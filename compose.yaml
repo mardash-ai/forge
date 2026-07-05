@@ -1,0 +1,35 @@
+name: forge
+
+# The Forge platform. For v1 the `api` service executes Capability work
+# synchronously; the `worker` seam is intentionally left for later without
+# overbuilding it now.
+services:
+  api:
+    build: .
+    # Tag the built image with its clear control-plane name.
+    image: ghcr.io/mardash-ai/forge-control-plane:latest
+    # Watch mode: because src/ is bind-mounted, editing platform source
+    # auto-reloads the API. (Without this, the long-running process keeps the
+    # old modules until `make restart`.)
+    command: ["./node_modules/.bin/tsx", "watch", "src/api/server.ts"]
+    ports:
+      - "3717:3717"
+    environment:
+      - PORT=3717
+      # Where Builder applications and the Resource/Event store live. This path
+      # is bind-mounted at the SAME absolute path on host and in the container so
+      # that nested `docker compose` (run by Capabilities against the host daemon)
+      # resolves app bind-mounts correctly — Docker-out-of-Docker.
+      - FORGE_WORKSPACE=${PWD}/workspace
+      - FORGE_STATE_DIR=${PWD}/workspace/.forge
+    volumes:
+      # Talk to the host Docker daemon.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Identical host==container path for app directories.
+      - ${PWD}/workspace:${PWD}/workspace
+      # Live source mount for fast iteration (does not shadow node_modules).
+      - ./src:/forge/src
+      - ./tests:/forge/tests
+      - ./tsconfig.json:/forge/tsconfig.json
+    working_dir: /forge
+    restart: unless-stopped

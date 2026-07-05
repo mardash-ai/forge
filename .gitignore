@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.log
+
+# Forge local workspace + state (generated apps and Resource/Event store)
+/workspace/
+.forge/
+
+# Internal, not for publication
+docs/SETUP_MARDASH_AI.md
+forge-agent-context.md
+FORGE_SAMPLE_PROJECT_IDEAS.md

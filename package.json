@@ -1,0 +1,29 @@
+{
+  "name": "forge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Forge — the AI-native software creation platform for Builders. Docker-first, API-first.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "api": "tsx src/api/server.ts",
+    "api:watch": "tsx watch src/api/server.ts",
+    "cli": "tsx src/cli/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "fastify": "^4.28.1",
+    "tsx": "^4.19.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.5"
+  }
+}

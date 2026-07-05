@@ -1,0 +1,7 @@
+node_modules
+dist
+workspace
+.forge
+.git
+*.log
+npm-debug.log*

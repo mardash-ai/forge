@@ -1,0 +1,31 @@
+name: CI
+
+# Fast feedback on every PR and push to main: run the platform's own unit tests.
+# These tests are pure (log-analyzer heuristics, scaffold shape) and need no
+# Docker, so they run directly on the runner for speed.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test
+
+      - name: Typecheck
+        run: npm run typecheck
