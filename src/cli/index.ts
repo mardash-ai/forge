@@ -194,6 +194,31 @@ for (const [cmd, slug, desc] of [
     });
 }
 
+// --- deploy ----------------------------------------------------------------
+program
+  .command('deploy')
+  .description('Zero-downtime deploy of the app’s production stack (Deploy)')
+  .requiredOption('--app <app>')
+  .option('--service <service>', 'public service rolled start-first', 'web')
+  .option('--context <context>', 'docker context for a remote target (default: local daemon)')
+  .option('--compose-file <file>', 'production compose manifest (at the project root)', 'compose.prod.yaml')
+  .option('--proxy-net <name>', 'reverse-proxy network to drain the old replica from', 'proxy')
+  .option('--no-pull', 'skip pulling images first')
+  .option('--drain-seconds <n>', 'seconds to let in-flight requests settle before removing the old', '3')
+  .option('--timeout-seconds <n>', 'seconds to wait for the new replica to become healthy', '120')
+  .action(async (opts) => {
+    await runCapability('deploy', {
+      app: opts.app,
+      service: opts.service,
+      context: opts.context,
+      compose_file: opts.composeFile,
+      proxy_net: opts.proxyNet,
+      pull: opts.pull,
+      drain_seconds: Number.parseInt(opts.drainSeconds, 10),
+      timeout_seconds: Number.parseInt(opts.timeoutSeconds, 10),
+    });
+  });
+
 // --- inspect ---------------------------------------------------------------
 program
   .command('inspect')

@@ -11,6 +11,7 @@ import { explainFailure } from './explain-failure/index';
 import { generateFeaturePlan } from './generate-feature-plan/index';
 import { setSecretCapability } from './set-secret/index';
 import { scheduleJob } from './schedule-job/index';
+import { deployCapability } from './deploy/index';
 
 // The full set of Capabilities the platform exposes. Order here is the order
 // they appear in discovery output.
@@ -27,4 +28,5 @@ export const capabilities: Capability<any, any>[] = [
   generateFeaturePlan,
   setSecretCapability,
   scheduleJob,
+  deployCapability,
 ];

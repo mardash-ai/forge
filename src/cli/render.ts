@@ -46,6 +46,24 @@ export function compact(resource: Any): Any {
         health: r.health,
         container_id: r.container_id || undefined,
       };
+    case 'Deployment':
+      return {
+        resource: r.id,
+        status: r.status,
+        service: r.service,
+        ...(r.strategy ? { strategy: r.strategy } : {}),
+        ...(r.context ? { context: r.context } : {}),
+        duration_ms: r.duration_ms,
+        ...(r.status === 'succeeded'
+          ? {
+              rolled_from: (r.old_container_ids ?? []).map((c: string) => c.slice(0, 12)),
+              rolled_to: (r.new_container_ids ?? []).map((c: string) => c.slice(0, 12)),
+            }
+          : { summary: r.error_summary }),
+        log_ref: logRef(r),
+        suggested_next:
+          r.status === 'succeeded' ? 'forge inspect events --app <app>' : `forge explain --resource ${r.id}`,
+      };
     case 'Build':
       return {
         resource: r.id,

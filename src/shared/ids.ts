@@ -20,6 +20,7 @@ export const RESOURCE_ID_PREFIX: Record<string, string> = {
   Plan: 'plan',
   Secret: 'sec',
   ScheduledJob: 'job',
+  Deployment: 'deploy',
 };
 
 export function newResourceId(type: string): string {

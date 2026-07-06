@@ -26,6 +26,9 @@ export const EVENT_TYPES = [
   'JobUnscheduled',
   'JobRan',
   'JobRunFailed',
+  'DeploymentStarted',
+  'DeploymentCompleted',
+  'DeploymentRolledBack',
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];

@@ -15,6 +15,7 @@ export const RESOURCE_TYPES = [
   'Plan',
   'Secret',
   'ScheduledJob',
+  'Deployment',
 ] as const;
 
 export type ResourceType = (typeof RESOURCE_TYPES)[number];
@@ -159,6 +160,32 @@ export interface ScheduledJob extends BaseResource {
   fail_count: number;
 }
 
+// A deployment of the app's PRODUCTION stack. Durable STATE only — the
+// deploy-compose-rollout Implementation owns the zero-downtime roll behavior.
+// Records what rolled (old→new container ids), which services reconciled, and the
+// outcome. A failed roll auto-discards the new replica and keeps the old serving
+// (status:'failed' + a DeploymentRolledBack fact) — the deploy is never a partial
+// outage.
+export interface Deployment extends BaseResource {
+  type: 'Deployment';
+  status: Status;
+  implementation: string;
+  // The public service rolled start-first (default "web"); other services reconcile in place.
+  service: string;
+  strategy?: 'first-deploy' | 'rolled';
+  // Docker context of the target daemon; undefined = the local daemon.
+  context?: string;
+  compose_file: string;
+  reconciled_services: string[];
+  old_container_ids: string[];
+  new_container_ids: string[];
+  started_at: string;
+  finished_at?: string;
+  duration_ms: number;
+  log_path: string;
+  error_summary?: string;
+}
+
 export type AnyResource =
   | Application
   | Environment
@@ -171,4 +198,5 @@ export type AnyResource =
   | Analysis
   | Plan
   | Secret
-  | ScheduledJob;
+  | ScheduledJob
+  | Deployment;

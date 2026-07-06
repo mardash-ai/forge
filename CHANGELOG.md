@@ -9,6 +9,25 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-06
+
+### Added
+- **Platform capability C7 — Deploy (zero-downtime rollout).** A new `Deploy`
+  Capability + `deploy-compose-rollout` Implementation performs a **start-first**
+  release of an app's production stack behind a reverse proxy (Traefik): it
+  reconciles the non-public services in place, then rolls the public `--service`
+  (default `web`) by bringing up a new replica alongside the old, waiting until it
+  is **healthy**, draining the old out of the proxy network, and removing it — so
+  there is never a moment with zero healthy backends (no 502 window). A new replica
+  that never becomes healthy is discarded and the old one keeps serving (automatic
+  rollback → `DeploymentRolledBack`). Drive it with `forge deploy --app <app>
+  [--service <s>] [--context <docker-context>] [--compose-file <f>]`; each deploy is
+  a `Deployment` Resource recording old→new container ids + outcome, emitting
+  `DeploymentStarted` / `DeploymentCompleted` / `DeploymentRolledBack` facts.
+  Targets the local Docker daemon by default; `--context` targets a remote daemon
+  over Docker's native transport. Ports the proven forge-os `deploy/rollout.sh`
+  into the platform so apps **consume** the behavior instead of copying the script.
+
 ## [0.5.1] — 2026-07-06
 
 ### Fixed
@@ -111,7 +130,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/mardash-ai/forge/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/mardash-ai/forge/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/mardash-ai/forge/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mardash-ai/forge/compare/v0.3.0...v0.4.0
