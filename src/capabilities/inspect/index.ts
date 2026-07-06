@@ -6,10 +6,11 @@ import type { Capability } from '../../core/types';
 import type { Inspection } from '../../resources/types';
 import { appRefInput, resolveApp, baseResource } from '../_shared';
 import { listSecretNames } from '../../plugins/secrets-local/index';
+import type { ScheduledJob } from '../../resources/types';
 
 const inputSchema = z.object({
   ...appRefInput,
-  type: z.enum(['app', 'resources', 'events', 'routes', 'scripts', 'docker', 'secrets']).default('app'),
+  type: z.enum(['app', 'resources', 'events', 'routes', 'scripts', 'docker', 'secrets', 'jobs']).default('app'),
 });
 type Input = z.infer<typeof inputSchema>;
 
@@ -129,6 +130,22 @@ export const inspect: Capability<Input, Inspection> = {
         summary = names.length
           ? `${names.length} secret(s) set for ${app.name}: ${names.join(', ')}.`
           : `No secrets set for ${app.name}. Set one: forge secrets set --app ${app.name} --name <NAME> --value <v>`;
+        break;
+      }
+      case 'jobs': {
+        const jobs = (await ctx.store.listResources({ type: 'ScheduledJob', app_id: app.id })) as ScheduledJob[];
+        data = jobs.map((j) => ({
+          name: j.name,
+          schedule: j.schedule,
+          target: `${j.target.method} ${j.target.path}`,
+          enabled: j.enabled,
+          next_run_at: j.next_run_at,
+          last_status: j.last_status,
+          runs: j.run_count,
+        }));
+        summary = jobs.length
+          ? `${jobs.length} scheduled job(s) for ${app.name}.`
+          : `No scheduled jobs for ${app.name}. Add one: forge schedule --app ${app.name} --name <n> --cron "0 0 * * *" --target /api/cron/<n>`;
         break;
       }
       case 'docker': {

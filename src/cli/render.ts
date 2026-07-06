@@ -80,6 +80,17 @@ export function compact(resource: Any): Any {
     case 'Secret':
       // Metadata only — a Secret Resource never carries the value.
       return { resource: r.id, name: r.name, status: r.status };
+    case 'ScheduledJob':
+      return {
+        resource: r.id,
+        name: r.name,
+        schedule: r.schedule,
+        target: `${r.target?.method} ${r.target?.path}`,
+        enabled: r.enabled,
+        next_run_at: r.next_run_at,
+        last_status: r.last_status,
+        runs: r.run_count,
+      };
     case 'Inspection':
       return { resource: r.id, inspection_type: r.inspection_type, summary: r.summary, data: r.data };
     case 'Analysis':

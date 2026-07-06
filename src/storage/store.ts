@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, readdir, appendFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, appendFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import {
   resourcesDir,
@@ -34,6 +34,15 @@ export class Store {
     await mkdir(this.resourceTypeDir(resource.type), { recursive: true });
     await writeFile(this.resourcePath(resource.type, resource.id), JSON.stringify(resource, null, 2));
     return resource;
+  }
+
+  async deleteResource(type: ResourceType, id: string): Promise<boolean> {
+    try {
+      await rm(this.resourcePath(type, id));
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async getResource<T extends AnyResource = AnyResource>(

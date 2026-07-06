@@ -9,6 +9,20 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-06
+
+### Added
+- **Platform capability C2 — Scheduler / background jobs.** A new `ScheduleJob`
+  Capability + `scheduler-node` Implementation (an in-process ticker in the always-on
+  control plane): register durable **recurring** (`--every <dur>` or `--cron "<expr>"`,
+  evaluated in UTC) or **one-shot** (`--at <iso>`) jobs that Forge fires on cadence by
+  calling back into the app (`--target <path>`). Jobs are `ScheduledJob` Resources, so
+  the ticker resumes across restarts (a job due while the plane was down fires on the
+  next tick); a failed run retries with backoff, then skips to the next fire. Manage and
+  observe with `forge schedule` / `forge jobs` (and `inspect jobs`); every run records a
+  `JobRan` / `JobRunFailed` event. The app callback host is `host.docker.internal` by
+  default (override with `FORGE_APP_CALLBACK_HOST`).
+
 ## [0.3.0] — 2026-07-06
 
 ### Fixed
@@ -74,7 +88,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/mardash-ai/forge/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mardash-ai/forge/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mardash-ai/forge/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/mardash-ai/forge/compare/defed64...v0.1.1

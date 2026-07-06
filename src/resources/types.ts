@@ -14,6 +14,7 @@ export const RESOURCE_TYPES = [
   'Analysis',
   'Plan',
   'Secret',
+  'ScheduledJob',
 ] as const;
 
 export type ResourceType = (typeof RESOURCE_TYPES)[number];
@@ -139,6 +140,25 @@ export interface Secret extends BaseResource {
   algo: string;
 }
 
+// A durable scheduled job: recurring or one-shot work Forge fires on cadence by
+// calling back into the app. State only — the scheduler-node Implementation owns
+// the behavior. Survives restart (next_run_at is persisted), so the scheduler
+// resumes from where it left off.
+export interface ScheduledJob extends BaseResource {
+  type: 'ScheduledJob';
+  name: string;
+  // Canonical schedule string: "every:<dur>" | "cron:<expr>" | "once:<iso>".
+  schedule: string;
+  // What Forge invokes on the app when the job fires.
+  target: { method: 'GET' | 'POST'; path: string };
+  enabled: boolean;
+  next_run_at: string;
+  last_run_at?: string;
+  last_status: 'never' | 'succeeded' | 'failed';
+  run_count: number;
+  fail_count: number;
+}
+
 export type AnyResource =
   | Application
   | Environment
@@ -150,4 +170,5 @@ export type AnyResource =
   | Inspection
   | Analysis
   | Plan
-  | Secret;
+  | Secret
+  | ScheduledJob;

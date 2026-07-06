@@ -251,6 +251,41 @@ secrets
     await runCapability('inspect', { app: opts.app, type: 'secrets' });
   });
 
+// --- schedule / jobs -------------------------------------------------------
+program
+  .command('schedule')
+  .description('Register or remove a scheduled job (ScheduleJob)')
+  .requiredOption('--app <app>')
+  .requiredOption('--name <name>', 'job name (kebab-case), unique per app')
+  .option('--target <path>', 'app path to call when it fires, e.g. /api/cron/habits')
+  .option('--method <method>', 'GET or POST', 'POST')
+  .option('--every <dur>', 'recurring interval, e.g. 30m / 1h / 24h')
+  .option('--cron <expr>', 'recurring 5-field cron in UTC, e.g. "0 0 * * *"')
+  .option('--at <iso>', 'one-shot ISO timestamp')
+  .option('--disabled', 'register but leave disabled')
+  .option('--remove', 'remove the job')
+  .action(async (opts) => {
+    await runCapability('schedule-job', {
+      app: opts.app,
+      name: opts.name,
+      ...(opts.target ? { target_path: opts.target } : {}),
+      method: opts.method,
+      ...(opts.every ? { every: opts.every } : {}),
+      ...(opts.cron ? { cron: opts.cron } : {}),
+      ...(opts.at ? { at: opts.at } : {}),
+      disabled: Boolean(opts.disabled),
+      remove: Boolean(opts.remove),
+    });
+  });
+
+program
+  .command('jobs')
+  .description('List scheduled jobs for an app')
+  .requiredOption('--app <app>')
+  .action(async (opts) => {
+    await runCapability('inspect', { app: opts.app, type: 'jobs' });
+  });
+
 // --- read-only surfaces ----------------------------------------------------
 program
   .command('capabilities')

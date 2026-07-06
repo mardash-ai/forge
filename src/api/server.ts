@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import { readFile } from 'node:fs/promises';
 import { store } from '../storage/store';
+import { startScheduler } from '../plugins/scheduler-node/index';
 import { executeCapability } from '../core/runtime';
 import { describeCapabilities } from '../core/registry';
 import { ForgeError } from '../shared/errors';
@@ -95,6 +96,10 @@ const port = Number(process.env.PORT ?? 3717);
 async function main() {
   await store.init();
   await app.listen({ port, host: '0.0.0.0' });
+  // Resume durable scheduled work (C2) — jobs due while the plane was down fire now.
+  startScheduler(store, {
+    tickMs: process.env.FORGE_SCHEDULER_TICK_MS ? Number(process.env.FORGE_SCHEDULER_TICK_MS) : undefined,
+  });
   // eslint-disable-next-line no-console
   console.log(`forge api listening on http://0.0.0.0:${port}`);
 }
