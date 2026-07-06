@@ -10,7 +10,9 @@ import type { ScheduledJob } from '../../resources/types';
 
 const inputSchema = z.object({
   ...appRefInput,
-  type: z.enum(['app', 'resources', 'events', 'routes', 'scripts', 'docker', 'secrets', 'jobs']).default('app'),
+  type: z
+    .enum(['app', 'resources', 'events', 'app-events', 'routes', 'scripts', 'docker', 'secrets', 'jobs'])
+    .default('app'),
 });
 type Input = z.infer<typeof inputSchema>;
 
@@ -48,7 +50,7 @@ function fileToRoute(rel: string): { route: string; kind: 'page' | 'api' } | nul
 export const inspect: Capability<Input, Inspection> = {
   name: 'Inspect',
   slug: 'inspect',
-  description: 'Return a compact structured view of an Application (app, resources, events, routes, scripts, docker).',
+  description: 'Return a compact structured view of an Application (app, resources, events, app-events, routes, scripts, docker, secrets, jobs).',
   inputSchema,
   resourceType: 'Inspection',
   events: ['InspectionCreated'],
@@ -100,6 +102,15 @@ export const inspect: Capability<Input, Inspection> = {
         const events = await ctx.store.listEvents({ app_id: app.id, limit: 20 });
         data = events.map((e) => ({ id: e.id, type: e.type, resource_id: e.resource_id, at: e.timestamp }));
         summary = `${events.length} recent event(s) for ${app.name}.`;
+        break;
+      }
+      case 'app-events': {
+        // The APP's own domain event log (C3) — distinct from platform `events` above.
+        const events = await ctx.store.listAppEvents({ app_id: app.id, limit: 20 });
+        data = events.map((e) => ({ id: e.id, type: e.type, subject: e.subject, at: e.at }));
+        summary = events.length
+          ? `${events.length} recent app event(s) for ${app.name}.`
+          : `No app events for ${app.name} yet.`;
         break;
       }
       case 'routes': {

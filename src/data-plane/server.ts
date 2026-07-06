@@ -10,6 +10,7 @@ import { SYSTEM_ACTOR, type Actor } from '../shared/domain';
 import { RESOURCE_TYPES, type ResourceType, type Application } from '../resources/types';
 import { newResourceId } from '../shared/ids';
 import { nowIso } from '../shared/time';
+import { registerAppEventRoutes } from '../api/app-events-routes';
 import { logPath } from '../shared/paths';
 
 // The Forge DATA PLANE server — the production/runtime counterpart to the control
@@ -79,6 +80,10 @@ app.get('/logs/:resourceId', async (req, reply) => {
     return reply.status(404).send({ error: { code: 'not_found', message: `No log for "${resourceId}".`, retry: 'change-input' } });
   }
 });
+
+// Application event log (C3) — the running app emits/queries its own domain events here over the
+// internal network. Defaults the app to this sidecar's FORGE_APP_NAME, so the app needn't pass it.
+registerAppEventRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 
 // In production there is no `./forge provision`, so seed a minimal Application
 // record for the app this sidecar serves — enough for schedule-job/inspect to

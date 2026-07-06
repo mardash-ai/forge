@@ -9,6 +9,23 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-07-06
+
+### Added
+- **Platform capability C3 — Application event log.** A running app can now emit its own typed
+  DOMAIN events and query them back as a per-app feed, via new routes on **both** the control-plane
+  API (dev) and the data-plane sidecar (prod) — the first *app→Forge* direction:
+  - `POST /app-events { app?, type, subject?, data? }` — best-effort emit (a failed emit must never
+    break the mutation that triggered it).
+  - `GET /app-events?app=&subject=&limit=` — the feed, newest-first, filterable by subject.
+  - `GET /app-events/latest?app=` — latest event time per subject (the primitive cold-subject /
+    "stale goal" detection needs).
+
+  App events (`AppEvent`) are an open-`type`, subject-keyed, denormalized fact log kept in a per-app
+  `app-events/<app_id>.jsonl` — deliberately separate from the platform's closed `ForgeEvent`
+  catalog (facts about *Resources*). Observable via `forge inspect app-events --app <app>`. `app`
+  defaults to the sidecar's `FORGE_APP_NAME`, so the app usually needn't pass it.
+
 ## [0.6.1] — 2026-07-06
 
 ### Fixed
@@ -139,7 +156,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/mardash-ai/forge/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/mardash-ai/forge/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/mardash-ai/forge/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/mardash-ai/forge/compare/v0.5.0...v0.5.1

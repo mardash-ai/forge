@@ -39,6 +39,17 @@ export function eventsFile(): string {
   return path.join(stateDir(), 'events', 'events.jsonl');
 }
 
+// Application DOMAIN event log (C3) — one append-only JSONL PER APP, separate from the
+// platform's single ForgeEvent log above. Keeps the app's own facts (goal.created, …) out
+// of the closed platform fact catalog.
+export function appEventsDir(): string {
+  return path.join(stateDir(), 'app-events');
+}
+
+export function appEventsFile(appId: string): string {
+  return path.join(appEventsDir(), `${appId}.jsonl`);
+}
+
 export function logsDir(): string {
   return path.join(stateDir(), 'logs');
 }

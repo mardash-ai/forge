@@ -223,7 +223,7 @@ program
 program
   .command('inspect')
   .description('Compact structured inspection (Inspect)')
-  .argument('[type]', 'app | resources | events | routes | scripts | docker', 'app')
+  .argument('[type]', 'app | resources | events | app-events | routes | scripts | docker | secrets | jobs', 'app')
   .requiredOption('--app <app>')
   .action(async (type, opts) => {
     await runCapability('inspect', { app: opts.app, type });

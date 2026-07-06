@@ -3,12 +3,15 @@ import path from 'node:path';
 import {
   resourcesDir,
   eventsFile,
+  appEventsDir,
+  appEventsFile,
   logsDir,
   stateDir,
 } from '../shared/paths';
 import type { AnyResource, ResourceType, BaseResource } from '../resources/types';
 import type { ForgeEvent, EventType } from '../events/catalog';
-import { newEventId } from '../shared/ids';
+import type { AppEvent } from '../events/app-events';
+import { newEventId, newId } from '../shared/ids';
 import type { Actor } from '../shared/domain';
 import { nowIso } from '../shared/time';
 
@@ -145,6 +148,73 @@ export class Store {
     events.reverse(); // newest first
     if (filter.limit) events = events.slice(0, filter.limit);
     return events;
+  }
+
+  // --- Application event log (C3) -------------------------------------------------
+  // A per-app append-only log of app DOMAIN facts, separate from the ForgeEvent log
+  // above. `type`/`subject` are app-defined; `data` is a denormalized snapshot.
+
+  async appendAppEvent(input: {
+    app_id: string;
+    type: string;
+    subject?: string;
+    data?: Record<string, unknown>;
+  }): Promise<AppEvent> {
+    const event: AppEvent = {
+      id: newId('aevt'),
+      app_id: input.app_id,
+      type: input.type,
+      subject: input.subject,
+      data: input.data ?? {},
+      at: nowIso(),
+    };
+    await mkdir(appEventsDir(), { recursive: true });
+    await appendFile(appEventsFile(input.app_id), JSON.stringify(event) + '\n');
+    return event;
+  }
+
+  // The per-app feed, newest-first, optionally filtered to a single subject. A missing log
+  // reads as an empty feed (best-effort — the app must degrade, never crash).
+  async listAppEvents(filter: { app_id: string; subject?: string; limit?: number }): Promise<AppEvent[]> {
+    let raw: string;
+    try {
+      raw = await readFile(appEventsFile(filter.app_id), 'utf8');
+    } catch {
+      return [];
+    }
+    let events = raw
+      .split('\n')
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as AppEvent);
+    if (filter.subject !== undefined) events = events.filter((e) => e.subject === filter.subject);
+    events.reverse(); // newest first
+    const limit = Math.min(Math.max(filter.limit ?? 100, 1), 500);
+    return events.slice(0, limit);
+  }
+
+  // Latest event time per subject — the primitive cold-subject detection needs (e.g. "goals
+  // with no activity in N days"). Events without a subject are ignored.
+  async latestAppEventTimes(app_id: string): Promise<Record<string, string>> {
+    let raw: string;
+    try {
+      raw = await readFile(appEventsFile(app_id), 'utf8');
+    } catch {
+      return {};
+    }
+    const latest: Record<string, string> = {};
+    for (const line of raw.split('\n')) {
+      if (line.trim().length === 0) continue;
+      let e: AppEvent;
+      try {
+        e = JSON.parse(line) as AppEvent;
+      } catch {
+        continue;
+      }
+      if (!e.subject) continue;
+      const prev = latest[e.subject];
+      if (!prev || prev < e.at) latest[e.subject] = e.at;
+    }
+    return latest;
   }
 
   stateDir(): string {
