@@ -43,6 +43,12 @@ export function logsDir(): string {
   return path.join(stateDir(), 'logs');
 }
 
+// Where encrypted secrets (and the local master key, in dev) are kept. Under the
+// gitignored state dir, so material never lands in a tracked file or image layer.
+export function secretsDir(): string {
+  return path.join(stateDir(), 'secrets');
+}
+
 export function logPath(resourceId: string): string {
   return path.join(logsDir(), `${resourceId}.log`);
 }

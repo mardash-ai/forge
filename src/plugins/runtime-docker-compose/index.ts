@@ -23,10 +23,16 @@ export function composeRun(
   );
 }
 
-// Start the full environment detached (dependencies included).
-export function composeUp(appDir: string, service?: string, opts: { logFile?: string } = {}): Promise<RunResult> {
+// Start the full environment detached (dependencies included). `env` carries
+// decrypted secret values into the `docker compose` process so Compose can
+// interpolate them into the container — they never touch a file on disk.
+export function composeUp(
+  appDir: string,
+  service?: string,
+  opts: { logFile?: string; env?: Record<string, string> } = {},
+): Promise<RunResult> {
   const args = ['compose', 'up', '-d', ...(service ? [service] : [])];
-  return run('docker', args, { cwd: appDir, logFile: opts.logFile, timeoutMs: 10 * 60_000 });
+  return run('docker', args, { cwd: appDir, env: opts.env, logFile: opts.logFile, timeoutMs: 10 * 60_000 });
 }
 
 export function composeDown(appDir: string): Promise<RunResult> {
@@ -76,6 +82,10 @@ export interface ComposeOptions {
   withPostgres: boolean;
   withRedis: boolean;
   devCommand: string;
+  // Secret names the app declares it needs. Each becomes an interpolation line
+  // (empty when unset), whose value Forge injects from its encrypted store at run
+  // time — the value is never written into this file.
+  secrets?: string[];
 }
 
 // Generate the app's compose.yaml. The `web` service uses the stock Node image
@@ -122,6 +132,13 @@ export function generateCompose(opts: ComposeOptions): string {
 
   const dependsBlock = dependsOn.length ? `    depends_on:\n${dependsOn.join('\n')}\n` : '';
 
+  // One interpolation line per declared secret. `${NAME:-}` keeps the var
+  // DEFINED-but-empty when unset, so the app can detect absence and degrade
+  // (e.g. return 503) instead of crashing — and no value is ever written here.
+  const secretEnv = (opts.secrets ?? [])
+    .map((name) => `      - ${name}=\${${name}:-}`)
+    .join('\n');
+
   const web = `  web:
     image: node:22-bookworm-slim
     working_dir: /app
@@ -131,7 +148,7 @@ export function generateCompose(opts: ComposeOptions): string {
     # breaks \`next build\` prerendering.
     environment:
       - HOST=0.0.0.0
-      - PORT=${opts.port}
+      - PORT=${opts.port}${secretEnv ? '\n' + secretEnv : ''}
 ${dependsBlock}    ports:
       - "${opts.port}:${opts.port}"
     volumes:

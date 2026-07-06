@@ -18,6 +18,7 @@ export const RESOURCE_ID_PREFIX: Record<string, string> = {
   Inspection: 'insp',
   Analysis: 'analysis',
   Plan: 'plan',
+  Secret: 'sec',
 };
 
 export function newResourceId(type: string): string {

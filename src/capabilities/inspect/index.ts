@@ -5,10 +5,11 @@ import type { Dirent } from 'node:fs';
 import type { Capability } from '../../core/types';
 import type { Inspection } from '../../resources/types';
 import { appRefInput, resolveApp, baseResource } from '../_shared';
+import { listSecretNames } from '../../plugins/secrets-local/index';
 
 const inputSchema = z.object({
   ...appRefInput,
-  type: z.enum(['app', 'resources', 'events', 'routes', 'scripts', 'docker']).default('app'),
+  type: z.enum(['app', 'resources', 'events', 'routes', 'scripts', 'docker', 'secrets']).default('app'),
 });
 type Input = z.infer<typeof inputSchema>;
 
@@ -118,6 +119,15 @@ export const inspect: Capability<Input, Inspection> = {
         }
         data = scripts;
         summary = `${Object.keys(scripts).length} npm script(s).`;
+        break;
+      }
+      case 'secrets': {
+        // Names only — the values never leave the secrets backend.
+        const names = await listSecretNames(app.id);
+        data = names.map((name) => ({ name, set: true }));
+        summary = names.length
+          ? `${names.length} secret(s) set for ${app.name}: ${names.join(', ')}.`
+          : `No secrets set for ${app.name}. Set one: forge secrets set --app ${app.name} --name <NAME> --value <v>`;
         break;
       }
       case 'docker': {

@@ -9,6 +9,7 @@ import { lintCapability } from './lint/index';
 import { inspect } from './inspect/index';
 import { explainFailure } from './explain-failure/index';
 import { generateFeaturePlan } from './generate-feature-plan/index';
+import { setSecretCapability } from './set-secret/index';
 
 // The full set of Capabilities the platform exposes. Order here is the order
 // they appear in discovery output.
@@ -23,4 +24,5 @@ export const capabilities: Capability<any, any>[] = [
   inspect,
   explainFailure,
   generateFeaturePlan,
+  setSecretCapability,
 ];

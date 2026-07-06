@@ -10,6 +10,10 @@ const inputSchema = z.object({
   ...appRefInput,
   with_postgres: z.boolean().default(false),
   with_redis: z.boolean().default(false),
+  // Secret names the app needs available in its runtime (e.g. ANTHROPIC_API_KEY).
+  // Merged with any declared in forge.app.json. Forge injects the values from its
+  // encrypted store at run time; they never appear in the generated compose file.
+  secrets: z.array(z.string()).default([]),
 });
 
 type Input = z.infer<typeof inputSchema>;
@@ -29,13 +33,17 @@ export const provisionEnvironment: Capability<Input, Environment> = {
   async execute(input, ctx) {
     const app = await resolveApp(ctx.store, input.app);
 
-    // Read the app port from its manifest (deterministic).
+    // Read the app port + declared secrets from its manifest (deterministic).
     let port = 3000;
+    const declaredSecrets = new Set<string>(input.secrets);
     try {
       const manifest = JSON.parse(await readFile(path.join(app.repo_path, 'forge.app.json'), 'utf8'));
       if (typeof manifest.port === 'number') port = manifest.port;
+      if (Array.isArray(manifest.secrets)) {
+        for (const s of manifest.secrets) if (typeof s === 'string') declaredSecrets.add(s);
+      }
     } catch {
-      // fall back to default
+      // fall back to defaults
     }
 
     const compose = generateCompose({
@@ -44,6 +52,7 @@ export const provisionEnvironment: Capability<Input, Environment> = {
       withPostgres: input.with_postgres,
       withRedis: input.with_redis,
       devCommand: 'npm run dev',
+      secrets: [...declaredSecrets],
     });
     const composeFile = path.join(app.repo_path, 'compose.yaml');
     await writeFile(composeFile, compose);

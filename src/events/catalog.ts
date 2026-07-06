@@ -21,6 +21,7 @@ export const EVENT_TYPES = [
   'InspectionCreated',
   'AnalysisCreated',
   'PlanCreated',
+  'SecretSet',
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];

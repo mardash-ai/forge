@@ -77,6 +77,9 @@ export function compact(resource: Any): Any {
         log_ref: logRef(r),
         suggested_next: r.status === 'succeeded' ? 'forge build --app <app>' : `forge explain --resource ${r.id}`,
       };
+    case 'Secret':
+      // Metadata only — a Secret Resource never carries the value.
+      return { resource: r.id, name: r.name, status: r.status };
     case 'Inspection':
       return { resource: r.id, inspection_type: r.inspection_type, summary: r.summary, data: r.data };
     case 'Analysis':

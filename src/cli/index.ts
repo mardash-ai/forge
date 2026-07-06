@@ -20,6 +20,11 @@ function fail(message: string, extra?: unknown): never {
   process.exit(1);
 }
 
+// Accumulator for repeatable options (e.g. --secret A --secret B).
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 async function api(method: string, path: string, body?: unknown): Promise<any> {
   let res: Response;
   try {
@@ -123,6 +128,7 @@ program
   .option('--framework <framework>', 'target framework', 'nextjs')
   .option('--with-postgres', 'include a Postgres service')
   .option('--with-redis', 'include a Redis service')
+  .option('--secret <name>', 'declare a secret the app needs, e.g. ANTHROPIC_API_KEY (repeatable)', collect, [])
   .action(async (opts) => {
     await runCapability('provision-environment', {
       app: opts.app,
@@ -130,6 +136,7 @@ program
       framework: opts.framework,
       with_postgres: Boolean(opts.withPostgres),
       with_redis: Boolean(opts.withRedis),
+      secrets: opts.secret,
     });
   });
 
@@ -203,6 +210,33 @@ program
   .requiredOption('--goal <goal>')
   .action(async (opts) => {
     await runCapability('generate-feature-plan', { app: opts.app, goal: opts.goal });
+  });
+
+// --- secrets ---------------------------------------------------------------
+const secrets = program.command('secrets').description('Manage an app\'s encrypted secrets (SetSecret)');
+secrets
+  .command('set')
+  .description('Store an encrypted secret for an app (SetSecret)')
+  .requiredOption('--app <app>')
+  .requiredOption('--name <name>', 'secret name, e.g. ANTHROPIC_API_KEY')
+  .option('--value <value>', 'secret value (prefer --from-env to keep it out of shell history)')
+  .option('--from-env [envName]', 'read the value from an env var (defaults to --name)')
+  .action(async (opts) => {
+    let value: string | undefined = opts.value;
+    if (value === undefined && opts.fromEnv !== undefined) {
+      const envName = typeof opts.fromEnv === 'string' ? opts.fromEnv : opts.name;
+      value = process.env[envName];
+      if (!value) fail(`Env var "${envName}" is empty or unset.`);
+    }
+    if (value === undefined) fail('Provide --value <v> or --from-env [ENV].');
+    await runCapability('set-secret', { app: opts.app, name: opts.name, value });
+  });
+secrets
+  .command('list')
+  .description('List the secret NAMES set for an app (never the values)')
+  .requiredOption('--app <app>')
+  .action(async (opts) => {
+    await runCapability('inspect', { app: opts.app, type: 'secrets' });
   });
 
 // --- read-only surfaces ----------------------------------------------------

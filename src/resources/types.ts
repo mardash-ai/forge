@@ -13,6 +13,7 @@ export const RESOURCE_TYPES = [
   'Inspection',
   'Analysis',
   'Plan',
+  'Secret',
 ] as const;
 
 export type ResourceType = (typeof RESOURCE_TYPES)[number];
@@ -128,6 +129,16 @@ export interface Plan extends BaseResource {
   risks: Array<{ risk: string; severity: 'low' | 'medium' | 'high' }>;
 }
 
+// A named secret an Application needs. Durable STATE only — metadata that the
+// secret is set, never the material. The encrypted value lives in the secrets
+// backend (plugins/secrets-local), never in this Resource or any API response.
+export interface Secret extends BaseResource {
+  type: 'Secret';
+  name: string;
+  status: 'set';
+  algo: string;
+}
+
 export type AnyResource =
   | Application
   | Environment
@@ -138,4 +149,5 @@ export type AnyResource =
   | CheckRun
   | Inspection
   | Analysis
-  | Plan;
+  | Plan
+  | Secret;

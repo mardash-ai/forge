@@ -7,6 +7,7 @@ import { appRefInput, resolveApp, baseResource } from '../_shared';
 import { logPath } from '../../shared/paths';
 import { nowIso } from '../../shared/time';
 import { composeUp, composeDown, composePs } from '../../plugins/runtime-docker-compose/index';
+import { readSecrets } from '../../plugins/secrets-local/index';
 
 const inputSchema = z.object({
   ...appRefInput,
@@ -72,7 +73,11 @@ export const runDevServer: Capability<Input, DevServer> = {
     }
 
     if (input.action === 'start') {
-      await composeUp(app.repo_path, 'web', { logFile: resource.log_path });
+      // Inject the app's declared secrets (decrypted only here, in memory) into
+      // the compose process so the running container receives them. A failure to
+      // read them is non-fatal — the app then just sees them absent and degrades.
+      const secretEnv = await readSecrets(app.id).catch(() => ({}));
+      await composeUp(app.repo_path, 'web', { logFile: resource.log_path, env: secretEnv });
     }
 
     // status (and post-start): read container state.
