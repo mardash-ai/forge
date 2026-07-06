@@ -13,6 +13,12 @@ Each released version maps to a published control-plane image tag
 - `CHANGELOG.md` following Keep a Changelog + SemVer. The `add-platform-capability`
   skill now updates it automatically as part of shipping each capability.
 
+### Changed
+- The publish workflow now builds **multi-arch** images (`linux/amd64` + `linux/arm64`)
+  via QEMU + buildx, so control-plane images run natively on arm64 (Apple Silicon) dev
+  hosts as well as x86 servers. `0.2.0` was republished as a multi-arch manifest — its
+  `Delivered in` digest changed — and all future images are multi-arch.
+
 ## [0.2.0] — 2026-07-06
 
 ### Added

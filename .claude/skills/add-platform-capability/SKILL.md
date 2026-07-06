@@ -193,6 +193,11 @@ The Delivery block is worthless without a concrete `tag @ sha256:digest`, so you
      Poll every ~30s until it returns a `sha256:…` (it appears once CI has pushed). If it errors on
      auth, `docker login ghcr.io` first. If tooling is unavailable, ask the human to paste the digest
      from the GHCR package page — do **not** fabricate one.
+   - **Confirm multi-arch.** Images MUST ship both `linux/amd64` and `linux/arm64` (the arm64 dev
+     host needs it). Verify: `docker buildx imagetools inspect …:X.Y.Z` lists both platforms (ignore
+     the `unknown/unknown` provenance/attestation entry — that is not an arch). If arm64 is missing,
+     the publish workflow lost its `platforms:` key — fix it before delivering. Record and pin the
+     top-level **image-index** digest (what `{{.Manifest.Digest}}` returns), not a per-arch one.
    - Record the full pin: **`X.Y.Z @ sha256:<digest>`**.
 4. **R1 baseline (first run only).** If the ledger's *Runtime & version → Baseline* still says
    `latest`, resolve the digest of the current published baseline image (the version *before* this
