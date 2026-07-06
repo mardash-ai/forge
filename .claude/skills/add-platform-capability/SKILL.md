@@ -45,7 +45,8 @@ that file).
 3. Design   → Capability(behavior) / Resource(state) / Event(fact); pick the app-facing consume path
 4. Build    → implement in src/ per 06_FORGE_REPOSITORY + the Implementation Map (CLAUDE.md)
 5. Validate → make test + typecheck green; re-check Required semantics + graceful degradation
-6. Publish  → /commit-and-publish (minor bump) → wait for CI → resolve tag @ sha256:digest  (R1)
+6. Publish  → update CHANGELOG.md (new X.Y.Z) → /commit-and-publish (minor) → wait for CI →
+              resolve tag @ sha256:digest  (R1)
 7. Deliver  → fill the Delivery block + Runtime table, set 🟢/owner→forge-os, Handoff log; commit
               ONLY the ledger in ../forge-os  (R1 + R2)
 8. Relay    → print the forge-os adoption prompt AND write it to relays/<Cn>-adopt.md
@@ -161,13 +162,28 @@ Keep the core boring and provider-agnostic; keep provider specifics inside the p
 
 The Delivery block is worthless without a concrete `tag @ sha256:digest`, so you must ship an image.
 
-1. **Ship it** via the existing release flow — invoke **`/commit-and-publish minor`** (a new
-   capability is a feature → **minor** bump; override if the ledger/human dictates). That commits
-   your `src/` changes, pushes `main` (runs CI), and pushes a `vX.Y.Z` tag which triggers
-   **`Publish control-plane image`** → `ghcr.io/mardash-ai/forge-control-plane:X.Y.Z` + `:latest`.
-   > Only your capability code should be in that commit — the ledger lives in forge-os and is
-   > committed separately in step 7.
-2. **Wait for the publish to finish**, then **resolve the digest** (no `latest`, ever):
+1. **Update `CHANGELOG.md`** (repo root) so the release records itself — this MUST happen *before*
+   the next step, so `/commit-and-publish`'s `git add -A` folds it into the release commit.
+   - **Compute the target version.** A capability is a feature → a **minor** bump: take
+     `package.json`'s current `X.Y.Z` and increment the minor, reset patch to 0 (e.g. `0.2.0 → 0.3.0`).
+     Use that same directive in the next step so the numbers match.
+   - **Add a `## [X.Y.Z] — <today>` section** (get today's date from the environment) just below
+     `## [Unreleased]`, in [Keep a Changelog](https://keepachangelog.com) style — group entries under
+     **Added / Changed / Fixed / Removed**. Describe the capability and any behavior change (e.g. a
+     new provision flag or compose output). **Move any existing `## [Unreleased]` items** into this
+     new section, leaving `## [Unreleased]` empty.
+   - **Update the compare-link footer:** point `[Unreleased]` at `compare/vX.Y.Z...HEAD` and add
+     `[X.Y.Z]: …/compare/v<prev>...vX.Y.Z`.
+   - Keep it a control-plane changelog (platform changes), not a forge-os one; the forge-os ledger is
+     the separate handoff record.
+2. **Ship it** via the existing release flow — invoke **`/commit-and-publish minor`** (the same
+   directive whose version you computed above; override only if the ledger/human dictates). That
+   commits your `src/` changes **and `CHANGELOG.md`**, pushes `main` (runs CI), and pushes a `vX.Y.Z`
+   tag which triggers **`Publish control-plane image`** →
+   `ghcr.io/mardash-ai/forge-control-plane:X.Y.Z` + `:latest`.
+   > Only your capability code + the changelog should be in that commit — the ledger lives in forge-os
+   > and is committed separately in step 7.
+3. **Wait for the publish to finish**, then **resolve the digest** (no `latest`, ever):
    - Prefer, if `gh` is available: `gh run watch` the *Publish control-plane image* run.
    - Resolve the digest without pulling:
      ```bash
@@ -178,10 +194,10 @@ The Delivery block is worthless without a concrete `tag @ sha256:digest`, so you
      auth, `docker login ghcr.io` first. If tooling is unavailable, ask the human to paste the digest
      from the GHCR package page — do **not** fabricate one.
    - Record the full pin: **`X.Y.Z @ sha256:<digest>`**.
-3. **R1 baseline (first run only).** If the ledger's *Runtime & version → Baseline* still says
+4. **R1 baseline (first run only).** If the ledger's *Runtime & version → Baseline* still says
    `latest`, resolve the digest of the current published baseline image (the version *before* this
    one) and pin it there as the floor — your first ledger edit.
-4. Note whether the **app base image** (`node:22-…` in `app/compose.yaml`) must change — usually it
+5. Note whether the **app base image** (`node:22-…` in `app/compose.yaml`) must change — usually it
    does **not**; only mention it if consuming the capability requires it.
 
 ## 7. Deliver — fill the ledger and hand ownership over (R1 + R2)
@@ -202,7 +218,7 @@ Edit `../forge-os/PLATFORM_CAPABILITIES.md` — **only** the platform-builder-ow
    - **Verify** — a concrete call/command with expected output the forge-os agent can run.
    - **Data & migration** — clean cutover vs. import path.
    - **Compatibility / breaking** — impact on already-adopted capabilities / re-provision needs.
-2. **Runtime & version table** — fill the `Cn` row's *Delivered in* (and the Baseline pin if step 6.3
+2. **Runtime & version table** — fill the `Cn` row's *Delivered in* (and the Baseline pin if step 6.4
    applied).
 3. **Status → 🟢 Ready for adoption, Owner → forge-os.** Set exactly this one row (R2).
 4. **Handoff log** — append one line: `| Cn | → 🟢 | platform-builder | <image tag / commit> | <note> |`.
@@ -262,7 +278,8 @@ anything you need, set it ⛔ Owner → platform-builder with the gap instead of
 
 ## Definition of done
 
-`make test` + typecheck green · a version-pinned image published (`X.Y.Z @ sha256:digest`) · the
-`Cn` Delivery block + Runtime table filled completely · row 🟢 Owner → forge-os · Handoff log
-appended · ledger committed in forge-os · relay prompt printed **and** saved to `relays/<Cn>-adopt.md`
-· exactly one capability handed over (R2). Then it's the human's turn to relay.
+`make test` + typecheck green · **`CHANGELOG.md` updated with the new `X.Y.Z` section** (in the
+release commit) · a version-pinned image published (`X.Y.Z @ sha256:digest`) · the `Cn` Delivery
+block + Runtime table filled completely · row 🟢 Owner → forge-os · Handoff log appended · ledger
+committed in forge-os · relay prompt printed **and** saved to `relays/<Cn>-adopt.md` · exactly one
+capability handed over (R2). Then it's the human's turn to relay.
