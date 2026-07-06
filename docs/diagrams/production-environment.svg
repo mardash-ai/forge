@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 848" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arw" markerWidth="10" markerHeight="10" refX="7.5" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#334155"/>
+    </marker>
+    <marker id="arwd" markerWidth="10" markerHeight="10" refX="7.5" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#94a3b8"/>
+    </marker>
+    <style>
+      .title { font-size: 24px; font-weight: 800; fill: #0f172a; }
+      .sub { font-size: 14px; fill: #475569; }
+      .bt { font-size: 15px; font-weight: 700; }
+      .tx { font-size: 12px; fill: #334155; }
+      .sm { font-size: 11px; fill: #64748b; }
+      .arw { stroke: #334155; stroke-width: 2.2; fill: none; }
+      .dash { stroke: #94a3b8; stroke-width: 1.8; fill: none; stroke-dasharray: 5 4; }
+      .badge { font-size: 12px; font-weight: 800; fill: #ffffff; }
+      .lg { font-size: 12.5px; fill: #334155; }
+      .lgb { font-size: 13px; font-weight: 700; fill: #0f172a; }
+      .pill { font-size: 11.5px; fill: #7c2d12; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1120" height="848" fill="#f8fafc"/>
+  <text x="34" y="42" class="title">Forge — Production Environment <tspan font-size="15" font-weight="600" fill="#b45309">(target)</tspan></text>
+  <text x="34" y="66" class="sub">Data-plane call path: scheduled jobs &amp; notifications. No build / test / lint here — those are dev-only (control plane).</text>
+
+  <!-- Prod boundary -->
+  <rect x="24" y="90" width="1072" height="472" rx="12" fill="#ffffff" stroke="#94a3b8" stroke-dasharray="6 5"/>
+  <text x="40" y="112" class="sm" font-weight="700">Production deployment</text>
+
+  <!-- Data plane runtime -->
+  <rect x="48" y="140" width="324" height="266" rx="10" fill="#fef3c7" stroke="#d97706" stroke-width="1.9"/>
+  <text x="210" y="170" text-anchor="middle" class="bt" fill="#92400e">Forge Data Plane runtime</text>
+  <text x="210" y="190" text-anchor="middle" class="sm">slim image — NO dev deps</text>
+  <g>
+    <rect x="64" y="204" width="292" height="40" rx="7" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.3"/>
+    <text x="78" y="222" class="pill" font-weight="700">Scheduler</text><text x="78" y="237" class="pill">recurring / one-shot jobs (C2)</text>
+    <rect x="64" y="252" width="292" height="40" rx="7" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.3"/>
+    <text x="78" y="270" class="pill" font-weight="700">Secrets</text><text x="78" y="285" class="pill">encrypted store + runtime injection (C5)</text>
+    <rect x="64" y="300" width="292" height="40" rx="7" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.3"/>
+    <text x="78" y="318" class="pill" font-weight="700">Event log</text><text x="78" y="333" class="pill">emit / query domain facts (C3)</text>
+    <rect x="64" y="348" width="292" height="40" rx="7" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.3"/>
+    <text x="78" y="366" class="pill" font-weight="700">Notifications</text><text x="78" y="381" class="pill">conditions → produce &amp; deliver (C4)</text>
+  </g>
+
+  <!-- App -->
+  <rect x="470" y="140" width="300" height="196" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="1.9"/>
+  <text x="620" y="170" text-anchor="middle" class="bt" fill="#14532d">App (web) — production</text>
+  <text x="620" y="194" text-anchor="middle" class="tx">production build · next start</text>
+  <text x="620" y="216" text-anchor="middle" class="tx">exposes /api/cron/* · /api/health</text>
+  <text x="620" y="240" text-anchor="middle" class="tx">reads secrets ← process.env</text>
+  <text x="620" y="262" text-anchor="middle" class="tx">runs the work, emits events →</text>
+  <text x="620" y="290" text-anchor="middle" class="sm">domain logic stays here (streaks, goals…)</text>
+
+  <!-- Postgres -->
+  <rect x="470" y="430" width="300" height="84" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.8"/>
+  <text x="620" y="464" text-anchor="middle" class="bt" fill="#4c1d95">Postgres</text>
+  <text x="620" y="488" text-anchor="middle" class="sm">data-plane persistence (app state)</text>
+
+  <!-- Notification delivery -->
+  <rect x="838" y="150" width="242" height="84" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="1.7"/>
+  <text x="959" y="184" text-anchor="middle" class="bt" fill="#1e3a8a">Notification delivery</text>
+  <text x="959" y="208" text-anchor="middle" class="sm">push / email / webhook</text>
+
+  <!-- End user -->
+  <rect x="838" y="300" width="242" height="84" rx="10" fill="#f1f5f9" stroke="#64748b" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <text x="959" y="334" text-anchor="middle" class="bt" fill="#334155">End user</text>
+  <text x="959" y="358" text-anchor="middle" class="sm">(may be away / asleep)</text>
+
+  <!-- 1 scheduler fires (self) -->
+  <path d="M48,224 C26,224 26,258 46,258" class="arw" marker-end="url(#arw)"/>
+  <circle cx="24" cy="241" r="12" fill="#334155"/><text x="24" y="245" text-anchor="middle" class="badge">1</text>
+
+  <!-- 2 data plane -> app callback -->
+  <line x1="372" y1="222" x2="466" y2="210" class="arw" marker-end="url(#arw)"/>
+  <circle cx="419" cy="214" r="12" fill="#334155"/><text x="419" y="218" text-anchor="middle" class="badge">2</text>
+  <text x="330" y="196" class="sm">POST /api/cron/…</text>
+
+  <!-- 3 app <-> postgres -->
+  <path d="M620,336 L620,428" class="arw" marker-end="url(#arw)"/>
+  <path d="M600,428 L600,338" class="arw" marker-end="url(#arw)"/>
+  <circle cx="656" cy="384" r="12" fill="#334155"/><text x="656" y="388" text-anchor="middle" class="badge">3</text>
+  <text x="676" y="388" class="sm">read / write state</text>
+
+  <!-- 4 app -> data plane event log -->
+  <path d="M470,300 C420,360 392,352 372,338" class="arw" marker-end="url(#arw)"/>
+  <circle cx="418" cy="349" r="12" fill="#334155"/><text x="418" y="353" text-anchor="middle" class="badge">4</text>
+  <text x="386" y="384" class="sm">emit events</text>
+
+  <!-- 5 notifications -> delivery -> user (routed over the app box) -->
+  <path d="M362,150 C500,108 700,108 836,176" class="arw" marker-end="url(#arw)"/>
+  <circle cx="618" cy="111" r="12" fill="#334155"/><text x="618" y="115" text-anchor="middle" class="badge">5</text>
+  <text x="700" y="132" class="sm">produce &amp; deliver</text>
+  <path d="M959,234 L959,298" class="dash" marker-end="url(#arwd)"/>
+  <text x="968" y="272" class="sm">async</text>
+
+  <!-- secrets injection (dotted) -->
+  <path d="M356,272 C410,272 430,244 466,240" class="dash" marker-end="url(#arwd)"/>
+  <text x="372" y="262" class="sm">inject at boot</text>
+
+  <!-- Absent-in-prod note -->
+  <text x="40" y="440" class="sm" transform="translate(0,0)"><tspan font-weight="700" fill="#b45309">Absent here:</tspan></text>
+  <text x="40" y="458" class="sm">build / test / lint,</text>
+  <text x="40" y="474" class="sm">the ./forge CLI, and</text>
+  <text x="40" y="490" class="sm">Docker-out-of-Docker —</text>
+  <text x="40" y="506" class="sm">all dev-only (control plane).</text>
+
+  <!-- Call path legend -->
+  <text x="34" y="602" class="lgb">Call path — a scheduled job that notifies (e.g. “you’re about to break your streak”)</text>
+  <g transform="translate(34,620)">
+    <circle cx="10" cy="8" r="10" fill="#334155"/><text x="10" y="12" text-anchor="middle" class="badge">1</text>
+    <text x="30" y="12" class="lg">The data-plane <tspan font-weight="700">scheduler</tspan> fires on cadence (cron / interval) — with <tspan font-weight="700">no user present</tspan>.</text>
+    <circle cx="10" cy="34" r="10" fill="#334155"/><text x="10" y="38" text-anchor="middle" class="badge">2</text>
+    <text x="30" y="38" class="lg">It <tspan font-weight="700">calls back into the app</tspan>: <tspan font-weight="700">POST /api/cron/…</tspan> (e.g. habits-finalize, reminders). The app must be reachable + running.</text>
+    <circle cx="10" cy="60" r="10" fill="#334155"/><text x="10" y="64" text-anchor="middle" class="badge">3</text>
+    <text x="30" y="64" class="lg">The app reads/writes <tspan font-weight="700">Postgres</tspan> and computes what changed (domain logic stays in the app).</text>
+    <circle cx="10" cy="86" r="10" fill="#334155"/><text x="10" y="90" text-anchor="middle" class="badge">4</text>
+    <text x="30" y="90" class="lg">The app <tspan font-weight="700">emits domain events</tspan> to the data-plane event log (facts).</text>
+    <circle cx="10" cy="112" r="10" fill="#334155"/><text x="10" y="116" text-anchor="middle" class="badge">5</text>
+    <text x="30" y="116" class="lg">The <tspan font-weight="700">notifications</tspan> capability turns conditions over events/state into notifications and <tspan font-weight="700">delivers</tspan> them — reaching the user asynchronously, even while away.</text>
+  </g>
+  <text x="34" y="744" class="sm"><tspan font-weight="700">Setup:</tspan> secrets (C5) are injected into the app’s process.env at boot from the encrypted store — the app just reads env; the scheduler/events/notifications live in the data plane.</text>
+
+  <!-- Design decision callout -->
+  <rect x="34" y="762" width="1052" height="58" rx="9" fill="#fff7ed" stroke="#ea580c" stroke-width="1.6"/>
+  <text x="48" y="786" class="lgb" fill="#9a3412">DESIGN DECISION (next) — how is the data plane packaged &amp; deployed?</text>
+  <text x="48" y="808" class="lg">(a) sidecar beside each app · (b) standalone shared service · (c) embedded library — plus a <tspan font-weight="700">slim prod image</tspan> (no dev deps) and a deploy pipeline.</text>
+</svg>

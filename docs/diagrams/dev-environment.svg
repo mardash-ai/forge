@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 720" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arw" markerWidth="10" markerHeight="10" refX="7.5" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#334155"/>
+    </marker>
+    <style>
+      .title { font-size: 24px; font-weight: 800; fill: #0f172a; }
+      .sub { font-size: 14px; fill: #475569; }
+      .bt { font-size: 15px; font-weight: 700; }
+      .tx { font-size: 12px; fill: #334155; }
+      .sm { font-size: 11px; fill: #64748b; }
+      .arw { stroke: #334155; stroke-width: 2.2; fill: none; }
+      .dash { stroke: #94a3b8; stroke-width: 1.6; fill: none; stroke-dasharray: 5 4; }
+      .badge { font-size: 12px; font-weight: 800; fill: #ffffff; }
+      .lg { font-size: 12.5px; fill: #334155; }
+      .lgb { font-size: 13px; font-weight: 700; fill: #0f172a; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1120" height="720" fill="#f8fafc"/>
+  <text x="34" y="42" class="title">Forge — Development Environment</text>
+  <text x="34" y="66" class="sub">The <tspan font-weight="700">./forge</tspan> CLI drives the control-plane API; the control plane runs build / test / lint in Docker (Docker-out-of-Docker).</text>
+
+  <!-- Host boundary -->
+  <rect x="24" y="90" width="1072" height="418" rx="12" fill="#ffffff" stroke="#94a3b8" stroke-dasharray="6 5"/>
+  <text x="40" y="112" class="sm" font-weight="700">Host machine · Docker Desktop (arm64)</text>
+
+  <!-- Builder -->
+  <rect x="44" y="150" width="184" height="120" rx="10" fill="#f1f5f9" stroke="#64748b" stroke-width="1.6"/>
+  <text x="136" y="188" text-anchor="middle" class="bt" fill="#334155">Builder / agent</text>
+  <text x="136" y="212" text-anchor="middle" class="tx">runs <tspan font-weight="700">./forge build</tspan></text>
+  <text x="136" y="232" text-anchor="middle" class="tx">= ./forge CLI</text>
+  <text x="136" y="250" text-anchor="middle" class="sm">(thin HTTP client)</text>
+
+  <!-- Control plane -->
+  <rect x="300" y="150" width="286" height="120" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="1.8"/>
+  <text x="443" y="182" text-anchor="middle" class="bt" fill="#1e3a8a">Forge Control Plane</text>
+  <text x="443" y="203" text-anchor="middle" class="sm">container · forge-control-plane image</text>
+  <text x="443" y="221" text-anchor="middle" class="tx">Fastify API :3717 · tsx · Docker CLI</text>
+  <text x="443" y="245" text-anchor="middle" class="sm">runtime: validate → policy →</text>
+  <text x="443" y="261" text-anchor="middle" class="sm">execute → audit</text>
+
+  <!-- Docker daemon -->
+  <rect x="656" y="150" width="150" height="120" rx="10" fill="#e2e8f0" stroke="#64748b" stroke-width="1.6"/>
+  <text x="731" y="196" text-anchor="middle" class="bt" fill="#334155">Host Docker</text>
+  <text x="731" y="216" text-anchor="middle" class="bt" fill="#334155">daemon</text>
+  <text x="731" y="240" text-anchor="middle" class="sm">/var/run/docker.sock</text>
+
+  <!-- Ephemeral container -->
+  <rect x="876" y="150" width="200" height="120" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8" stroke-dasharray="6 4"/>
+  <text x="976" y="184" text-anchor="middle" class="bt" fill="#14532d">Ephemeral container</text>
+  <text x="976" y="206" text-anchor="middle" class="tx">web · node:22-slim</text>
+  <text x="976" y="226" text-anchor="middle" class="tx">npm run build|test|lint</text>
+  <text x="976" y="246" text-anchor="middle" class="sm">--rm --no-deps (skips db)</text>
+
+  <!-- Forward arrows -->
+  <line x1="228" y1="200" x2="298" y2="200" class="arw" marker-end="url(#arw)"/>
+  <circle cx="263" cy="200" r="12" fill="#334155"/><text x="263" y="204" text-anchor="middle" class="badge">1</text>
+
+  <line x1="586" y1="200" x2="654" y2="200" class="arw" marker-end="url(#arw)"/>
+  <circle cx="620" cy="200" r="12" fill="#334155"/><text x="620" y="204" text-anchor="middle" class="badge">2</text>
+
+  <line x1="806" y1="200" x2="874" y2="200" class="arw" marker-end="url(#arw)"/>
+  <circle cx="840" cy="200" r="12" fill="#334155"/><text x="840" y="204" text-anchor="middle" class="badge">3</text>
+
+  <!-- Return arrows -->
+  <path d="M976,270 C976,345 443,345 443,272" class="arw" marker-end="url(#arw)"/>
+  <circle cx="709" cy="333" r="12" fill="#334155"/><text x="709" y="337" text-anchor="middle" class="badge">4</text>
+
+  <path d="M360,270 C360,318 136,318 136,272" class="arw" marker-end="url(#arw)"/>
+  <circle cx="248" cy="309" r="12" fill="#334155"/><text x="248" y="313" text-anchor="middle" class="badge">5</text>
+
+  <!-- Artifacts -->
+  <rect x="300" y="416" width="250" height="66" rx="9" fill="#dcfce7" stroke="#16a34a" stroke-width="1.4"/>
+  <text x="425" y="442" text-anchor="middle" class="bt" fill="#14532d">./app — app source</text>
+  <text x="425" y="463" text-anchor="middle" class="sm">bind-mounted, host ≡ container path</text>
+
+  <rect x="600" y="416" width="206" height="66" rx="9" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+  <text x="703" y="442" text-anchor="middle" class="bt" fill="#334155">.forge — state</text>
+  <text x="703" y="463" text-anchor="middle" class="sm">Resources + Events (JSON/JSONL)</text>
+
+  <!-- bind-mount / store connectors -->
+  <path d="M440,416 L440,272" class="dash"/>
+  <path d="M520,416 C640,392 900,330 968,272" class="dash"/>
+  <text x="628" y="372" class="sm">bind mount</text>
+  <path d="M700,416 L560,272" class="dash"/>
+
+  <!-- Call path legend -->
+  <text x="34" y="548" class="lgb">Call path — <tspan fill="#1e3a8a">forge build --app &lt;n&gt;</tspan>  (test / lint are identical with npm run test|lint)</text>
+  <g transform="translate(34,566)">
+    <circle cx="10" cy="8" r="10" fill="#334155"/><text x="10" y="12" text-anchor="middle" class="badge">1</text>
+    <text x="30" y="12" class="lg">Builder runs <tspan font-weight="700">./forge build</tspan> → the CLI sends <tspan font-weight="700">POST /capabilities/build</tspan> to the control-plane API (:3717).</text>
+    <circle cx="10" cy="34" r="10" fill="#334155"/><text x="10" y="38" text-anchor="middle" class="badge">2</text>
+    <text x="30" y="38" class="lg">The control plane (build-npm Implementation) runs <tspan font-weight="700">docker compose run --rm --no-deps -T web npm run build</tspan> on the host daemon via the mounted socket (DooD).</text>
+    <circle cx="10" cy="60" r="10" fill="#334155"/><text x="10" y="64" text-anchor="middle" class="badge">3</text>
+    <text x="30" y="64" class="lg">The daemon spins an <tspan font-weight="700">ephemeral web container</tspan> (node:22) with ./app bind-mounted; the build runs there and exits.</text>
+    <circle cx="10" cy="86" r="10" fill="#334155"/><text x="10" y="90" text-anchor="middle" class="badge">4</text>
+    <text x="30" y="90" class="lg">Output + exit code stream back; the control plane records a <tspan font-weight="700">Build</tspan> Resource and a <tspan font-weight="700">BuildSucceeded/Failed</tspan> Event in .forge.</text>
+    <circle cx="10" cy="112" r="10" fill="#334155"/><text x="10" y="116" text-anchor="middle" class="badge">5</text>
+    <text x="30" y="116" class="lg">The CLI renders a <tspan font-weight="700">compact JSON</tspan> result to the Builder.</text>
+  </g>
+
+  <!-- Key note -->
+  <rect x="34" y="694" width="1052" height="0.5" fill="none"/>
+  <text x="34" y="700" class="sm"><tspan font-weight="700" fill="#b45309">DEV-ONLY:</tspan> the control-plane image bundles developer dependencies — Docker CLI, tsx, and the build/test/lint toolchain. Postgres/Redis are started only for <tspan font-weight="700">forge dev</tspan>, not for build/test/lint.</text>
+</svg>
