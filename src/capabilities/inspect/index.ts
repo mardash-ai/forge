@@ -77,6 +77,7 @@ export const inspect: Capability<Input, Inspection> = {
           package_manager: app.package_manager,
           repo_path: app.repo_path,
           port: manifest.port ?? 3000,
+          infra: manifest.infra ?? null,
           resource_counts: counts,
         };
         summary = `${app.name} — ${app.platform}/${app.framework}, ${resources.length} resource(s).`;

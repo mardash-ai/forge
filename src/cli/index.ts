@@ -126,8 +126,14 @@ program
   .requiredOption('--app <app>')
   .option('--platform <platform>', 'target platform', 'web')
   .option('--framework <framework>', 'target framework', 'nextjs')
-  .option('--with-postgres', 'include a Postgres service')
-  .option('--with-redis', 'include a Redis service')
+  .option('--with-postgres', 'add a Postgres service')
+  .option('--with-redis', 'add a Redis service')
+  .option('--without-postgres', 'remove the Postgres service (needs --force if it holds data)')
+  .option('--without-redis', 'remove the Redis service')
+  .option('--postgres-port <hostPort>', 'host port to map to Postgres 5432')
+  .option('--redis-port <hostPort>', 'host port to map to Redis 6379')
+  .option('--web-port <hostPort>', 'host port to map to the web container')
+  .option('--force', 'allow dropping a service that owns a data volume (e.g. Postgres)')
   .option('--secret <name>', 'declare a secret the app needs, e.g. ANTHROPIC_API_KEY (repeatable)', collect, [])
   .action(async (opts) => {
     await runCapability('provision-environment', {
@@ -136,6 +142,12 @@ program
       framework: opts.framework,
       with_postgres: Boolean(opts.withPostgres),
       with_redis: Boolean(opts.withRedis),
+      without_postgres: Boolean(opts.withoutPostgres),
+      without_redis: Boolean(opts.withoutRedis),
+      ...(opts.postgresPort ? { postgres_port: opts.postgresPort } : {}),
+      ...(opts.redisPort ? { redis_port: opts.redisPort } : {}),
+      ...(opts.webPort ? { web_port: opts.webPort } : {}),
+      force: Boolean(opts.force),
       secrets: opts.secret,
     });
   });

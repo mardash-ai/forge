@@ -86,6 +86,10 @@ export interface ComposeOptions {
   // (empty when unset), whose value Forge injects from its encrypted store at run
   // time — the value is never written into this file.
   secrets?: string[];
+  // Host-port overrides (container ports are fixed). Defaults: web=port,
+  // postgres=5432, redis=6379. Lets a re-provision preserve a custom remap
+  // (e.g. host 5433 → postgres 5432) instead of resetting it.
+  ports?: { web?: number; postgres?: number; redis?: number };
 }
 
 // Generate the app's compose.yaml. The `web` service uses the stock Node image
@@ -97,6 +101,11 @@ export function generateCompose(opts: ComposeOptions): string {
   const dependsOn: string[] = [];
   const volumes: string[] = ['  web_node_modules:'];
 
+  // Host ports (container ports are fixed). Overrides preserve custom remaps.
+  const webHost = opts.ports?.web ?? opts.port;
+  const pgHost = opts.ports?.postgres ?? 5432;
+  const redisHost = opts.ports?.redis ?? 6379;
+
   if (opts.withPostgres) {
     dependsOn.push('      - postgres');
     services.push(`  postgres:
@@ -106,7 +115,7 @@ export function generateCompose(opts: ComposeOptions): string {
       - POSTGRES_PASSWORD=forge
       - POSTGRES_DB=${opts.appName.replace(/[^a-z0-9_]/gi, '_')}
     ports:
-      - "5432:5432"
+      - "${pgHost}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -122,7 +131,7 @@ export function generateCompose(opts: ComposeOptions): string {
     services.push(`  redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${redisHost}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -150,7 +159,7 @@ export function generateCompose(opts: ComposeOptions): string {
       - HOST=0.0.0.0
       - PORT=${opts.port}${secretEnv ? '\n' + secretEnv : ''}
 ${dependsBlock}    ports:
-      - "${opts.port}:${opts.port}"
+      - "${webHost}:${opts.port}"
     volumes:
       - .:/app
       - web_node_modules:/app/node_modules

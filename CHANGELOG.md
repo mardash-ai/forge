@@ -9,15 +9,30 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-06
+
+### Fixed
+- **`provision` is no longer destructive (P1).** It now **converges** the desired
+  environment from `forge.app.json` (+ this call's flags) instead of regenerating
+  `compose.yaml` from *only* the flags, so a flag-less re-provision no longer silently
+  drops a service (e.g. Postgres and its data volume) or resets a host-port remap. Apps
+  provisioned before this fix are recovered from their existing `compose.yaml` on the
+  first re-provision. Dropping a data-volume service now requires an explicit `--force`.
+
 ### Added
-- `CHANGELOG.md` following Keep a Changelog + SemVer. The `add-platform-capability`
-  skill now updates it automatically as part of shipping each capability.
+- `provision` persists the desired infra (postgres / redis / secrets / host-ports) under
+  an `infra` key in `forge.app.json`, so a re-provision needs no flags. New flags:
+  `--without-postgres` / `--without-redis` (explicit removal), `--postgres-port` /
+  `--redis-port` / `--web-port` (host-port overrides), and `--force`. `inspect app` now
+  surfaces the persisted `infra`.
+- `CHANGELOG.md` following Keep a Changelog + SemVer; the `add-platform-capability` skill
+  maintains it automatically as part of shipping each capability.
 
 ### Changed
-- The publish workflow now builds **multi-arch** images (`linux/amd64` + `linux/arm64`)
-  via QEMU + buildx, so control-plane images run natively on arm64 (Apple Silicon) dev
-  hosts as well as x86 servers. `0.2.0` was republished as a multi-arch manifest — its
-  `Delivered in` digest changed — and all future images are multi-arch.
+- The publish workflow builds **multi-arch** images (`linux/amd64` + `linux/arm64`) via
+  QEMU + buildx, so control-plane images run natively on arm64 (Apple Silicon) dev hosts
+  as well as x86 servers; `0.2.0` was republished multi-arch and all future images are
+  multi-arch.
 
 ## [0.2.0] — 2026-07-06
 
@@ -59,7 +74,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/mardash-ai/forge/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mardash-ai/forge/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/mardash-ai/forge/compare/defed64...v0.1.1
 [0.1.0]: https://github.com/mardash-ai/forge/commit/defed64
