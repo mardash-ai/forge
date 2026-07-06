@@ -54,12 +54,11 @@ Parse it as: an optional **version directive** (the first token, if it is `patch
    git tag -a vX.Y.Z -m "vX.Y.Z"
    git push origin vX.Y.Z
    ```
-7. **Confirm the publish started.**
-   - If `gh` is available: `gh run list --workflow "Publish control-plane image" --limit 1`
-     (optionally `gh run watch` the run) to confirm it kicked off.
-   - Otherwise: print the repo's **Actions** URL so the user can watch it.
-   Report the commit SHA, the pushed tag, and the two image tags that will land in GHCR
-   (`:X.Y.Z` and `:latest`).
+7. **Confirm the publish started.** `gh` is a required, authenticated dependency — use it:
+   `gh run watch` (or `gh run list --workflow "Publish control-plane image" --limit 1`) to
+   confirm the run kicked off and went green. (Only if `gh` isn't authenticated, fall back to
+   printing the repo's **Actions** URL.) Report the commit SHA, the pushed tag, and the two image
+   tags that will land in GHCR (`:X.Y.Z` and `:latest`).
 
 ### Safety
 

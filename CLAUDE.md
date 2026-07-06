@@ -10,7 +10,7 @@ Source lives under `src/` (see "Implementation Map" below). Generated Builder ap
 
 ### Running / building / testing
 
-Everything runs in Docker. The only host dependency is Docker + the Compose plugin — no local Node/npm is assumed even though `tsx` runs the platform.
+Everything runs in Docker. Host dependencies are **Docker + the Compose plugin** (the platform and all app work run in containers — no local Node/npm is assumed even though `tsx` runs the platform) and the **authenticated GitHub CLI (`gh`)** — releases publish images via GitHub Actions, and `gh` is how you watch publish/CI runs, inspect failed jobs (`gh run watch`, `gh run view --log-failed`), and manage PRs.
 
 ```bash
 make up        # build image + start the platform API (docker compose up -d --build)

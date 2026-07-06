@@ -184,7 +184,8 @@ The Delivery block is worthless without a concrete `tag @ sha256:digest`, so you
    > Only your capability code + the changelog should be in that commit — the ledger lives in forge-os
    > and is committed separately in step 7.
 3. **Wait for the publish to finish**, then **resolve the digest** (no `latest`, ever):
-   - Prefer, if `gh` is available: `gh run watch` the *Publish control-plane image* run.
+   - Watch the run to completion with `gh run watch` the *Publish control-plane image* run
+     (`gh` is a required, authenticated dependency).
    - Resolve the digest without pulling:
      ```bash
      docker buildx imagetools inspect ghcr.io/mardash-ai/forge-control-plane:X.Y.Z \

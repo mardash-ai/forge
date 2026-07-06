@@ -66,9 +66,13 @@ The first slice makes a **Dockerized Next.js web app** easy to initialize,
 provision, build, test, lint, inspect, and debug — reproducibly, with structured
 Resources, an Event history, and token-conscious output.
 
-**Requirements:** only **Docker** (with the Compose plugin). No local Node, npm,
-Python, Postgres, or Redis is needed or assumed — the platform and all app work
-run in containers.
+**Requirements:**
+
+- **Docker** (with the Compose plugin) — the platform and all app work run in containers.
+  No local Node, npm, Python, Postgres, or Redis is needed or assumed.
+- **GitHub CLI (`gh`), authenticated** — run `gh auth login` once. Releases publish images
+  through GitHub Actions, and `gh` is how you watch publish/CI runs, inspect failed jobs, and
+  manage pull requests (e.g. `gh run watch`, `gh run view --log-failed`).
 
 ### Capabilities
 
