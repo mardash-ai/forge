@@ -243,6 +243,21 @@ needed) so the human has a durable copy. Then report, in the transcript: which `
 `X.Y.Z @ sha256:digest`, the forge commit/tag, the forge-os ledger commit, and that it's now
 **forge-os's turn** (R2: you will not build another until this reaches ✅).
 
+> **Single shared channel — the ledger is the ONLY thing forge-os can read.**
+> `../forge-os/PLATFORM_CAPABILITIES.md` is the *sole* surface the forge-os agent sees; it runs in a
+> different repo and **cannot open anything in this `forge` repo** — not `relays/`, not `src/`, not
+> `CHANGELOG.md`. So:
+> - **Every fact forge-os needs to adopt MUST live in the ledger** (Delivery block / Runtime table /
+>   Handoff log — step 7 makes the block self-contained). `relays/<Cn>-adopt.md` is a **human-
+>   convenience mirror**, never the sole home of any detail.
+> - **Never reference a `forge`-repo path inside the ledger** (`relays/…`, `src/…`, a CHANGELOG
+>   entry) as if forge-os could follow it — it's a dead link over there. Point only to the ledger's
+>   own sections (e.g. "see the `Cn` Platform delivery block").
+> - **Self-containment check before you finish:** could a forge-os agent seeing *only* the ledger
+>   adopt this with zero other context — including pinning the digest from *Delivered in*, not from a
+>   possibly-stale pasted relay? If not, the missing detail belongs in the ledger, and you add it
+>   there (while you hold the baton).
+
 ### Relay prompt template
 
 ````text
