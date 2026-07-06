@@ -3,7 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Capability } from '../../core/types';
 import type { Deployment } from '../../resources/types';
-import { appRefInput, resolveApp, baseResource } from '../_shared';
+import { appRefInput, baseResource } from '../_shared';
 import { logPath, workspaceDir } from '../../shared/paths';
 import { nowIso } from '../../shared/time';
 import { rollout, IMPLEMENTATION } from '../../plugins/deploy-compose-rollout/index';
@@ -39,13 +39,17 @@ export const deployCapability: Capability<Input, Deployment> = {
   longRunning: true,
   requiresDocker: true,
   async execute(input, ctx) {
-    const app = await resolveApp(ctx.store, input.app);
+    // Deploy targets a production compose stack at the project root; a registered
+    // Application is OPTIONAL — a prod host may never have run `forge init`. Resolve
+    // it softly (to label the Deployment + events), but never require it.
+    const known = await ctx.store.findAppByName(input.app);
+    const appId = known && known.type === 'Application' ? known.id : undefined;
     // The prod compose manifest + its relative bind-mounts live at the project root,
     // which the control plane has mounted at the identical host==container path.
     const cwd = workspaceDir();
 
     const resource: Deployment = {
-      ...baseResource('Deployment', app.id),
+      ...baseResource('Deployment', appId),
       type: 'Deployment',
       status: 'running',
       implementation: IMPLEMENTATION,
@@ -65,7 +69,7 @@ export const deployCapability: Capability<Input, Deployment> = {
       type: 'DeploymentStarted',
       resource_type: 'Deployment',
       resource_id: resource.id,
-      app_id: app.id,
+      app_id: appId,
       data: { service: input.service, target: input.context ?? 'local', compose_file: input.compose_file },
     });
 
@@ -113,7 +117,7 @@ export const deployCapability: Capability<Input, Deployment> = {
       type: resource.status === 'succeeded' ? 'DeploymentCompleted' : 'DeploymentRolledBack',
       resource_type: 'Deployment',
       resource_id: resource.id,
-      app_id: app.id,
+      app_id: appId,
       data:
         resource.status === 'succeeded'
           ? { strategy: resource.strategy, service: resource.service, duration_ms: resource.duration_ms }

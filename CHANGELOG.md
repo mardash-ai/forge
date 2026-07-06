@@ -9,6 +9,15 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-07-06
+
+### Fixed
+- **`Deploy` no longer requires a registered Application.** Deploy targets a production
+  compose stack at the project root, and a deploy host may never have run `forge init` — so
+  `--app` is now a soft label (resolved if present, else the `Deployment` is recorded with no
+  `app_id`) instead of a hard `resolveApp` that 404s. Lets `forge deploy` run on a host that
+  carries only the manifests + images (e.g. via a transiently-started control plane).
+
 ## [0.6.0] — 2026-07-06
 
 ### Added
@@ -130,7 +139,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/mardash-ai/forge/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/mardash-ai/forge/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/mardash-ai/forge/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/mardash-ai/forge/compare/v0.4.0...v0.5.0
