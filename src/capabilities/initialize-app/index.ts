@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { Capability } from '../../core/types';
 import type { Application } from '../../resources/types';
 import { platformInput, baseResource } from '../_shared';
-import { appDir as appDirFor } from '../../shared/paths';
+import { appDir as appDirFor, appLayout } from '../../shared/paths';
 import { scaffold, IMPLEMENTATION } from '../../plugins/scaffold-nextjs-npm/index';
 import { invalidInput } from '../../shared/errors';
 
@@ -35,6 +35,19 @@ export const initializeApp: Capability<Input, Application> = {
   longRunning: false,
   requiresDocker: false,
   async execute(input, ctx) {
+    // Single-app workspaces hold exactly one app (at ./app). Reject a second
+    // init even under a different name — it would collide on the same directory.
+    if (appLayout() === 'single') {
+      const apps = await ctx.store.listResources({ type: 'Application' });
+      if (apps.length > 0) {
+        const owner = (apps[0] as { name?: string }).name ?? 'the existing app';
+        throw invalidInput(
+          `This workspace already contains an app ("${owner}"). Every repo holds exactly one app in single-app mode.`,
+          { app: input.name },
+        );
+      }
+    }
+
     const existing = await ctx.store.findAppByName(input.name);
     if (existing) {
       throw invalidInput(`An Application named "${input.name}" already exists.`, { app: input.name });
