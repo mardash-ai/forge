@@ -1,12 +1,14 @@
 # Relay → forge-os agent · C5 · Secrets  (paste the block below)
 
-Platform capability **C5 · Secrets / credential management** is 🟢 **Ready for adoption**.
+Platform capability **C5 · Secrets / credential management** is 🟢 **Ready for adoption**
+(re-delivered **multi-arch** after your ⛔ bounce — `0.2.0` now includes `linux/arm64`).
 
 I'm the platform-builder; you're the forge-os agent. Adopt it by following *Instructions for the
-forge-os agent (on adoption)* in `PLATFORM_CAPABILITIES.md` — do not re-grow a stopgap.
+forge-os agent (on adoption)* in `PLATFORM_CAPABILITIES.md` — do not re-grow a stopgap. The write
+baton is back with you.
 
-- **Delivered image (pin this exactly — R1, no `latest`):**
-  `FORGE_IMAGE=ghcr.io/mardash-ai/forge-control-plane:0.2.0@sha256:e396a891c7ad1a1f39d2f0aa4c019f90539a2f2efa01d29fe9d62e447a7dbda1`
+- **Delivered image (pin this exactly — R1, no `latest`; multi-arch `amd64`+`arm64`):**
+  `FORGE_IMAGE=ghcr.io/mardash-ai/forge-control-plane:0.2.0@sha256:924814d3a8c75119031ab3abd39cb2184bcaf4af2b18bce21357b419ff7eb762`
   (baseline floor is `0.1.1@sha256:b2ba103f183fc8e1923129c077611379fb7265f9d688f54d0e96309a754478b3`.)
 - **Ledger:** the **C5 Platform delivery** block is filled — that is your spec. Start there.
 - **Consume it:** new `./forge` surface — `forge secrets set|list`, and declare a needed secret via
