@@ -33,6 +33,7 @@ export const scheduleJob: Capability<Input, ScheduledJob> = {
   events: ['JobScheduled', 'JobUnscheduled'],
   longRunning: false,
   requiresDocker: false,
+  plane: 'both', // registration/observability is control-plane; the running scheduler is data-plane (C2)
   async execute(input, ctx) {
     const app = await resolveApp(ctx.store, input.app);
     const existing = (await ctx.store.listResources({ type: 'ScheduledJob', app_id: app.id })).find(

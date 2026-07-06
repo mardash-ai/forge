@@ -24,6 +24,15 @@ const INVOKE_TIMEOUT_MS = 30_000;
 // `host.docker.internal` (overridable for Linux/CI). The port is the app's web
 // host port (persisted infra, else the manifest port).
 async function appCallbackBase(store: Store, appId?: string): Promise<string | null> {
+  const host = process.env.FORGE_APP_CALLBACK_HOST ?? 'host.docker.internal';
+  // Prod sidecar mode: the app's address is given by env (host + port), so the
+  // scheduler needs no provisioned Resource/manifest — e.g. FORGE_APP_CALLBACK_HOST=web
+  // FORGE_APP_CALLBACK_PORT=3000 on the deploy compose network.
+  const envPort = process.env.FORGE_APP_CALLBACK_PORT;
+  if (process.env.FORGE_APP_CALLBACK_HOST && envPort) {
+    return `http://${host}:${envPort}`;
+  }
+  // Dev mode: resolve the app's web host port from its provisioned manifest.
   if (!appId) return null;
   const app = (await store.getResource('Application', appId)) as Application | null;
   if (!app) return null;
@@ -35,7 +44,6 @@ async function appCallbackBase(store: Store, appId?: string): Promise<string | n
   } catch {
     /* default */
   }
-  const host = process.env.FORGE_APP_CALLBACK_HOST ?? 'host.docker.internal';
   return `http://${host}:${port}`;
 }
 

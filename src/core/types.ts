@@ -37,6 +37,11 @@ export interface Capability<I = unknown, O extends AnyResource | AnyResource[] =
   longRunning: boolean;
   // Whether this Capability needs the Docker daemon (drives a Policy check).
   requiresDocker: boolean;
+  // Which deployment plane's runtime carries this capability (R3). Defaults to
+  // 'control' (dev/orchestration only — build/test/lint/provision). 'data' = the
+  // running app needs it in production; 'both' = a control-plane management surface
+  // AND a data-plane runtime surface. The data-plane image exposes only data/both.
+  plane?: 'control' | 'data' | 'both';
   execute(input: I, ctx: CapabilityContext): Promise<O>;
 }
 

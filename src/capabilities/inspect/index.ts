@@ -54,6 +54,7 @@ export const inspect: Capability<Input, Inspection> = {
   events: ['InspectionCreated'],
   longRunning: false,
   requiresDocker: false,
+  plane: 'both', // observability surface used in both dev and production
   async execute(input, ctx) {
     const app = await resolveApp(ctx.store, input.app);
     let summary = '';

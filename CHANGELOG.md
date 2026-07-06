@@ -9,6 +9,20 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-06
+
+### Added
+- **Data-plane image + deployment split (R3).** A `plane` field on the Capability contract
+  (`control` / `data` / `both`) classifies each capability, and a new **data-plane server**
+  (`src/data-plane/server.ts`) exposes only the data-plane capabilities (scheduler C2, secrets
+  store C5, and read/observe surfaces) and runs the scheduler — no build/test/lint/provision.
+- A slim **`forge-data-plane`** image (`Dockerfile.data-plane`, ~403 MB vs the control plane's
+  ~799 MB): no Docker CLI, no dev dependencies. Published multi-arch by a new **continuous**
+  workflow (on push to `main` → `:latest` + `:sha-…`, and on version tags → `:X.Y.Z`).
+- The scheduler reaches the app in production via `FORGE_APP_CALLBACK_HOST` /
+  `FORGE_APP_CALLBACK_PORT` (sidecar mode, no provisioned state), and the data plane can register
+  jobs from a mounted `FORGE_JOBS_FILE` at boot.
+
 ## [0.4.0] — 2026-07-06
 
 ### Added
@@ -88,7 +102,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/mardash-ai/forge/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mardash-ai/forge/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mardash-ai/forge/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mardash-ai/forge/compare/v0.1.1...v0.2.0

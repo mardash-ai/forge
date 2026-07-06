@@ -29,6 +29,7 @@ export const setSecretCapability: Capability<Input, Secret> = {
   events: ['SecretSet'],
   longRunning: false,
   requiresDocker: false,
+  plane: 'both', // the set/list CLI is control-plane; the encrypted store the app reads is data-plane (C5)
   async execute(input, ctx) {
     const app = await resolveApp(ctx.store, input.app);
 
