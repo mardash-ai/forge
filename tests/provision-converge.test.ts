@@ -88,4 +88,11 @@ describe('generateCompose — host-port overrides', () => {
     const yaml = generateCompose({ ...base });
     expect(yaml).toContain('- "5432:5432"');
   });
+
+  it('names the db in the postgres healthcheck (user forge != db name)', () => {
+    const yaml = generateCompose({ ...base, appName: 'forge-os' });
+    expect(yaml).toContain('POSTGRES_DB=forge_os');
+    expect(yaml).toContain('pg_isready -U forge -d forge_os');
+    expect(yaml).not.toContain('"pg_isready -U forge"'); // the bare form probes a nonexistent db "forge"
+  });
 });

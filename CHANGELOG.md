@@ -9,6 +9,15 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-07-06
+
+### Fixed
+- **Generated Postgres healthcheck now names the database.** `generateCompose` emitted
+  `pg_isready -U forge` with no `-d`, which probes a database named after the *user* (`forge`)
+  — but the db is the app name (e.g. `forge_os`). For any app whose name isn't `forge`, every
+  10s healthcheck logged a harmless-but-alarming `FATAL: database "forge" does not exist`. Now
+  emits `pg_isready -U forge -d <db>`. Re-run `forge provision` to regenerate `compose.yaml`.
+
 ## [0.5.0] — 2026-07-06
 
 ### Added
@@ -102,7 +111,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/mardash-ai/forge/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/mardash-ai/forge/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mardash-ai/forge/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mardash-ai/forge/compare/v0.2.0...v0.3.0

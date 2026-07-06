@@ -106,6 +106,11 @@ export function generateCompose(opts: ComposeOptions): string {
   const pgHost = opts.ports?.postgres ?? 5432;
   const redisHost = opts.ports?.redis ?? 6379;
 
+  // Postgres db name (sanitized app name). The healthcheck MUST name it — the user is
+  // `forge` but the db is `<app>`, so a bare `pg_isready -U forge` probes a nonexistent
+  // db "forge" and spams FATAL "database \"forge\" does not exist" every interval.
+  const dbName = opts.appName.replace(/[^a-z0-9_]/gi, '_');
+
   if (opts.withPostgres) {
     dependsOn.push('      - postgres');
     services.push(`  postgres:
@@ -113,13 +118,13 @@ export function generateCompose(opts: ComposeOptions): string {
     environment:
       - POSTGRES_USER=forge
       - POSTGRES_PASSWORD=forge
-      - POSTGRES_DB=${opts.appName.replace(/[^a-z0-9_]/gi, '_')}
+      - POSTGRES_DB=${dbName}
     ports:
       - "${pgHost}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U forge"]
+      test: ["CMD-SHELL", "pg_isready -U forge -d ${dbName}"]
       interval: 10s
       timeout: 5s
       retries: 5`);
