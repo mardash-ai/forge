@@ -5,12 +5,15 @@ import {
   eventsFile,
   appEventsDir,
   appEventsFile,
+  notificationsDir,
+  notificationsFile,
   logsDir,
   stateDir,
 } from '../shared/paths';
 import type { AnyResource, ResourceType, BaseResource } from '../resources/types';
 import type { ForgeEvent, EventType } from '../events/catalog';
 import type { AppEvent } from '../events/app-events';
+import type { Notification } from '../notifications/types';
 import { newEventId, newId } from '../shared/ids';
 import type { Actor } from '../shared/domain';
 import { nowIso } from '../shared/time';
@@ -215,6 +218,75 @@ export class Store {
       if (!prev || prev < e.at) latest[e.subject] = e.at;
     }
     return latest;
+  }
+
+  // --- Notifications (C4) ---------------------------------------------------------
+  // Durable, per-app, keyed notifications. The app derives WHICH conditions matter and upserts
+  // by a stable key; Forge persists + tracks dismissal + clear. One JSON doc (keyed map) per app.
+
+  private async readNotifications(app_id: string): Promise<Record<string, Notification>> {
+    try {
+      return JSON.parse(await readFile(notificationsFile(app_id), 'utf8')) as Record<string, Notification>;
+    } catch {
+      return {};
+    }
+  }
+
+  private async writeNotifications(app_id: string, map: Record<string, Notification>): Promise<void> {
+    await mkdir(notificationsDir(), { recursive: true });
+    await writeFile(notificationsFile(app_id), JSON.stringify(map, null, 2));
+  }
+
+  // Upsert by (app, key). Re-deriving the same condition updates in place (idempotent) and
+  // PRESERVES the dismissed flag + created_at — so a dismissed-but-still-true condition stays
+  // dismissed instead of resurfacing.
+  async upsertNotification(
+    app_id: string,
+    input: { key: string; title: string; body?: string; data?: Record<string, unknown>; subject?: string },
+  ): Promise<Notification> {
+    const map = await this.readNotifications(app_id);
+    const now = nowIso();
+    const prev = map[input.key];
+    const n: Notification = {
+      key: input.key,
+      title: input.title,
+      body: input.body,
+      data: input.data ?? {},
+      subject: input.subject,
+      dismissed: prev?.dismissed ?? false,
+      created_at: prev?.created_at ?? now,
+      updated_at: now,
+    };
+    map[input.key] = n;
+    await this.writeNotifications(app_id, map);
+    return n;
+  }
+
+  async dismissNotification(app_id: string, key: string): Promise<boolean> {
+    const map = await this.readNotifications(app_id);
+    const n = map[key];
+    if (!n) return false;
+    n.dismissed = true;
+    n.updated_at = nowIso();
+    await this.writeNotifications(app_id, map);
+    return true;
+  }
+
+  // Remove a notification entirely — its condition no longer applies.
+  async clearNotification(app_id: string, key: string): Promise<boolean> {
+    const map = await this.readNotifications(app_id);
+    if (!(key in map)) return false;
+    delete map[key];
+    await this.writeNotifications(app_id, map);
+    return true;
+  }
+
+  async listNotifications(app_id: string, opts: { includeDismissed?: boolean } = {}): Promise<Notification[]> {
+    const map = await this.readNotifications(app_id);
+    let list = Object.values(map);
+    if (!opts.includeDismissed) list = list.filter((n) => !n.dismissed);
+    list.sort((a, b) => (a.created_at < b.created_at ? 1 : -1)); // newest-first
+    return list;
   }
 
   stateDir(): string {

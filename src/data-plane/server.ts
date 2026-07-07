@@ -11,6 +11,7 @@ import { RESOURCE_TYPES, type ResourceType, type Application } from '../resource
 import { newResourceId } from '../shared/ids';
 import { nowIso } from '../shared/time';
 import { registerAppEventRoutes } from '../api/app-events-routes';
+import { registerNotificationRoutes } from '../api/notifications-routes';
 import { logPath } from '../shared/paths';
 
 // The Forge DATA PLANE server — the production/runtime counterpart to the control
@@ -84,6 +85,10 @@ app.get('/logs/:resourceId', async (req, reply) => {
 // Application event log (C3) — the running app emits/queries its own domain events here over the
 // internal network. Defaults the app to this sidecar's FORGE_APP_NAME, so the app needn't pass it.
 registerAppEventRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
+
+// Notifications (C4) — the app upserts/dismisses/clears its derived notifications here. A scheduled
+// job (C2) can upsert while the user is away so the inbox is current before they open the app.
+registerNotificationRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 
 // In production there is no `./forge provision`, so seed a minimal Application
 // record for the app this sidecar serves — enough for schedule-job/inspect to

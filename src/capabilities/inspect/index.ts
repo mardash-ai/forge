@@ -11,7 +11,7 @@ import type { ScheduledJob } from '../../resources/types';
 const inputSchema = z.object({
   ...appRefInput,
   type: z
-    .enum(['app', 'resources', 'events', 'app-events', 'routes', 'scripts', 'docker', 'secrets', 'jobs'])
+    .enum(['app', 'resources', 'events', 'app-events', 'notifications', 'routes', 'scripts', 'docker', 'secrets', 'jobs'])
     .default('app'),
 });
 type Input = z.infer<typeof inputSchema>;
@@ -50,7 +50,7 @@ function fileToRoute(rel: string): { route: string; kind: 'page' | 'api' } | nul
 export const inspect: Capability<Input, Inspection> = {
   name: 'Inspect',
   slug: 'inspect',
-  description: 'Return a compact structured view of an Application (app, resources, events, app-events, routes, scripts, docker, secrets, jobs).',
+  description: 'Return a compact structured view of an Application (app, resources, events, app-events, notifications, routes, scripts, docker, secrets, jobs).',
   inputSchema,
   resourceType: 'Inspection',
   events: ['InspectionCreated'],
@@ -111,6 +111,14 @@ export const inspect: Capability<Input, Inspection> = {
         summary = events.length
           ? `${events.length} recent app event(s) for ${app.name}.`
           : `No app events for ${app.name} yet.`;
+        break;
+      }
+      case 'notifications': {
+        // The app's derived notifications (C4) — active + dismissed.
+        const notes = await ctx.store.listNotifications(app.id, { includeDismissed: true });
+        data = notes.map((n) => ({ key: n.key, title: n.title, subject: n.subject, dismissed: n.dismissed, at: n.updated_at }));
+        const active = notes.filter((n) => !n.dismissed).length;
+        summary = `${active} active notification(s) for ${app.name}${notes.length > active ? ` (+${notes.length - active} dismissed)` : ''}.`;
         break;
       }
       case 'routes': {

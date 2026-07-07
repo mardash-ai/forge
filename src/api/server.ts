@@ -8,6 +8,7 @@ import { ForgeError } from '../shared/errors';
 import type { Actor } from '../shared/domain';
 import { RESOURCE_TYPES, type ResourceType } from '../resources/types';
 import { registerAppEventRoutes } from './app-events-routes';
+import { registerNotificationRoutes } from './notifications-routes';
 import { logPath } from '../shared/paths';
 
 // The Forge HTTP API. Capability APIs perform behavior; Resource/Event APIs
@@ -73,6 +74,9 @@ app.get('/resources/:id', async (req, reply) => {
 // Application event log (C3) — the app emits/queries its own domain events here (dev: the app
 // reaches the control plane; prod: the data-plane sidecar serves the same routes).
 registerAppEventRoutes(app);
+
+// Notifications (C4) — the app upserts/dismisses/clears its derived notifications here.
+registerNotificationRoutes(app);
 
 // Event APIs.
 app.get('/events', async (req) => {

@@ -50,6 +50,16 @@ export function appEventsFile(appId: string): string {
   return path.join(appEventsDir(), `${appId}.jsonl`);
 }
 
+// Per-app notification store (C4) — a single JSON doc per app (keyed map), since notifications
+// are low-volume durable STATE (upsert/dismiss/clear), unlike the append-only app-event log.
+export function notificationsDir(): string {
+  return path.join(stateDir(), 'notifications');
+}
+
+export function notificationsFile(appId: string): string {
+  return path.join(notificationsDir(), `${appId}.json`);
+}
+
 export function logsDir(): string {
   return path.join(stateDir(), 'logs');
 }
