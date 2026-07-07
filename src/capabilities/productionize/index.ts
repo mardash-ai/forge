@@ -7,6 +7,7 @@ import { appRefInput, resolveApp, baseResource } from '../_shared';
 import { parseComposeInfra, type PrevInfra } from '../provision-environment/converge';
 import {
   IMPLEMENTATION,
+  JOBS_FILE,
   generateProdDockerfile,
   generateProdDockerignore,
   generateProdCompose,
@@ -94,6 +95,10 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
     const withPostgres = Boolean(infra.postgres);
     const withRedis = Boolean(infra.redis);
     const secrets = Array.isArray(infra.secrets) ? infra.secrets : [];
+    // The app declares scheduled jobs (C2) by committing a `forge.jobs.json` at the
+    // repo root — the same file the data-plane reads to auto-register on boot. When
+    // present, the generated compose mounts it into the sidecar (P7.3).
+    const withJobs = Boolean(await firstExisting(repo, [JOBS_FILE]));
 
     // 1. Standalone Dockerfile + .dockerignore (deterministic — re-run = identical bytes).
     await writeFile(path.join(repo, 'Dockerfile'), generateProdDockerfile({ appName: app.name, port: appPort }));
@@ -127,13 +132,14 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
         withRedis,
         secrets,
         certResolver: cfg.cert_resolver,
+        withJobs,
       }),
     );
 
     // 4. .env.prod.example — documents .env.prod (never a real value).
     await writeFile(
       path.join(repo, '.env.prod.example'),
-      generateEnvProdExample({ appName: app.name, host: cfg.host, withPostgres, withRedis, secrets }),
+      generateEnvProdExample({ appName: app.name, host: cfg.host, withPostgres, withRedis, secrets, withJobs }),
     );
 
     // Persist the converged production config so a flag-less re-run reproduces it.

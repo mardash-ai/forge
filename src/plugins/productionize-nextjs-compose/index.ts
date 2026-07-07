@@ -196,11 +196,21 @@ export interface ProdComposeOptions {
   withRedis: boolean;
   secrets: string[];
   certResolver: string;
+  // The app declares scheduled jobs (a `forge.jobs.json` at the repo root). When set,
+  // the compose bind-mounts that file into the data-plane sidecar and pins
+  // FORGE_JOBS_FILE at it, so C2 registers the jobs on boot (P7.3).
+  withJobs?: boolean;
   // Reverse-proxy network the old replica is drained out of on a roll (matches C7).
   proxyNet?: string;
 }
 
 const DATA_PLANE_PORT = 3718;
+
+// The canonical scheduled-jobs declaration file (C2) — a JSON array of jobs at the
+// app repo root; the data-plane reads it (FORGE_JOBS_FILE) to auto-register on boot.
+export const JOBS_FILE = 'forge.jobs.json';
+// Where the sidecar reads the app's repo (FORGE_APP_REPO_PATH); the jobs file mounts here.
+const APP_REPO_MOUNT = '/app';
 
 // A container healthcheck (node fetch) — the roll (C7) gates on this container
 // health before draining the old replica. Mirrors the runtime-docker-compose form.
@@ -221,6 +231,7 @@ export function generateProdCompose(opts: ProdComposeOptions): string {
     secrets,
     certResolver,
   } = opts;
+  const withJobs = opts.withJobs ?? false;
   const proxyNet = opts.proxyNet ?? 'proxy';
   const db = dbNameFor(appName);
   // Traefik router/service keys must be a safe slug.
@@ -230,14 +241,17 @@ export function generateProdCompose(opts: ProdComposeOptions): string {
   if (withPostgres) dependsOn.push('      postgres:\n        condition: service_healthy');
   dependsOn.push('      data-plane:\n        condition: service_started');
 
-  // Web environment: prod NODE_ENV, the data-plane sidecar URL (C3/C4), DB/Redis
-  // URLs from infra, and one interpolation line per declared secret (`${NAME:-}`
-  // keeps it defined-but-empty when unset, so the app degrades instead of crashing;
-  // real values come from .env.prod, never this file).
+  // Web environment: prod NODE_ENV, the data-plane sidecar base URL, DB/Redis URLs
+  // from infra, and one interpolation line per declared secret (`${NAME:-}` keeps it
+  // defined-but-empty when unset, so the app degrades instead of crashing; real
+  // values come from .env.prod, never this file). The data-plane base is published
+  // under BOTH names: FORGE_EVENTS_URL is the contract the shipped C1/C3/C4 app
+  // clients actually read; FORGE_DATA_PLANE_URL is kept as a compatible alias.
   const webEnv: string[] = [
     '      - NODE_ENV=production',
     `      - PORT=${port}`,
     '      - HOSTNAME=0.0.0.0',
+    `      - FORGE_EVENTS_URL=http://data-plane:${DATA_PLANE_PORT}`,
     `      - FORGE_DATA_PLANE_URL=http://data-plane:${DATA_PLANE_PORT}`,
   ];
   if (withPostgres) {
@@ -282,20 +296,41 @@ ${dependsOn.join('\n')}
 ${labels.join('\n')}`;
 
   // The Forge data-plane sidecar (C3 app-event log + C4 notifications + C2
-  // scheduler + C5 secrets read). The web app reaches it at
-  // http://data-plane:3718 (FORGE_DATA_PLANE_URL). Its store persists on a volume.
+  // scheduler + C1 agent-run + C5 secrets read). The web app reaches it at
+  // http://data-plane:3718 (FORGE_EVENTS_URL). Its store persists on a volume.
+  //
+  // Its DATA-plane capabilities run here, so it needs the same runtime injection the
+  // web tier gets (P6): FORGE_SECRETS_KEY to DECRYPT the C5 vault at rest (on the
+  // forge_state volume) + the declared secrets on the env (the process-env fallback
+  // C1 agent-run reads when the vault is empty). Real values come from .env.prod.
+  const dpEnv: string[] = [
+    `      - PORT=${DATA_PLANE_PORT}`,
+    `      - FORGE_APP_NAME=${appName}`,
+    `      - FORGE_APP_REPO_PATH=${APP_REPO_MOUNT}`,
+    '      - FORGE_STATE_DIR=/forge-state',
+    // C5 vault master key — without it the sidecar can't decrypt secrets (C1 → 503).
+    '      - FORGE_SECRETS_KEY=${FORGE_SECRETS_KEY:-}',
+  ];
+  for (const s of secrets) dpEnv.push(`      - ${s}=\${${s}:-}`);
+  const dpVolumes: string[] = ['      - forge_state:/forge-state'];
+  if (withJobs) {
+    // The app declares scheduled jobs — mount the declaration read-only and pin
+    // FORGE_JOBS_FILE at it so C2 registers them on boot (P7.3). The registered
+    // ScheduledJob state then persists on the forge_state volume.
+    dpEnv.push(`      - FORGE_JOBS_FILE=${APP_REPO_MOUNT}/${JOBS_FILE}`);
+    dpVolumes.push(`      - ./${JOBS_FILE}:${APP_REPO_MOUNT}/${JOBS_FILE}:ro`);
+  } else {
+    // No declared jobs — leave the seam optional so an operator can still point at one.
+    dpEnv.push('      - FORGE_JOBS_FILE=${FORGE_JOBS_FILE:-}');
+  }
+
   const dataPlane = `  data-plane:
     image: ${dataPlaneImage}
     restart: unless-stopped
     environment:
-      - PORT=${DATA_PLANE_PORT}
-      - FORGE_APP_NAME=${appName}
-      - FORGE_APP_REPO_PATH=/app
-      - FORGE_STATE_DIR=/forge-state
-      # Optional: point at a mounted JSON file to auto-register scheduled jobs (C2).
-      - FORGE_JOBS_FILE=\${FORGE_JOBS_FILE:-}
+${dpEnv.join('\n')}
     volumes:
-      - forge_state:/forge-state
+${dpVolumes.join('\n')}
     networks:
       - internal
     stop_grace_period: 15s
@@ -375,6 +410,9 @@ export interface EnvProdExampleOptions {
   withPostgres: boolean;
   withRedis: boolean;
   secrets: string[];
+  // The app declares scheduled jobs (forge.jobs.json) — the compose wires them
+  // automatically, so the example documents that instead of the optional seam.
+  withJobs?: boolean;
 }
 
 export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
@@ -384,6 +422,12 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
     `# Consumed at deploy time (e.g. \`docker compose -f compose.prod.yaml --env-file .env.prod ...\`).`,
     `# Public host (baked into compose.prod.yaml Traefik labels): ${opts.host}`,
     '',
+    '# --- Forge secrets vault master key (C5) ---',
+    '# The data-plane sidecar decrypts the app’s secrets vault with this key at runtime',
+    '# (e.g. C1 agent-run reads ANTHROPIC_API_KEY from it). Use the SAME key the secrets',
+    '# were set under. Required whenever the app uses secrets or the agent runtime.',
+    'FORGE_SECRETS_KEY=change-me',
+    '',
   ];
   if (opts.withPostgres) {
     lines.push('# --- Postgres (required when the app is provisioned with a database) ---');
@@ -391,11 +435,17 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
     lines.push('');
   }
   if (opts.secrets.length) {
-    lines.push('# --- Declared secrets (injected into the web container; never commit real values) ---');
+    lines.push('# --- Declared secrets (injected into the web AND data-plane containers; never commit real values) ---');
     for (const s of opts.secrets) lines.push(`${s}=`);
     lines.push('');
   }
-  lines.push('# --- Optional: scheduled jobs (C2) the data-plane sidecar registers on boot ---');
-  lines.push('# FORGE_JOBS_FILE=/app/forge.jobs.json');
+  if (opts.withJobs) {
+    lines.push('# --- Scheduled jobs (C2) ---');
+    lines.push(`# ${JOBS_FILE} is mounted into the data-plane sidecar and registered on boot — no env needed.`);
+  } else {
+    lines.push('# --- Optional: scheduled jobs (C2) the data-plane sidecar registers on boot ---');
+    lines.push(`# Declare jobs in ${JOBS_FILE} at the repo root (re-run \`forge productionize\` to wire it), or:`);
+    lines.push(`# FORGE_JOBS_FILE=/app/${JOBS_FILE}`);
+  }
   return lines.join('\n') + '\n';
 }

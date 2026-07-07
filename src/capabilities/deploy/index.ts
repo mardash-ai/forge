@@ -14,8 +14,11 @@ const inputSchema = z.object({
   service: z.string().default('web'),
   // Docker context of the target daemon (SSH etc.). Omit to target the local daemon.
   context: z.string().optional(),
-  // Production compose manifest, resolved at the project root (workspace dir).
-  compose_file: z.string().default('compose.prod.yaml'),
+  // Production compose manifest, resolved from the workspace dir. Defaults to what
+  // `forge productionize` writes — `app/compose.prod.yaml` (the app repo is ./app in
+  // the single-app layout `provision` uses) — so a plain `forge deploy` finds it with
+  // no flag, and the compose file's relative bind-mounts resolve from ./app (P7.2).
+  compose_file: z.string().default('app/compose.prod.yaml'),
   // Reverse-proxy network the old replica is drained out of before removal.
   proxy_net: z.string().default('proxy'),
   // Pull images first (non-fatal — a locked keychain over SSH still deploys cached images).

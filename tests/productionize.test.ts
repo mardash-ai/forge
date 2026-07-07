@@ -12,11 +12,30 @@ import {
   type ProdComposeOptions,
 } from '../src/plugins/productionize-nextjs-compose/index';
 import { ForgeError } from '../src/shared/errors';
+import { deployCapability } from '../src/capabilities/deploy/index';
 
 // C8 Productionize: generation + idempotency + the R1 digest-pin requirement.
 
 const WEB = 'ghcr.io/mardash-ai/acme-web:1.2.3@sha256:' + 'a'.repeat(64);
 const DP = 'ghcr.io/mardash-ai/forge-data-plane:0.11.0@sha256:' + 'b'.repeat(64);
+
+// Slice one 2-space-indented service block out of the generated compose (up to the
+// next top-level `services:`-child key), so env/volume assertions can be scoped to a
+// specific service rather than matched loosely across the whole file.
+function serviceBlock(yaml: string, name: string): string {
+  const lines = yaml.split('\n');
+  const start = lines.findIndex((l) => l === `  ${name}:`);
+  if (start === -1) throw new Error(`service "${name}" not found in compose`);
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    if (/^  \S/.test(line) || /^\S/.test(line)) {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(start, end).join('\n');
+}
 
 describe('convergeProduction — required inputs + digest pins (R1) + convergence', () => {
   const ok = { host: 'app.example.com', web_image: WEB, data_plane_image: DP };
@@ -165,8 +184,46 @@ describe('generateProdCompose — Traefik + healthcheck + stop_grace + data-plan
     expect(yaml).toContain('- ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}');
   });
 
+  // P7.1 — the shipped C1/C3/C4 app clients read FORGE_EVENTS_URL (the data-plane base).
+  it('points the web app at the data-plane via FORGE_EVENTS_URL (the C3/C4 client contract) (P7.1)', () => {
+    const web = serviceBlock(generateProdCompose(base), 'web');
+    expect(web).toContain('FORGE_EVENTS_URL=http://data-plane:3718');
+    // The compatible alias may remain, but FORGE_EVENTS_URL is the load-bearing one.
+    expect(web).toContain('FORGE_DATA_PLANE_URL=http://data-plane:3718');
+  });
+
+  // P6 — the data-plane runs C1/C5, so it needs the vault key + the declared secrets.
+  it('gives the data-plane sidecar FORGE_SECRETS_KEY so it can decrypt the C5 vault (P6)', () => {
+    const dp = serviceBlock(generateProdCompose(base), 'data-plane');
+    expect(dp).toContain('FORGE_SECRETS_KEY=${FORGE_SECRETS_KEY:-}');
+  });
+
+  it('injects the declared secrets into the data-plane too, not only web (P6)', () => {
+    const yaml = generateProdCompose({ ...base, secrets: ['ANTHROPIC_API_KEY'] });
+    const web = serviceBlock(yaml, 'web');
+    const dp = serviceBlock(yaml, 'data-plane');
+    expect(web).toContain('- ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}');
+    expect(dp).toContain('- ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}');
+  });
+
+  // P7.3 — a declared jobs file must be mounted + pinned, else C2 never registers it.
+  it('mounts the jobs file and pins FORGE_JOBS_FILE at it when jobs are declared (P7.3)', () => {
+    const dp = serviceBlock(generateProdCompose({ ...base, withJobs: true }), 'data-plane');
+    expect(dp).toContain('FORGE_JOBS_FILE=/app/forge.jobs.json');
+    expect(dp).toContain('- ./forge.jobs.json:/app/forge.jobs.json:ro');
+  });
+
+  it('leaves FORGE_JOBS_FILE optional (no mount) when the app declares no jobs (P7.3)', () => {
+    const dp = serviceBlock(generateProdCompose({ ...base, withJobs: false }), 'data-plane');
+    expect(dp).toContain('FORGE_JOBS_FILE=${FORGE_JOBS_FILE:-}');
+    expect(dp).not.toContain('forge.jobs.json:');
+  });
+
   it('is deterministic — identical inputs produce identical bytes (idempotency)', () => {
     expect(generateProdCompose(base)).toBe(generateProdCompose({ ...base }));
+    expect(generateProdCompose({ ...base, withJobs: true, secrets: ['ANTHROPIC_API_KEY'] })).toBe(
+      generateProdCompose({ ...base, withJobs: true, secrets: ['ANTHROPIC_API_KEY'] }),
+    );
   });
 });
 
@@ -256,5 +313,39 @@ describe('generateEnvProdExample — documents .env.prod without real values', (
     expect(env).toContain('ANTHROPIC_API_KEY=');
     expect(env).toContain('app.example.com');
     expect(env).toContain('FORGE_JOBS_FILE');
+  });
+
+  it('documents the C5 vault master key the data-plane needs (P6)', () => {
+    const env = generateEnvProdExample({
+      appName: 'acme',
+      host: 'app.example.com',
+      withPostgres: false,
+      withRedis: false,
+      secrets: ['ANTHROPIC_API_KEY'],
+    });
+    expect(env).toContain('FORGE_SECRETS_KEY=');
+  });
+
+  it('states jobs auto-wire (no FORGE_JOBS_FILE env) when the app declares them (P7.3)', () => {
+    const env = generateEnvProdExample({
+      appName: 'acme',
+      host: 'app.example.com',
+      withPostgres: false,
+      withRedis: false,
+      secrets: [],
+      withJobs: true,
+    });
+    expect(env).toContain('forge.jobs.json');
+    expect(env).not.toContain('# FORGE_JOBS_FILE=');
+  });
+});
+
+// P7.2 — `forge productionize` writes app/compose.prod.yaml; `forge deploy` must find
+// it by default. Deploy runs from the workspace dir and the app repo is ./app (the
+// single-app layout `provision` uses), so the default must resolve into ./app.
+describe('deploy ⇄ productionize compose path agree by default (P7.2)', () => {
+  it('forge deploy defaults --compose-file to what forge productionize writes (app/compose.prod.yaml)', () => {
+    const parsed = deployCapability.inputSchema.parse({ app: 'acme' });
+    expect(parsed.compose_file).toBe('app/compose.prod.yaml');
   });
 });

@@ -9,6 +9,38 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-07-07
+
+### Fixed
+- **`productionize` — the generated `compose.prod.yaml` now matches the runtime contract the
+  platform’s own capabilities (C1–C5, C7) establish.** Adopting C8 surfaced four seams where the
+  emitted prod stack didn’t line up with how the shipped capabilities actually run; the generator
+  now derives all four from the app’s declared `infra`/manifest (still generic — no app specifics):
+  - **P6 — the data-plane sidecar can now read the C5 secrets vault.** The sidecar runs the
+    **data-plane** capabilities (C1 agent-run reads `ANTHROPIC_API_KEY` from the C5 vault here), but
+    the generated compose gave it **no `FORGE_SECRETS_KEY`** and injected the declared secrets only
+    into `web` — so prod agent-run would 503. The generated `data-plane` service now gets
+    `FORGE_SECRETS_KEY` (to decrypt the vault at rest on the `forge_state` volume) **and** each
+    declared secret as a defined-but-empty interpolation (the process-env fallback), mirroring the
+    web tier. `.env.prod.example` documents `FORGE_SECRETS_KEY`.
+  - **P7.1 — the web app now reaches the data-plane under the name the shipped clients read.** The
+    C1/C3/C4 delivery has apps read the data-plane base URL from **`FORGE_EVENTS_URL`**; the
+    generator only set `FORGE_DATA_PLANE_URL`, so prod lost data-plane reachability. `web` now sets
+    **`FORGE_EVENTS_URL=http://data-plane:3718`** (the load-bearing contract), keeping
+    `FORGE_DATA_PLANE_URL` as a compatible alias.
+  - **P7.2 — `forge productionize` and `forge deploy` now agree on the compose path.**
+    `productionize` writes `app/compose.prod.yaml`, but `forge deploy` defaulted `--compose-file` to
+    `compose.prod.yaml` at the workspace root and couldn’t find it. `forge deploy` now defaults to
+    **`app/compose.prod.yaml`** (the single-app layout `provision` uses), so a plain
+    `forge productionize` → `forge deploy` works end-to-end and the compose’s relative bind-mounts
+    resolve from `./app`.
+  - **P7.3 — declared C2 scheduled jobs are now mounted into the sidecar.** The generated sidecar
+    set `FORGE_JOBS_FILE` but never mounted the file, so scheduled jobs never registered in prod.
+    When the app declares jobs (a `forge.jobs.json` at the repo root), the compose now bind-mounts it
+    read-only into the data-plane (`./forge.jobs.json:/app/forge.jobs.json:ro`) and pins
+    `FORGE_JOBS_FILE` at it, so C2 registers them on boot (their `ScheduledJob` state persists on the
+    `forge_state` volume). With no jobs declared the `FORGE_JOBS_FILE` seam stays optional.
+
 ## [0.11.0] — 2026-07-07
 
 ### Added
