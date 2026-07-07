@@ -9,6 +9,38 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-07-07
+
+### Added
+- **C6 — a standard health / telemetry contract the platform owns and observes.** Apps used to
+  hand-roll `/api/health` as a liveness-only endpoint that returned `200 {status:'ok'}` even when a
+  dependency (e.g. Postgres) was down — it lied about readiness. C6 standardizes the shape, the
+  readiness → HTTP-code convention, and adds a way to inspect it. The route STAYS in the app
+  (framework-native); the platform owns the contract.
+  - **Standard health schema (`src/shared/health.ts`).** `{ status: 'ok'|'degraded'|'unavailable';
+    service; time: ISO-8601; checks: [{ name; status: 'ok'|'unavailable'; detail? }] }`
+    (`checks: []` = valid liveness-only). Recognized/validated by `parseHealthResponse`.
+  - **Readiness → HTTP-code convention.** `httpStatusFor`: **200** when `ok` (all required checks
+    pass, or none) or `degraded` (a *non-required* check failed, flagged); **503** when a *required*
+    check fails (`unavailable`). Every prober already treats non-2xx as unhealthy, so 503-on-not-ready
+    needs no prober change (dev/prod compose healthchecks, the C7 Traefik `loadbalancer.healthcheck`).
+  - **Platform-owned check aggregation.** `aggregateHealth(service, results)` rolls a list of resolved
+    check results up into `{ body, httpStatus }` per the convention above. The app supplies its checks
+    (opaque thunks, e.g. a DB `SELECT 1`) + its service name; the platform owns the shape + rollup.
+  - **`forge inspect health --app <app>`.** New `health` inspection type: reads
+    `production.readiness_path` from `forge.app.json` (default `/api/health`), fetches it LIVE
+    (no-cache, 5s timeout) over the same app-callback convention the scheduler uses
+    (`FORGE_APP_CALLBACK_HOST`/`_PORT`, else `host.docker.internal` + the provisioned web port), and
+    renders the parsed schema — overall status + per-check. Flags a reachable-but-non-conforming
+    endpoint and a 200/503 convention mismatch; degrades (never throws) when unreachable.
+
+### Changed
+- **The `init app` scaffold now emits the standard health handler** (distribution (A) — the reference
+  snippet, materialized), replacing the retired always-`ok` `healthPayload`. New apps get a vendored
+  `lib/health.ts` (`buildHealth({ service, probes })` → `{ body, httpStatus }`), an `/api/health` route
+  that returns real 200/503 readiness, and matching tests. No new distribution mechanism, no npm
+  package, no data-plane code — the contract is platform-owned; the route is app-owned.
+
 ## [0.11.1] — 2026-07-07
 
 ### Fixed
@@ -297,7 +329,9 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/mardash-ai/forge/compare/v0.11.1...v0.12.0
+[0.11.1]: https://github.com/mardash-ai/forge/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/mardash-ai/forge/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/mardash-ai/forge/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/mardash-ai/forge/compare/v0.8.0...v0.9.0

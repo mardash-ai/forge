@@ -248,7 +248,7 @@ program
 program
   .command('inspect')
   .description('Compact structured inspection (Inspect)')
-  .argument('[type]', 'app | resources | events | app-events | notifications | routes | scripts | docker | secrets | jobs | agent-runs', 'app')
+  .argument('[type]', 'app | resources | events | app-events | notifications | routes | scripts | docker | secrets | jobs | agent-runs | health', 'app')
   .requiredOption('--app <app>')
   .action(async (type, opts) => {
     await runCapability('inspect', { app: opts.app, type });

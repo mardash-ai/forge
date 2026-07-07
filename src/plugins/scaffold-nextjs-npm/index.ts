@@ -151,36 +151,104 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 `,
 
     'app/api/health/route.ts': `import { NextResponse } from 'next/server';
-import { healthPayload } from '../../../lib/health';
+import { buildHealth } from '../../../lib/health';
 
+// Liveness + readiness in the standard Forge health contract (C6). Add readiness
+// probes to the array below (e.g. a DB \`SELECT 1\`); a failing REQUIRED probe makes
+// this return 503 so every prober sees "not ready" instead of a 200 that lies.
 export const dynamic = 'force-dynamic';
 
-export function GET() {
-  return NextResponse.json(healthPayload('${name}'));
+export async function GET() {
+  const { body, httpStatus } = await buildHealth('${name}', [
+    // { name: 'db', check: async () => { await db.query('select 1'); } },
+  ]);
+  return NextResponse.json(body, { status: httpStatus });
 }
 `,
 
-    // A tiny pure module so there is meaningful, deterministic test coverage.
-    'lib/health.ts': `export interface HealthPayload {
-  status: 'ok';
-  service: string;
-  time: string;
+    // The app's copy of the standard health contract (C6). The platform recognizes this
+    // exact shape and the 200/503 readiness convention; \`forge inspect health\` reads and
+    // renders it. Framework-agnostic + pure aside from running the app's probes.
+    'lib/health.ts': `export type HealthStatus = 'ok' | 'degraded' | 'unavailable';
+export type CheckStatus = 'ok' | 'unavailable';
+
+export interface HealthCheck {
+  name: string;
+  status: CheckStatus;
+  detail?: string;
 }
 
-export function healthPayload(service: string, now: Date = new Date()): HealthPayload {
-  return { status: 'ok', service, time: now.toISOString() };
+export interface HealthResponse {
+  status: HealthStatus;
+  service: string;
+  time: string;
+  checks: HealthCheck[];
+}
+
+// A readiness check the app supplies: a name + an opaque probe (e.g. a DB \`SELECT 1\`).
+// \`required: false\` marks it non-fatal — a failure degrades readiness rather than
+// failing it.
+export interface HealthProbe {
+  name: string;
+  required?: boolean;
+  check: () => Promise<void> | void;
+}
+
+// Run the probes and aggregate to the standard response + HTTP code:
+//   - a REQUIRED probe throwing      -> 'unavailable' (503)
+//   - a non-required probe throwing  -> 'degraded'    (200, flagged)
+//   - all pass / none given          -> 'ok'          (200)
+export async function buildHealth(
+  service: string,
+  probes: HealthProbe[] = [],
+  now: Date = new Date(),
+): Promise<{ body: HealthResponse; httpStatus: 200 | 503 }> {
+  const checks: HealthCheck[] = [];
+  let requiredFailed = false;
+  let anyFailed = false;
+  for (const p of probes) {
+    try {
+      await p.check();
+      checks.push({ name: p.name, status: 'ok' });
+    } catch (err) {
+      anyFailed = true;
+      if (p.required ?? true) requiredFailed = true;
+      checks.push({ name: p.name, status: 'unavailable', detail: (err as Error)?.message ?? String(err) });
+    }
+  }
+  const status: HealthStatus = requiredFailed ? 'unavailable' : anyFailed ? 'degraded' : 'ok';
+  return { body: { status, service, time: now.toISOString(), checks }, httpStatus: status === 'unavailable' ? 503 : 200 };
 }
 `,
 
     'tests/health.test.ts': `import { describe, it, expect } from 'vitest';
-import { healthPayload } from '../lib/health';
+import { buildHealth } from '../lib/health';
 
-describe('healthPayload', () => {
-  it('reports ok for the service', () => {
-    const p = healthPayload('${name}', new Date('2026-01-01T00:00:00.000Z'));
-    expect(p.status).toBe('ok');
-    expect(p.service).toBe('${name}');
-    expect(p.time).toBe('2026-01-01T00:00:00.000Z');
+describe('buildHealth', () => {
+  it('reports ok with HTTP 200 for a liveness-only probe (no checks)', async () => {
+    const { body, httpStatus } = await buildHealth('${name}', [], new Date('2026-01-01T00:00:00.000Z'));
+    expect(body.status).toBe('ok');
+    expect(body.service).toBe('${name}');
+    expect(body.time).toBe('2026-01-01T00:00:00.000Z');
+    expect(body.checks).toEqual([]);
+    expect(httpStatus).toBe(200);
+  });
+
+  it('returns 503 unavailable when a required probe fails', async () => {
+    const { body, httpStatus } = await buildHealth('${name}', [
+      { name: 'db', check: async () => { throw new Error('down'); } },
+    ]);
+    expect(body.status).toBe('unavailable');
+    expect(httpStatus).toBe(503);
+    expect(body.checks[0]).toMatchObject({ name: 'db', status: 'unavailable' });
+  });
+
+  it('degrades (still 200) when only a non-required probe fails', async () => {
+    const { body, httpStatus } = await buildHealth('${name}', [
+      { name: 'cache', required: false, check: async () => { throw new Error('miss'); } },
+    ]);
+    expect(body.status).toBe('degraded');
+    expect(httpStatus).toBe(200);
   });
 });
 `,

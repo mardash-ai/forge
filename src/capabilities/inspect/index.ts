@@ -7,14 +7,30 @@ import type { Inspection } from '../../resources/types';
 import { appRefInput, resolveApp, baseResource } from '../_shared';
 import { listSecretNames } from '../../plugins/secrets-local/index';
 import type { ScheduledJob, AgentTask } from '../../resources/types';
+import { parseHealthResponse, httpStatusFor } from '../../shared/health';
 
 const inputSchema = z.object({
   ...appRefInput,
   type: z
-    .enum(['app', 'resources', 'events', 'app-events', 'notifications', 'routes', 'scripts', 'docker', 'secrets', 'jobs', 'agent-runs'])
+    .enum(['app', 'resources', 'events', 'app-events', 'notifications', 'routes', 'scripts', 'docker', 'secrets', 'jobs', 'agent-runs', 'health'])
     .default('app'),
 });
 type Input = z.infer<typeof inputSchema>;
+
+// Live health probe timeout — an inspection must never hang on a wedged app.
+const HEALTH_TIMEOUT_MS = 5_000;
+
+// Where the control plane reaches a Builder app's HTTP server to probe health — the
+// SAME env convention the scheduler uses to call an app back (host.docker.internal in
+// dev; FORGE_APP_CALLBACK_HOST/PORT on a prod compose network). Port falls back to the
+// provisioned web host port, then the manifest port, then 3000.
+function resolveAppBase(manifest: Record<string, unknown>): string {
+  const host = process.env.FORGE_APP_CALLBACK_HOST ?? 'host.docker.internal';
+  const envPort = process.env.FORGE_APP_CALLBACK_PORT;
+  const webPort = (manifest.infra as { ports?: { web?: unknown } } | undefined)?.ports?.web;
+  const manifestPort = typeof webPort === 'number' ? webPort : typeof manifest.port === 'number' ? manifest.port : 3000;
+  return `http://${host}:${envPort ?? manifestPort}`;
+}
 
 async function walk(dir: string, base = dir): Promise<string[]> {
   let entries: Dirent[];
@@ -50,7 +66,7 @@ function fileToRoute(rel: string): { route: string; kind: 'page' | 'api' } | nul
 export const inspect: Capability<Input, Inspection> = {
   name: 'Inspect',
   slug: 'inspect',
-  description: 'Return a compact structured view of an Application (app, resources, events, app-events, notifications, routes, scripts, docker, secrets, jobs, agent-runs).',
+  description: 'Return a compact structured view of an Application (app, resources, events, app-events, notifications, routes, scripts, docker, secrets, jobs, agent-runs, health).',
   inputSchema,
   resourceType: 'Inspection',
   events: ['InspectionCreated'],
@@ -203,6 +219,65 @@ export const inspect: Capability<Input, Inspection> = {
         summary = provisioned
           ? `Provisioned. Services: ${services.join(', ')}.`
           : 'Not provisioned yet. Run: forge provision --app ' + app.name;
+        break;
+      }
+      case 'health': {
+        // Read the readiness path the whole platform already points at (dev/prod
+        // compose healthchecks, the C7 Traefik loadbalancer.healthcheck), fetch it
+        // LIVE (no-cache), and render the parsed standard health schema.
+        let manifest: Record<string, unknown> = {};
+        try {
+          manifest = JSON.parse(await readFile(path.join(app.repo_path, 'forge.app.json'), 'utf8'));
+        } catch {
+          /* no manifest — fall through to the default readiness path */
+        }
+        const production = (manifest.production ?? {}) as { readiness_path?: string };
+        const readinessPath = production.readiness_path ?? '/api/health';
+        const url = `${resolveAppBase(manifest)}${readinessPath}`;
+
+        try {
+          const res = await fetch(url, {
+            headers: { 'cache-control': 'no-cache', pragma: 'no-cache' },
+            signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+          });
+          const text = await res.text();
+          let json: unknown;
+          try {
+            json = JSON.parse(text);
+          } catch {
+            json = undefined;
+          }
+          const parsed = parseHealthResponse(json);
+          if (parsed.ok) {
+            const h = parsed.value;
+            const expected = httpStatusFor(h.status);
+            const conventionOk = res.status === expected;
+            data = {
+              url,
+              reachable: true,
+              http_status: res.status,
+              conforms: true,
+              status: h.status,
+              service: h.service,
+              time: h.time,
+              checks: h.checks,
+              ...(conventionOk
+                ? {}
+                : { convention_warning: `HTTP ${res.status} but status '${h.status}' implies HTTP ${expected} (200/503 convention)` }),
+            };
+            const failed = h.checks.filter((c) => c.status === 'unavailable').map((c) => c.name);
+            summary =
+              `${app.name} health: ${h.status} (HTTP ${res.status}) — ${h.checks.length} check(s)` +
+              (failed.length ? `, down: ${failed.join(', ')}` : '') +
+              (conventionOk ? '' : ' [convention mismatch]');
+          } else {
+            data = { url, reachable: true, http_status: res.status, conforms: false, error: parsed.error, body_preview: text.slice(0, 200) };
+            summary = `${app.name} health endpoint reachable (HTTP ${res.status}) but does not conform to the standard schema — ${parsed.error}.`;
+          }
+        } catch (e) {
+          data = { url, reachable: false, error: String((e as Error)?.message ?? e) };
+          summary = `${app.name} health endpoint unreachable at ${url}. Is the app running? (forge dev --app ${app.name})`;
+        }
         break;
       }
     }
