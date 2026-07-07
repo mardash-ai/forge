@@ -15,6 +15,11 @@ const inputSchema = z.object({
   // The Application NAME. Optional: defaults to the runtime's own app (data-plane:
   // FORGE_APP_NAME), so the running app usually needn't pass it, like C3/C4.
   app: z.string().min(1).optional(),
+  // Owner (C11) — the opaque per-user id (C10's session `userId`) this run belongs to. Optional:
+  // omit for an app-scoped run. When set, the AgentTask + its Artifact carry it, so a per-user
+  // query (`/resources?type=AgentTask&owner=…`, `inspect agent-runs --owner …`) returns ONLY that
+  // user's runs — user A can never read user B's runs/artifacts.
+  owner: z.string().min(1).optional().describe('Opaque per-user owner id (C10 session userId)'),
   // Free-form label/kind for this run (e.g. "planner"). Generic — NOT a Forge Capability;
   // the consumer owns what the label means.
   capability: z.string().min(1).describe('Free-form label/kind for this run, e.g. "planner"'),
@@ -67,8 +72,10 @@ export const agentRun: Capability<Input, AgentTask> = {
       );
     }
 
-    // Pre-allocate the AgentTask envelope so its id can be the Artifact's producer ref.
-    const base = baseResource('AgentTask', app.id);
+    // Pre-allocate the AgentTask envelope so its id can be the Artifact's producer ref. The C11
+    // `owner` rides on the envelope, so BOTH the failed and succeeded task carry it (and the
+    // Artifact below), making every persisted run owner-scoped.
+    const base = { ...baseResource('AgentTask', app.id), owner: input.owner };
 
     // (1)(3) Invoke the model with system + input + enforced schema; get the PARSED result. The
     // output is untrusted — we return it for the consumer to post-validate, we do not act on it.
@@ -111,6 +118,7 @@ export const agentRun: Capability<Input, AgentTask> = {
     // consumer the parsed result without a second fetch.
     const artifact: Artifact = {
       ...baseResource('Artifact', app.id),
+      owner: input.owner,
       type: 'Artifact',
       kind: input.capability,
       produced_by: base.id,

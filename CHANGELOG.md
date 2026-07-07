@@ -9,6 +9,42 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-07-07
+
+### Added
+- **C11 — permissions / access control (per-user ownership).** Now that C10 ships a multi-user
+  session (`getSession() → { userId }`), the shared stores are made **owner-aware** so records no
+  longer leak across users. Every shared store gains an opaque **`owner`** dimension (the app passes
+  C10's `userId`): **write** takes an `owner`; **feed/query/inspect** filter by `(app, owner)` so a
+  read scoped to an owner returns **only** that owner's records — user A can never read user B.
+  Generic + opaque (no goal/task/auth specifics); the platform provides the owner-scoping primitive
+  the app builds its own tables on.
+  - **C3 application event log (`POST/GET /app-events`, `GET /app-events/latest`).** Emit accepts
+    `owner`; the feed, subject filter, and `latest` (cold-subject) map all filter by owner, so one
+    user's activity never resets another's clock. `AppEvent` carries `owner?`.
+  - **C4 notifications (`POST /notifications[/dismiss|/clear]`, `GET /notifications`).** Scoping is by
+    `(app, owner, key)`: two users may hold the **same** app key (e.g. `cold:g1`) as **distinct**
+    notifications (namespaced internally by an owner + NUL storage key — the returned `.key` is
+    unchanged), and dismiss/clear/list act only on the caller's own. `Notification` carries `owner?`.
+  - **C1 agent runs (`agent-run` capability + `GET /resources?...&owner=`).** `agent-run` input takes
+    `owner`; **both** the `AgentTask` and its `Artifact` are stamped, so a run and its result stay
+    attributed to the same user (success **and** failure). `listResources` gains an `owner` filter;
+    `BaseResource` carries `owner?` (set only by owner-scoped stores).
+  - **`forge inspect <app-events|notifications|agent-runs> --owner <id>`** and
+    **`forge resources --owner <id>`** scope those views to one user.
+  - **One-time migration — `POST /owner/claim-legacy` / `forge owner claim-legacy --app --owner`.**
+    Assigns every owner-**less** record across C3 + C4 + C1 to a seeded owner (pairs with C10's
+    `auth seed-owner`) on cutover. Idempotent — already-owned records are untouched.
+  - **Convention (for the consumer): 404-not-403.** An unknown/other-owner id returns **404** (not
+    403) so existence never leaks; the app enforces this on its own tables using this owner-scoping
+    primitive (a cross-owner read returns empty/nothing to render → 404).
+
+### Changed
+- **Backward compatible.** `owner` is optional everywhere: a caller that doesn't pass one is
+  **app-scoped** exactly as before C11 (a C10-less app is unaffected), and legacy/pre-C11 records
+  (no owner) still read under app-scope. An owner-scoped query excludes legacy records until they're
+  claimed via `claim-legacy` — no data is lost or broken, no re-provision required.
+
 ## [0.14.0] — 2026-07-07
 
 ### Added
@@ -417,7 +453,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/mardash-ai/forge/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/mardash-ai/forge/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/mardash-ai/forge/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/mardash-ai/forge/compare/v0.11.1...v0.12.0

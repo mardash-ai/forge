@@ -17,6 +17,10 @@ const inputSchema = z.object({
   type: z
     .enum(['app', 'resources', 'events', 'app-events', 'notifications', 'routes', 'scripts', 'docker', 'secrets', 'jobs', 'agent-runs', 'email', 'auth', 'health'])
     .default('app'),
+  // Owner (C11) — an opaque per-user id. When set, the owner-scoped views (`app-events`,
+  // `notifications`, `agent-runs`) return ONLY that owner's records; omitted = app-scoped (all
+  // owners). Ignored by views that carry no owner dimension (routes, secrets, health, …).
+  owner: z.string().min(1).optional(),
 });
 type Input = z.infer<typeof inputSchema>;
 
@@ -124,20 +128,24 @@ export const inspect: Capability<Input, Inspection> = {
         break;
       }
       case 'app-events': {
-        // The APP's own domain event log (C3) — distinct from platform `events` above.
-        const events = await ctx.store.listAppEvents({ app_id: app.id, limit: 20 });
-        data = events.map((e) => ({ id: e.id, type: e.type, subject: e.subject, at: e.at }));
+        // The APP's own domain event log (C3) — distinct from platform `events` above. Owner-scoped
+        // (C11) when an owner is supplied: only that user's events.
+        const events = await ctx.store.listAppEvents({ app_id: app.id, owner: input.owner, limit: 20 });
+        data = events.map((e) => ({ id: e.id, type: e.type, subject: e.subject, owner: e.owner, at: e.at }));
+        const scope = input.owner ? ` (owner ${input.owner})` : '';
         summary = events.length
-          ? `${events.length} recent app event(s) for ${app.name}.`
-          : `No app events for ${app.name} yet.`;
+          ? `${events.length} recent app event(s) for ${app.name}${scope}.`
+          : `No app events for ${app.name}${scope} yet.`;
         break;
       }
       case 'notifications': {
-        // The app's derived notifications (C4) — active + dismissed.
-        const notes = await ctx.store.listNotifications(app.id, { includeDismissed: true });
-        data = notes.map((n) => ({ key: n.key, title: n.title, subject: n.subject, dismissed: n.dismissed, at: n.updated_at }));
+        // The app's derived notifications (C4) — active + dismissed. Owner-scoped (C11) when an
+        // owner is supplied: only that user's notifications.
+        const notes = await ctx.store.listNotifications(app.id, { includeDismissed: true, owner: input.owner });
+        data = notes.map((n) => ({ key: n.key, title: n.title, subject: n.subject, owner: n.owner, dismissed: n.dismissed, at: n.updated_at }));
         const active = notes.filter((n) => !n.dismissed).length;
-        summary = `${active} active notification(s) for ${app.name}${notes.length > active ? ` (+${notes.length - active} dismissed)` : ''}.`;
+        const scope = input.owner ? ` (owner ${input.owner})` : '';
+        summary = `${active} active notification(s) for ${app.name}${scope}${notes.length > active ? ` (+${notes.length - active} dismissed)` : ''}.`;
         break;
       }
       case 'routes': {
@@ -188,21 +196,24 @@ export const inspect: Capability<Input, Inspection> = {
         break;
       }
       case 'agent-runs': {
-        // Durable agent-run records (C1) — every model invocation, success AND failure.
-        const runs = (await ctx.store.listResources({ type: 'AgentTask', app_id: app.id })) as AgentTask[];
+        // Durable agent-run records (C1) — every model invocation, success AND failure. Owner-scoped
+        // (C11) when an owner is supplied: only that user's runs.
+        const runs = (await ctx.store.listResources({ type: 'AgentTask', app_id: app.id, owner: input.owner })) as AgentTask[];
         data = runs.map((r) => ({
           id: r.id,
           label: r.label,
           status: r.status,
           model: r.model,
+          owner: r.owner,
           artifact_id: r.artifact_id,
           error: r.error,
           at: r.created_at,
         }));
         const failed = runs.filter((r) => r.status === 'failed').length;
+        const scope = input.owner ? ` (owner ${input.owner})` : '';
         summary = runs.length
-          ? `${runs.length} agent run(s) for ${app.name}${failed ? ` (${failed} failed)` : ''}.`
-          : `No agent runs for ${app.name} yet.`;
+          ? `${runs.length} agent run(s) for ${app.name}${scope}${failed ? ` (${failed} failed)` : ''}.`
+          : `No agent runs for ${app.name}${scope} yet.`;
         break;
       }
       case 'email': {

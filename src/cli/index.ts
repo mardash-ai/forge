@@ -250,8 +250,9 @@ program
   .description('Compact structured inspection (Inspect)')
   .argument('[type]', 'app | resources | events | app-events | notifications | routes | scripts | docker | secrets | jobs | agent-runs | email | auth | health', 'app')
   .requiredOption('--app <app>')
+  .option('--owner <id>', 'scope owner-aware views (app-events | notifications | agent-runs) to one opaque user id (C11)')
   .action(async (type, opts) => {
-    await runCapability('inspect', { app: opts.app, type });
+    await runCapability('inspect', { app: opts.app, type, ...(opts.owner ? { owner: opts.owner } : {}) });
   });
 
 // --- explain ---------------------------------------------------------------
@@ -407,6 +408,18 @@ auth
     process.stdout.write(JSON.stringify(data) + '\n');
   });
 
+// --- owner (C11) -----------------------------------------------------------
+const owner = program.command('owner').description('Per-user ownership of the shared stores (Permissions / access control)');
+owner
+  .command('claim-legacy')
+  .description('Assign every owner-less shared-store record (app-events + notifications + agent-runs) to an owner — the C11 cutover migration (pairs with `auth seed-owner`)')
+  .requiredOption('--app <app>')
+  .requiredOption('--owner <id>', 'opaque owner user id to claim legacy records for (e.g. the seeded owner)')
+  .action(async (opts) => {
+    const data = await api('POST', '/owner/claim-legacy', { app: opts.app, owner: opts.owner });
+    process.stdout.write(JSON.stringify(data) + '\n');
+  });
+
 // --- read-only surfaces ----------------------------------------------------
 program
   .command('capabilities')
@@ -421,12 +434,14 @@ program
   .description('List Resources')
   .option('--app <app_id>', 'filter by app id')
   .option('--type <type>', 'filter by resource type')
+  .option('--owner <id>', 'scope per-user resources (e.g. agent-runs) to one opaque owner id (C11)')
   .action(async (opts) => {
     const params = new URLSearchParams();
     if (opts.app) params.set('app_id', opts.app);
     if (opts.type) params.set('type', opts.type);
+    if (opts.owner) params.set('owner', opts.owner);
     const data = await api('GET', `/resources?${params.toString()}`);
-    process.stdout.write(JSON.stringify(data.resources.map((r: any) => ({ id: r.id, type: r.type, status: r.status, created_at: r.created_at }))) + '\n');
+    process.stdout.write(JSON.stringify(data.resources.map((r: any) => ({ id: r.id, type: r.type, status: r.status, owner: r.owner, created_at: r.created_at }))) + '\n');
   });
 
 program

@@ -13,6 +13,7 @@ import { nowIso } from '../shared/time';
 import { registerAppEventRoutes } from '../api/app-events-routes';
 import { registerNotificationRoutes } from '../api/notifications-routes';
 import { registerAuthRoutes } from '../api/auth-routes';
+import { registerOwnerRoutes } from '../api/owner-routes';
 import { logPath } from '../shared/paths';
 
 // The Forge DATA PLANE server — the production/runtime counterpart to the control
@@ -60,9 +61,10 @@ app.post('/capabilities/:slug', async (req, reply) => {
 
 // Read surfaces (state + facts) — safe in production.
 app.get('/resources', async (req) => {
-  const q = req.query as { type?: string; app_id?: string };
+  const q = req.query as { type?: string; app_id?: string; owner?: string };
   const type = q.type && (RESOURCE_TYPES as readonly string[]).includes(q.type) ? (q.type as ResourceType) : undefined;
-  return { resources: await store.listResources({ type, app_id: q.app_id }) };
+  // `owner` (C11) scopes per-user resources (e.g. C1 agent-runs) to one user; omitted = app-scoped.
+  return { resources: await store.listResources({ type, app_id: q.app_id, owner: q.owner }) };
 });
 app.get('/resources/:id', async (req, reply) => {
   const { id } = req.params as { id: string };
@@ -95,6 +97,10 @@ registerNotificationRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME }
 // accessor. The app proxies `/auth/*` here (same-origin) and gates the rest of itself by verifying
 // the signed session cookie locally. Defaults the app to this sidecar's FORGE_APP_NAME.
 registerAuthRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
+
+// Owner-scoping migration (C11) — one-time `claim-legacy` cutover assigning owner-less C3/C4/C1
+// records to a seeded owner. Runs on the data plane so a production cutover needs no control plane.
+registerOwnerRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 
 // In production there is no `./forge provision`, so seed a minimal Application
 // record for the app this sidecar serves — enough for schedule-job/inspect to

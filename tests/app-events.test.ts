@@ -67,3 +67,58 @@ describe('AppEvent log (C3)', () => {
     expect(latest['g1']).toBe(g1Feed[0]?.at); // newest g1 event's timestamp
   });
 });
+
+// C11 — owner-scoping (per-user ownership). The same per-app log now partitions by (app, owner):
+// an emit carries an opaque `owner` (C10's session userId); a read scoped to an owner returns ONLY
+// that owner's events. Cross-owner reads MUST come back empty — user A can never read user B.
+describe('AppEvent owner-scoping (C11)', () => {
+  it("user A's events are NOT visible to user B's owner-scoped query (A cannot read B)", async () => {
+    await store.appendAppEvent({ app_id: 'app', type: 'goal.created', subject: 'g1', owner: 'A' });
+    await store.appendAppEvent({ app_id: 'app', type: 'goal.created', subject: 'g2', owner: 'B' });
+
+    const aFeed = await store.listAppEvents({ app_id: 'app', owner: 'A' });
+    const bFeed = await store.listAppEvents({ app_id: 'app', owner: 'B' });
+    expect(aFeed.map((e) => e.subject)).toEqual(['g1']); // only A's
+    expect(bFeed.map((e) => e.subject)).toEqual(['g2']); // only B's
+    // The cross-owner read is EMPTY, never the other user's data.
+    expect((await store.listAppEvents({ app_id: 'app', owner: 'A' })).some((e) => e.owner === 'B')).toBe(false);
+  });
+
+  it('a query with an owner returns only that owner’s records; a subject filter composes with it', async () => {
+    await store.appendAppEvent({ app_id: 'app', type: 't', subject: 'g1', owner: 'A' });
+    await store.appendAppEvent({ app_id: 'app', type: 't', subject: 'g1', owner: 'B' });
+    await store.appendAppEvent({ app_id: 'app', type: 't', subject: 'g1', owner: 'A' });
+
+    const aG1 = await store.listAppEvents({ app_id: 'app', owner: 'A', subject: 'g1' });
+    expect(aG1.length).toBe(2); // A's two g1 events, not B's
+    expect(aG1.every((e) => e.owner === 'A')).toBe(true);
+  });
+
+  it('backward compat: no owner on emit = legacy/app-scoped — an owner-less query sees ALL, an owner query excludes legacy', async () => {
+    await store.appendAppEvent({ app_id: 'app', type: 'legacy' }); // pre-C11, no owner
+    await store.appendAppEvent({ app_id: 'app', type: 'owned', owner: 'A' });
+
+    // App-scope (no owner passed) — a C10-less app / pre-C11 read is unchanged: sees everything.
+    expect((await store.listAppEvents({ app_id: 'app' })).map((e) => e.type).sort()).toEqual(['legacy', 'owned']);
+    // Owner-scoped — a legacy (owner-less) event is not attributed to A until migrated.
+    expect((await store.listAppEvents({ app_id: 'app', owner: 'A' })).map((e) => e.type)).toEqual(['owned']);
+  });
+
+  it('latestAppEventTimes is owner-scoped — one user’s activity never resets another user’s clock', async () => {
+    await store.appendAppEvent({ app_id: 'app', type: 'a', subject: 'shared', owner: 'A' });
+    await store.appendAppEvent({ app_id: 'app', type: 'b', subject: 'shared', owner: 'B' });
+    const aLatest = await store.latestAppEventTimes('app', 'A');
+    const aFeed = await store.listAppEvents({ app_id: 'app', owner: 'A', subject: 'shared' });
+    expect(aLatest['shared']).toBe(aFeed[0]?.at); // A's own newest, not B's
+  });
+
+  it('assignAppEventOwner migrates legacy events to an owner (one-time cutover), idempotently', async () => {
+    await store.appendAppEvent({ app_id: 'app', type: 'legacy1' });
+    await store.appendAppEvent({ app_id: 'app', type: 'legacy2' });
+    await store.appendAppEvent({ app_id: 'app', type: 'already', owner: 'A' });
+
+    expect(await store.assignAppEventOwner('app', 'A')).toBe(2); // only the two legacy events
+    expect((await store.listAppEvents({ app_id: 'app', owner: 'A' })).map((e) => e.type).sort()).toEqual(['already', 'legacy1', 'legacy2']);
+    expect(await store.assignAppEventOwner('app', 'A')).toBe(0); // nothing left to claim (idempotent)
+  });
+});

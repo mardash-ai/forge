@@ -207,6 +207,71 @@ describe('AgentRun capability (C1)', () => {
   });
 });
 
+// C11 — owner-scoping. An agent run carries an opaque `owner` (C10's session userId); both the
+// AgentTask and its Artifact are stamped with it, so a per-user query returns ONLY that user's runs.
+describe('AgentRun owner-scoping (C11)', () => {
+  it("A's run + artifact are stamped with the owner and are NOT visible to B (A cannot read B)", async () => {
+    const app = await seedApp('demo');
+    await setSecret(app.id, 'ANTHROPIC_API_KEY', 'sk-ant-test');
+    setModelInvoker(async () => ({ steps: ['x'] }));
+
+    const a = (await executeCapability('agent-run', { app: 'demo', owner: 'A', capability: 'planner', system: 's', input: 'i', schema: SCHEMA }, SYSTEM_ACTOR)).resource as AgentTask;
+    const b = (await executeCapability('agent-run', { app: 'demo', owner: 'B', capability: 'planner', system: 's', input: 'i', schema: SCHEMA }, SYSTEM_ACTOR)).resource as AgentTask;
+
+    expect(a.owner).toBe('A');
+    expect(b.owner).toBe('B');
+    // The Artifact is owner-stamped too, so a run and its result stay attributed to the same user.
+    expect(((await store.getResource('Artifact', a.artifact_id!)) as Artifact).owner).toBe('A');
+
+    // Owner-scoped queries return ONLY that owner's runs; the cross-owner read is empty.
+    const aRuns = (await store.listResources({ type: 'AgentTask', app_id: app.id, owner: 'A' })) as AgentTask[];
+    const bRuns = (await store.listResources({ type: 'AgentTask', app_id: app.id, owner: 'B' })) as AgentTask[];
+    expect(aRuns.map((r) => r.id)).toEqual([a.id]);
+    expect(bRuns.map((r) => r.id)).toEqual([b.id]);
+    expect(aRuns.some((r) => r.owner === 'B')).toBe(false);
+    // Owner-scoped Artifact isolation too.
+    expect(((await store.listResources({ type: 'Artifact', app_id: app.id, owner: 'B' })) as Artifact[]).every((r) => r.owner === 'B')).toBe(true);
+  });
+
+  it('a FAILED run is also owner-stamped (persisted failures stay owner-scoped)', async () => {
+    const app = await seedApp('demo');
+    await setSecret(app.id, 'ANTHROPIC_API_KEY', 'sk-ant-test');
+    setModelInvoker(async () => {
+      throw new Error('nonconforming');
+    });
+    const failed = (await executeCapability('agent-run', { app: 'demo', owner: 'A', capability: 'planner', system: 's', input: 'i', schema: SCHEMA }, SYSTEM_ACTOR)).resource as AgentTask;
+    expect(failed.status).toBe('failed');
+    expect(failed.owner).toBe('A');
+    expect((await store.listResources({ type: 'AgentTask', app_id: app.id, owner: 'B' })).length).toBe(0);
+  });
+
+  it('inspect agent-runs respects owner scoping (only the owner’s runs), and is app-scoped without an owner', async () => {
+    const app = await seedApp('demo');
+    await setSecret(app.id, 'ANTHROPIC_API_KEY', 'sk-ant-test');
+    setModelInvoker(async () => ({ steps: [] }));
+    await executeCapability('agent-run', { app: 'demo', owner: 'A', capability: 'p', system: 's', input: 'i', schema: SCHEMA }, SYSTEM_ACTOR);
+    await executeCapability('agent-run', { app: 'demo', owner: 'B', capability: 'p', system: 's', input: 'i', schema: SCHEMA }, SYSTEM_ACTOR);
+
+    const aInspect = (await executeCapability('inspect', { app: 'demo', type: 'agent-runs', owner: 'A' }, SYSTEM_ACTOR)).resource as { data: unknown[] };
+    expect(aInspect.data.length).toBe(1);
+    expect((aInspect.data[0] as { owner: string }).owner).toBe('A');
+    // No owner → app-scope: both runs.
+    const allInspect = (await executeCapability('inspect', { app: 'demo', type: 'agent-runs' }, SYSTEM_ACTOR)).resource as { data: unknown[] };
+    expect(allInspect.data.length).toBe(2);
+  });
+
+  it('backward compat: a run with NO owner still works and is app-scoped', async () => {
+    const app = await seedApp('demo');
+    await setSecret(app.id, 'ANTHROPIC_API_KEY', 'sk-ant-test');
+    setModelInvoker(async () => ({ steps: [] }));
+    const run = (await executeCapability('agent-run', { app: 'demo', capability: 'p', system: 's', input: 'i', schema: SCHEMA }, SYSTEM_ACTOR)).resource as AgentTask;
+    expect(run.owner).toBeUndefined();
+    // App-scope query (no owner) sees it; an owner-scoped query does not (until migrated).
+    expect((await store.listResources({ type: 'AgentTask', app_id: app.id })).length).toBe(1);
+    expect((await store.listResources({ type: 'AgentTask', app_id: app.id, owner: 'A' })).length).toBe(0);
+  });
+});
+
 describe('model-anthropic plugin', () => {
   it('resolveModelKey prefers the C5 vault, then env, else null (absence is detectable)', async () => {
     const app = await seedApp('demo');

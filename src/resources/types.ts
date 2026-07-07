@@ -28,6 +28,12 @@ export interface BaseResource {
   id: string;
   type: ResourceType;
   app_id?: string;
+  // Owner (C11) — the opaque user id (e.g. C10's session `userId`) a per-user resource belongs to.
+  // Set only by the owner-scoped stores (currently C1's AgentTask + Artifact); resources that are
+  // platform/dev-time state (Build, TestRun, …) leave it absent. A `listResources` query passing an
+  // owner filters to `resource.owner === owner`, so per-user resources never leak across users.
+  // Absent = legacy/app-scoped (pre-C11 or a C10-less app).
+  owner?: string;
   created_at: string;
   updated_at: string;
 }

@@ -13,6 +13,11 @@ export interface Notification {
   data: Record<string, unknown>;
   // Optional subject ref (e.g. the goal id) the notification is about.
   subject?: string;
+  // Owner (C11) — the opaque user id (e.g. C10's session `userId`) this notification belongs to.
+  // Upsert/dismiss/clear/list all scope by (app, owner, key): two users may hold the same `key`
+  // (e.g. "cold:g1") as DISTINCT notifications, and a list passing an owner sees ONLY that owner's.
+  // Absent = legacy/app-scoped (pre-C11 or a C10-less app).
+  owner?: string;
   // Dismissed by the user — kept out of the active feed, but remembered so a re-derivation of the
   // same still-true condition does not resurface it.
   dismissed: boolean;

@@ -10,6 +10,7 @@ import { RESOURCE_TYPES, type ResourceType } from '../resources/types';
 import { registerAppEventRoutes } from './app-events-routes';
 import { registerNotificationRoutes } from './notifications-routes';
 import { registerAuthRoutes } from './auth-routes';
+import { registerOwnerRoutes } from './owner-routes';
 import { logPath } from '../shared/paths';
 
 // The Forge HTTP API. Capability APIs perform behavior; Resource/Event APIs
@@ -48,9 +49,10 @@ app.post('/capabilities/:slug', async (req, reply) => {
 
 // Resource APIs.
 app.get('/resources', async (req) => {
-  const q = req.query as { type?: string; app_id?: string };
+  const q = req.query as { type?: string; app_id?: string; owner?: string };
   const type = q.type && (RESOURCE_TYPES as readonly string[]).includes(q.type) ? (q.type as ResourceType) : undefined;
-  const resources = await store.listResources({ type, app_id: q.app_id });
+  // `owner` (C11) scopes per-user resources (e.g. C1 agent-runs) to one user; omitted = app-scoped.
+  const resources = await store.listResources({ type, app_id: q.app_id, owner: q.owner });
   return { resources };
 });
 
@@ -82,6 +84,11 @@ registerNotificationRoutes(app);
 // Identity / auth (C10) — hosted login/signup/verify/reset/OAuth/sign-out pages + session accessor.
 // Served here for dev; the data-plane sidecar serves the same routes in production.
 registerAuthRoutes(app);
+
+// Owner-scoping migration (C11) — one-time `claim-legacy` cutover that assigns owner-less shared-store
+// records (C3/C4/C1) to a seeded owner. Owner-scoping itself is just an added dimension on the C3/C4/C1
+// routes above; this is only the migration primitive.
+registerOwnerRoutes(app);
 
 // Event APIs.
 app.get('/events', async (req) => {

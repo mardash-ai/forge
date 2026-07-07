@@ -75,3 +75,63 @@ describe('Notification store (C4)', () => {
     expect((await store.listNotifications('b'))[0]?.title).toBe('B');
   });
 });
+
+// C11 — owner-scoping. Notifications now partition by (app, owner, key): two users can hold the
+// SAME app key as DISTINCT notifications, mutations act only on the caller's own, and a list scoped
+// to an owner returns ONLY that owner's — user A can never read/affect user B.
+describe('Notification owner-scoping (C11)', () => {
+  it('two owners may hold the same key as distinct records; each lists only their own (A cannot read B)', async () => {
+    await store.upsertNotification('app', { key: 'cold:g1', title: "A's", owner: 'A' });
+    await store.upsertNotification('app', { key: 'cold:g1', title: "B's", owner: 'B' });
+
+    const aList = await store.listNotifications('app', { owner: 'A' });
+    const bList = await store.listNotifications('app', { owner: 'B' });
+    expect(aList.map((n) => n.title)).toEqual(["A's"]); // only A's, despite the shared key
+    expect(bList.map((n) => n.title)).toEqual(["B's"]);
+    expect(aList[0]?.key).toBe('cold:g1'); // the app key is unchanged (owner namespacing is internal)
+    expect(aList[0]?.owner).toBe('A');
+  });
+
+  it("dismiss + clear act only on the caller's own record — the other owner's is untouched", async () => {
+    await store.upsertNotification('app', { key: 'k', title: 'A', owner: 'A' });
+    await store.upsertNotification('app', { key: 'k', title: 'B', owner: 'B' });
+
+    expect(await store.dismissNotification('app', 'k', 'A')).toBe(true);
+    expect(await store.listNotifications('app', { owner: 'A' })).toEqual([]); // A's is hidden
+    expect((await store.listNotifications('app', { owner: 'B' })).length).toBe(1); // B's untouched
+
+    expect(await store.clearNotification('app', 'k', 'A')).toBe(true);
+    expect(await store.listNotifications('app', { owner: 'A', includeDismissed: true })).toEqual([]); // gone
+    expect((await store.listNotifications('app', { owner: 'B', includeDismissed: true })).length).toBe(1); // still B's
+  });
+
+  it("re-upsert preserves the per-owner dismissed flag independently", async () => {
+    await store.upsertNotification('app', { key: 'k', title: 't', owner: 'A' });
+    await store.dismissNotification('app', 'k', 'A');
+    await store.upsertNotification('app', { key: 'k', title: 't (re-derived)', owner: 'A' }); // still true for A
+    await store.upsertNotification('app', { key: 'k', title: 'fresh', owner: 'B' }); // new for B
+    expect(await store.listNotifications('app', { owner: 'A' })).toEqual([]); // stays dismissed for A
+    expect((await store.listNotifications('app', { owner: 'B' }))[0]?.dismissed).toBe(false); // B's is active
+  });
+
+  it('backward compat: an owner-less upsert is app-scoped/legacy — app-scope list sees all, owner list excludes legacy', async () => {
+    await store.upsertNotification('app', { key: 'legacy', title: 'legacy' }); // pre-C11, no owner
+    await store.upsertNotification('app', { key: 'owned', title: 'owned', owner: 'A' });
+
+    // App-scope (no owner passed) — unchanged pre-C11 behavior: sees everything.
+    expect((await store.listNotifications('app')).map((n) => n.key).sort()).toEqual(['legacy', 'owned']);
+    // Owner-scoped — the legacy notification is not attributed to A until migrated.
+    expect((await store.listNotifications('app', { owner: 'A' })).map((n) => n.key)).toEqual(['owned']);
+  });
+
+  it('assignNotificationOwner migrates legacy notifications to an owner (re-keys + stamps), idempotently', async () => {
+    await store.upsertNotification('app', { key: 'cold:g1', title: 't1' }); // legacy
+    await store.upsertNotification('app', { key: 'cold:g2', title: 't2' }); // legacy
+    await store.upsertNotification('app', { key: 'owned', title: 'o', owner: 'A' });
+
+    expect(await store.assignNotificationOwner('app', 'A')).toBe(2);
+    const aKeys = (await store.listNotifications('app', { owner: 'A' })).map((n) => n.key).sort();
+    expect(aKeys).toEqual(['cold:g1', 'cold:g2', 'owned']); // legacy now attributed to A
+    expect(await store.assignNotificationOwner('app', 'A')).toBe(0); // idempotent
+  });
+});

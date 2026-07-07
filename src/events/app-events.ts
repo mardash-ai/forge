@@ -13,6 +13,10 @@ export interface AppEvent {
   type: string;
   // App-defined subject ref (the filter key), e.g. a goal id. Optional.
   subject?: string;
+  // Owner (C11) — the opaque user id (e.g. C10's session `userId`) this event belongs to.
+  // The feed filters by (app, owner): a query passing an owner sees ONLY that owner's events,
+  // so events never leak across users. Absent = legacy/app-scoped (pre-C11 or a C10-less app).
+  owner?: string;
   // Denormalized snapshot the app supplies; rendered as-is.
   data: Record<string, unknown>;
   // ISO-8601 emit time.
