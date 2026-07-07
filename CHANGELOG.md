@@ -9,6 +9,23 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-07-07
+
+### Added
+- **Platform capability C4 — Notifications.** A durable, per-app notification store the running app
+  drives over HTTP (on **both** the control-plane API and the data-plane sidecar, like C3):
+  - `POST /notifications { app?, key, title, body?, data?, subject? }` — upsert by stable `key`
+    (idempotent; re-deriving the same condition updates in place and **preserves `dismissed` +
+    `created_at`**, so a still-true dismissed notification never resurfaces).
+  - `POST /notifications/dismiss { app?, key }` — dismissal **persists** (leaves the active feed but
+    not `?include_dismissed=`).
+  - `POST /notifications/clear { app?, key }` — remove one whose condition no longer applies.
+  - `GET /notifications?app=&include_dismissed=` — the active feed, newest-first.
+
+  The app owns WHICH conditions matter (derivation stays domain); Forge owns produce/track/dismiss/
+  clear. A scheduled job (C2) can upsert while the user is away, so the inbox/badge is current before
+  they open the app. Observable via `forge inspect notifications`.
+
 ## [0.7.0] — 2026-07-06
 
 ### Added
@@ -156,7 +173,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/mardash-ai/forge/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/mardash-ai/forge/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/mardash-ai/forge/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/mardash-ai/forge/compare/v0.5.1...v0.6.0
