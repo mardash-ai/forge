@@ -30,6 +30,7 @@ export const EVENT_TYPES = [
   'DeploymentStarted',
   'DeploymentCompleted',
   'DeploymentRolledBack',
+  'ProductionArtifactsGenerated',
   'AgentRunSucceeded',
   'AgentRunFailed',
   'ArtifactCreated',

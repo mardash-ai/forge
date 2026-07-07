@@ -219,6 +219,31 @@ program
     });
   });
 
+// --- productionize ---------------------------------------------------------
+program
+  .command('productionize')
+  .description('Generate the app’s canonical production artifacts (Productionize)')
+  .requiredOption('--app <app>')
+  .option('--platform <platform>', 'target platform', 'web')
+  .option('--framework <framework>', 'target framework', 'nextjs')
+  .option('--host <domain>', 'public host for the Traefik router (remembered after first run)')
+  .option('--readiness-path <path>', 'readiness path Traefik + the healthcheck probe (default /api/health)')
+  .option('--web-image <ref>', 'digest-pinned production web image, e.g. ghcr.io/owner/app@sha256:… (R1)')
+  .option('--data-plane-image <ref>', 'digest-pinned Forge data-plane image (default: FORGE_DATA_PLANE_IMAGE)')
+  .option('--cert-resolver <name>', 'Traefik TLS cert resolver name (default letsencrypt)')
+  .action(async (opts) => {
+    await runCapability('productionize', {
+      app: opts.app,
+      platform: opts.platform,
+      framework: opts.framework,
+      ...(opts.host ? { host: opts.host } : {}),
+      ...(opts.readinessPath ? { readiness_path: opts.readinessPath } : {}),
+      ...(opts.webImage ? { web_image: opts.webImage } : {}),
+      ...(opts.dataPlaneImage ? { data_plane_image: opts.dataPlaneImage } : {}),
+      ...(opts.certResolver ? { cert_resolver: opts.certResolver } : {}),
+    });
+  });
+
 // --- inspect ---------------------------------------------------------------
 program
   .command('inspect')

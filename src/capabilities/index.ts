@@ -13,6 +13,7 @@ import { setSecretCapability } from './set-secret/index';
 import { unsetSecretCapability } from './unset-secret/index';
 import { scheduleJob } from './schedule-job/index';
 import { deployCapability } from './deploy/index';
+import { productionize } from './productionize/index';
 import { agentRun } from './agent-run/index';
 
 // The full set of Capabilities the platform exposes. Order here is the order
@@ -32,5 +33,6 @@ export const capabilities: Capability<any, any>[] = [
   unsetSecretCapability,
   scheduleJob,
   deployCapability,
+  productionize,
   agentRun,
 ];

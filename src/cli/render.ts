@@ -64,6 +64,15 @@ export function compact(resource: Any): Any {
         suggested_next:
           r.status === 'succeeded' ? 'forge inspect events --app <app>' : `forge explain --resource ${r.id}`,
       };
+    case 'ProductionArtifacts':
+      return {
+        resource: r.id,
+        status: r.status,
+        host: r.host,
+        services: r.services,
+        files: r.files,
+        suggested_next: `forge deploy --app <app>`,
+      };
     case 'Build':
       return {
         resource: r.id,

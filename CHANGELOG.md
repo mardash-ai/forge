@@ -9,6 +9,39 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-07-07
+
+### Added
+- **`forge productionize` — generate the app’s canonical production artifacts (C8).** A new
+  control-plane `Productionize` Capability (HTTP `POST /capabilities/productionize`,
+  `forge productionize --app <app> --host <domain> [--readiness-path /api/health]
+  [--web-image <ref@sha256:…>] [--data-plane-image <ref@sha256:…>] [--cert-resolver <name>]`) that
+  EMITS files — like `provision` generates the dev `compose.yaml`; nothing new runs in prod. It
+  writes, into the app repo:
+  - a multi-stage **`Dockerfile`** that builds a slim runtime image from Next’s
+    `output: 'standalone'` (no build tooling in the runner, non-root, `CMD ["node","server.js"]`)
+    and a matching **`.dockerignore`**;
+  - **`output: 'standalone'`** set in the app’s Next config — injected idempotently, never clobbering
+    a hand-set `output` (a config is created if the app has none);
+  - **`compose.prod.yaml`** — the CANONICAL production stack, derived from the app’s declared `infra`
+    (postgres/redis/secrets, per P1) + `--host`: the **Traefik** ingress labels (host rule + the
+    `loadbalancer.healthcheck` that **C7 Deploy** gates on), `stop_grace_period`, the external
+    `proxy` network, the **Forge data-plane sidecar** (C3/C4 — reached at `http://data-plane:3718`
+    via `FORGE_DATA_PLANE_URL`, state on a volume), and the **DB** service (healthcheck names the db).
+    It is **exactly what `forge deploy` rolls**;
+  - **`.env.prod.example`** documenting the values `.env.prod` must supply (never a real secret).
+
+  **Idempotent + convergent** like `provision`: the converged production config (host, readiness
+  path, image pins, cert resolver) is persisted under `forge.app.json` `production`, so a flag-less
+  re-run reproduces byte-identical artifacts and never resets a value it isn’t given. **R1:** the
+  generated compose references only **digest-pinned** images (`ref@sha256:…`) for the web and
+  data-plane services — a non-digest `--web-image`/`--data-plane-image` (or a bare tag / `latest`) is
+  rejected `422 invalid_input`; postgres/redis use the same fixed tags `provision` uses. A new
+  `ProductionArtifacts` Resource + `ProductionArtifactsGenerated` Event record what was generated.
+  Pairs with **C7 Deploy**; additive — no change to already-adopted capabilities. Consumers replace
+  their hand-authored `app/Dockerfile` + `compose.prod.yaml` (and any template deploy-image staging)
+  with this generator’s output.
+
 ## [0.10.0] — 2026-07-07
 
 ### Added
@@ -232,7 +265,9 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/mardash-ai/forge/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/mardash-ai/forge/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/mardash-ai/forge/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/mardash-ai/forge/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/mardash-ai/forge/compare/v0.6.1...v0.7.0
