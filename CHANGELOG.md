@@ -9,6 +9,41 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-07-07
+
+### Added
+- **C12 — transactional email delivery.** A generic, provider-agnostic capability to *deliver* a
+  transactional email — the platform surface C10 (identity/auth) will call to send signup-verification
+  and password-reset messages, and later the channel behind C4 Notifications' email. It composes +
+  delivers a message it is handed; it does **not** generate tokens or links (that stays C10's job).
+  Runs on the **data plane** (email is sent at runtime by the app / an auth flow); the control plane
+  only inspects it.
+  - **`SendEmail` Capability (`send-email`, plane `data`).** Input
+    `{ to; subject?; html?; text?; template?; data?; app? }` — provide **either** an inline
+    `subject` + `html`/`text` **or** a built-in `template` (+ `data`). Returns a durable
+    **`EmailDelivery`** Resource (`status: 'sent' | 'failed'`, `message_id?`, `error?`). Persists
+    **every attempted** send (success *and* failure) so a delivery failure is reported, never silently
+    dropped. Primary caller is platform-internal (C10 via `executeCapability('send-email', …)` / the
+    data-plane `POST /capabilities/send-email`); the same route is available to an app later.
+  - **Built-in templates.** `verify-email` and `reset-password` render subject + HTML + plain-text from
+    the `data.url` link the caller supplies (HTML is escaped — no injection). C10 generates the link;
+    C12 only composes and delivers it.
+  - **Provider-agnostic, configured via C5.** Credentials come from the C5 secret store (or process
+    env), never hardcoded: **`SMTP_URL`** (`smtp[s]://user:pass@host:port` — any SMTP relay: SES /
+    Postmark / Sendgrid / Mailgun / Postfix) + **`EMAIL_FROM`** (the From address). The transport is
+    Node's built-in `net`/`tls` (implicit TLS, opportunistic STARTTLS, AUTH LOGIN) — **no new
+    dependency**, so the slim data-plane image stays clean. The `email-smtp` Implementation is a real
+    technology boundary a future `email-api` Implementation can replace without touching the contract.
+  - **Detectable absence → graceful degrade.** When email is unconfigured (missing `SMTP_URL` and/or
+    `EMAIL_FROM`), `SendEmail` throws a typed **503 `dependency_unavailable`** naming exactly what is
+    missing — it never crashes, and no delivery is persisted (there was no send). C10 can detect this
+    and decide (block a signup that needs verification, or surface the state).
+  - **Observable without leaking.** An `EmailDelivery` and the `EmailSent`/`EmailFailed` Events record
+    **to (redacted, e.g. `j***@example.com`) / subject / status** only — never credentials, never the
+    message body/PII; a provider error is scrubbed of any recipient address before it is stored.
+    Inspect with **`forge inspect email --app <app>`** / **`forge email list`**; send manually with
+    **`forge email send`**.
+
 ## [0.12.0] — 2026-07-07
 
 ### Added
@@ -329,7 +364,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/mardash-ai/forge/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/mardash-ai/forge/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/mardash-ai/forge/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/mardash-ai/forge/compare/v0.10.0...v0.11.0

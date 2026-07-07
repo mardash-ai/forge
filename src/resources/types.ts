@@ -19,6 +19,7 @@ export const RESOURCE_TYPES = [
   'ProductionArtifacts',
   'AgentTask',
   'Artifact',
+  'EmailDelivery',
 ] as const;
 
 export type ResourceType = (typeof RESOURCE_TYPES)[number];
@@ -249,6 +250,27 @@ export interface AgentTask extends BaseResource {
   implementation: string;
 }
 
+// An EmailDelivery — the durable, inspectable record of ONE transactional-email send attempt (C12),
+// persisted for success AND failure once a send was attempted. State only; behavior lives in the
+// SendEmail Capability. Deliberately CARRIES NO PII/secrets: `to` is a REDACTED recipient (e.g.
+// "j***@example.com"), never the full address; there is NO message body and NO credential here — only
+// the subject + status + (on failure) a scrubbed provider error. Survives restart (a JSON doc under the
+// state dir), so past sends stay queryable via `forge inspect email`.
+export interface EmailDelivery extends BaseResource {
+  type: 'EmailDelivery';
+  status: 'sent' | 'failed';
+  // Redacted recipient — never the full address (no PII at rest).
+  to: string;
+  subject: string;
+  // The built-in template used (verify-email | reset-password), if any; absent for an inline body.
+  template?: string;
+  implementation: string;
+  // The transport's message id (success only).
+  message_id?: string;
+  // Populated on failure (provider/transport error), scrubbed of any recipient address.
+  error?: string;
+}
+
 export type AnyResource =
   | Application
   | Environment
@@ -265,4 +287,5 @@ export type AnyResource =
   | Deployment
   | ProductionArtifacts
   | AgentTask
-  | Artifact;
+  | Artifact
+  | EmailDelivery;

@@ -15,6 +15,7 @@ import { scheduleJob } from './schedule-job/index';
 import { deployCapability } from './deploy/index';
 import { productionize } from './productionize/index';
 import { agentRun } from './agent-run/index';
+import { sendEmail } from './send-email/index';
 
 // The full set of Capabilities the platform exposes. Order here is the order
 // they appear in discovery output.
@@ -35,4 +36,5 @@ export const capabilities: Capability<any, any>[] = [
   deployCapability,
   productionize,
   agentRun,
+  sendEmail,
 ];

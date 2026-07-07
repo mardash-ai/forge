@@ -34,6 +34,8 @@ export const EVENT_TYPES = [
   'AgentRunSucceeded',
   'AgentRunFailed',
   'ArtifactCreated',
+  'EmailSent',
+  'EmailFailed',
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];

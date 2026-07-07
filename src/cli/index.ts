@@ -248,7 +248,7 @@ program
 program
   .command('inspect')
   .description('Compact structured inspection (Inspect)')
-  .argument('[type]', 'app | resources | events | app-events | notifications | routes | scripts | docker | secrets | jobs | agent-runs | health', 'app')
+  .argument('[type]', 'app | resources | events | app-events | notifications | routes | scripts | docker | secrets | jobs | agent-runs | email | health', 'app')
   .requiredOption('--app <app>')
   .action(async (type, opts) => {
     await runCapability('inspect', { app: opts.app, type });
@@ -342,6 +342,45 @@ program
   .requiredOption('--app <app>')
   .action(async (opts) => {
     await runCapability('inspect', { app: opts.app, type: 'jobs' });
+  });
+
+// --- email (C12) -----------------------------------------------------------
+const email = program.command('email').description('Send + inspect transactional email (SendEmail)');
+email
+  .command('send')
+  .description('Send a transactional email (inline body or a built-in verify/reset template)')
+  .requiredOption('--app <app>')
+  .requiredOption('--to <addr>', 'recipient email address')
+  .option('--subject <s>', 'subject (required for an inline body)')
+  .option('--text <t>', 'plain-text body')
+  .option('--html <h>', 'HTML body')
+  .option('--template <name>', 'built-in template: verify-email | reset-password')
+  .option('--data <json>', 'template data as JSON, e.g. \'{"url":"https://…","product":"Acme"}\'')
+  .action(async (opts) => {
+    let data: unknown;
+    if (opts.data) {
+      try {
+        data = JSON.parse(opts.data);
+      } catch (e) {
+        fail(`--data is not valid JSON: ${String(e)}`);
+      }
+    }
+    await runCapability('send-email', {
+      app: opts.app,
+      to: opts.to,
+      ...(opts.subject ? { subject: opts.subject } : {}),
+      ...(opts.text ? { text: opts.text } : {}),
+      ...(opts.html ? { html: opts.html } : {}),
+      ...(opts.template ? { template: opts.template } : {}),
+      ...(data !== undefined ? { data } : {}),
+    });
+  });
+email
+  .command('list')
+  .description('List transactional-email sends for an app (redacted recipient + subject + status)')
+  .requiredOption('--app <app>')
+  .action(async (opts) => {
+    await runCapability('inspect', { app: opts.app, type: 'email' });
   });
 
 // --- read-only surfaces ----------------------------------------------------

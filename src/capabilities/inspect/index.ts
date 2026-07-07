@@ -6,13 +6,13 @@ import type { Capability } from '../../core/types';
 import type { Inspection } from '../../resources/types';
 import { appRefInput, resolveApp, baseResource } from '../_shared';
 import { listSecretNames } from '../../plugins/secrets-local/index';
-import type { ScheduledJob, AgentTask } from '../../resources/types';
+import type { ScheduledJob, AgentTask, EmailDelivery } from '../../resources/types';
 import { parseHealthResponse, httpStatusFor } from '../../shared/health';
 
 const inputSchema = z.object({
   ...appRefInput,
   type: z
-    .enum(['app', 'resources', 'events', 'app-events', 'notifications', 'routes', 'scripts', 'docker', 'secrets', 'jobs', 'agent-runs', 'health'])
+    .enum(['app', 'resources', 'events', 'app-events', 'notifications', 'routes', 'scripts', 'docker', 'secrets', 'jobs', 'agent-runs', 'email', 'health'])
     .default('app'),
 });
 type Input = z.infer<typeof inputSchema>;
@@ -66,7 +66,7 @@ function fileToRoute(rel: string): { route: string; kind: 'page' | 'api' } | nul
 export const inspect: Capability<Input, Inspection> = {
   name: 'Inspect',
   slug: 'inspect',
-  description: 'Return a compact structured view of an Application (app, resources, events, app-events, notifications, routes, scripts, docker, secrets, jobs, agent-runs, health).',
+  description: 'Return a compact structured view of an Application (app, resources, events, app-events, notifications, routes, scripts, docker, secrets, jobs, agent-runs, email, health).',
   inputSchema,
   resourceType: 'Inspection',
   events: ['InspectionCreated'],
@@ -200,6 +200,26 @@ export const inspect: Capability<Input, Inspection> = {
         summary = runs.length
           ? `${runs.length} agent run(s) for ${app.name}${failed ? ` (${failed} failed)` : ''}.`
           : `No agent runs for ${app.name} yet.`;
+        break;
+      }
+      case 'email': {
+        // Durable transactional-email records (C12) — every attempted send, success AND failure.
+        // Shows the REDACTED recipient + subject + status only (no body/creds are ever stored).
+        const deliveries = (await ctx.store.listResources({ type: 'EmailDelivery', app_id: app.id })) as EmailDelivery[];
+        data = deliveries.map((d) => ({
+          id: d.id,
+          to: d.to,
+          subject: d.subject,
+          status: d.status,
+          template: d.template,
+          message_id: d.message_id,
+          error: d.error,
+          at: d.created_at,
+        }));
+        const failed = deliveries.filter((d) => d.status === 'failed').length;
+        summary = deliveries.length
+          ? `${deliveries.length} email(s) for ${app.name}${failed ? ` (${failed} failed)` : ''}.`
+          : `No emails sent for ${app.name} yet.`;
         break;
       }
       case 'docker': {
