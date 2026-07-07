@@ -8,11 +8,14 @@ import { appRefInput, resolveApp, baseResource } from '../_shared';
 import { listSecretNames } from '../../plugins/secrets-local/index';
 import type { ScheduledJob, AgentTask, EmailDelivery } from '../../resources/types';
 import { parseHealthResponse, httpStatusFor } from '../../shared/health';
+import { resolveAuthConfig, redactEmail } from '../../plugins/auth-identity/index';
+import { resolveEmailConfig } from '../../plugins/email-smtp/index';
+import * as authStore from '../../plugins/auth-identity/store';
 
 const inputSchema = z.object({
   ...appRefInput,
   type: z
-    .enum(['app', 'resources', 'events', 'app-events', 'notifications', 'routes', 'scripts', 'docker', 'secrets', 'jobs', 'agent-runs', 'email', 'health'])
+    .enum(['app', 'resources', 'events', 'app-events', 'notifications', 'routes', 'scripts', 'docker', 'secrets', 'jobs', 'agent-runs', 'email', 'auth', 'health'])
     .default('app'),
 });
 type Input = z.infer<typeof inputSchema>;
@@ -220,6 +223,40 @@ export const inspect: Capability<Input, Inspection> = {
         summary = deliveries.length
           ? `${deliveries.length} email(s) for ${app.name}${failed ? ` (${failed} failed)` : ''}.`
           : `No emails sent for ${app.name} yet.`;
+        break;
+      }
+      case 'auth': {
+        // Identity/auth (C10) — a SAFE projection only. Never returns password
+        // hashes, session tokens, or verify/reset tokens (those live in the private
+        // auth store, off the resource API). Also reports what's configured so the
+        // app/operator can see the degrade state (no session key / no Google / no email).
+        const users = await authStore.listUsers(app.id);
+        const cfg = await resolveAuthConfig(app.id);
+        const emailCfg = await resolveEmailConfig(app.id);
+        const activeSessions = await authStore.activeSessionCount(app.id);
+        data = {
+          users: users.map((u) => ({
+            id: u.id,
+            email: redactEmail(u.email),
+            verified: u.email_verified,
+            provider: u.provider ?? 'password',
+            is_owner: u.is_owner,
+            created_at: u.created_at,
+          })),
+          user_count: users.length,
+          active_sessions: activeSessions,
+          configured: {
+            session_key: Boolean(cfg.sessionSecret),
+            google_oauth: Boolean(cfg.google),
+            email_delivery: emailCfg.ok,
+            service_token: Boolean(cfg.serviceToken),
+          },
+        };
+        const owner = users.find((u) => u.is_owner);
+        summary =
+          `${users.length} user(s) for ${app.name}${activeSessions ? `, ${activeSessions} active session(s)` : ''}` +
+          (owner ? `, owner ${redactEmail(owner.email)}` : ', no owner seeded') +
+          `. Configured: session-key ${cfg.sessionSecret ? 'yes' : 'NO'}, google ${cfg.google ? 'yes' : 'no'}, email ${emailCfg.ok ? 'yes' : 'no'}, service-token ${cfg.serviceToken ? 'yes' : 'no'}.`;
         break;
       }
       case 'docker': {

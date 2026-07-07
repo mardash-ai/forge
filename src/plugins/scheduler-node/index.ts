@@ -3,6 +3,8 @@ import path from 'node:path';
 import type { Store } from '../../storage/store';
 import type { Application, ScheduledJob } from '../../resources/types';
 import { SYSTEM_ACTOR } from '../../shared/domain';
+import { SERVICE_TOKEN_HEADER } from '../../shared/session';
+import { resolveServiceToken } from '../auth-identity/index';
 import { isDue, advanceJob } from './schedule';
 
 // Plugin: scheduler-node.
@@ -50,10 +52,22 @@ async function appCallbackBase(store: Store, appId?: string): Promise<string | n
 async function invokeTarget(
   base: string,
   target: ScheduledJob['target'],
+  serviceToken: string | null,
 ): Promise<{ ok: boolean; status?: number; error?: string }> {
   try {
+    // C10 §5 — authenticate as a SERVICE (not a user session). The app's session
+    // gate lets `/api/cron/*` through only when it carries the valid service token,
+    // closing what used to be fully-open cron endpoints. Sent under both a dedicated
+    // header and Bearer so the app can check whichever it prefers. When no token is
+    // configured, none is sent and the app's gate rejects it (detectable, not silent).
+    const headers: Record<string, string> = {};
+    if (serviceToken) {
+      headers[SERVICE_TOKEN_HEADER] = serviceToken;
+      headers['authorization'] = `Bearer ${serviceToken}`;
+    }
     const res = await fetch(`${base}${target.path}`, {
       method: target.method,
+      headers,
       signal: AbortSignal.timeout(INVOKE_TIMEOUT_MS),
     });
     return { ok: res.ok, status: res.status };
@@ -70,8 +84,10 @@ export async function tick(store: Store, now: Date = new Date()): Promise<void> 
     if (!job.enabled || !isDue(job.next_run_at, now)) continue;
 
     const base = await appCallbackBase(store, job.app_id);
+    // Resolve the app's service token (C5) so the callback authenticates as a service.
+    const serviceToken = job.app_id ? await resolveServiceToken(job.app_id) : null;
     const outcome = base
-      ? await invokeTarget(base, job.target)
+      ? await invokeTarget(base, job.target, serviceToken)
       : { ok: false, error: 'app is not resolvable (never provisioned?)' };
 
     const updated = advanceJob(job, outcome.ok, now);

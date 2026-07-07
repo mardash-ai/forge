@@ -70,6 +70,18 @@ export function secretsDir(): string {
   return path.join(stateDir(), 'secrets');
 }
 
+// Per-app identity store (C10) — one JSON doc per app holding users, sessions, and
+// short-lived verify/reset tokens. Lives under the gitignored state dir (like the
+// secrets vault), NEVER surfaced through the generic `/resources` read API, so
+// password hashes and session material stay out of any inspectable resource.
+export function authDir(): string {
+  return path.join(stateDir(), 'auth');
+}
+
+export function authFile(appId: string): string {
+  return path.join(authDir(), `${appId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
+}
+
 export function logPath(resourceId: string): string {
   return path.join(logsDir(), `${resourceId}.log`);
 }

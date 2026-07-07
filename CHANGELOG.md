@@ -9,6 +9,59 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-07-07
+
+### Added
+- **C10 — hosted, multi-user identity / auth.** Auth is generic platform machinery — apps must not
+  hand-roll it. C10 lets any app gate itself while shipping **no auth UI and no auth tables**: it
+  proxies `/auth/*` to the platform and reads a signed session. Google OAuth **and** email+password
+  are both live at launch; anyone can sign up (each user is a distinct account). Like C3/C4, this is
+  delivered as **routes** (registered on the control-plane API for dev and the **data-plane** sidecar
+  for prod), not a Capability — so password hashes/session material never touch the `/resources` API.
+  - **Hosted pages + routes (`src/api/auth-routes.ts`, `registerAuthRoutes`).** Platform-rendered
+    `GET/POST /auth/{login,signup,forgot,reset}`, `GET /auth/verify`, `GET /auth/{google,google/callback}`,
+    `GET|POST /auth/logout`, plus `GET /auth/session` (the session accessor / verify-endpoint option →
+    `{ userId, email }` | 401) and `GET /auth/config` (which methods are enabled). The app proxies
+    `/auth/*` same-origin so the session cookie lands on the app's domain.
+  - **Signed session token + tiny app surface (`src/shared/session.ts`).** A compact HS256 JWS signed
+    with a C5 key; the app's middleware **verifies it locally** (`verifySessionToken`) with no
+    per-request round-trip. Ships the exact reference the app mirrors: `SESSION_COOKIE`,
+    `signSessionToken`/`verifySessionToken`, `sessionCookie`/`clearSessionCookie` (**httpOnly + Secure
+    + SameSite=Lax**, 30-day sliding), `parseCookies`, `isPublicPath`/`isServicePath`, and
+    `SERVICE_TOKEN_HEADER`. Public list defaults to `/auth`, `/api/health`, `/api/cron`. Unauthenticated
+    **pages → redirect to hosted login**; unauthenticated **`/api/*` → 401**.
+  - **Durable, multi-user store (`src/plugins/auth-identity/`).** Users + sessions + verify/reset
+    tokens persist per-app under the (gitignored) state dir — a private store like the C5 vault, never
+    a Forge Resource. Passwords hashed with **scrypt** (memory-hard KDF; per-user salt; constant-time
+    verify) — never stored or logged in plaintext. Google users are linked by provider id (or adopt an
+    existing email account). Verify/reset tokens are **single-use + expiring** and stored only as a
+    SHA-256 hash. Sign-out revokes the server session; a password reset revokes all of a user's sessions.
+  - **Email via C12.** Signup verification and password reset send through **`send-email`** with
+    `template:'verify-email'|'reset-password'` + the `data.url` link **C10 generates** (C10 owns
+    token/link generation; C12 only delivers).
+  - **Service/cron auth (§5).** The **C2 scheduler** now authenticates its `/api/cron/*` callbacks as a
+    **service** — it attaches the `AUTH_SERVICE_TOKEN` (C5) under both `X-Forge-Service-Token` and
+    `Authorization: Bearer`, closing what used to be fully-open cron endpoints. Absent token ⇒ no header
+    ⇒ the app's gate rejects it (detectable, not silently reopened).
+  - **Secrets via C5.** `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` (OAuth), `AUTH_SESSION_SECRET`
+    (session signing), `AUTH_SERVICE_TOKEN` (service auth) resolve vault→env, same pattern as
+    `ANTHROPIC_API_KEY`. Nothing hardcoded.
+  - **Detectable degradation (§7).** No Google creds → OAuth disabled, email/pw still works. No
+    C12/email → email/pw signup is blocked cleanly (503), Google still works, no half-account. No
+    session key → sign-in is cleanly unavailable, never a crash. All surfaced via `GET /auth/config`
+    and `forge inspect auth`.
+  - **Owner migration hook (§8).** `POST /auth/admin/seed-owner` / `forge auth seed-owner` designates a
+    verified first/owner user (with or without a password) so a consumer can assign existing app data
+    to it on cutover.
+  - **Observability without leaking.** New facts `UserSignedUp` / `UserVerified` / `UserAuthenticated`
+    / `SessionRevoked` / `PasswordResetRequested` / `PasswordChanged` / `OwnerSeeded` carry a **redacted**
+    email + ids only — never a password, hash, or token. Inspect with **`forge inspect auth`** /
+    **`forge auth users`** (redacted emails, verified/provider/owner, active-session count, and what's
+    configured).
+  - **Dependency-clean, multi-arch-safe.** All crypto is Node built-ins (scrypt, HMAC, timing-safe
+    compare) and the form parser is `URLSearchParams` — no argon2/bcrypt native module, no OAuth SDK, no
+    `@fastify/formbody`, so the slim data-plane image stays clean and cross-builds for amd64+arm64.
+
 ## [0.13.0] — 2026-07-07
 
 ### Added
@@ -364,7 +417,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/mardash-ai/forge/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/mardash-ai/forge/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/mardash-ai/forge/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/mardash-ai/forge/compare/v0.11.0...v0.11.1

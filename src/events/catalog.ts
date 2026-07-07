@@ -36,6 +36,15 @@ export const EVENT_TYPES = [
   'ArtifactCreated',
   'EmailSent',
   'EmailFailed',
+  // Identity / auth (C10) — facts carry a REDACTED email + ids only; never a
+  // password, hash, session token, or verify/reset token.
+  'UserSignedUp',
+  'UserVerified',
+  'UserAuthenticated',
+  'SessionRevoked',
+  'PasswordResetRequested',
+  'PasswordChanged',
+  'OwnerSeeded',
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];

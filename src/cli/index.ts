@@ -248,7 +248,7 @@ program
 program
   .command('inspect')
   .description('Compact structured inspection (Inspect)')
-  .argument('[type]', 'app | resources | events | app-events | notifications | routes | scripts | docker | secrets | jobs | agent-runs | email | health', 'app')
+  .argument('[type]', 'app | resources | events | app-events | notifications | routes | scripts | docker | secrets | jobs | agent-runs | email | auth | health', 'app')
   .requiredOption('--app <app>')
   .action(async (type, opts) => {
     await runCapability('inspect', { app: opts.app, type });
@@ -381,6 +381,30 @@ email
   .requiredOption('--app <app>')
   .action(async (opts) => {
     await runCapability('inspect', { app: opts.app, type: 'email' });
+  });
+
+// --- auth (C10) ------------------------------------------------------------
+const auth = program.command('auth').description('Inspect identity/auth + seed the owner user (Identity/Auth)');
+auth
+  .command('users')
+  .description('List users for an app (redacted email + verified + provider; never hashes)')
+  .requiredOption('--app <app>')
+  .action(async (opts) => {
+    await runCapability('inspect', { app: opts.app, type: 'auth' });
+  });
+auth
+  .command('seed-owner')
+  .description('Designate/seed the owner (first) user — the migration cutover hook (§8)')
+  .requiredOption('--app <app>')
+  .requiredOption('--email <email>', 'owner email address')
+  .option('--password <password>', 'set an initial password (else owner uses reset/Google)')
+  .action(async (opts) => {
+    const data = await api('POST', '/auth/admin/seed-owner', {
+      app: opts.app,
+      email: opts.email,
+      ...(opts.password ? { password: opts.password } : {}),
+    });
+    process.stdout.write(JSON.stringify(data) + '\n');
   });
 
 // --- read-only surfaces ----------------------------------------------------

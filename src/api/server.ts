@@ -9,6 +9,7 @@ import type { Actor } from '../shared/domain';
 import { RESOURCE_TYPES, type ResourceType } from '../resources/types';
 import { registerAppEventRoutes } from './app-events-routes';
 import { registerNotificationRoutes } from './notifications-routes';
+import { registerAuthRoutes } from './auth-routes';
 import { logPath } from '../shared/paths';
 
 // The Forge HTTP API. Capability APIs perform behavior; Resource/Event APIs
@@ -77,6 +78,10 @@ registerAppEventRoutes(app);
 
 // Notifications (C4) — the app upserts/dismisses/clears its derived notifications here.
 registerNotificationRoutes(app);
+
+// Identity / auth (C10) — hosted login/signup/verify/reset/OAuth/sign-out pages + session accessor.
+// Served here for dev; the data-plane sidecar serves the same routes in production.
+registerAuthRoutes(app);
 
 // Event APIs.
 app.get('/events', async (req) => {
