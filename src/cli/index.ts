@@ -275,6 +275,14 @@ secrets
   .action(async (opts) => {
     await runCapability('inspect', { app: opts.app, type: 'secrets' });
   });
+secrets
+  .command('unset')
+  .description('Remove/revoke a secret from an app (UnsetSecret; idempotent, never returns the value)')
+  .requiredOption('--app <app>')
+  .requiredOption('--name <name>', 'secret name to remove, e.g. ANTHROPIC_API_KEY')
+  .action(async (opts) => {
+    await runCapability('unset-secret', { app: opts.app, name: opts.name });
+  });
 
 // --- schedule / jobs -------------------------------------------------------
 program

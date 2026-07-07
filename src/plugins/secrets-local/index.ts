@@ -91,6 +91,17 @@ export async function setSecret(appId: string, name: string, value: string): Pro
   await writeVault(appId, vault);
 }
 
+// Remove one secret's encrypted entry from an app's vault. IDEMPOTENT: removing an absent secret
+// is a no-op success (returns false). Returns whether an entry existed and was removed. Never reads,
+// decrypts, logs, or returns the value — this only revokes it. An empty vault is left as `{}`.
+export async function unsetSecret(appId: string, name: string): Promise<boolean> {
+  const vault = await readVault(appId);
+  if (!(name in vault)) return false;
+  delete vault[name];
+  await writeVault(appId, vault);
+  return true;
+}
+
 // Decrypt every secret for an app, for injection into its runtime. An entry that
 // can't be decrypted (e.g. the key rotated) is skipped, never fatal — the app
 // then simply sees the value as absent and degrades gracefully.

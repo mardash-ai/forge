@@ -8,6 +8,7 @@ import { logPath } from '../../shared/paths';
 import { nowIso } from '../../shared/time';
 import { composeUp, composeDown, composePs } from '../../plugins/runtime-docker-compose/index';
 import { readSecrets } from '../../plugins/secrets-local/index';
+import { resetStaleProductionNext } from '../../plugins/build-npm/next-artifacts';
 
 const inputSchema = z.object({
   ...appRefInput,
@@ -72,7 +73,15 @@ export const runDevServer: Capability<Input, DevServer> = {
       return resource;
     }
 
+    let nextReset = false;
     if (input.action === 'start') {
+      // A prior `forge build` leaves a PRODUCTION `.next` in the bind mount that dev and build share.
+      // Starting `next dev` over it makes the dev server load stale production chunks — every route
+      // 500s (`Cannot find module './chunks/vendor-chunks/next.js'`) and it can't self-recover. Reset
+      // it first, so the build→dev order can never corrupt dev state. A missing/dev `.next` is left
+      // untouched; a failure here must not block dev start.
+      nextReset = (await resetStaleProductionNext(app.repo_path).catch(() => ({ reset: false }))).reset;
+
       // Inject the app's declared secrets (decrypted only here, in memory) into
       // the compose process so the running container receives them. A failure to
       // read them is non-fatal — the app then just sees them absent and degrades.
@@ -95,7 +104,7 @@ export const runDevServer: Capability<Input, DevServer> = {
         resource_type: 'DevServer',
         resource_id: resource.id,
         app_id: app.id,
-        data: { url: resource.url, status: resource.status },
+        data: { url: resource.url, status: resource.status, next_reset: nextReset },
       });
     }
 

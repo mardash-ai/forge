@@ -139,7 +139,9 @@ export interface Plan extends BaseResource {
 export interface Secret extends BaseResource {
   type: 'Secret';
   name: string;
-  status: 'set';
+  // 'set' while the encrypted value is in the vault; 'unset' once revoked (UnsetSecret). The
+  // Resource never carries the material — only that a secret by this name is/was configured.
+  status: 'set' | 'unset';
   algo: string;
 }
 

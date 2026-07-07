@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, readdir, appendFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, appendFile, rm, rename } from 'node:fs/promises';
 import path from 'node:path';
 import {
   resourcesDir,
@@ -223,6 +223,31 @@ export class Store {
   // --- Notifications (C4) ---------------------------------------------------------
   // Durable, per-app, keyed notifications. The app derives WHICH conditions matter and upserts
   // by a stable key; Forge persists + tracks dismissal + clear. One JSON doc (keyed map) per app.
+  //
+  // A mutation is a read-modify-write of the whole per-app map. That RMW is NOT atomic on its
+  // own, so two concurrent mutations (even to DIFFERENT keys) would both read the same map, each
+  // apply only its own change, and the later write would clobber the earlier one — a lost update.
+  // `withNotifLock` serializes every mutation for a given app so the RMW runs one-at-a-time, and
+  // `writeNotifications` replaces the file atomically (temp + rename) so a concurrent reader never
+  // observes a half-written file. Reads do not take the lock.
+
+  // Per-app promise chain (async mutex). Keyed by app_id so different apps never block each other.
+  private notifLocks = new Map<string, Promise<unknown>>();
+
+  private withNotifLock<T>(app_id: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.notifLocks.get(app_id) ?? Promise.resolve();
+    // Run fn after the previous holder settles, whether it resolved or rejected.
+    const run = prev.then(fn, fn);
+    // The lock tail must never reject, or a failed mutation would wedge the next waiter.
+    this.notifLocks.set(
+      app_id,
+      run.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return run;
+  }
 
   private async readNotifications(app_id: string): Promise<Record<string, Notification>> {
     try {
@@ -232,9 +257,14 @@ export class Store {
     }
   }
 
+  // Atomic replace: write a sibling temp file then rename over the target. rename(2) is atomic on
+  // the same filesystem, so a reader sees either the whole old file or the whole new one.
   private async writeNotifications(app_id: string, map: Record<string, Notification>): Promise<void> {
     await mkdir(notificationsDir(), { recursive: true });
-    await writeFile(notificationsFile(app_id), JSON.stringify(map, null, 2));
+    const file = notificationsFile(app_id);
+    const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+    await writeFile(tmp, JSON.stringify(map, null, 2));
+    await rename(tmp, file);
   }
 
   // Upsert by (app, key). Re-deriving the same condition updates in place (idempotent) and
@@ -244,41 +274,47 @@ export class Store {
     app_id: string,
     input: { key: string; title: string; body?: string; data?: Record<string, unknown>; subject?: string },
   ): Promise<Notification> {
-    const map = await this.readNotifications(app_id);
-    const now = nowIso();
-    const prev = map[input.key];
-    const n: Notification = {
-      key: input.key,
-      title: input.title,
-      body: input.body,
-      data: input.data ?? {},
-      subject: input.subject,
-      dismissed: prev?.dismissed ?? false,
-      created_at: prev?.created_at ?? now,
-      updated_at: now,
-    };
-    map[input.key] = n;
-    await this.writeNotifications(app_id, map);
-    return n;
+    return this.withNotifLock(app_id, async () => {
+      const map = await this.readNotifications(app_id);
+      const now = nowIso();
+      const prev = map[input.key];
+      const n: Notification = {
+        key: input.key,
+        title: input.title,
+        body: input.body,
+        data: input.data ?? {},
+        subject: input.subject,
+        dismissed: prev?.dismissed ?? false,
+        created_at: prev?.created_at ?? now,
+        updated_at: now,
+      };
+      map[input.key] = n;
+      await this.writeNotifications(app_id, map);
+      return n;
+    });
   }
 
   async dismissNotification(app_id: string, key: string): Promise<boolean> {
-    const map = await this.readNotifications(app_id);
-    const n = map[key];
-    if (!n) return false;
-    n.dismissed = true;
-    n.updated_at = nowIso();
-    await this.writeNotifications(app_id, map);
-    return true;
+    return this.withNotifLock(app_id, async () => {
+      const map = await this.readNotifications(app_id);
+      const n = map[key];
+      if (!n) return false;
+      n.dismissed = true;
+      n.updated_at = nowIso();
+      await this.writeNotifications(app_id, map);
+      return true;
+    });
   }
 
   // Remove a notification entirely — its condition no longer applies.
   async clearNotification(app_id: string, key: string): Promise<boolean> {
-    const map = await this.readNotifications(app_id);
-    if (!(key in map)) return false;
-    delete map[key];
-    await this.writeNotifications(app_id, map);
-    return true;
+    return this.withNotifLock(app_id, async () => {
+      const map = await this.readNotifications(app_id);
+      if (!(key in map)) return false;
+      delete map[key];
+      await this.writeNotifications(app_id, map);
+      return true;
+    });
   }
 
   async listNotifications(app_id: string, opts: { includeDismissed?: boolean } = {}): Promise<Notification[]> {

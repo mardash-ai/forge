@@ -22,6 +22,7 @@ export const EVENT_TYPES = [
   'AnalysisCreated',
   'PlanCreated',
   'SecretSet',
+  'SecretUnset',
   'JobScheduled',
   'JobUnscheduled',
   'JobRan',

@@ -10,6 +10,7 @@ import { inspect } from './inspect/index';
 import { explainFailure } from './explain-failure/index';
 import { generateFeaturePlan } from './generate-feature-plan/index';
 import { setSecretCapability } from './set-secret/index';
+import { unsetSecretCapability } from './unset-secret/index';
 import { scheduleJob } from './schedule-job/index';
 import { deployCapability } from './deploy/index';
 import { agentRun } from './agent-run/index';
@@ -28,6 +29,7 @@ export const capabilities: Capability<any, any>[] = [
   explainFailure,
   generateFeaturePlan,
   setSecretCapability,
+  unsetSecretCapability,
   scheduleJob,
   deployCapability,
   agentRun,

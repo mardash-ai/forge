@@ -9,6 +9,36 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-07-07
+
+### Added
+- **`forge secrets unset` — remove/revoke a secret (P2, C5 follow-up).** C5 shipped `secrets set`/
+  `list` but no way to remove a secret; this adds `forge secrets unset --app <app> --name <NAME>`
+  (a new `UnsetSecret` Capability, HTTP `POST /capabilities/unset-secret { app, name }`). It deletes
+  the encrypted entry from the app's vault and retires the `Secret` Resource, emitting a `SecretUnset`
+  fact (name only). **Idempotent** (unsetting an absent secret succeeds), `404 not_found` for an
+  unknown app, `422 invalid_input` for an invalid name, and it **never logs, echoes, or returns the
+  value**. Served on both planes like `set-secret`, so a live `unset` revokes the key the running app
+  reads — its next lookup sees it absent and degrades (e.g. `agent-run` → `503`).
+
+### Fixed
+- **`forge build` then `forge dev` no longer corrupts the shared `.next` (P4).** `next build`
+  (production) and `next dev` (development) both write `.next`, which Forge runs over the same
+  bind-mounted directory — so a build-then-dev sequence left the dev server loading stale production
+  chunks and 500ing every route (`Cannot find module './chunks/vendor-chunks/next.js'`), recoverable
+  only by manually wiping `.next`. `RunDevServer` now detects a leftover **production** `.next` (by
+  its build-only markers — `BUILD_ID` / `required-server-files.json` / `prerender-manifest.json`) and
+  resets it before starting dev, so the build→dev order can never corrupt dev state. A dev-mode
+  `.next` is left untouched (the cache stays warm); the reset is reported on `DevServerStarted`.
+  Transparent to apps on the image bump — no app change or reprovision.
+- **The C4 notification store is now safe under concurrent writes (P5).** Each mutation
+  (`POST /notifications`, `/notifications/dismiss`, `/notifications/clear`) is a read-modify-write of
+  the whole per-app list; that RMW was **not atomic**, so concurrent writes — even to different keys —
+  lost updates (identical GETs returned different subsets). Mutations now run under a **per-app async
+  mutex** so the RMW is serialized, and the store file is replaced **atomically** (temp + rename) so a
+  concurrent reader never sees a half-written file. Concurrent `upsert`/`dismiss`/`clear` to distinct
+  keys all persist. Contract unchanged; transparent on image bump.
+
 ## [0.9.0] — 2026-07-06
 
 ### Added
