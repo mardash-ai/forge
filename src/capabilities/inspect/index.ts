@@ -6,12 +6,12 @@ import type { Capability } from '../../core/types';
 import type { Inspection } from '../../resources/types';
 import { appRefInput, resolveApp, baseResource } from '../_shared';
 import { listSecretNames } from '../../plugins/secrets-local/index';
-import type { ScheduledJob } from '../../resources/types';
+import type { ScheduledJob, AgentTask } from '../../resources/types';
 
 const inputSchema = z.object({
   ...appRefInput,
   type: z
-    .enum(['app', 'resources', 'events', 'app-events', 'notifications', 'routes', 'scripts', 'docker', 'secrets', 'jobs'])
+    .enum(['app', 'resources', 'events', 'app-events', 'notifications', 'routes', 'scripts', 'docker', 'secrets', 'jobs', 'agent-runs'])
     .default('app'),
 });
 type Input = z.infer<typeof inputSchema>;
@@ -50,7 +50,7 @@ function fileToRoute(rel: string): { route: string; kind: 'page' | 'api' } | nul
 export const inspect: Capability<Input, Inspection> = {
   name: 'Inspect',
   slug: 'inspect',
-  description: 'Return a compact structured view of an Application (app, resources, events, app-events, notifications, routes, scripts, docker, secrets, jobs).',
+  description: 'Return a compact structured view of an Application (app, resources, events, app-events, notifications, routes, scripts, docker, secrets, jobs, agent-runs).',
   inputSchema,
   resourceType: 'Inspection',
   events: ['InspectionCreated'],
@@ -166,6 +166,24 @@ export const inspect: Capability<Input, Inspection> = {
         summary = jobs.length
           ? `${jobs.length} scheduled job(s) for ${app.name}.`
           : `No scheduled jobs for ${app.name}. Add one: forge schedule --app ${app.name} --name <n> --cron "0 0 * * *" --target /api/cron/<n>`;
+        break;
+      }
+      case 'agent-runs': {
+        // Durable agent-run records (C1) — every model invocation, success AND failure.
+        const runs = (await ctx.store.listResources({ type: 'AgentTask', app_id: app.id })) as AgentTask[];
+        data = runs.map((r) => ({
+          id: r.id,
+          label: r.label,
+          status: r.status,
+          model: r.model,
+          artifact_id: r.artifact_id,
+          error: r.error,
+          at: r.created_at,
+        }));
+        const failed = runs.filter((r) => r.status === 'failed').length;
+        summary = runs.length
+          ? `${runs.length} agent run(s) for ${app.name}${failed ? ` (${failed} failed)` : ''}.`
+          : `No agent runs for ${app.name} yet.`;
         break;
       }
       case 'docker': {

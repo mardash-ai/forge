@@ -12,6 +12,7 @@ import { generateFeaturePlan } from './generate-feature-plan/index';
 import { setSecretCapability } from './set-secret/index';
 import { scheduleJob } from './schedule-job/index';
 import { deployCapability } from './deploy/index';
+import { agentRun } from './agent-run/index';
 
 // The full set of Capabilities the platform exposes. Order here is the order
 // they appear in discovery output.
@@ -29,4 +30,5 @@ export const capabilities: Capability<any, any>[] = [
   setSecretCapability,
   scheduleJob,
   deployCapability,
+  agentRun,
 ];

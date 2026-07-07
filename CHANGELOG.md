@@ -9,6 +9,35 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-07-06
+
+### Added
+- **Platform capability C1 — Agent runtime (model access + Agent Task / Artifact resources).** A new
+  `AgentRun` Capability + `model-anthropic` Implementation lets the running app invoke a model with a
+  **system prompt + user input + an enforced output schema** and get back the **parsed structured
+  result** — the platform absorbs the model SDK so apps don't carry one. Data-plane capability
+  (`plane: 'data'`): served by the data-plane sidecar in prod and by the control plane in `forge dev`,
+  the established app→Forge HTTP pattern.
+  - `POST /capabilities/agent-run { app?, capability, system, input, schema, model?, max_tokens? }`
+    → `{ capability: "AgentRun", resource: <AgentTask> }`. `capability` is a free-form **label/kind**
+    (generic — no goal/planner domain concepts); `app` defaults to the sidecar's `FORGE_APP_NAME`, so
+    the app usually needn't pass it. Structured output is enforced provider-natively via a forced
+    tool whose `input_schema` is the caller's **JSON Schema**; the model's output is **untrusted** and
+    returned (not acted on) so the consumer can post-validate it.
+  - **Durable run records.** Every run — success *and* failure — is persisted as an inspectable
+    **`AgentTask`** Resource (`id` = runId, `label`/kind, `status`, `model`, `artifact`, `error`,
+    `created_at`); a successful run's result is a first-class **`Artifact`** Resource (the parsed
+    result + the schema it conformed to), referenced by `AgentTask.artifact_id` and echoed inline on
+    the run. Survives restart; observable via `forge inspect agent-runs --app <app>` and
+    `/resources?type=AgentTask|Artifact`. Emits `AgentRunSucceeded` / `AgentRunFailed` /
+    `ArtifactCreated` facts.
+  - **Detectable absence → graceful degradation.** The model key is the C5 secret `ANTHROPIC_API_KEY`,
+    resolved from Forge's encrypted vault (falling back to the runtime env). When it is
+    absent/unconfigured, `agent-run` returns **`503 dependency_unavailable`** (a typed error, never an
+    unhandled throw), so the consuming app can return 503 and never crash. Defaults to
+    `claude-opus-4-8`; the caller may specify `model`. Implemented with native `fetch` (no new
+    dependency) so both images stay slim.
+
 ## [0.8.0] — 2026-07-07
 
 ### Added
@@ -173,7 +202,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/mardash-ai/forge/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/mardash-ai/forge/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/mardash-ai/forge/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/mardash-ai/forge/compare/v0.6.0...v0.6.1

@@ -29,6 +29,9 @@ export const EVENT_TYPES = [
   'DeploymentStarted',
   'DeploymentCompleted',
   'DeploymentRolledBack',
+  'AgentRunSucceeded',
+  'AgentRunFailed',
+  'ArtifactCreated',
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];

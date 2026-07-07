@@ -16,6 +16,8 @@ export const RESOURCE_TYPES = [
   'Secret',
   'ScheduledJob',
   'Deployment',
+  'AgentTask',
+  'Artifact',
 ] as const;
 
 export type ResourceType = (typeof RESOURCE_TYPES)[number];
@@ -186,6 +188,42 @@ export interface Deployment extends BaseResource {
   error_summary?: string;
 }
 
+// An Artifact — the durable, first-class RESULT produced by an agent run (C1). State
+// only. Holds the parsed structured output (conforming to the run's schema) plus the
+// schema it was enforced against, echoed so the consumer can POST-VALIDATE the untrusted
+// model output before use. Referenced by its producing AgentTask.
+export interface Artifact extends BaseResource {
+  type: 'Artifact';
+  // Free-form kind/label mirrored from the producing AgentTask (e.g. "planner").
+  kind: string;
+  // The AgentTask that produced this artifact.
+  produced_by: string;
+  model: string;
+  // The parsed structured result. UNTRUSTED model output — the consumer post-validates.
+  result: unknown;
+  // The JSON Schema the result was enforced against (for the consumer's post-validation).
+  schema: unknown;
+}
+
+// An AgentTask — the durable, inspectable record of ONE model invocation (C1), persisted
+// for success AND failure. State only; behavior lives in the AgentRun Capability. Survives
+// restart (a JSON doc under the state dir), so past runs stay queryable/inspectable. The
+// run's `id` is the caller's runId; `created_at` is its timestamp.
+export interface AgentTask extends BaseResource {
+  type: 'AgentTask';
+  // Free-form label/kind the caller supplies to categorize the run (e.g. "planner").
+  label: string;
+  status: 'succeeded' | 'failed';
+  model: string;
+  // The produced Artifact's id (success only) + the inline parsed result, so a single
+  // response gives the consumer the result without a second fetch. null/absent on failure.
+  artifact_id?: string;
+  artifact?: unknown;
+  // Populated on failure (model/API error, or output that didn't conform to the schema).
+  error?: string;
+  implementation: string;
+}
+
 export type AnyResource =
   | Application
   | Environment
@@ -199,4 +237,6 @@ export type AnyResource =
   | Plan
   | Secret
   | ScheduledJob
-  | Deployment;
+  | Deployment
+  | AgentTask
+  | Artifact;

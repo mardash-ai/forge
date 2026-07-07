@@ -21,6 +21,8 @@ export const RESOURCE_ID_PREFIX: Record<string, string> = {
   Secret: 'sec',
   ScheduledJob: 'job',
   Deployment: 'deploy',
+  AgentTask: 'run',
+  Artifact: 'art',
 };
 
 export function newResourceId(type: string): string {
