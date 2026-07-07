@@ -1,5 +1,12 @@
 # CLAUDE.md
 
+> **mardash isolation — you are scoped to THIS project (`forge`).** This repo is one of the `mardash`
+> wind-tunnel projects. Read/write **only within this repository**; never read or write a sibling
+> mardash project (`../forge-os`, `../forge-starter`) — code *or* docs. The **mardash orchestrator**
+> (`../mardash/`) is the sole writer of the wind-tunnel ledger and hands you tasks + the contract you
+> need — get everything from the task prompt, never by reaching into another project. See
+> `../mardash/CLAUDE.md`.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Repository Status

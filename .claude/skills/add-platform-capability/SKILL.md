@@ -14,6 +14,17 @@ description: >-
 
 # Add a Platform Capability (the platform-builder's turn)
 
+> **⚠ ORCHESTRATED MODE (mardash).** The wind-tunnel is now driven by the **mardash orchestrator**
+> (`../mardash/`), which is the **sole writer** of the ledger (now at `../mardash/PLATFORM_CAPABILITIES.md`,
+> not `../forge-os/`). **If you are a forge-scoped agent dispatched by the orchestrator, your job is
+> ONLY: build the capability in THIS repo → tests + typecheck green → publish a pinned multi-arch
+> image → RETURN the structured result** (version, image pins `tag@sha256:digest`, commit, the consume
+> signature, verify command). You do **NOT** read `../forge-os` (strict **zero-bleed** — the spec you
+> build from is in your task prompt / the ledger's Required-semantics), write the ledger, or emit a
+> relay — the orchestrator does those. Under orchestration, execute only the **build → validate →
+> publish** steps below and hand the pin back. The rest is kept for reference / standalone use. See
+> `../mardash/CLAUDE.md`.
+
 This repo (`forge`) **is the Forge platform**. The sibling repo `../forge-os` is a **black-box
 consumer** — an app that pressures Forge into growing. The two are built by two different agents
 that **never talk directly**; a human relays between them through one shared file:
