@@ -303,7 +303,7 @@ describe('identity store — durable, multi-user, unique email', () => {
 
   it('verify/reset tokens are single-use + expiring, stored only as a hash', async () => {
     const u = await authStore.createUser('app_tok', { email: 't@example.com', password_hash: 'h' });
-    const { token, hash } = newToken();
+    const { hash } = newToken();
     await authStore.putVerifyToken('app_tok', hash, u.id, 3600);
     // First consume works; second is rejected (single-use).
     expect(await authStore.consumeVerifyToken('app_tok', hash)).toBe(u.id);

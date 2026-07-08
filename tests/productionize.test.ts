@@ -5,12 +5,15 @@ import {
   generateProdDockerfile,
   generateProdDockerignore,
   generateEnvProdExample,
+  generateProvisioningRunbook,
+  PROVISIONING_FILE,
   applyStandaloneOutput,
   defaultNextConfig,
   isDigestPinned,
   normalizeReadinessPath,
   type ProdComposeOptions,
 } from '../src/plugins/productionize-nextjs-compose/index';
+import { describeSecret, requirementLabel, SECRET_CATALOG } from '../src/plugins/productionize-nextjs-compose/secret-catalog';
 import { ForgeError } from '../src/shared/errors';
 import { deployCapability } from '../src/capabilities/deploy/index';
 
@@ -337,6 +340,100 @@ describe('generateEnvProdExample — documents .env.prod without real values', (
     });
     expect(env).toContain('forge.jobs.json');
     expect(env).not.toContain('# FORGE_JOBS_FILE=');
+  });
+});
+
+// C13 — the operator provisioning contract. A secret catalog (the single source of
+// truth) annotates .env.prod.example and generates a per-app PROVISIONING.md runbook,
+// so an operator knows what each value is, which capability needs it, and how to set it.
+describe('secret catalog (C13) — every required value is described', () => {
+  const REQUIRED_ROSTER = [
+    'POSTGRES_PASSWORD', 'FORGE_SECRETS_KEY', 'ANTHROPIC_API_KEY',
+    'AUTH_SESSION_SECRET', 'AUTH_SERVICE_TOKEN', 'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET', 'SMTP_URL', 'EMAIL_FROM',
+  ];
+  it('covers the whole required roster with capability + what + obtain', () => {
+    for (const name of REQUIRED_ROSTER) {
+      const spec = SECRET_CATALOG[name];
+      expect(spec, name).toBeTruthy();
+      expect(spec!.capability.length).toBeGreaterThan(0);
+      expect(spec!.what.length).toBeGreaterThan(0);
+      expect(spec!.obtain.length).toBeGreaterThan(0);
+    }
+  });
+  it('binds Google/SMTP to C10/C12 and carries the OAuth redirect-URI shape', () => {
+    expect(describeSecret('GOOGLE_CLIENT_ID').capability).toContain('C10');
+    expect(describeSecret('GOOGLE_CLIENT_ID').obtain).toContain('/auth/google/callback');
+    expect(describeSecret('SMTP_URL').capability).toContain('C12');
+    expect(describeSecret('AUTH_SESSION_SECRET').generate).toContain('openssl');
+  });
+  it('synthesizes a neutral spec for an unknown/app-specific secret (never a bare NAME=)', () => {
+    const spec = describeSecret('SOME_APP_THING');
+    expect(spec.capability).toBe('App-specific');
+    expect(spec.what.length).toBeGreaterThan(0);
+    expect(requirementLabel(spec)).toBe('Conditional');
+  });
+});
+
+describe('generateEnvProdExample — now annotates each secret (C13)', () => {
+  it('precedes each declared secret with what-it-is + how-to-obtain, keeps the assignable line', () => {
+    const env = generateEnvProdExample({
+      appName: 'acme', host: 'app.example.com', withPostgres: true, withRedis: false,
+      secrets: ['GOOGLE_CLIENT_ID', 'SMTP_URL'],
+    });
+    expect(env).toContain('# GOOGLE_CLIENT_ID —');
+    expect(env).toContain('#   Obtain:');
+    expect(env).toContain('GOOGLE_CLIENT_ID=');
+    expect(env).toContain('# SMTP_URL —');
+    expect(env).toContain('SMTP_URL=');
+    // The C5 vault key still carries its generate hint, and it points at the runbook.
+    expect(env).toContain('#   Generate: openssl rand -base64 32');
+    expect(env).toContain(PROVISIONING_FILE);
+  });
+});
+
+describe('generateProvisioningRunbook — per-app operator runbook (C13)', () => {
+  const base = { appName: 'acme', host: 'app.example.com', withPostgres: true, withRedis: false };
+
+  it('lists exactly this app’s secrets with capability + set commands', () => {
+    const md = generateProvisioningRunbook({ ...base, secrets: ['ANTHROPIC_API_KEY'] });
+    expect(md).toContain('# Provisioning — acme');
+    expect(md).toContain('`FORGE_SECRETS_KEY`');
+    expect(md).toContain('`POSTGRES_PASSWORD`'); // withPostgres
+    expect(md).toContain('`ANTHROPIC_API_KEY`');
+    // The exact dev + prod set paths.
+    expect(md).toContain('./forge secrets set --app acme --name FORGE_SECRETS_KEY');
+    expect(md).toContain('app/.env.prod');
+    expect(md).toContain('./forge deploy --app acme');
+  });
+
+  it('when auth is used but neither Google nor SMTP is declared, spells out the unblock', () => {
+    const md = generateProvisioningRunbook({ ...base, secrets: ['AUTH_SESSION_SECRET'] });
+    expect(md).toContain('Enabling a working sign-in method');
+    expect(md).toContain('no way to sign in');
+    // The precise redirect URI (host-substituted) an operator needs for Google.
+    expect(md).toContain('https://app.example.com/auth/google/callback');
+    // The declare→productionize→deploy snippet names the missing secrets.
+    expect(md).toContain('./forge provision --app acme --secret GOOGLE_CLIENT_ID --secret GOOGLE_CLIENT_SECRET --secret SMTP_URL --secret EMAIL_FROM');
+    expect(md).toContain('./forge productionize --app acme');
+  });
+
+  it('marks a declared method as configured (no missing-secret snippet needed for it)', () => {
+    const md = generateProvisioningRunbook({ ...base, secrets: ['AUTH_SESSION_SECRET', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'] });
+    expect(md).toContain('_(declared for this app)_');
+    // Google is declared, so the missing-secret snippet only needs SMTP, not Google.
+    expect(md).toContain('--secret SMTP_URL --secret EMAIL_FROM');
+    expect(md).not.toContain('--secret GOOGLE_CLIENT_ID');
+  });
+
+  it('omits the sign-in section for an app that does not use auth', () => {
+    const md = generateProvisioningRunbook({ ...base, secrets: [] });
+    expect(md).not.toContain('Enabling a working sign-in method');
+  });
+
+  it('is deterministic — identical inputs produce identical bytes (convergent)', () => {
+    const opts = { ...base, secrets: ['AUTH_SESSION_SECRET', 'SMTP_URL', 'EMAIL_FROM'] };
+    expect(generateProvisioningRunbook(opts)).toBe(generateProvisioningRunbook(opts));
   });
 });
 

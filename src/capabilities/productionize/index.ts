@@ -12,6 +12,8 @@ import {
   generateProdDockerignore,
   generateProdCompose,
   generateEnvProdExample,
+  generateProvisioningRunbook,
+  PROVISIONING_FILE,
   applyStandaloneOutput,
   defaultNextConfig,
 } from '../../plugins/productionize-nextjs-compose/index';
@@ -136,10 +138,19 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
       }),
     );
 
-    // 4. .env.prod.example — documents .env.prod (never a real value).
+    // 4. .env.prod.example — documents .env.prod (never a real value); each secret is
+    //    now annotated (what it is + how to obtain it) from the C13 secret catalog.
     await writeFile(
       path.join(repo, '.env.prod.example'),
       generateEnvProdExample({ appName: app.name, host: cfg.host, withPostgres, withRedis, secrets, withJobs }),
+    );
+
+    // 5. PROVISIONING.md — the per-app operator runbook (C13): exactly the secrets THIS
+    //    app needs, each explained, with the exact set commands. Generated from the app's
+    //    declared capabilities so it can't drift; inherited like compose.prod.yaml.
+    await writeFile(
+      path.join(repo, PROVISIONING_FILE),
+      generateProvisioningRunbook({ appName: app.name, host: cfg.host, withPostgres, secrets, withJobs }),
     );
 
     // Persist the converged production config so a flag-less re-run reproduces it.
@@ -147,7 +158,7 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
 
     const services = ['web', 'data-plane', ...(withPostgres ? ['postgres'] : []), ...(withRedis ? ['redis'] : [])];
-    const files = ['Dockerfile', '.dockerignore', 'compose.prod.yaml', '.env.prod.example', found ?? 'next.config.mjs'];
+    const files = ['Dockerfile', '.dockerignore', 'compose.prod.yaml', '.env.prod.example', PROVISIONING_FILE, found ?? 'next.config.mjs'];
 
     const resource: ProductionArtifacts = {
       ...baseResource('ProductionArtifacts', app.id),

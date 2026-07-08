@@ -9,6 +9,40 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-07-07
+
+### Added
+- **C13 — the operator provisioning contract: an operator can now tell what they must provision.**
+  Driven by a real report — prod `/auth/signup` showed *no form* and *"Email/password sign-up is
+  unavailable"* because **both** SMTP (C12) and Google OAuth (C10) were unset, so there was **no
+  working sign-in method** — and nothing told the operator what `GOOGLE_CLIENT_ID` / `SMTP_URL` / … are,
+  which capability needs them, or how to set them. This fixes the class:
+  - **A canonical secret catalog** (`src/plugins/productionize-nextjs-compose/secret-catalog.ts`) — the
+    single source of truth describing every provisioning value (capability, required-vs-optional, what
+    it is, external setup, how to generate, how to set). Both the human guide and the generated
+    per-app artifacts derive from it, so they can't drift.
+  - **`forge productionize` now emits a per-app operator runbook** — a generated **`PROVISIONING.md`**
+    in the app repo listing exactly the secrets **that** app needs (its subset of the matrix), each
+    explained, with the exact dev (`forge secrets set`) and prod (`.env.prod` + `forge deploy`)
+    commands. Generated from the app's declared capabilities → convergent/idempotent, inherited like
+    `compose.prod.yaml`. When the app uses C10 auth but has **neither** Google nor SMTP declared, the
+    runbook spells out the unblock (the exact Google redirect URI `https://<host>/auth/google/callback`
+    and a `provision → productionize → deploy` snippet naming the missing secrets).
+  - **The generated `.env.prod.example` is now annotated** — each secret is preceded by a `#` comment
+    (what it is · which capability · required/optional · how to obtain · how to generate) instead of a
+    bare `NAME=`.
+  - **An authoritative `PROVISIONING.md` at the forge repo root** — the operator guide: how to bring up
+    the control plane and a data-plane sidecar, how secrets reach the runtime (C5 vault vs `.env.prod`),
+    the full per-capability secret/token matrix, and an explicit "no sign-in method ⇒ no signup path"
+    section (Google unblocks sign-in with no email dependency; SMTP unblocks email/password
+    signup+verify+reset). `AUTH_SESSION_SECRET` is required for either to function; `GET /auth/config`
+    reports what's enabled.
+
+### Changed
+- **No regression to existing productionize output.** The Dockerfile / `compose.prod.yaml` / next-config
+  generation is unchanged; `.env.prod.example` gains explanatory comments (same variable lines) and a new
+  `PROVISIONING.md` is added to the emitted file set (and to the generated `.dockerignore`).
+
 ## [0.16.0] — 2026-07-07
 
 ### Added
@@ -530,7 +564,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/mardash-ai/forge/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/mardash-ai/forge/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/mardash-ai/forge/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/mardash-ai/forge/compare/v0.14.0...v0.15.0
