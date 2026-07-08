@@ -12,15 +12,24 @@ import {
   themeLogoImg,
   type Theme,
 } from '../shared/theme';
+import { resolveAppBase, resolveReadinessPath, probeHealth } from '../shared/health-probe';
 import {
-  resolveAppBase,
-  resolveReadinessPath,
-  probeHealth,
-  type HealthProbeResult,
-} from '../shared/health-probe';
+  computeStatus,
+  type OverallStatus,
+  type ComponentState,
+  type StatusComponent,
+  type StatusReport,
+} from '../shared/status';
+import { uptimeStore } from '../storage/uptime-store';
+import {
+  DEFAULT_WINDOW_DAYS,
+  type HistoryReport,
+  type HistoryComponent,
+  type DayState,
+} from '../shared/uptime';
 
-// C15 — the PUBLIC per-app status page (Phase 1), modeled on a Statuspage-style
-// dashboard and rendered through the C16 theme.
+// C15 — the PUBLIC per-app status page, modeled on a Statuspage-style dashboard and
+// rendered through the C16 theme.
 //
 //   GET /status        -> a themed HTML dashboard (public, no auth)
 //   GET /status.json   -> the same aggregation as JSON (agents/humans, same contract)
@@ -28,80 +37,18 @@ import {
 // Served by the platform on BOTH planes (dev control plane, prod data-plane sidecar),
 // exactly like /auth/* — the app proxies /status same-origin; there is NO app page
 // code. The overall banner + per-component rows aggregate the app's live C6 health
-// (fetched via the shared probe) plus the serving platform plane. No persisted state
-// (Phase 1 shows a live snapshot; uptime history is Phase 2 — see the release notes).
+// (fetched via the shared probe) plus the serving platform plane.
+//
+// Phase 2 (uptime history): when the C2 health sampler is enabled, each live
+// component also gets a Statuspage-style uptime timeline (per-day bar + uptime %)
+// from the durable uptime store, and `/status.json` gains an additive `uptime`
+// section. The live banner/components are unchanged; an app that never enabled
+// sampling reads an empty history and renders exactly the Phase-1 page.
 
-export type OverallStatus = 'operational' | 'degraded' | 'partial_outage' | 'major_outage';
-export type ComponentState = 'operational' | 'degraded' | 'down' | 'unknown';
-
-export interface StatusComponent {
-  name: string;
-  state: ComponentState;
-  detail?: string;
-}
-
-export interface StatusReport {
-  overall: OverallStatus;
-  banner: string;
-  components: StatusComponent[];
-  checked_at: string;
-}
-
-const BANNER: Record<OverallStatus, string> = {
-  operational: 'All Systems Operational',
-  degraded: 'Degraded Performance',
-  partial_outage: 'Partial Outage',
-  major_outage: 'Major Outage',
-};
-
-// Aggregate a live health probe (+ the serving plane) into an overall status and
-// per-component rows. PURE + exported so the banner logic is unit-tested directly.
-//   - unreachable app                       -> Major Outage (web down)
-//   - reachable but non-conforming health   -> Degraded (web status unknown)
-//   - C6 status 'ok'                         -> Operational
-//   - C6 status 'degraded'                   -> Degraded
-//   - C6 status 'unavailable', all checks down -> Major Outage
-//   - C6 status 'unavailable', some down     -> Partial Outage
-export function computeStatus(
-  probe: HealthProbeResult,
-  opts: { appName: string; planeLabel: string; now?: Date },
-): StatusReport {
-  const now = opts.now ?? new Date();
-  const web = `${opts.appName} (web)`;
-  let overall: OverallStatus;
-  const components: StatusComponent[] = [];
-
-  if (!probe.reachable) {
-    overall = 'major_outage';
-    components.push({ name: web, state: 'down', detail: 'health endpoint unreachable' });
-  } else if (!probe.conforms || !probe.health) {
-    overall = 'degraded';
-    components.push({ name: web, state: 'unknown', detail: 'health endpoint did not return the standard schema' });
-  } else {
-    const h = probe.health;
-    components.push({ name: web, state: 'operational' });
-    for (const c of h.checks) {
-      components.push({
-        name: c.name,
-        state: c.status === 'ok' ? 'operational' : 'down',
-        ...(c.detail ? { detail: c.detail } : {}),
-      });
-    }
-    if (h.status === 'ok') {
-      overall = 'operational';
-    } else if (h.status === 'degraded') {
-      overall = 'degraded';
-    } else {
-      const down = h.checks.filter((c) => c.status === 'unavailable').length;
-      overall = down > 0 && down === h.checks.length ? 'major_outage' : 'partial_outage';
-    }
-  }
-
-  // The serving platform plane is, by definition, operational — it just answered.
-  components.push({ name: opts.planeLabel, state: 'operational' });
-
-  return { overall, banner: BANNER[overall], components, checked_at: now.toISOString() };
-}
+// The status aggregation now lives in `src/shared/status.ts` (shared with the health
+// sampler). Re-exported here so existing importers keep importing it from this route.
+export { computeStatus };
+export type { OverallStatus, ComponentState, StatusComponent, StatusReport };
 
 // ---------------------------------------------------------------------------
 // Rendering (themed, self-contained, responsive, light/dark via tokens)
@@ -121,6 +68,14 @@ const OVERALL_TOKEN: Record<OverallStatus, string> = {
   major_outage: '--forge-color-danger',
 };
 
+// Per-day timeline tick colour (Phase 2), from the C16 theme tokens.
+const TICK_TOKEN: Record<DayState, string> = {
+  operational: '--forge-color-success',
+  degraded: '--forge-color-warning',
+  down: '--forge-color-danger',
+  nodata: '--forge-color-border',
+};
+
 const STATUS_CSS = `
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;background:var(--forge-color-bg);color:var(--forge-color-text);font:15px/1.6 var(--forge-font);-webkit-font-smoothing:antialiased}
@@ -133,29 +88,56 @@ body{margin:0;min-height:100vh;background:var(--forge-color-bg);color:var(--forg
 .banner .dot{width:14px;height:14px;border-radius:50%;background:var(--_ov);flex:none;box-shadow:0 0 0 4px color-mix(in srgb, var(--_ov) 22%, transparent)}
 .banner .txt{font-size:18px;font-weight:650}
 .card{background:var(--forge-color-surface);border:1px solid var(--forge-color-border);border-radius:var(--forge-radius-lg);overflow:hidden}
-.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 20px;border-top:1px solid var(--forge-color-border)}
+.row{padding:15px 20px;border-top:1px solid var(--forge-color-border)}
 .row:first-child{border-top:0}
+.rowhead{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .row .name{font-weight:550}
 .row .detail{color:var(--forge-color-text-muted);font-size:12.5px;margin-top:2px}
 .pill{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;color:var(--_st);white-space:nowrap}
 .pill .dot{width:9px;height:9px;border-radius:50%;background:var(--_st);flex:none}
+.tl{display:flex;gap:1px;height:30px;margin-top:12px}
+.tick{flex:1 1 0;min-width:0;border-radius:2px;background:var(--_tk)}
+.tlmeta{display:flex;justify-content:space-between;align-items:center;margin-top:6px;color:var(--forge-color-text-muted);font-size:11.5px}
+.tlpct{font-weight:600;color:var(--forge-color-text)}
 .foot{margin-top:22px;color:var(--forge-color-text-muted);font-size:12.5px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
 .foot a{color:var(--forge-color-primary);text-decoration:none}
 `;
 
-function statusPageHtml(theme: Theme, appName: string, report: StatusReport): string {
+// A component's uptime timeline (Phase 2): a row of per-day ticks (themed by day
+// state) + the windowed uptime %. Rendered under a live component row only when that
+// component has sampled history.
+function timelineHtml(c: HistoryComponent): string {
+  const ticks = c.days
+    .map((d) => {
+      const pct = d.uptime_pct === null ? 'no data' : `${d.uptime_pct}% up`;
+      const title = escapeHtml(`${d.date} — ${pct}`);
+      return `<span class="tick" style="--_tk:var(${TICK_TOKEN[d.state]})" title="${title}"></span>`;
+    })
+    .join('');
+  const pct = c.uptime_pct === null ? '—' : `${c.uptime_pct}%`;
+  return (
+    `<div class="tl">${ticks}</div>` +
+    `<div class="tlmeta"><span>${c.days.length} days ago</span>` +
+    `<span class="tlpct">${escapeHtml(pct)} uptime</span><span>Today</span></div>`
+  );
+}
+
+function statusPageHtml(theme: Theme, appName: string, report: StatusReport, history: HistoryReport): string {
   const heading = theme.name ?? appName;
   const logo = themeLogoImg(theme, 'forge-brand-logo');
   const ovToken = OVERALL_TOKEN[report.overall];
 
+  const byName = new Map(history.components.map((c) => [c.name, c]));
+  const hasHistory = history.sample_count > 0;
   const rows = report.components
     .map((c) => {
       const meta = STATE_META[c.state];
       const detail = c.detail ? `<div class="detail">${escapeHtml(c.detail)}</div>` : '';
-      return (
-        `<div class="row"><div><div class="name">${escapeHtml(c.name)}</div>${detail}</div>` +
-        `<span class="pill" style="--_st:var(${meta.token})"><span class="dot"></span>${meta.label}</span></div>`
-      );
+      const head =
+        `<div class="rowhead"><div><div class="name">${escapeHtml(c.name)}</div>${detail}</div>` +
+        `<span class="pill" style="--_st:var(${meta.token})"><span class="dot"></span>${meta.label}</span></div>`;
+      const hist = hasHistory ? byName.get(c.name) : undefined;
+      return `<div class="row">${head}${hist ? timelineHtml(hist) : ''}</div>`;
     })
     .join('');
 
@@ -192,26 +174,30 @@ export function registerStatusRoutes(
 ): void {
   const planeLabel = opts.planeLabel ?? 'Forge platform';
 
-  async function build(reqApp: { id: string; name: string; repoPath: string }): Promise<{ theme: Theme; report: StatusReport }> {
-    const [theme, manifest] = await Promise.all([
+  async function build(
+    reqApp: { id: string; name: string; repoPath: string },
+  ): Promise<{ theme: Theme; report: StatusReport; history: HistoryReport }> {
+    const [theme, manifest, history] = await Promise.all([
       resolveThemeForApp(reqApp.id),
       loadManifest(reqApp.repoPath),
+      // Always safe: an app that never enabled sampling reads an empty history.
+      uptimeStore.getHistory(reqApp.id, { windowDays: DEFAULT_WINDOW_DAYS }),
     ]);
     const url = `${resolveAppBase(manifest)}${resolveReadinessPath(manifest)}`;
     const probe = await probeHealth(url);
     const report = computeStatus(probe, { appName: reqApp.name, planeLabel });
-    return { theme, report };
+    return { theme, report, history };
   }
 
   app.get('/status', async (req, reply: FastifyReply) => {
     const resolved = await resolveApp(req, opts.defaultApp);
     if (!resolved) return unknownAppHtml(reply);
-    const { theme, report } = await build(resolved);
+    const { theme, report, history } = await build(resolved);
     reply
       .code(200)
       .type('text/html; charset=utf-8')
       .header('cache-control', 'no-store')
-      .send(statusPageHtml(theme, resolved.name, report));
+      .send(statusPageHtml(theme, resolved.name, report, history));
   });
 
   app.get('/status.json', async (req, reply: FastifyReply) => {
@@ -219,9 +205,45 @@ export function registerStatusRoutes(
     if (!resolved) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } });
     }
-    const { report } = await build(resolved);
-    return reply.code(200).header('cache-control', 'no-store').send({ app: resolved.name, ...report });
+    const { report, history } = await build(resolved);
+    // Additive: the Phase-1 fields (overall/banner/components/checked_at) are
+    // unchanged; `uptime` is the new Phase-2 history section.
+    return reply
+      .code(200)
+      .header('cache-control', 'no-store')
+      .send({ app: resolved.name, ...report, uptime: uptimeJson(report, history) });
   });
+}
+
+// The additive `/status.json` uptime section. Per component: window, overall + per-
+// component uptime %, and the per-day buckets ({date, state, uptime_pct}). Components
+// are ordered to match the live report (web → checks → plane), with any history-only
+// component (e.g. a check since removed, still within the window) appended.
+function uptimeJson(report: StatusReport, history: HistoryReport) {
+  const byName = new Map(history.components.map((c) => [c.name, c]));
+  const shape = (c: HistoryComponent) => ({
+    name: c.name,
+    uptime_pct: c.uptime_pct,
+    days: c.days.map((d) => ({ date: d.date, state: d.state, uptime_pct: d.uptime_pct })),
+  });
+  const emitted = new Set<string>();
+  const components: ReturnType<typeof shape>[] = [];
+  for (const c of report.components) {
+    const h = byName.get(c.name);
+    if (h) {
+      components.push(shape(h));
+      emitted.add(c.name);
+    }
+  }
+  for (const c of history.components) {
+    if (!emitted.has(c.name)) components.push(shape(c));
+  }
+  return {
+    window_days: history.window_days,
+    sampling: history.sample_count > 0,
+    overall_uptime_pct: history.overall_uptime_pct,
+    components,
+  };
 }
 
 function unknownAppHtml(reply: FastifyReply) {

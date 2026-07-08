@@ -10,6 +10,8 @@ import { nowIso } from '../src/shared/time';
 import type { Application } from '../src/resources/types';
 import { registerStatusRoutes, computeStatus } from '../src/api/status-routes';
 import type { HealthProbeResult } from '../src/shared/health-probe';
+import { uptimeStore } from '../src/storage/uptime-store';
+import type { SnapshotComponent } from '../src/shared/uptime';
 
 // C15 — the public status page. computeStatus() (the banner/aggregation logic) is
 // unit-tested directly; the /status + /status.json routes are driven through Fastify
@@ -186,5 +188,65 @@ describe('C15 /status route (public, no auth, live C6)', () => {
     await server.ready();
     const res = await server.inject({ method: 'GET', url: '/status.json' });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+// ---- Phase 2 (uptime history) ------------------------------------------------
+
+describe('C15 Phase 2 — uptime history on /status(.json)', () => {
+  const liveComps: SnapshotComponent[] = [
+    { name: `${APP} (web)`, state: 'operational' },
+    { name: 'db', state: 'operational' },
+    { name: 'Forge data plane', state: 'operational' },
+  ];
+
+  it('/status.json gains an additive uptime section; Phase-1 fields are unchanged', async () => {
+    const port = await startHealth(200, { status: 'ok', service: APP, time: nowIso(), checks: [{ name: 'db', status: 'ok' }] });
+    process.env.FORGE_APP_CALLBACK_PORT = String(port);
+    await seedApp();
+
+    const body = (await server.inject({ method: 'GET', url: '/status.json' })).json();
+    // Phase-1 shape intact (additive only).
+    expect(body).toMatchObject({ app: APP, overall: 'operational', banner: 'All Systems Operational' });
+    expect(Array.isArray(body.components)).toBe(true);
+    expect(typeof body.checked_at).toBe('string');
+    // No sampling yet → an empty, "collecting" uptime section.
+    expect(body.uptime).toMatchObject({ sampling: false, window_days: 90 });
+    expect(body.uptime.overall_uptime_pct).toBeNull();
+    expect(body.uptime.components).toEqual([]);
+  });
+
+  it('the live page (no history) is byte-for-byte the Phase-1 page — no timeline markup', async () => {
+    const port = await startHealth(200, { status: 'ok', service: APP, time: nowIso(), checks: [{ name: 'db', status: 'ok' }] });
+    process.env.FORGE_APP_CALLBACK_PORT = String(port);
+    await seedApp();
+    const html = (await server.inject({ method: 'GET', url: '/status' })).body;
+    expect(html).toContain('All Systems Operational');
+    expect(html).not.toContain('class="tick"'); // no bars until sampling runs
+  });
+
+  it('renders a themed per-component uptime timeline once history exists', async () => {
+    const port = await startHealth(200, { status: 'ok', service: APP, time: nowIso(), checks: [{ name: 'db', status: 'ok' }] });
+    process.env.FORGE_APP_CALLBACK_PORT = String(port);
+    await seedApp();
+    // Two samples today for the live components (shares the temp state dir).
+    await uptimeStore.record(`app_${APP}`, { at: nowIso(), overall: 'operational', components: liveComps });
+    await uptimeStore.record(`app_${APP}`, { at: nowIso(), overall: 'operational', components: liveComps });
+
+    const json = (await server.inject({ method: 'GET', url: '/status.json' })).json();
+    expect(json.uptime.sampling).toBe(true);
+    expect(json.uptime.overall_uptime_pct).toBe(100);
+    // Ordered to match the live components (web first).
+    expect(json.uptime.components[0].name).toBe(`${APP} (web)`);
+    const web = json.uptime.components.find((c: { name: string }) => c.name === `${APP} (web)`);
+    expect(web.uptime_pct).toBe(100);
+    expect(web.days.length).toBe(90);
+    expect(web.days.at(-1)).toMatchObject({ state: 'operational' });
+    expect(web.days.at(-1).uptime_pct).toBe(100);
+
+    const html = (await server.inject({ method: 'GET', url: '/status' })).body;
+    expect(html).toContain('class="tick"'); // the per-day bar
+    expect(html).toContain('% uptime'); // the windowed uptime label
+    expect(html).toContain('--forge-color-success'); // themed tick colour
   });
 });

@@ -9,6 +9,40 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-07-08
+
+### Added
+- **C15 Phase 2 — uptime history on the status page.** The public `/status` dashboard grows a
+  Statuspage-style **per-component uptime timeline** (a per-day bar + windowed uptime %), backed by a
+  periodic health **sampler** and a durable, **bounded** snapshot store. Phase 1 (the live banner +
+  component rows) is unchanged; history is **opt-in** and additive.
+  - **Sampling (C2).** A platform-internal periodic probe run by the **scheduler-node** Implementation
+    (the same always-on, non-overlapping, unref'd ticker as the job scheduler — NOT an app-callback
+    `ScheduledJob`). Each tick it does a **cheap, read-only GET** to every app's C6 health and records
+    a `HealthSnapshot` (overall + per-component state at that instant), **reusing the same `probeHealth`
+    + `computeStatus` core** the live page uses — one health definition, no writes to the app.
+    **Opt-in + safe by default:** runs only when **`FORGE_STATUS_SAMPLE`** is truthy on the plane;
+    cadence is **`FORGE_STATUS_SAMPLE_INTERVAL`** (e.g. `1m`, `5m`; default **5m**, floored at 30s).
+    When off, `startHealthSampler` is a no-op and every app still gets the exact Phase-1 page.
+  - **Durable store + retention/rollup (bounded storage).** A per-app store under the state dir keeps
+    **raw** snapshots for a short window (default **2 days**) so today/yesterday are exact, **rolls up**
+    completed days to per-day counts kept for a long window (default **90 days**), and prunes both on
+    every write — so storage stays bounded no matter how long sampling runs. Kept out of the generic
+    Resource store (like the C3 app-event log / C4 notifications), so it never bloats `/resources`.
+  - **Page + JSON.** `/status` renders each **live** component's per-day bar (themed via the C16
+    `--forge-color-success/warning/danger` tokens, muted for no-data days; responsive) plus its uptime %.
+    `/status.json` gains an **additive** `uptime` section: `{ window_days, sampling, overall_uptime_pct,
+    components:[{ name, uptime_pct, days:[{ date, state, uptime_pct }] }] }`. **No breaking change** to
+    the Phase-1 `/status.json` shape (`overall`/`banner`/`components`/`checked_at` are untouched); an app
+    with no history reads `sampling:false` + empty components ("collecting…").
+  - **Out of scope (Phase 3, not built):** incident management + subscriptions (not stubbed).
+
+### Changed
+- The status aggregation (`computeStatus` + the status type unions) moved from `src/api/status-routes.ts`
+  to a pure **`src/shared/status.ts`**, shared by the status route and the new health sampler so there is
+  a single definition of "what the app's health says." Re-exported from `status-routes.ts` — no importer
+  change. `src/shared/health-probe.ts` (the C6/C14/C15 probe core) is untouched.
+
 ## [0.20.0] — 2026-07-08
 
 ### Added
@@ -682,7 +716,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/mardash-ai/forge/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/mardash-ai/forge/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/mardash-ai/forge/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/mardash-ai/forge/compare/v0.17.0...v0.18.0

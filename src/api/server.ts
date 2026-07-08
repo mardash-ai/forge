@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { readFile } from 'node:fs/promises';
 import { store } from '../storage/store';
 import { startScheduler } from '../plugins/scheduler-node/index';
+import { startHealthSampler } from '../plugins/scheduler-node/health-sampler';
 import { executeCapability } from '../core/runtime';
 import { describeCapabilities } from '../core/registry';
 import { ForgeError } from '../shared/errors';
@@ -133,6 +134,9 @@ async function main() {
   startScheduler(store, {
     tickMs: process.env.FORGE_SCHEDULER_TICK_MS ? Number(process.env.FORGE_SCHEDULER_TICK_MS) : undefined,
   });
+  // C15 Phase 2 — the health sampler (opt-in via FORGE_STATUS_SAMPLE) records the
+  // per-app uptime history the status page renders. No-op when disabled.
+  startHealthSampler(store, { planeLabel: 'Forge control plane' });
   // eslint-disable-next-line no-console
   console.log(`forge api listening on http://0.0.0.0:${port}`);
 }

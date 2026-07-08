@@ -5,6 +5,7 @@ import { executeCapability } from '../core/runtime';
 import { describeCapabilities } from '../core/registry';
 import { capabilities } from '../capabilities/index';
 import { startScheduler } from '../plugins/scheduler-node/index';
+import { startHealthSampler } from '../plugins/scheduler-node/health-sampler';
 import { ForgeError } from '../shared/errors';
 import { SYSTEM_ACTOR, type Actor } from '../shared/domain';
 import { RESOURCE_TYPES, type ResourceType, type Application } from '../resources/types';
@@ -167,6 +168,9 @@ async function main() {
   startScheduler(store, {
     tickMs: process.env.FORGE_SCHEDULER_TICK_MS ? Number(process.env.FORGE_SCHEDULER_TICK_MS) : undefined,
   });
+  // C15 Phase 2 — the health sampler (opt-in via FORGE_STATUS_SAMPLE) records the
+  // per-app uptime history the status page renders. No-op when disabled.
+  startHealthSampler(store, { planeLabel: 'Forge data plane' });
   // eslint-disable-next-line no-console
   console.log(`forge data-plane listening on http://0.0.0.0:${port} (app=${appName}, jobs=${loaded})`);
 }

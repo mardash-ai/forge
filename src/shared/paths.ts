@@ -60,6 +60,23 @@ export function notificationsFile(appId: string): string {
   return path.join(notificationsDir(), `${appId}.json`);
 }
 
+// Per-app uptime history store (C15 Phase 2). Two files per app under one dir:
+//   <appId>.jsonl        raw HealthSnapshots (bounded to the raw retention window)
+//   <appId>.rollup.json  the durable per-day rollup (bounded to the rollup window)
+// High-volume, timestamped, per-app durable data — kept out of the generic Resource
+// store (like the C3 app-event log + C4 notifications), so it never bloats /resources.
+export function uptimeDir(): string {
+  return path.join(stateDir(), 'uptime');
+}
+
+export function uptimeRawFile(appId: string): string {
+  return path.join(uptimeDir(), `${appId}.jsonl`);
+}
+
+export function uptimeRollupFile(appId: string): string {
+  return path.join(uptimeDir(), `${appId}.rollup.json`);
+}
+
 export function logsDir(): string {
   return path.join(stateDir(), 'logs');
 }
