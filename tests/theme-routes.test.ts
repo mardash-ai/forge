@@ -119,3 +119,49 @@ describe('C16 auth pages render from the theme tokens', () => {
     expect(html).not.toContain('forge-custom');
   });
 });
+
+describe('C16 a pinned mode:dark theme carries neutral surfaces (no redundant dark{})', () => {
+  // The forge-os prod-cutover rough edge: with mode:dark, custom neutral surfaces used to
+  // revert to the platform dark defaults unless mirrored into a dark{} block. Prove the
+  // app's surfaces now reach BOTH the /theme.css artifact and the inlined auth-page tokens
+  // (the status page renders from the same themeMetaHead → renderTokenCss machinery).
+  const DARK_ONLY_COLORS = {
+    name: 'Nightshade',
+    mode: 'dark',
+    colors: { primary: '#e0b970', background: '#16120e', surface: '#1f1a14', text: '#f5ecd9', border: '#3a3126' },
+  };
+
+  async function seedDark(): Promise<void> {
+    const now = nowIso();
+    const app: Application = {
+      id: `app_${APP}`, type: 'Application', app_id: `app_${APP}`, created_at: now, updated_at: now,
+      name: APP, repo_path: repo, platform: 'web', framework: 'nextjs', template: 'nextjs-web',
+      language: 'typescript', package_manager: 'npm',
+    };
+    await store.saveResource(app);
+    await writeFile(path.join(repo, 'forge.theme.json'), JSON.stringify(DARK_ONLY_COLORS, null, 2));
+  }
+
+  it('/theme.css emits the app surfaces, not the platform dark defaults', async () => {
+    await seedDark();
+    const res = await server.inject({ method: 'GET', url: '/theme.css' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('color-scheme:dark;');
+    expect(res.body).not.toContain('@media'); // a pinned mode has no media override
+    expect(res.body).toContain('--forge-color-bg:#16120e');
+    expect(res.body).toContain('--forge-color-surface:#1f1a14');
+    expect(res.body).toContain('--forge-color-text:#f5ecd9');
+    expect(res.body).toContain('--forge-color-border:#3a3126');
+    expect(res.body).not.toContain('--forge-color-bg:#0b0f19'); // platform dark default gone
+  });
+
+  it('/auth/login inlines the same app surfaces', async () => {
+    await setSecret(`app_${APP}`, 'AUTH_SESSION_SECRET', 'the-signing-secret');
+    await seedDark();
+    const res = await server.inject({ method: 'GET', url: '/auth/login' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('--forge-color-bg:#16120e');
+    expect(res.body).toContain('--forge-color-surface:#1f1a14');
+    expect(res.body).not.toContain('--forge-color-bg:#0b0f19');
+  });
+});

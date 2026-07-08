@@ -93,6 +93,67 @@ describe('C16 theme — normalization', () => {
     expect(t.dark.background).toBe('#000');
   });
 
+  it('mode:dark makes colors{} the WHOLE dark palette — surfaces included, no dark{} needed', () => {
+    // The forge-os cutover bug: with mode:dark, custom neutral surfaces reverted to the
+    // platform dark defaults unless mirrored into a redundant dark{}. Now colors{} alone
+    // is the entire dark palette.
+    const t = normalizeTheme({
+      mode: 'dark',
+      colors: {
+        primary: '#e0b970',
+        background: '#16120e',
+        surface: '#1f1a14',
+        text: '#f5ecd9',
+        textMuted: '#b8a888',
+        border: '#3a3126',
+      },
+    });
+    // brand carries…
+    expect(t.dark.primary).toBe('#e0b970');
+    // …AND the neutral surfaces are the app's values, NOT the platform dark defaults.
+    expect(t.dark.background).toBe('#16120e');
+    expect(t.dark.surface).toBe('#1f1a14');
+    expect(t.dark.text).toBe('#f5ecd9');
+    expect(t.dark.textMuted).toBe('#b8a888');
+    expect(t.dark.border).toBe('#3a3126');
+    expect(t.dark.background).not.toBe(DEFAULT_DARK.background);
+    // a field the app left unset still falls back to the dark default
+    expect(t.dark.danger).toBe(DEFAULT_DARK.danger);
+  });
+
+  it('mode:light makes colors{} the whole light palette (surfaces included)', () => {
+    const t = normalizeTheme({ mode: 'light', colors: { background: '#fffaf5', surface: '#ffffff', text: '#1a1a1a' } });
+    expect(t.light.background).toBe('#fffaf5');
+    expect(t.light.surface).toBe('#ffffff');
+    expect(t.light.text).toBe('#1a1a1a');
+  });
+
+  it('regression: a mode:dark theme with matching colors{} + dark{} (forge-os shape) renders identically', () => {
+    const palette = { primary: '#e0b970', background: '#16120e', surface: '#1f1a14', text: '#f5ecd9', border: '#3a3126' };
+    const withRedundantDark = normalizeTheme({ mode: 'dark', colors: palette, dark: palette });
+    const selfContained = normalizeTheme({ mode: 'dark', colors: palette });
+    expect(withRedundantDark.dark).toEqual(selfContained.dark);
+    // and both emit the app's surfaces (not the platform defaults)
+    expect(renderTokenCss(withRedundantDark)).toBe(renderTokenCss(selfContained));
+    expect(renderTokenCss(selfContained)).toContain('--forge-color-bg:#16120e');
+  });
+
+  it('mode:auto is unchanged — colors{} is the light palette, dark{} supplies the dark overrides', () => {
+    const t = normalizeTheme({
+      mode: 'auto',
+      colors: { primary: '#ff0066', background: '#fafafa' },
+      dark: { background: '#050505' },
+    });
+    // light half = colors{}
+    expect(t.light.background).toBe('#fafafa');
+    // dark half: brand hue carried from light, surface from the explicit dark{} override
+    expect(t.dark.primary).toBe('#ff0066');
+    expect(t.dark.background).toBe('#050505');
+    // a custom LIGHT surface with NO dark{} override stays the neutral dark default (auto)
+    const noDark = normalizeTheme({ mode: 'auto', colors: { primary: '#ff0066', background: '#fafafa' } });
+    expect(noDark.dark.background).toBe(DEFAULT_DARK.background);
+  });
+
   it('auto-derives a readable primary contrast when none is given', () => {
     const light = normalizeTheme({ colors: { primary: '#ffffff' } });
     expect(light.light.primaryContrast).toBe('#111827'); // dark text on a light primary
@@ -151,6 +212,24 @@ describe('C16 theme — token rendering', () => {
     const dark = renderTokenCss({ ...DEFAULT_THEME, mode: 'dark' });
     expect(dark).toContain('color-scheme:dark;');
     expect(dark).toContain(DEFAULT_DARK.primary);
+  });
+
+  it('a mode:dark colors-only theme emits the app surfaces as the rendered tokens', () => {
+    // The exact artifact both the auth and status pages render from (themeMetaHead →
+    // renderTokenCss). No dark{} block present.
+    const css = renderTokenCss(
+      normalizeTheme({
+        mode: 'dark',
+        colors: { background: '#16120e', surface: '#1f1a14', text: '#f5ecd9', border: '#3a3126' },
+      }),
+    );
+    expect(css).toContain('color-scheme:dark;');
+    expect(css).not.toContain('@media');
+    expect(css).toContain('--forge-color-bg:#16120e');
+    expect(css).toContain('--forge-color-surface:#1f1a14');
+    expect(css).toContain('--forge-color-text:#f5ecd9');
+    expect(css).toContain('--forge-color-border:#3a3126');
+    expect(css).not.toContain(`--forge-color-bg:${DEFAULT_DARK.background}`);
   });
 
   it('renderThemeCss appends sandboxed custom CSS', () => {

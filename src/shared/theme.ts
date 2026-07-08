@@ -41,7 +41,12 @@ export interface Theme {
   name?: string; // app display name (title + brand label)
   logo?: string; // logo asset (URL or app-served path)
   favicon?: string; // favicon href
-  mode: ThemeMode; // light / dark / auto (default auto)
+  // light / dark / auto (default auto). `colors{}` is your palette for the CHOSEN mode:
+  // with a PINNED mode ('light' or 'dark') the base `colors{}` is the WHOLE palette for
+  // that mode — neutral surfaces (background/surface/text/textMuted/border) included — so
+  // a pinned theme is self-contained and needs no `dark{}`. Add a `dark{}` block only for
+  // `mode:'auto'`, where `colors{}` is the light palette and `dark{}` the dark overrides.
+  mode: ThemeMode;
   font: string; // font-family stack
   radius: string; // base corner radius (e.g. "8px")
   light: ThemePalette; // resolved light palette
@@ -57,7 +62,13 @@ export interface RawTheme {
   mode?: unknown;
   font?: unknown;
   radius?: unknown;
+  // Your palette for the chosen `mode`. Under a pinned `mode` ('light'/'dark') this is
+  // the ENTIRE palette for that mode (surfaces included). Under `mode:'auto'` it is the
+  // light palette.
   colors?: Record<string, unknown>;
+  // Dark overrides — meaningful ONLY for `mode:'auto'` (where `colors{}` is the light
+  // palette). A pinned `mode:'dark'` theme does not need this; put your dark palette in
+  // `colors{}`.
   dark?: Record<string, unknown>;
   custom_css?: unknown;
   custom_css_path?: unknown;
@@ -126,9 +137,11 @@ export const THEME_TOKENS = [
   '--forge-color-danger',
 ] as const;
 
-// "brand-ish" palette fields carry a custom LIGHT value into dark when the app
-// didn't give an explicit dark value; "surface-ish" fields keep the neutral dark
-// default instead (a custom light background would be wrong in dark mode).
+// For `mode:'auto'` ONLY: "brand-ish" palette fields carry a custom LIGHT value into
+// dark when the app didn't give an explicit `dark{}` value; "surface-ish" fields keep
+// the neutral dark default instead (a custom light background would be wrong in the dark
+// half of an auto theme). Under a PINNED `mode:'dark'` this brand-only carry does not
+// apply — there the app's whole `colors{}` (surfaces included) IS the dark palette.
 const BRAND_FIELDS: (keyof ThemePalette)[] = [
   'primary',
   'primaryContrast',
@@ -280,14 +293,40 @@ export function normalizeTheme(raw: RawTheme | null | undefined): Theme {
     light.primaryContrast = readableOn(light.primary, DEFAULT_LIGHT.primaryContrast);
   }
 
-  // Dark: neutral dark default, then carry any customized BRAND colors from light
-  // (unless the app gave explicit dark values), then overlay explicit `dark`.
+  const mode = sanitizeMode(raw.mode);
+
+  // Dark palette resolution depends on the chosen MODE:
+  //
+  //  - mode 'dark' (PINNED): the app's `colors{}` IS the entire dark palette — neutral
+  //    surfaces (background/surface/text/textMuted/border) included — merged over the
+  //    dark default for any field left unset. A pinned dark theme is therefore SELF-
+  //    CONTAINED from `colors{}` alone (set `colors.background` and dark mode honors it,
+  //    no `dark{}` needed). An explicit `dark{}` still overrides — so a theme that
+  //    mirrors `colors{}` into `dark{}` (the mode:auto shape) renders IDENTICALLY — but
+  //    it is redundant here.
+  //
+  //  - mode 'auto' / 'light': `colors{}` is the LIGHT palette; the dark palette starts
+  //    from the neutral dark default, carries the customized BRAND colors from light
+  //    (so a brand hue still reads in the dark half) unless an explicit `dark{}` value is
+  //    given, then overlays `dark{}`. `dark{}` is meaningful only in this branch.
   const dark = { ...DEFAULT_DARK };
-  for (const f of BRAND_FIELDS) {
-    if (colors[jsonKey[f]] !== undefined && darkOverrides[jsonKey[f]] === undefined) {
-      dark[f] = light[f];
+  if (mode === 'dark') {
+    for (const f of PALETTE_FIELDS) {
+      dark[f] = sanitizeColor(colors[jsonKey[f]], DEFAULT_DARK[f]);
+    }
+    // A primary set without an explicit contrast → pick readable black/white on it.
+    if (colors.primary !== undefined && colors.primaryContrast === undefined) {
+      dark.primaryContrast = readableOn(dark.primary, DEFAULT_DARK.primaryContrast);
+    }
+  } else {
+    for (const f of BRAND_FIELDS) {
+      if (colors[jsonKey[f]] !== undefined && darkOverrides[jsonKey[f]] === undefined) {
+        dark[f] = light[f];
+      }
     }
   }
+  // Explicit `dark{}` overrides apply last in every mode (redundant-but-harmless when a
+  // pinned-dark theme mirrors `colors{}` into `dark{}`; the source of truth for auto).
   for (const f of PALETTE_FIELDS) {
     if (darkOverrides[jsonKey[f]] !== undefined) {
       dark[f] = sanitizeColor(darkOverrides[jsonKey[f]], dark[f]);
@@ -295,7 +334,7 @@ export function normalizeTheme(raw: RawTheme | null | undefined): Theme {
   }
 
   const theme: Theme = {
-    mode: sanitizeMode(raw.mode),
+    mode,
     font: sanitizeFont(raw.font, DEFAULT_FONT),
     radius: sanitizeSize(raw.radius, DEFAULT_RADIUS),
     light,

@@ -9,6 +9,42 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-07-08
+
+### Fixed
+- **C16 theming — a pinned `mode` now makes `colors{}` the WHOLE palette (neutral surfaces included).**
+  Found adopting the theme during the forge-os prod cutover: with `mode:'dark'`, the **brand** colors from
+  `colors{}` carried into dark but the **neutral surfaces** (`background`/`surface`/`text`/`textMuted`/`border`)
+  reverted to the platform dark defaults unless the app *also* mirrored them into a redundant `dark{}` block
+  (so `colors.background:#16120e` + `mode:'dark'` rendered on the platform's `#0b0f19`). Now a **pinned mode
+  is self-contained:** `mode:'dark'` (and `mode:'light'`) treats the base `colors{}` — merged over that mode's
+  default for any unset field — as the **entire palette for the mode, surfaces and all**, so no `dark{}` is
+  needed. `mode:'auto'` is **unchanged** (there `colors{}` is the light palette and `dark{}` supplies the dark
+  overrides — the only mode where `dark{}` is meaningful). **Regression-safe:** a theme that sets `colors{}`
+  **and** a matching `dark{}` (the previous forge-os shape) renders **identically**. Schema comments + the
+  generated starter theme now say it plainly: *`colors{}` is your palette for the chosen `mode`; add a `dark{}`
+  block only for `mode:auto`.*
+- **P14 — `forge deploy` no longer silently runs a stale image.** The image pull was quietly non-fatal, so a
+  failed pull (e.g. a locked Docker keychain over non-interactive SSH) left the already-cached **old**
+  container running while deploy reported **success** — "requested pin X, running Y" drift with no warning
+  (it cost two no-op prod deploys). Deploy now:
+  - **Verifies against the pins (drift gate).** After the reconcile + roll it compares each digest-pinned
+    service's **running** image against the image its **compose pin** resolves to; on any mismatch it **fails
+    loudly** (non-zero) naming the service + `running <Y>` vs `pinned <X>` and why (e.g. the pull failed — is
+    the registry authenticated?), instead of reporting success.
+  - **Recreates on a pin change.** A reconciled digest-pinned sidecar (the data-plane) left on a stale image by
+    the `restart: unless-stopped` + only-image-changed trap is **force-recreated onto its pin**; the public web
+    tier keeps its start-first, zero-downtime roll.
+  - **Surfaces pull failures.** A failed pull is no longer swallowed — it is reported and, when it caused any
+    drift, blocks the success report.
+  Fixed for **every** consumer + forge-starter — no deploy needs hand-forcing.
+
+### Changed
+- **`make up` now `--force-recreate`s the control-plane container** — the P14 sibling trap: a container under
+  `restart: unless-stopped` is not swapped by `compose up` when only its image changed (a rebuilt / re-pinned
+  `FORGE_IMAGE`), silently keeping the old one. `make up` now always lands the freshly built/pinned image
+  instead of leaving `forge productionize`/commands running on a stale one.
+
 ## [0.18.0] — 2026-07-08
 
 ### Added
@@ -614,7 +650,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/mardash-ai/forge/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/mardash-ai/forge/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/mardash-ai/forge/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/mardash-ai/forge/compare/v0.15.1...v0.16.0

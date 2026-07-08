@@ -202,6 +202,11 @@ export function applyStandaloneOutput(text: string): StandalonePatchResult {
 // brand every platform-served page (auth + status) at once; add `logo`/`favicon` or a
 // `custom_css` string (CSS only; sandboxed) for deeper control. Only scaffolded when
 // absent — never clobbers an app's edited theme.
+//
+// `colors{}` is your palette for the chosen `mode`: with `mode:'light'` or `'dark'`
+// pinned, `colors{}` is the WHOLE palette for that mode (surfaces included) — no
+// `dark{}` block needed. Add a `dark{}` block only for `mode:'auto'` (where `colors{}`
+// is the light palette and `dark{}` supplies the dark overrides).
 export function generateStarterTheme(appName: string): string {
   const starter = {
     name: appName,
