@@ -5,12 +5,19 @@ import { ForgeError } from '../shared/errors';
 import { SYSTEM_ACTOR } from '../shared/domain';
 import {
   SESSION_COOKIE,
+  REFRESH_COOKIE,
+  APP_HEADER,
   DEFAULT_SESSION_TTL_SECONDS,
   signSessionToken,
   verifySessionToken,
   sessionCookie,
   clearSessionCookie,
+  refreshCookie,
+  clearRefreshCookie,
   parseCookies,
+  accessTtlSeconds,
+  refreshTtlSeconds,
+  refreshReuseGraceSeconds,
 } from '../shared/session';
 import {
   IMPLEMENTATION,
@@ -72,9 +79,29 @@ export function registerAuthRoutes(
     );
   }
 
-  const resolveAppName = (name?: string): string | undefined => name ?? opts.defaultApp?.();
-  const resolveAppId = async (name?: string): Promise<{ id: string; name: string } | null> => {
-    const n = resolveAppName(name);
+  // Resolve which app a /auth request targets. Precedence (P9): an explicit `app`
+  // (query on GET, body on POST) → the `X-Forge-App` header a dev proxy sets so a
+  // MULTI-app control plane can scope /auth without a per-app path mount → the
+  // server's default (the single-app data-plane sidecar's FORGE_APP_NAME). Prod is
+  // un-regressed: with no explicit app and no header, it falls through to the default.
+  const trimmed = (v: unknown): string | undefined => {
+    const s = typeof v === 'string' ? v.trim() : '';
+    return s || undefined;
+  };
+  const resolveAppName = (req: FastifyRequest, explicit?: string): string | undefined => {
+    const fromExplicit = trimmed(explicit);
+    if (fromExplicit) return fromExplicit;
+    const fromQuery = trimmed((req.query as { app?: string } | undefined)?.app);
+    if (fromQuery) return fromQuery;
+    const fromBody = trimmed((req.body as { app?: string } | undefined)?.app);
+    if (fromBody) return fromBody;
+    const hdr = req.headers[APP_HEADER];
+    const fromHeader = trimmed(Array.isArray(hdr) ? hdr[0] : hdr);
+    if (fromHeader) return fromHeader;
+    return opts.defaultApp?.();
+  };
+  const resolveAppId = async (req: FastifyRequest, explicit?: string): Promise<{ id: string; name: string } | null> => {
+    const n = resolveAppName(req, explicit);
     if (!n) return null;
     const a = await store.findAppByName(n);
     return a && a.type === 'Application' ? { id: a.id, name: n } : null;
@@ -146,11 +173,59 @@ export function registerAuthRoutes(
     location: string,
     extraCookies: string[] = [],
   ) {
+    const secure = requestIsSecure(req);
     const session = await authStore.createSession(appId, user.id, DEFAULT_SESSION_TTL_SECONDS);
-    const token = signSessionToken({ userId: user.id, email: user.email, sessionId: session.id }, cfg.sessionSecret!);
-    const cookieStr = sessionCookie(token, { secure: requestIsSecure(req), maxAgeSeconds: DEFAULT_SESSION_TTL_SECONDS });
+    const now = Math.floor(Date.now() / 1000);
+    // SHORT-lived access token (~15m JWS exp) — locally verifiable, no round-trip.
+    const access = signSessionToken({ userId: user.id, email: user.email, sessionId: session.id }, cfg.sessionSecret!, accessTtlSeconds(), now);
+    // The access cookie's Max-Age is the (long) session lifetime, so the browser keeps
+    // presenting the token even after its short JWS `exp`; the gate then sees it's
+    // expired and refreshes. The short-lived part is the JWS `exp`, not the cookie.
+    const accessC = sessionCookie(access, { secure, maxAgeSeconds: refreshTtlSeconds() });
+    // Opaque, revocable refresh token (~30d) — a new record persists its HASH only.
+    const refreshRaw = newToken().token;
+    await authStore.putRefreshToken(appId, { tokenHash: hashToken(refreshRaw), userId: user.id, sessionId: session.id, ttlSeconds: refreshTtlSeconds() });
+    const refreshC = refreshCookie(refreshRaw, { secure, maxAgeSeconds: refreshTtlSeconds() });
     await emit(appId, 'UserAuthenticated', user.id, user.email, { method: user.provider ?? 'password' });
-    reply.header('set-cookie', [cookieStr, ...extraCookies]).code(303).header('location', location).send();
+    reply.header('set-cookie', [accessC, refreshC, ...extraCookies]).code(303).header('location', location).send();
+  }
+
+  // Rotate the opaque refresh cookie into a fresh access+refresh pair, setting both
+  // Set-Cookie headers on `reply` on success. Returns the identity on success, 'reuse'
+  // on a detected stolen-token replay (breach — the caller 401s + clears cookies), or
+  // null when there's nothing valid to refresh. Never calls reply.send() itself.
+  async function performRefresh(
+    req: FastifyRequest,
+    reply: FastifyReply,
+    appId: string,
+    cfg: AuthConfig,
+  ): Promise<{ userId: string; email: string; exp: number } | 'reuse' | null> {
+    if (!cfg.sessionSecret) return null;
+    const raw = cookieVal(req, REFRESH_COOKIE);
+    if (!raw) return null;
+    const successorRaw = newToken().token;
+    const res = await authStore.redeemRefreshToken(appId, hashToken(raw), hashToken(successorRaw), {
+      refreshTtlSeconds: refreshTtlSeconds(),
+      sessionTtlSeconds: DEFAULT_SESSION_TTL_SECONDS,
+      graceSeconds: refreshReuseGraceSeconds(),
+    });
+    if (res.outcome === 'reuse') {
+      await emit(appId, 'SessionRevoked', res.userId, undefined, { reason: 'refresh_reuse_detected', session_id: res.sessionId });
+      return 'reuse';
+    }
+    if (res.outcome !== 'rotated') return null;
+    const user = await authStore.getUser(appId, res.userId);
+    if (!user) return null;
+    const secure = requestIsSecure(req);
+    const now = Math.floor(Date.now() / 1000);
+    const ttl = accessTtlSeconds();
+    const access = signSessionToken({ userId: user.id, email: user.email, sessionId: res.sessionId }, cfg.sessionSecret, ttl, now);
+    reply.header('set-cookie', [
+      sessionCookie(access, { secure, maxAgeSeconds: refreshTtlSeconds() }),
+      refreshCookie(successorRaw, { secure, maxAgeSeconds: refreshTtlSeconds() }),
+    ]);
+    await emit(appId, 'SessionRefreshed', user.id, user.email);
+    return { userId: user.id, email: user.email, exp: now + ttl };
   }
 
   function htmlReply(reply: FastifyReply, status: number, htmlStr: string) {
@@ -160,7 +235,7 @@ export function registerAuthRoutes(
   // ---- config (which methods are enabled) --------------------------------------
 
   app.get('/auth/config', async (req, reply) => {
-    const app_ = await resolveAppId((req.query as { app?: string }).app);
+    const app_ = await resolveAppId(req);
     if (!app_) return reply.code(404).send(unknownApp);
     const cfg = await resolveAuthConfig(app_.id);
     const email = await resolveEmailConfig(app_.id);
@@ -183,7 +258,7 @@ export function registerAuthRoutes(
   // ---- login -------------------------------------------------------------------
 
   app.get('/auth/login', async (req, reply) => {
-    const app_ = await resolveAppId((req.query as { app?: string }).app);
+    const app_ = await resolveAppId(req);
     if (!app_) return htmlReply(reply, 404, page({ title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const cfg = await resolveAuthConfig(app_.id);
     const q = req.query as { next?: string; error?: string; notice?: string };
@@ -192,7 +267,7 @@ export function registerAuthRoutes(
 
   app.post('/auth/login', async (req, reply) => {
     const b = body(req);
-    const app_ = await resolveAppId(b.app);
+    const app_ = await resolveAppId(req);
     if (!app_) return htmlReply(reply, 404, page({ title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const cfg = await resolveAuthConfig(app_.id);
     const next = safeNext(b.next);
@@ -215,7 +290,7 @@ export function registerAuthRoutes(
   // ---- signup ------------------------------------------------------------------
 
   app.get('/auth/signup', async (req, reply) => {
-    const app_ = await resolveAppId((req.query as { app?: string }).app);
+    const app_ = await resolveAppId(req);
     if (!app_) return htmlReply(reply, 404, page({ title: 'Sign up', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const cfg = await resolveAuthConfig(app_.id);
     const email = await resolveEmailConfig(app_.id);
@@ -225,7 +300,7 @@ export function registerAuthRoutes(
 
   app.post('/auth/signup', async (req, reply) => {
     const b = body(req);
-    const app_ = await resolveAppId(b.app);
+    const app_ = await resolveAppId(req);
     if (!app_) return htmlReply(reply, 404, page({ title: 'Sign up', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const cfg = await resolveAuthConfig(app_.id);
     const next = safeNext(b.next);
@@ -278,7 +353,7 @@ export function registerAuthRoutes(
   // ---- verify email ------------------------------------------------------------
 
   app.get('/auth/verify', async (req, reply) => {
-    const app_ = await resolveAppId((req.query as { app?: string }).app);
+    const app_ = await resolveAppId(req);
     if (!app_) return htmlReply(reply, 404, page({ title: 'Verify', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const token = String((req.query as { token?: string }).token ?? '');
     const userId = token ? await authStore.consumeVerifyToken(app_.id, hashToken(token)) : null;
@@ -300,7 +375,7 @@ export function registerAuthRoutes(
 
   app.post('/auth/forgot', async (req, reply) => {
     const b = body(req);
-    const app_ = await resolveAppId(b.app);
+    const app_ = await resolveAppId(req);
     if (!app_) return htmlReply(reply, 404, forgotPage({ error: 'Unknown app.' }));
     const email = String(b.email ?? '').trim();
     const emailCfg = await resolveEmailConfig(app_.id);
@@ -331,7 +406,7 @@ export function registerAuthRoutes(
 
   app.post('/auth/reset', async (req, reply) => {
     const b = body(req);
-    const app_ = await resolveAppId(b.app);
+    const app_ = await resolveAppId(req);
     if (!app_) return htmlReply(reply, 404, resetPage({ token: '', error: 'Unknown app.' }));
     const token = String(b.token ?? '');
     const password = String(b.password ?? '');
@@ -344,18 +419,24 @@ export function registerAuthRoutes(
     }
     const password_hash = await hashPassword(password);
     // A reset also VERIFIES the email (they proved control of it) and REVOKES all
-    // existing sessions (a reset should log other devices out).
+    // existing sessions AND refresh tokens — "sign out everywhere": every device is
+    // logged out and no revoked session can mint a new access token.
     await authStore.updateUser(app_.id, userId, { password_hash, email_verified: true });
     await authStore.revokeAllUserSessions(app_.id, userId);
+    await authStore.revokeAllUserRefreshTokens(app_.id, userId);
     const u = await authStore.getUser(app_.id, userId);
     await emit(app_.id, 'PasswordChanged', userId, u?.email);
-    reply.code(303).header('location', `/auth/login?notice=${encodeURIComponent('Password updated — sign in with your new password.')}`).send();
+    reply
+      .header('set-cookie', [clearSessionCookie({ secure: requestIsSecure(req) }), clearRefreshCookie({ secure: requestIsSecure(req) })])
+      .code(303)
+      .header('location', `/auth/login?notice=${encodeURIComponent('Password updated — sign in with your new password.')}`)
+      .send();
   });
 
   // ---- Google OAuth ------------------------------------------------------------
 
   app.get('/auth/google', async (req, reply) => {
-    const app_ = await resolveAppId((req.query as { app?: string }).app);
+    const app_ = await resolveAppId(req);
     if (!app_) return htmlReply(reply, 404, page({ title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const cfg = await resolveAuthConfig(app_.id);
     if (!cfg.google) {
@@ -380,7 +461,7 @@ export function registerAuthRoutes(
 
     if (q.error) return bail('Google sign-in was cancelled.');
     if (!q.code || !q.state || !savedState || q.state !== savedState) return bail('Google sign-in failed (state mismatch). Please try again.');
-    const app_ = await resolveAppId(savedApp);
+    const app_ = await resolveAppId(req, savedApp);
     if (!app_) return bail('Unknown app.');
     const cfg = await resolveAuthConfig(app_.id);
     if (!cfg.google || !cfg.sessionSecret) return bail('Google sign-in is not available.');
@@ -427,17 +508,43 @@ export function registerAuthRoutes(
   // ---- sign-out ----------------------------------------------------------------
 
   const logout = async (req: FastifyRequest, reply: FastifyReply) => {
-    const app_ = await resolveAppId((body(req).app as string) || (req.query as { app?: string }).app);
+    const secure = requestIsSecure(req);
+    const app_ = await resolveAppId(req);
     if (app_) {
       const cfg = await resolveAuthConfig(app_.id);
-      const live = await liveSession(req, app_.id, cfg);
-      if (live) {
-        await authStore.revokeSession(app_.id, live.session.id);
-        await emit(app_.id, 'SessionRevoked', live.claims.userId, live.claims.email);
+      let sessionId: string | undefined;
+      let userId: string | undefined;
+      let email: string | undefined;
+      // Prefer the (possibly still-valid) access token's claims...
+      if (cfg.sessionSecret) {
+        const claims = verifySessionToken(cookieVal(req, SESSION_COOKIE), cfg.sessionSecret);
+        if (claims) {
+          sessionId = claims.sessionId;
+          userId = claims.userId;
+          email = claims.email;
+        }
+      }
+      // ...else fall back to the refresh cookie's record — the short access token may
+      // have already expired, but logout must still kill the session.
+      const rawRefresh = cookieVal(req, REFRESH_COOKIE);
+      if (rawRefresh) {
+        const rec = await authStore.getRefreshToken(app_.id, hashToken(rawRefresh));
+        if (rec) {
+          sessionId ??= rec.session_id;
+          userId ??= rec.user_id;
+        }
+      }
+      if (sessionId) {
+        // Revoke the server session AND its whole refresh chain, so no new access can
+        // be minted; the current access token dies within its short window.
+        await authStore.revokeSession(app_.id, sessionId);
+        await authStore.revokeSessionRefreshTokens(app_.id, sessionId);
+        if (!email && userId) email = (await authStore.getUser(app_.id, userId))?.email;
+        await emit(app_.id, 'SessionRevoked', userId ?? sessionId, email);
       }
     }
     reply
-      .header('set-cookie', clearSessionCookie({ secure: requestIsSecure(req) }))
+      .header('set-cookie', [clearSessionCookie({ secure }), clearRefreshCookie({ secure })])
       .code(303)
       .header('location', '/auth/login?notice=' + encodeURIComponent('Signed out.'))
       .send();
@@ -445,26 +552,60 @@ export function registerAuthRoutes(
   app.post('/auth/logout', logout);
   app.get('/auth/logout', logout);
 
+  // ---- refresh (P8: short-lived access + rotating, revocable refresh) ----------
+
+  // The consuming app's gate calls this SERVER-SIDE (same-origin) when it local-verifies
+  // `forge_session` and finds it expired/absent but a `forge_refresh` cookie is present.
+  // On success it sets a rotated `forge_session` + `forge_refresh` and returns the
+  // identity; on any failure it 401s and clears BOTH cookies (so the app treats the
+  // request as unauthenticated). Reuse of an already-rotated refresh → the whole chain
+  // is revoked (see performRefresh / redeemRefreshToken).
+  app.post('/auth/refresh', async (req, reply) => {
+    const secure = requestIsSecure(req);
+    const clear401 = () =>
+      reply
+        .header('set-cookie', [clearSessionCookie({ secure }), clearRefreshCookie({ secure })])
+        .code(401)
+        .send({ error: { code: 'unauthenticated', message: 'no valid session', retry: 'no' } });
+    const app_ = await resolveAppId(req);
+    if (!app_) return clear401();
+    const cfg = await resolveAuthConfig(app_.id);
+    const r = await performRefresh(req, reply, app_.id, cfg);
+    if (r === null || r === 'reuse') return clear401();
+    return reply.code(200).send(r);
+  });
+
   // ---- session accessor (the verify-endpoint option) ---------------------------
 
   app.get('/auth/session', async (req, reply) => {
-    const app_ = await resolveAppId((req.query as { app?: string }).app);
+    const app_ = await resolveAppId(req);
     if (!app_) return reply.code(404).send(unknownApp);
     const cfg = await resolveAuthConfig(app_.id);
+    const secure = requestIsSecure(req);
     const live = await liveSession(req, app_.id, cfg);
-    if (!live) return reply.code(401).send({ error: { code: 'unauthenticated', message: 'no active session', retry: 'no' } });
-    // Sliding expiry: extend the server session + re-issue the cookie on activity.
-    await authStore.touchSession(app_.id, live.session.id, DEFAULT_SESSION_TTL_SECONDS);
-    const token = signSessionToken({ userId: live.claims.userId, email: live.claims.email, sessionId: live.session.id }, cfg.sessionSecret!);
-    reply.header('set-cookie', sessionCookie(token, { secure: requestIsSecure(req) }));
-    return { userId: live.claims.userId, email: live.claims.email };
+    if (live) {
+      // Sliding expiry: extend the server session + re-issue a fresh SHORT access cookie.
+      await authStore.touchSession(app_.id, live.session.id, DEFAULT_SESSION_TTL_SECONDS);
+      const now = Math.floor(Date.now() / 1000);
+      const ttl = accessTtlSeconds();
+      const token = signSessionToken({ userId: live.claims.userId, email: live.claims.email, sessionId: live.session.id }, cfg.sessionSecret!, ttl, now);
+      reply.header('set-cookie', sessionCookie(token, { secure, maxAgeSeconds: refreshTtlSeconds() }));
+      return { userId: live.claims.userId, email: live.claims.email, exp: now + ttl };
+    }
+    // Access expired/absent — for apps using this accessor (a round-trip pattern) rather
+    // than the local-verify gate, transparently rotate the refresh so their effective
+    // session length stays ~30d (as before P8), not capped at the 15-min access window.
+    const r = await performRefresh(req, reply, app_.id, cfg);
+    if (r && r !== 'reuse') return { userId: r.userId, email: r.email, exp: r.exp };
+    if (r === 'reuse') reply.header('set-cookie', [clearSessionCookie({ secure }), clearRefreshCookie({ secure })]);
+    return reply.code(401).send({ error: { code: 'unauthenticated', message: 'no active session', retry: 'no' } });
   });
 
   // ---- owner migration hook (§8) ----------------------------------------------
 
   app.post('/auth/admin/seed-owner', async (req, reply) => {
     const b = body(req);
-    const app_ = await resolveAppId(b.app);
+    const app_ = await resolveAppId(req);
     if (!app_) return reply.code(404).send(unknownApp);
     const email = String(b.email ?? '').trim();
     if (!EMAIL_RE.test(email)) {

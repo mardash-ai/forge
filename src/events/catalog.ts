@@ -41,6 +41,7 @@ export const EVENT_TYPES = [
   'UserSignedUp',
   'UserVerified',
   'UserAuthenticated',
+  'SessionRefreshed',
   'SessionRevoked',
   'PasswordResetRequested',
   'PasswordChanged',

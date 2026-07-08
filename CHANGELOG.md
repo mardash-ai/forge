@@ -9,6 +9,57 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-07-07
+
+### Added
+- **P8 — logout/revocation is now real: short-lived access token + a revocable, rotating refresh
+  token.** Before this, the app's gate verified the long-lived (`~30d`) `forge_session` cookie
+  **locally with no round-trip**, so a **replayed** cookie still passed the gate after
+  logout/reset/leak until its far-off `exp`. C10 now issues **two** cookies:
+  - **`forge_session` (access)** — the **same** HS256-JWS shape/verification an app already mirrors
+    (`{ userId, email, sessionId, iat, exp }`, signed with `AUTH_SESSION_SECRET`, verified locally with
+    no round-trip), but its JWS **`exp` is short (~15m)**. That short window is what now bounds exposure
+    after a revocation. The cookie's `Max-Age` is the session lifetime so the browser keeps presenting
+    the (soon-expired) token, which drives the gate's decision to refresh.
+  - **`forge_refresh` (refresh)** — a **new**, **opaque**, high-entropy httpOnly + Secure +
+    SameSite=Lax cookie (NOT a JWS). The server persists only its **SHA-256 hash** in the per-app auth
+    store (`{ id(hashed), user_id, session_id, created_at, expires_at(~30d), revoked_at, rotated_from?,
+    rotated_to? }`), so a store leak can't be replayed. **Path=/** (not `/auth`) on purpose — the app's
+    gate runs on every path and must read this cookie to decide whether to refresh.
+  - **`POST /auth/refresh`** (both planes) — reads `forge_refresh`, validates it (exists, unrevoked,
+    unexpired, live session), then **issues a fresh short access token AND rotates the refresh**
+    (mints a new `forge_refresh`, single-use-revokes the old, links them). Returns `200 { userId,
+    email, exp }` + `Set-Cookie` for both; on failure `401` + clears both cookies. **Refresh-token
+    rotation** makes a stolen refresh single-use and reuse **detectable**: re-presenting an
+    already-rotated token (outside a small benign-concurrency grace) **revokes the whole session's
+    refresh chain + the server session**.
+  - **Revocation is real.** **Logout** revokes the session **and** its refresh chain (works even when
+    the access token has already expired, via the refresh record) and clears both cookies. **Password
+    reset** revokes **all** of the user's sessions **and** refresh tokens ("sign out everywhere"). After
+    a revocation the current access token still works only until its ~15-min `exp`, and **no new access
+    can be minted** — so the session dies within the window.
+  - Every sign-in path (`/auth/login`, OAuth callback) now sets **both** cookies; the `/auth/session`
+    accessor signs the short access token and transparently refreshes on expiry so accessor-pattern
+    apps keep a ~30d session. New event **`SessionRefreshed`**; `SessionRevoked` now also fires on a
+    detected refresh reuse. New TTL knobs (env, with defaults): `FORGE_AUTH_ACCESS_TTL_SECONDS`
+    (900), `FORGE_AUTH_REFRESH_TTL_SECONDS` (2592000), `FORGE_AUTH_REFRESH_REUSE_GRACE_SECONDS` (15).
+- **P9 — the multi-app control plane can scope `/auth` for a dev app without a single-app sidecar
+  workaround.** The single-app data-plane sidecar infers the app from `FORGE_APP_NAME`, but the
+  multi-app control plane (dev) serves `/auth` for many apps and couldn't infer which — a pure
+  same-origin form POST 404'd (`Unknown app`). The `/auth` routes now resolve the target app from a
+  new **`X-Forge-App`** request header (which a dev proxy sets), **and** honor the `app` query param
+  uniformly on **POST** as well as GET (so a `?app=<name>` rewrite destination works too). Precedence:
+  explicit `app` → `X-Forge-App` header → the server default (`FORGE_APP_NAME`).
+
+### Changed
+- **Backward compatible for adopters; a re-verify, not a breaking change.** The access cookie keeps the
+  **same name and JWS verification** an app already mirrors — only its `exp` shrinks — so an app's local
+  `verifySessionToken` path is unchanged. To gain real revocation an app adds the small refresh step to
+  its middleware: when `forge_session` is expired/absent **and** `forge_refresh` is present, do a
+  server-side same-origin `POST /auth/refresh`; on `200` set the rotated cookies and admit the request,
+  on `401` treat it as unauthenticated. Public/service paths are unchanged. **Prod is un-regressed:** the
+  single-app data-plane path (no header, no `app` param) still defaults from `FORGE_APP_NAME`.
+
 ## [0.15.1] — 2026-07-07
 
 ### Fixed
@@ -479,7 +530,9 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/mardash-ai/forge/compare/v0.15.1...v0.16.0
+[0.15.1]: https://github.com/mardash-ai/forge/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/mardash-ai/forge/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/mardash-ai/forge/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/mardash-ai/forge/compare/v0.12.0...v0.13.0

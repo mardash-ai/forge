@@ -12,16 +12,72 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 // where sig = HMAC-SHA256(header + '.' + payload, secret). No dependency (Node crypto),
 // so both the slim data-plane image and the app stay clean.
 
-// The session cookie name. httpOnly + Secure + SameSite=Lax, long/sliding expiry.
+// The ACCESS-token cookie name (P8). A short-lived HS256 JWS the app verifies
+// LOCALLY with no round-trip. httpOnly + Secure + SameSite=Lax. Its JWS `exp` is
+// short (~15m) — that short window is what bounds exposure after a logout/reset,
+// because a revoked session can mint no new access token. (The cookie's Max-Age is
+// set to the session lifetime so the browser keeps presenting the — soon-expired —
+// token, which is what drives the middleware's decision to refresh; see below.)
 export const SESSION_COOKIE = 'forge_session';
+
+// The REFRESH-token cookie name (P8). OPAQUE (a high-entropy random id, NOT a JWS):
+// the app never inspects it, only forwards it to POST /auth/refresh. httpOnly +
+// Secure + SameSite=Lax, long-lived (~30d). Path=/ (NOT /auth) on purpose: the app's
+// gate runs on EVERY path and must be able to read this cookie to decide whether to
+// refresh an expired access token — a Path=/auth cookie would not be sent to the
+// browser on `/dashboard` etc., so the middleware could never see it. Security is
+// preserved by opacity + httpOnly + Secure + SameSite=Lax + single-use server-side
+// rotation + hashed-at-rest storage; it only ever travels same-origin over TLS.
+export const REFRESH_COOKIE = 'forge_refresh';
 
 // How a service (the C2 scheduler / cron) authenticates as a NON-user principal.
 // The scheduler sends BOTH so an app can check whichever it prefers.
 export const SERVICE_TOKEN_HEADER = 'x-forge-service-token';
 
-// Default long/sliding session lifetime (30 days). The hosted routes re-issue on
-// activity (sliding); the app's local gate trusts `exp`.
+// The app-scoping request header (P9). A multi-app control plane (dev) serves /auth
+// for many apps and cannot infer which from a pure same-origin proxy; a dev proxy
+// sets this header so the routes resolve the app WITHOUT a per-app path mount. In
+// production the single-app data-plane sidecar defaults the app from FORGE_APP_NAME,
+// so this header is unused there (prod path un-regressed).
+export const APP_HEADER = 'x-forge-app';
+
+// Long/sliding session lifetime (30 days) — the REFRESH token + the server-side
+// session record live this long (sliding: rotation/activity re-extends them).
 export const DEFAULT_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
+
+// Refresh-token lifetime is the session lifetime (kept as its own name for clarity
+// at the call sites that mint/rotate refresh tokens).
+export const DEFAULT_REFRESH_TTL_SECONDS = DEFAULT_SESSION_TTL_SECONDS;
+
+// Default SHORT access-token lifetime (15 min). The gate verifies this locally; a
+// revoked session can mint no new access, so exposure after logout/reset is bounded
+// to at most this window. Overridable per-deploy via FORGE_AUTH_ACCESS_TTL_SECONDS.
+export const DEFAULT_ACCESS_TTL_SECONDS = 15 * 60;
+
+// Grace window (seconds) in which re-presenting an already-rotated refresh token is
+// treated as a BENIGN concurrent retry (parallel gated subrequests firing one refresh
+// each), not a stolen-token replay. Outside it, a reused rotated token is a breach →
+// the whole session's refresh chain is revoked. Overridable for ops/tests.
+export const DEFAULT_REFRESH_REUSE_GRACE_SECONDS = 15;
+
+function intFromEnv(name: string, dflt: number, min: number, max: number): number {
+  const raw = process.env[name];
+  if (!raw) return dflt;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return dflt;
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
+// Resolved TTL knobs (env-overridable, clamped to sane bounds).
+export function accessTtlSeconds(): number {
+  return intFromEnv('FORGE_AUTH_ACCESS_TTL_SECONDS', DEFAULT_ACCESS_TTL_SECONDS, 30, DEFAULT_SESSION_TTL_SECONDS);
+}
+export function refreshTtlSeconds(): number {
+  return intFromEnv('FORGE_AUTH_REFRESH_TTL_SECONDS', DEFAULT_REFRESH_TTL_SECONDS, 60, 60 * 60 * 24 * 365);
+}
+export function refreshReuseGraceSeconds(): number {
+  return intFromEnv('FORGE_AUTH_REFRESH_REUSE_GRACE_SECONDS', DEFAULT_REFRESH_REUSE_GRACE_SECONDS, 0, 300);
+}
 
 export interface SessionClaims {
   // The platform user id.
@@ -120,6 +176,25 @@ export function sessionCookie(
 // The Set-Cookie value that CLEARS the session (sign-out): empty value, Max-Age 0.
 export function clearSessionCookie(opts: { secure?: boolean } = {}): string {
   return cookie(SESSION_COOKIE, '', { secure: opts.secure ?? true, maxAgeSeconds: 0 });
+}
+
+// The Set-Cookie value for the opaque REFRESH token (P8). Same attributes as the
+// session cookie (httpOnly + SameSite=Lax + Secure in prod) and Path=/ (see the
+// REFRESH_COOKIE note), long-lived by default (~30d).
+export function refreshCookie(
+  token: string,
+  opts: { secure?: boolean; maxAgeSeconds?: number } = {},
+): string {
+  return cookie(REFRESH_COOKIE, token, {
+    secure: opts.secure ?? true,
+    maxAgeSeconds: opts.maxAgeSeconds ?? DEFAULT_REFRESH_TTL_SECONDS,
+  });
+}
+
+// The Set-Cookie value that CLEARS the refresh token (sign-out / reset / 401 on a
+// dead refresh): empty value, Max-Age 0.
+export function clearRefreshCookie(opts: { secure?: boolean } = {}): string {
+  return cookie(REFRESH_COOKIE, '', { secure: opts.secure ?? true, maxAgeSeconds: 0 });
 }
 
 function cookie(name: string, value: string, opts: { secure: boolean; maxAgeSeconds: number }): string {

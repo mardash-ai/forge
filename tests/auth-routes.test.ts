@@ -46,6 +46,16 @@ function linkToken(kind: 'verify' | 'reset'): string {
   return m[1]!;
 }
 
+// Full email/password onboarding → a logged-in response carrying BOTH cookies.
+async function signupVerifyLogin(email = 'jane@example.com', password = 'correct horse battery') {
+  await server.inject({ method: 'POST', url: '/auth/signup', headers: FORM, payload: form({ email, password }) });
+  await server.inject({ method: 'GET', url: `/auth/verify?token=${linkToken('verify')}`, headers: HDR });
+  return server.inject({ method: 'POST', url: '/auth/login', headers: FORM, payload: form({ email, password }) });
+}
+function refreshWith(refresh: string) {
+  return server.inject({ method: 'POST', url: '/auth/refresh', headers: { ...HDR, cookie: `forge_refresh=${refresh}` } });
+}
+
 async function seedApp(): Promise<Application> {
   const now = nowIso();
   const a: Application = {
@@ -344,5 +354,145 @@ describe('owner migration hook (§8)', () => {
     const login = await server.inject({ method: 'POST', url: '/auth/login', headers: FORM, payload: form({ email: 'owner@example.com', password: 'owner-pass-123' }) });
     expect(login.statusCode).toBe(303);
     expect(cookieValue(login, 'forge_session')).toBeTruthy();
+  });
+});
+
+describe('P8 — short-lived access + revocable, rotating refresh', () => {
+  it('login sets BOTH cookies: a short access token + an opaque path-broad refresh', async () => {
+    await configureSessionAndEmail();
+    const login = await signupVerifyLogin();
+    expect(login.statusCode).toBe(303);
+    const accessLine = setCookie(login, 'forge_session')!;
+    const refreshLine = setCookie(login, 'forge_refresh')!;
+    for (const line of [accessLine, refreshLine]) {
+      expect(line).toContain('HttpOnly');
+      expect(line).toContain('Secure');
+      expect(line).toContain('SameSite=Lax');
+      expect(line).toContain('Path=/');
+    }
+    // The refresh token is opaque (not a 3-part JWS) and distinct from the access token.
+    const access = cookieValue(login, 'forge_session')!;
+    const refresh = cookieValue(login, 'forge_refresh')!;
+    expect(refresh.split('.').length).toBe(1);
+    expect(refresh).not.toBe(access);
+    expect(refresh.length).toBeGreaterThan(20);
+  });
+
+  it('POST /auth/refresh rotates both cookies and returns the identity (no access cookie needed)', async () => {
+    await configureSessionAndEmail();
+    const login = await signupVerifyLogin();
+    const r1 = cookieValue(login, 'forge_refresh')!;
+    // The gate calls this with only the refresh cookie (access token independent).
+    const refreshed = await refreshWith(r1);
+    expect(refreshed.statusCode).toBe(200);
+    expect(refreshed.json()).toMatchObject({ email: 'jane@example.com' });
+    expect(refreshed.json().userId).toBeTruthy();
+    expect(refreshed.json().exp).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    const r2 = cookieValue(refreshed, 'forge_refresh')!;
+    const s2 = cookieValue(refreshed, 'forge_session')!;
+    expect(r2).toBeTruthy();
+    expect(r2).not.toBe(r1); // rotated — opaque tokens always differ
+    expect(s2).toBeTruthy();
+    // The freshly-minted access token verifies for a live session.
+    const me = await server.inject({ method: 'GET', url: '/auth/session', headers: { ...HDR, cookie: `forge_session=${s2}` } });
+    expect(me.statusCode).toBe(200);
+    expect(me.json()).toMatchObject({ email: 'jane@example.com' });
+  });
+
+  it('reuse of an already-rotated refresh token is a breach → the whole chain is revoked', async () => {
+    await configureSessionAndEmail();
+    const prev = process.env.FORGE_AUTH_REFRESH_REUSE_GRACE_SECONDS;
+    process.env.FORGE_AUTH_REFRESH_REUSE_GRACE_SECONDS = '0'; // no benign-concurrency window
+    try {
+      const login = await signupVerifyLogin();
+      const r1 = cookieValue(login, 'forge_refresh')!;
+      const first = await refreshWith(r1);
+      expect(first.statusCode).toBe(200);
+      const r2 = cookieValue(first, 'forge_refresh')!;
+      // Replaying the already-rotated r1 is detected: 401 + both cookies cleared.
+      const reuse = await refreshWith(r1);
+      expect(reuse.statusCode).toBe(401);
+      expect(setCookie(reuse, 'forge_session')).toContain('Max-Age=0');
+      expect(setCookie(reuse, 'forge_refresh')).toContain('Max-Age=0');
+      // The legit successor r2 is now dead too — the entire session chain was revoked.
+      expect((await refreshWith(r2)).statusCode).toBe(401);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_AUTH_REFRESH_REUSE_GRACE_SECONDS;
+      else process.env.FORGE_AUTH_REFRESH_REUSE_GRACE_SECONDS = prev;
+    }
+  });
+
+  it('a benign concurrent double-refresh (within grace) does NOT revoke the session', async () => {
+    await configureSessionAndEmail();
+    const login = await signupVerifyLogin();
+    const r1 = cookieValue(login, 'forge_refresh')!;
+    expect((await refreshWith(r1)).statusCode).toBe(200);
+    // Default grace (>0): a parallel duplicate of r1 is treated as benign, still 200.
+    const dup = await refreshWith(r1);
+    expect(dup.statusCode).toBe(200);
+    // The successor from the benign retry is live and usable.
+    expect((await refreshWith(cookieValue(dup, 'forge_refresh')!)).statusCode).toBe(200);
+  });
+
+  it('logout revokes the refresh chain — no new access can be minted', async () => {
+    await configureSessionAndEmail();
+    const login = await signupVerifyLogin();
+    const r1 = cookieValue(login, 'forge_refresh')!;
+    const s1 = cookieValue(login, 'forge_session')!;
+    const out = await server.inject({ method: 'POST', url: '/auth/logout', headers: { ...FORM, cookie: `forge_session=${s1}; forge_refresh=${r1}` }, payload: '' });
+    expect(out.statusCode).toBe(303);
+    expect(setCookie(out, 'forge_session')).toContain('Max-Age=0');
+    expect(setCookie(out, 'forge_refresh')).toContain('Max-Age=0');
+    expect((await refreshWith(r1)).statusCode).toBe(401);
+  });
+
+  it('logout works from the refresh cookie alone (access already expired)', async () => {
+    await configureSessionAndEmail();
+    const login = await signupVerifyLogin();
+    const r1 = cookieValue(login, 'forge_refresh')!;
+    // No forge_session presented — logout must still kill the session via the refresh record.
+    const out = await server.inject({ method: 'GET', url: '/auth/logout', headers: { ...HDR, cookie: `forge_refresh=${r1}` } });
+    expect(out.statusCode).toBe(303);
+    expect((await refreshWith(r1)).statusCode).toBe(401);
+  });
+
+  it('password reset revokes ALL refresh tokens (sign out everywhere)', async () => {
+    await configureSessionAndEmail();
+    const login = await signupVerifyLogin('jane@example.com', 'original-pass-1');
+    const r1 = cookieValue(login, 'forge_refresh')!;
+    emails = [];
+    await server.inject({ method: 'POST', url: '/auth/forgot', headers: FORM, payload: form({ email: 'jane@example.com' }) });
+    const reset = await server.inject({ method: 'POST', url: '/auth/reset', headers: FORM, payload: form({ token: linkToken('reset'), password: 'brand-new-pass-2' }) });
+    expect(reset.statusCode).toBe(303);
+    expect((await refreshWith(r1)).statusCode).toBe(401);
+  });
+});
+
+describe('P9 — the multi-app control plane scopes /auth without a sidecar', () => {
+  it('resolves the app from the X-Forge-App header (and ?app=) when there is no default', async () => {
+    await configureSessionAndEmail();
+    // Seed a verified user (via the defaulted `server`, same store/app).
+    await signupVerifyLogin();
+
+    // A control-plane-style server with NO defaultApp: a bare same-origin POST 404s.
+    const cp = Fastify({ logger: false });
+    registerAuthRoutes(cp);
+    await cp.ready();
+    try {
+      const bare = await cp.inject({ method: 'POST', url: '/auth/login', headers: FORM, payload: form({ email: 'jane@example.com', password: 'correct horse battery' }) });
+      expect(bare.statusCode).toBe(404);
+
+      // The X-Forge-App header a dev proxy sets scopes it → login succeeds.
+      const viaHeader = await cp.inject({ method: 'POST', url: '/auth/login', headers: { ...FORM, 'x-forge-app': APP }, payload: form({ email: 'jane@example.com', password: 'correct horse battery' }) });
+      expect(viaHeader.statusCode).toBe(303);
+      expect(cookieValue(viaHeader, 'forge_session')).toBeTruthy();
+      expect(cookieValue(viaHeader, 'forge_refresh')).toBeTruthy();
+
+      // A ?app= query on the rewrite destination also scopes it, even for a POST.
+      const viaQuery = await cp.inject({ method: 'POST', url: `/auth/login?app=${APP}`, headers: FORM, payload: form({ email: 'jane@example.com', password: 'correct horse battery' }) });
+      expect(viaQuery.statusCode).toBe(303);
+    } finally {
+      await cp.close();
+    }
   });
 });

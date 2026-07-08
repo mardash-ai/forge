@@ -50,6 +50,21 @@ interface StoredToken {
   used_at?: string;
 }
 
+// A REFRESH-token record (P8). The RAW opaque token is never stored — the key AND
+// `id` are its SHA-256 hash, so a leak of this store can't replay a refresh. Rotation
+// is single-use: redeeming a token revokes it (`revoked_at`) and links its successor
+// (`rotated_to`), so re-presenting an already-rotated token is a DETECTABLE reuse.
+export interface StoredRefreshToken {
+  id: string; // sha256(raw) — the map key and the record id
+  user_id: string;
+  session_id: string; // the server session this refresh chain belongs to
+  created_at: string; // issuedAt
+  expires_at: string;
+  revoked_at: string | null;
+  rotated_from?: string; // predecessor tokenHash (the token this one was minted from)
+  rotated_to?: string; // successor tokenHash (set when THIS token is rotated/used)
+}
+
 interface AuthDoc {
   users: Record<string, StoredUser>;
   email_index: Record<string, string>; // emailLower -> userId
@@ -57,10 +72,11 @@ interface AuthDoc {
   sessions: Record<string, StoredSession>;
   verify_tokens: Record<string, StoredToken>; // tokenHash -> record
   reset_tokens: Record<string, StoredToken>; // tokenHash -> record
+  refresh_tokens: Record<string, StoredRefreshToken>; // tokenHash -> record
 }
 
 function emptyDoc(): AuthDoc {
-  return { users: {}, email_index: {}, provider_index: {}, sessions: {}, verify_tokens: {}, reset_tokens: {} };
+  return { users: {}, email_index: {}, provider_index: {}, sessions: {}, verify_tokens: {}, reset_tokens: {}, refresh_tokens: {} };
 }
 
 export function canonicalEmail(email: string): string {
@@ -263,6 +279,148 @@ export async function activeSessionCount(appId: string): Promise<number> {
   const doc = await read(appId);
   const now = Date.now();
   return Object.values(doc.sessions).filter((s) => !s.revoked && new Date(s.expires_at).getTime() > now).length;
+}
+
+// --- refresh tokens (P8: short-lived access + revocable, rotating refresh) -------
+
+// Persist a fresh refresh-token record (keyed by the SHA-256 of the raw opaque token).
+export async function putRefreshToken(
+  appId: string,
+  input: { tokenHash: string; userId: string; sessionId: string; ttlSeconds: number; rotatedFrom?: string },
+): Promise<StoredRefreshToken> {
+  return mutate(appId, (doc) => {
+    const now = Date.now();
+    const rec: StoredRefreshToken = {
+      id: input.tokenHash,
+      user_id: input.userId,
+      session_id: input.sessionId,
+      created_at: new Date(now).toISOString(),
+      expires_at: new Date(now + input.ttlSeconds * 1000).toISOString(),
+      revoked_at: null,
+      ...(input.rotatedFrom ? { rotated_from: input.rotatedFrom } : {}),
+    };
+    doc.refresh_tokens[input.tokenHash] = rec;
+    return rec;
+  });
+}
+
+export async function getRefreshToken(appId: string, tokenHash: string): Promise<StoredRefreshToken | null> {
+  const doc = await read(appId);
+  return doc.refresh_tokens[tokenHash] ?? null;
+}
+
+// Revoke every refresh token in one session's chain (logout).
+export async function revokeSessionRefreshTokens(appId: string, sessionId: string): Promise<number> {
+  return mutate(appId, (doc) => {
+    let n = 0;
+    const iso = nowIso();
+    for (const r of Object.values(doc.refresh_tokens)) {
+      if (r.session_id === sessionId && !r.revoked_at) { r.revoked_at = iso; n++; }
+    }
+    return n;
+  });
+}
+
+// Revoke every refresh token a user holds (password-reset → "sign out everywhere").
+export async function revokeAllUserRefreshTokens(appId: string, userId: string): Promise<number> {
+  return mutate(appId, (doc) => {
+    let n = 0;
+    const iso = nowIso();
+    for (const r of Object.values(doc.refresh_tokens)) {
+      if (r.user_id === userId && !r.revoked_at) { r.revoked_at = iso; n++; }
+    }
+    return n;
+  });
+}
+
+export async function activeRefreshTokenCount(appId: string): Promise<number> {
+  const doc = await read(appId);
+  const now = Date.now();
+  return Object.values(doc.refresh_tokens).filter((r) => !r.revoked_at && new Date(r.expires_at).getTime() > now).length;
+}
+
+// Redeem a refresh token: validate it, then ATOMICALLY rotate it (single-use) into
+// the caller-provided successor hash. The whole read-check-write runs inside ONE
+// per-app mutate, so concurrent redeems of the same token are serialized (the classic
+// refresh-rotation race). Outcomes:
+//   - 'invalid'  — unknown / expired / revoked-by-logout / dead session: the caller
+//                  401s and clears cookies (there's nothing valid to refresh).
+//   - 'reuse'    — an already-rotated token re-presented OUTSIDE the grace window: a
+//                  stolen-token replay. This call revokes the WHOLE session's refresh
+//                  chain + the session; the caller 401s and clears cookies.
+//   - 'rotated'  — success: `presented` is revoked and linked to the successor, the
+//                  successor record is created, and the server session is slid forward.
+export type RefreshRedeem =
+  | { outcome: 'invalid' }
+  | { outcome: 'reuse'; userId: string; sessionId: string }
+  | { outcome: 'rotated'; userId: string; sessionId: string };
+
+export async function redeemRefreshToken(
+  appId: string,
+  presentedHash: string,
+  successorHash: string,
+  opts: { refreshTtlSeconds: number; sessionTtlSeconds: number; graceSeconds?: number; now?: number },
+): Promise<RefreshRedeem> {
+  const grace = opts.graceSeconds ?? 0;
+  return mutate(appId, (doc) => {
+    const nowMs = opts.now ?? Date.now();
+    const iso = new Date(nowMs).toISOString();
+    const rec = doc.refresh_tokens[presentedHash];
+    if (!rec) return { outcome: 'invalid' };
+    if (new Date(rec.expires_at).getTime() <= nowMs) return { outcome: 'invalid' };
+
+    // Create the successor + slide the server session. Does NOT revoke `rec`.
+    const mintSuccessor = (): void => {
+      doc.refresh_tokens[successorHash] = {
+        id: successorHash,
+        user_id: rec.user_id,
+        session_id: rec.session_id,
+        created_at: iso,
+        expires_at: new Date(nowMs + opts.refreshTtlSeconds * 1000).toISOString(),
+        revoked_at: null,
+        rotated_from: rec.id,
+      };
+      const s = doc.sessions[rec.session_id];
+      if (s) {
+        s.last_seen_at = iso;
+        s.expires_at = new Date(nowMs + opts.sessionTtlSeconds * 1000).toISOString();
+      }
+    };
+    const sessionLive = (): boolean => {
+      const s = doc.sessions[rec.session_id];
+      return Boolean(s && !s.revoked && new Date(s.expires_at).getTime() > nowMs);
+    };
+
+    if (rec.revoked_at) {
+      // Revoked because it was ROTATED (has a successor) → a re-presentation.
+      if (rec.rotated_to) {
+        // Strict `<` so graceSeconds:0 fully disables the benign window (a reuse is
+        // then always a breach), rather than counting a same-millisecond replay as benign.
+        const withinGrace = nowMs - new Date(rec.revoked_at).getTime() < grace * 1000;
+        if (withinGrace && sessionLive()) {
+          // Benign concurrent retry: mint a fresh successor off the same live session.
+          mintSuccessor();
+          return { outcome: 'rotated', userId: rec.user_id, sessionId: rec.session_id };
+        }
+        // Breach (or dead session): revoke the whole chain + the session.
+        for (const r of Object.values(doc.refresh_tokens)) {
+          if (r.session_id === rec.session_id && !r.revoked_at) r.revoked_at = iso;
+        }
+        const s = doc.sessions[rec.session_id];
+        if (s) s.revoked = true;
+        return { outcome: 'reuse', userId: rec.user_id, sessionId: rec.session_id };
+      }
+      // Revoked by logout/reset (no successor): expected, just unauthorized.
+      return { outcome: 'invalid' };
+    }
+
+    // Live refresh — the server session must still be live too.
+    if (!sessionLive()) return { outcome: 'invalid' };
+    rec.revoked_at = iso;
+    rec.rotated_to = successorHash;
+    mintSuccessor();
+    return { outcome: 'rotated', userId: rec.user_id, sessionId: rec.session_id };
+  });
 }
 
 // --- verify / reset tokens ------------------------------------------------------

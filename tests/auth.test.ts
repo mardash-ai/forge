@@ -246,6 +246,61 @@ describe('identity store — durable, multi-user, unique email', () => {
     expect((await authStore.getSession('app_sess', s2.id))?.revoked).toBe(true);
   });
 
+  it('refresh tokens (P8): rotate, reuse-detect, revoke by session/user', async () => {
+    const APP = 'app_refresh';
+    const OPTS = { refreshTtlSeconds: 3600, sessionTtlSeconds: 3600, graceSeconds: 0 };
+    async function seed() {
+      const u = await authStore.createUser(APP, { email: `r-${Math.random().toString(36).slice(2)}@ex.com`, password_hash: 'h', email_verified: true });
+      const s = await authStore.createSession(APP, u.id, 3600);
+      await authStore.putRefreshToken(APP, { tokenHash: 'rt_1', userId: u.id, sessionId: s.id, ttlSeconds: 3600 });
+      return { u, s };
+    }
+
+    // Rotate a live token: old revoked + linked, successor live, session slid.
+    const a = await seed();
+    const rot = await authStore.redeemRefreshToken(APP, 'rt_1', 'rt_2', OPTS);
+    expect(rot).toEqual({ outcome: 'rotated', userId: a.u.id, sessionId: a.s.id });
+    expect((await authStore.getRefreshToken(APP, 'rt_1'))?.rotated_to).toBe('rt_2');
+    expect((await authStore.getRefreshToken(APP, 'rt_1'))?.revoked_at).toBeTruthy();
+    expect((await authStore.getRefreshToken(APP, 'rt_2'))?.rotated_from).toBe('rt_1');
+    expect((await authStore.getRefreshToken(APP, 'rt_2'))?.revoked_at).toBeNull();
+    expect(await authStore.activeRefreshTokenCount(APP)).toBe(1);
+
+    // Reuse of the already-rotated rt_1 (grace 0) → breach: whole chain + session dead.
+    const reuse = await authStore.redeemRefreshToken(APP, 'rt_1', 'rt_3', OPTS);
+    expect(reuse).toEqual({ outcome: 'reuse', userId: a.u.id, sessionId: a.s.id });
+    expect(await authStore.activeRefreshTokenCount(APP)).toBe(0);
+    expect((await authStore.getSession(APP, a.s.id))?.revoked).toBe(true);
+    expect((await authStore.redeemRefreshToken(APP, 'rt_2', 'rt_4', OPTS)).outcome).toBe('invalid');
+
+    // Unknown / expired / logout-revoked all read as 'invalid'.
+    const b = await seed();
+    expect((await authStore.redeemRefreshToken(APP, 'nope', 'x', OPTS)).outcome).toBe('invalid');
+    await authStore.putRefreshToken(APP, { tokenHash: 'rt_exp', userId: b.u.id, sessionId: b.s.id, ttlSeconds: -1 });
+    expect((await authStore.redeemRefreshToken(APP, 'rt_exp', 'x', OPTS)).outcome).toBe('invalid');
+    await authStore.revokeSessionRefreshTokens(APP, b.s.id);
+    expect((await authStore.redeemRefreshToken(APP, 'rt_1', 'x', OPTS)).outcome).toBe('invalid');
+
+    // Benign concurrent retry within a generous grace → rotated, session stays live.
+    const c = await seed();
+    await authStore.redeemRefreshToken(APP, 'rt_1', 'rt_2', OPTS);
+    const benign = await authStore.redeemRefreshToken(APP, 'rt_1', 'rt_2b', { ...OPTS, graceSeconds: 300 });
+    expect(benign.outcome).toBe('rotated');
+    expect((await authStore.getSession(APP, c.s.id))?.revoked).toBe(false);
+    expect((await authStore.getRefreshToken(APP, 'rt_2b'))?.revoked_at).toBeNull();
+
+    // A live token against a revoked session is invalid (defense in depth).
+    const d = await seed();
+    await authStore.revokeSession(APP, d.s.id);
+    expect((await authStore.redeemRefreshToken(APP, 'rt_1', 'rt_2', OPTS)).outcome).toBe('invalid');
+
+    // revokeAllUserRefreshTokens kills every token a user holds.
+    const e = await seed();
+    await authStore.putRefreshToken(APP, { tokenHash: 'rt_other', userId: e.u.id, sessionId: e.s.id, ttlSeconds: 3600 });
+    expect(await authStore.revokeAllUserRefreshTokens(APP, e.u.id)).toBeGreaterThanOrEqual(2);
+    expect((await authStore.redeemRefreshToken(APP, 'rt_1', 'z', OPTS)).outcome).toBe('invalid');
+  });
+
   it('verify/reset tokens are single-use + expiring, stored only as a hash', async () => {
     const u = await authStore.createUser('app_tok', { email: 't@example.com', password_hash: 'h' });
     const { token, hash } = newToken();
