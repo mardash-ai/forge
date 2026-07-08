@@ -8,11 +8,13 @@ import { parseComposeInfra, type PrevInfra } from '../provision-environment/conv
 import {
   IMPLEMENTATION,
   JOBS_FILE,
+  THEME_FILE,
   generateProdDockerfile,
   generateProdDockerignore,
   generateProdCompose,
   generateEnvProdExample,
   generateProvisioningRunbook,
+  generateStarterTheme,
   PROVISIONING_FILE,
   applyStandaloneOutput,
   defaultNextConfig,
@@ -102,6 +104,13 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
     // present, the generated compose mounts it into the sidecar (P7.3).
     const withJobs = Boolean(await firstExisting(repo, [JOBS_FILE]));
 
+    // C16 — ensure the app has a theme declaration (`forge.theme.json`). Scaffold a
+    // neutral starter once (never clobber an edited one), then carry it into the
+    // sidecar so the hosted auth + status pages render branded in production.
+    const hadTheme = Boolean(await firstExisting(repo, [THEME_FILE]));
+    if (!hadTheme) await writeFile(path.join(repo, THEME_FILE), generateStarterTheme(app.name));
+    const withTheme = true;
+
     // 1. Standalone Dockerfile + .dockerignore (deterministic — re-run = identical bytes).
     await writeFile(path.join(repo, 'Dockerfile'), generateProdDockerfile({ appName: app.name, port: appPort }));
     await writeFile(path.join(repo, '.dockerignore'), generateProdDockerignore());
@@ -135,6 +144,7 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
         secrets,
         certResolver: cfg.cert_resolver,
         withJobs,
+        withTheme,
       }),
     );
 
@@ -158,7 +168,7 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
 
     const services = ['web', 'data-plane', ...(withPostgres ? ['postgres'] : []), ...(withRedis ? ['redis'] : [])];
-    const files = ['Dockerfile', '.dockerignore', 'compose.prod.yaml', '.env.prod.example', PROVISIONING_FILE, found ?? 'next.config.mjs'];
+    const files = ['Dockerfile', '.dockerignore', 'compose.prod.yaml', '.env.prod.example', PROVISIONING_FILE, THEME_FILE, found ?? 'next.config.mjs'];
 
     const resource: ProductionArtifacts = {
       ...baseResource('ProductionArtifacts', app.id),

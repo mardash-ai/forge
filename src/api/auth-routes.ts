@@ -34,6 +34,15 @@ import {
 } from '../plugins/auth-identity/index';
 import { resolveEmailConfig } from '../plugins/email-smtp/index';
 import * as authStore from '../plugins/auth-identity/store';
+import { resolveThemeForApp } from './theme-context';
+import {
+  DEFAULT_THEME,
+  themeMetaHead,
+  themeCustomStyleTag,
+  themeTitle,
+  themeLogoImg,
+  type Theme,
+} from '../shared/theme';
 
 // C10 — the HOSTED identity/auth surface (platform-rendered pages + routes). The
 // consuming app ships NO auth UI and NO auth tables: it proxies `/auth/*` to this
@@ -232,6 +241,11 @@ export function registerAuthRoutes(
     reply.code(status).type('text/html; charset=utf-8').send(htmlStr);
   }
 
+  // Resolve the app's C16 theme so the hosted pages render branded (auth is themeable
+  // via the SAME token set as the status page). Unknown app → the neutral default.
+  const themeFor = async (appId?: string): Promise<Theme> =>
+    appId ? resolveThemeForApp(appId) : DEFAULT_THEME;
+
   // ---- config (which methods are enabled) --------------------------------------
 
   app.get('/auth/config', async (req, reply) => {
@@ -261,8 +275,9 @@ export function registerAuthRoutes(
     const app_ = await resolveAppId(req);
     if (!app_) return htmlReply(reply, 404, page({ title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const cfg = await resolveAuthConfig(app_.id);
+    const theme = await themeFor(app_.id);
     const q = req.query as { next?: string; error?: string; notice?: string };
-    htmlReply(reply, 200, loginPage({ next: safeNext(q.next), google: Boolean(cfg.google), error: q.error, notice: q.notice }));
+    htmlReply(reply, 200, loginPage({ next: safeNext(q.next), google: Boolean(cfg.google), error: q.error, notice: q.notice, theme }));
   });
 
   app.post('/auth/login', async (req, reply) => {
@@ -270,10 +285,11 @@ export function registerAuthRoutes(
     const app_ = await resolveAppId(req);
     if (!app_) return htmlReply(reply, 404, page({ title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const cfg = await resolveAuthConfig(app_.id);
+    const theme = await themeFor(app_.id);
     const next = safeNext(b.next);
     const fail = (msg: string) =>
-      htmlReply(reply, 401, loginPage({ next, google: Boolean(cfg.google), error: msg, email: b.email }));
-    if (!cfg.sessionSecret) return htmlReply(reply, 503, notConfiguredPage());
+      htmlReply(reply, 401, loginPage({ next, google: Boolean(cfg.google), error: msg, email: b.email, theme }));
+    if (!cfg.sessionSecret) return htmlReply(reply, 503, notConfiguredPage(theme));
 
     const email = String(b.email ?? '');
     const password = String(b.password ?? '');
@@ -282,7 +298,7 @@ export function registerAuthRoutes(
     const ok = user ? await verifyPassword(password, user.password_hash) : await verifyPassword(password, undefined);
     if (!user || !ok) return fail('Incorrect email or password.');
     if (!user.email_verified) {
-      return htmlReply(reply, 403, loginPage({ next, google: Boolean(cfg.google), error: 'Please verify your email before signing in. Check your inbox for the verification link.', email: user.email }));
+      return htmlReply(reply, 403, loginPage({ next, google: Boolean(cfg.google), error: 'Please verify your email before signing in. Check your inbox for the verification link.', email: user.email, theme }));
     }
     await establishSession(req, reply, app_.id, cfg, user, next);
   });
@@ -294,8 +310,9 @@ export function registerAuthRoutes(
     if (!app_) return htmlReply(reply, 404, page({ title: 'Sign up', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const cfg = await resolveAuthConfig(app_.id);
     const email = await resolveEmailConfig(app_.id);
+    const theme = await themeFor(app_.id);
     const q = req.query as { next?: string; error?: string };
-    htmlReply(reply, 200, signupPage({ next: safeNext(q.next), google: Boolean(cfg.google), emailEnabled: email.ok, error: q.error }));
+    htmlReply(reply, 200, signupPage({ next: safeNext(q.next), google: Boolean(cfg.google), emailEnabled: email.ok, error: q.error, theme }));
   });
 
   app.post('/auth/signup', async (req, reply) => {
@@ -303,12 +320,13 @@ export function registerAuthRoutes(
     const app_ = await resolveAppId(req);
     if (!app_) return htmlReply(reply, 404, page({ title: 'Sign up', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const cfg = await resolveAuthConfig(app_.id);
+    const theme = await themeFor(app_.id);
     const next = safeNext(b.next);
     const emailCfg = await resolveEmailConfig(app_.id);
     const fail = (msg: string, status = 400) =>
-      htmlReply(reply, status, signupPage({ next, google: Boolean(cfg.google), emailEnabled: emailCfg.ok, error: msg, email: b.email }));
+      htmlReply(reply, status, signupPage({ next, google: Boolean(cfg.google), emailEnabled: emailCfg.ok, error: msg, email: b.email, theme }));
 
-    if (!cfg.sessionSecret) return htmlReply(reply, 503, notConfiguredPage());
+    if (!cfg.sessionSecret) return htmlReply(reply, 503, notConfiguredPage(theme));
     const email = String(b.email ?? '').trim();
     const password = String(b.password ?? '');
     if (!EMAIL_RE.test(email)) return fail('Enter a valid email address.');
@@ -345,9 +363,9 @@ export function registerAuthRoutes(
       // C12 unconfigured/failed — surface cleanly; the account exists but stays
       // unverified until a (future) resend succeeds. Never crash.
       const detail = e instanceof ForgeError && e.code === 'dependency_unavailable' ? ' (email delivery is not configured)' : '';
-      return htmlReply(reply, 200, page({ title: 'Almost there', bodyHtml: `<h1>Check your email</h1><p>We tried to send a verification link to <b>${escapeHtml(redactEmail(user.email))}</b> but delivery didn't go through${escapeHtml(detail)}. Please try again later.</p>` }));
+      return htmlReply(reply, 200, page({ theme, title: 'Almost there', bodyHtml: `<h1>Check your email</h1><p>We tried to send a verification link to <b>${escapeHtml(redactEmail(user.email))}</b> but delivery didn't go through${escapeHtml(detail)}. Please try again later.</p>` }));
     }
-    htmlReply(reply, 200, checkEmailPage(user.email));
+    htmlReply(reply, 200, checkEmailPage(user.email, theme));
   });
 
   // ---- verify email ------------------------------------------------------------
@@ -358,7 +376,8 @@ export function registerAuthRoutes(
     const token = String((req.query as { token?: string }).token ?? '');
     const userId = token ? await authStore.consumeVerifyToken(app_.id, hashToken(token)) : null;
     if (!userId) {
-      return htmlReply(reply, 400, page({ title: 'Verify', bodyHtml: `<h1>Link expired</h1><p>This verification link is invalid or has already been used. Sign in to request a new one.</p><p><a href="/auth/login">Go to sign in</a></p>` }));
+      const theme = await themeFor(app_.id);
+      return htmlReply(reply, 400, page({ theme, title: 'Verify', bodyHtml: `<h1>Link expired</h1><p>This verification link is invalid or has already been used. Sign in to request a new one.</p><p><a href="/auth/login">Go to sign in</a></p>` }));
     }
     await authStore.updateUser(app_.id, userId, { email_verified: true });
     const u = await authStore.getUser(app_.id, userId);
@@ -369,19 +388,22 @@ export function registerAuthRoutes(
   // ---- password reset ----------------------------------------------------------
 
   app.get('/auth/forgot', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    const theme = await themeFor(app_?.id);
     const q = req.query as { error?: string; notice?: string };
-    htmlReply(reply, 200, forgotPage({ error: q.error, notice: q.notice }));
+    htmlReply(reply, 200, forgotPage({ error: q.error, notice: q.notice, theme }));
   });
 
   app.post('/auth/forgot', async (req, reply) => {
     const b = body(req);
     const app_ = await resolveAppId(req);
-    if (!app_) return htmlReply(reply, 404, forgotPage({ error: 'Unknown app.' }));
+    const theme = await themeFor(app_?.id);
+    if (!app_) return htmlReply(reply, 404, forgotPage({ error: 'Unknown app.', theme }));
     const email = String(b.email ?? '').trim();
     const emailCfg = await resolveEmailConfig(app_.id);
     // Always respond identically — never reveal whether an account exists (§ no enumeration).
     const done = () =>
-      htmlReply(reply, 200, page({ title: 'Check your email', bodyHtml: `<h1>Check your email</h1><p>If an account exists for that address, we've sent a link to reset its password.</p>` }));
+      htmlReply(reply, 200, page({ theme, title: 'Check your email', bodyHtml: `<h1>Check your email</h1><p>If an account exists for that address, we've sent a link to reset its password.</p>` }));
     if (!emailCfg.ok || !EMAIL_RE.test(email)) return done();
     const user = await authStore.findByEmail(app_.id, email);
     if (user) {
@@ -401,21 +423,24 @@ export function registerAuthRoutes(
   app.get('/auth/reset', async (req, reply) => {
     const token = String((req.query as { token?: string }).token ?? '');
     const q = req.query as { error?: string; app?: string };
-    htmlReply(reply, 200, resetPage({ token, app: q.app, error: q.error }));
+    const app_ = await resolveAppId(req);
+    const theme = await themeFor(app_?.id);
+    htmlReply(reply, 200, resetPage({ token, app: q.app, error: q.error, theme }));
   });
 
   app.post('/auth/reset', async (req, reply) => {
     const b = body(req);
     const app_ = await resolveAppId(req);
-    if (!app_) return htmlReply(reply, 404, resetPage({ token: '', error: 'Unknown app.' }));
+    const theme = await themeFor(app_?.id);
+    if (!app_) return htmlReply(reply, 404, resetPage({ token: '', error: 'Unknown app.', theme }));
     const token = String(b.token ?? '');
     const password = String(b.password ?? '');
     if (password.length < MIN_PASSWORD) {
-      return htmlReply(reply, 400, resetPage({ token, app: b.app, error: `Password must be at least ${MIN_PASSWORD} characters.` }));
+      return htmlReply(reply, 400, resetPage({ token, app: b.app, error: `Password must be at least ${MIN_PASSWORD} characters.`, theme }));
     }
     const userId = token ? await authStore.consumeResetToken(app_.id, hashToken(token)) : null;
     if (!userId) {
-      return htmlReply(reply, 400, page({ title: 'Reset password', bodyHtml: `<h1>Link expired</h1><p>This reset link is invalid or has already been used. <a href="/auth/forgot">Request a new one</a>.</p>` }));
+      return htmlReply(reply, 400, page({ theme, title: 'Reset password', bodyHtml: `<h1>Link expired</h1><p>This reset link is invalid or has already been used. <a href="/auth/forgot">Request a new one</a>.</p>` }));
     }
     const password_hash = await hashPassword(password);
     // A reset also VERIFIES the email (they proved control of it) and REVOKES all
@@ -643,26 +668,37 @@ export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function page(opts: { title: string; bodyHtml: string }): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(opts.title)}</title><style>
-  :root{color-scheme:light dark}
-  *{box-sizing:border-box}
-  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f6f7f9;color:#111827;font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-  .card{background:#fff;width:100%;max-width:380px;margin:24px;padding:32px;border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,.08),0 8px 24px rgba(0,0,0,.06)}
-  h1{font-size:20px;margin:0 0 16px}
-  label{display:block;font-size:13px;font-weight:600;margin:14px 0 6px;color:#374151}
-  input[type=email],input[type=password]{width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:15px}
-  button{width:100%;margin-top:20px;padding:11px;border:0;border-radius:8px;background:#111827;color:#fff;font-size:15px;font-weight:600;cursor:pointer}
-  .oauth{display:block;text-align:center;margin-top:12px;padding:11px;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:#111827;text-decoration:none;font-weight:600}
-  .muted{color:#6b7280;font-size:13px}
-  .row{display:flex;justify-content:space-between;margin-top:14px}
-  a{color:#2563eb;text-decoration:none}
-  .err{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:10px 12px;border-radius:8px;font-size:13px;margin:0 0 4px}
-  .notice{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;padding:10px 12px;border-radius:8px;font-size:13px;margin:0 0 4px}
-  .sep{display:flex;align-items:center;gap:10px;margin:18px 0;color:#9ca3af;font-size:12px}
-  .sep::before,.sep::after{content:"";flex:1;height:1px;background:#e5e7eb}
-  @media(prefers-color-scheme:dark){body{background:#0b0f19;color:#e5e7eb}.card{background:#111827;box-shadow:none;border:1px solid #1f2937}input[type=email],input[type=password]{background:#0b0f19;border-color:#374151;color:#e5e7eb}button{background:#e5e7eb;color:#111827}.oauth{background:#111827;color:#e5e7eb;border-color:#374151}label{color:#9ca3af}}
-  </style></head><body><div class="card">${opts.bodyHtml}</div></body></html>`;
+// Auth-page component CSS — token-driven (C16). Every color/shape reads a `--forge-*`
+// custom property, so an app's declared theme (and its dark @media variant) restyles
+// these pages with no per-page knobs; light/dark switching happens at the token level.
+const AUTH_CSS = `
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--forge-color-bg);color:var(--forge-color-text);font:15px/1.5 var(--forge-font)}
+.card{background:var(--forge-color-surface);width:100%;max-width:380px;margin:24px;padding:32px;border-radius:var(--forge-radius-lg);box-shadow:0 1px 3px rgba(0,0,0,.08),0 8px 24px rgba(0,0,0,.06);border:1px solid var(--forge-color-border)}
+.brand-logo{display:block;height:34px;width:auto;max-width:200px;margin:0 0 18px}
+h1{font-size:20px;margin:0 0 16px}
+label{display:block;font-size:13px;font-weight:600;margin:14px 0 6px;color:var(--forge-color-text)}
+input[type=email],input[type=password]{width:100%;padding:10px 12px;border:1px solid var(--forge-color-border);border-radius:var(--forge-radius);font-size:15px;background:var(--forge-color-surface);color:var(--forge-color-text)}
+input:focus{outline:2px solid color-mix(in srgb, var(--forge-color-primary) 55%, transparent);outline-offset:1px;border-color:var(--forge-color-primary)}
+button{width:100%;margin-top:20px;padding:11px;border:0;border-radius:var(--forge-radius);background:var(--forge-color-primary);color:var(--forge-color-primary-contrast);font-size:15px;font-weight:600;cursor:pointer}
+.oauth{display:block;text-align:center;margin-top:12px;padding:11px;border:1px solid var(--forge-color-border);border-radius:var(--forge-radius);background:var(--forge-color-surface);color:var(--forge-color-text);text-decoration:none;font-weight:600}
+.muted{color:var(--forge-color-text-muted);font-size:13px}
+.row{display:flex;justify-content:space-between;margin-top:14px}
+a{color:var(--forge-color-primary);text-decoration:none}
+.err{background:color-mix(in srgb, var(--forge-color-danger) 12%, var(--forge-color-surface));border:1px solid color-mix(in srgb, var(--forge-color-danger) 45%, var(--forge-color-border));color:var(--forge-color-danger);padding:10px 12px;border-radius:var(--forge-radius);font-size:13px;margin:0 0 4px}
+.notice{background:color-mix(in srgb, var(--forge-color-success) 12%, var(--forge-color-surface));border:1px solid color-mix(in srgb, var(--forge-color-success) 45%, var(--forge-color-border));color:var(--forge-color-success);padding:10px 12px;border-radius:var(--forge-radius);font-size:13px;margin:0 0 4px}
+.sep{display:flex;align-items:center;gap:10px;margin:18px 0;color:var(--forge-color-text-muted);font-size:12px}
+.sep::before,.sep::after{content:"";flex:1;height:1px;background:var(--forge-color-border)}
+`;
+
+function page(opts: { title: string; bodyHtml: string; theme?: Theme }): string {
+  const theme = opts.theme ?? DEFAULT_THEME;
+  const brand = themeLogoImg(theme, 'brand-logo');
+  return (
+    `<!doctype html><html lang="en"><head>${themeMetaHead(theme, themeTitle(theme, opts.title))}` +
+    `<style id="forge-base">${AUTH_CSS}</style></head><body>${themeCustomStyleTag(theme)}` +
+    `<div class="card">${brand}${opts.bodyHtml}</div></body></html>`
+  );
 }
 
 function alerts(error?: string, notice?: string): string {
@@ -672,12 +708,13 @@ function alerts(error?: string, notice?: string): string {
   );
 }
 
-function loginPage(o: { next: string; google: boolean; error?: string; notice?: string; email?: string }): string {
+function loginPage(o: { next: string; google: boolean; error?: string; notice?: string; email?: string; theme?: Theme }): string {
   const nextField = `<input type="hidden" name="next" value="${escapeHtml(o.next)}">`;
   const googleBtn = o.google
     ? `<a class="oauth" href="/auth/google?next=${encodeURIComponent(o.next)}">Continue with Google</a><div class="sep">or</div>`
     : '';
   return page({
+    theme: o.theme,
     title: 'Sign in',
     bodyHtml:
       `<h1>Sign in</h1>${alerts(o.error, o.notice)}${googleBtn}` +
@@ -689,7 +726,7 @@ function loginPage(o: { next: string; google: boolean; error?: string; notice?: 
   });
 }
 
-function signupPage(o: { next: string; google: boolean; emailEnabled: boolean; error?: string; email?: string }): string {
+function signupPage(o: { next: string; google: boolean; emailEnabled: boolean; error?: string; email?: string; theme?: Theme }): string {
   const nextField = `<input type="hidden" name="next" value="${escapeHtml(o.next)}">`;
   const googleBtn = o.google
     ? `<a class="oauth" href="/auth/google?next=${encodeURIComponent(o.next)}">Continue with Google</a><div class="sep">or</div>`
@@ -701,6 +738,7 @@ function signupPage(o: { next: string; google: boolean; emailEnabled: boolean; e
       `<button type="submit">Create account</button></form>`
     : `<p class="muted">Email/password sign-up is unavailable (email delivery isn't configured).${o.google ? ' Use Google above.' : ''}</p>`;
   return page({
+    theme: o.theme,
     title: 'Sign up',
     bodyHtml:
       `<h1>Create account</h1>${alerts(o.error)}${googleBtn}${form}` +
@@ -708,8 +746,9 @@ function signupPage(o: { next: string; google: boolean; emailEnabled: boolean; e
   });
 }
 
-function forgotPage(o: { error?: string; notice?: string }): string {
+function forgotPage(o: { error?: string; notice?: string; theme?: Theme }): string {
   return page({
+    theme: o.theme,
     title: 'Reset password',
     bodyHtml:
       `<h1>Reset password</h1>${alerts(o.error, o.notice)}<p class="muted">Enter your email and we'll send a reset link.</p>` +
@@ -718,8 +757,9 @@ function forgotPage(o: { error?: string; notice?: string }): string {
   });
 }
 
-function resetPage(o: { token: string; app?: string; error?: string }): string {
+function resetPage(o: { token: string; app?: string; error?: string; theme?: Theme }): string {
   return page({
+    theme: o.theme,
     title: 'Set a new password',
     bodyHtml:
       `<h1>Set a new password</h1>${alerts(o.error)}` +
@@ -730,15 +770,17 @@ function resetPage(o: { token: string; app?: string; error?: string }): string {
   });
 }
 
-function checkEmailPage(email: string): string {
+function checkEmailPage(email: string, theme?: Theme): string {
   return page({
+    theme,
     title: 'Check your email',
     bodyHtml: `<h1>Check your email</h1><p>We sent a verification link to <b>${escapeHtml(redactEmail(email))}</b>. Click it to activate your account, then sign in.</p><p class="muted"><a href="/auth/login">Back to sign in</a></p>`,
   });
 }
 
-function notConfiguredPage(): string {
+function notConfiguredPage(theme?: Theme): string {
   return page({
+    theme,
     title: 'Sign in unavailable',
     bodyHtml: `<h1>Sign in is unavailable</h1><p class="muted">Authentication isn't fully configured for this app yet (no session key). Please try again later.</p>`,
   });

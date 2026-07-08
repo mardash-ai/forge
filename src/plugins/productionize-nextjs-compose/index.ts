@@ -17,6 +17,7 @@
 // is unit-testable with no Docker — the Capability does the file I/O.
 
 import { forgeNextConfig } from '../../shared/next-config';
+import { DEFAULT_LIGHT, DEFAULT_FONT, DEFAULT_RADIUS } from '../../shared/theme';
 import {
   describeSecret,
   requirementLabel,
@@ -192,6 +193,27 @@ export function applyStandaloneOutput(text: string): StandalonePatchResult {
 }
 
 // ---------------------------------------------------------------------------
+// forge.theme.json — the app's declared C16 theme (scaffolded starter)
+// ---------------------------------------------------------------------------
+
+// A neutral starter theme committed at the app repo root. It reproduces the default
+// look (so an un-edited app is unbranded-but-clean) while exposing the full editable
+// token surface: display name, mode, font, radius, and the color palette. Edit it to
+// brand every platform-served page (auth + status) at once; add `logo`/`favicon` or a
+// `custom_css` string (CSS only; sandboxed) for deeper control. Only scaffolded when
+// absent — never clobbers an app's edited theme.
+export function generateStarterTheme(appName: string): string {
+  const starter = {
+    name: appName,
+    mode: 'auto',
+    font: DEFAULT_FONT,
+    radius: DEFAULT_RADIUS,
+    colors: { ...DEFAULT_LIGHT },
+  };
+  return JSON.stringify(starter, null, 2) + '\n';
+}
+
+// ---------------------------------------------------------------------------
 // compose.prod.yaml — the canonical production stack `forge deploy` rolls
 // ---------------------------------------------------------------------------
 
@@ -210,6 +232,10 @@ export interface ProdComposeOptions {
   // the compose bind-mounts that file into the data-plane sidecar and pins
   // FORGE_JOBS_FILE at it, so C2 registers the jobs on boot (P7.3).
   withJobs?: boolean;
+  // The app declares a theme (`forge.theme.json`, C16). When set, the compose mounts
+  // it into the data-plane sidecar and pins FORGE_THEME_FILE, so the hosted auth +
+  // status pages render branded in production.
+  withTheme?: boolean;
   // Reverse-proxy network the old replica is drained out of on a roll (matches C7).
   proxyNet?: string;
 }
@@ -219,7 +245,10 @@ const DATA_PLANE_PORT = 3718;
 // The canonical scheduled-jobs declaration file (C2) — a JSON array of jobs at the
 // app repo root; the data-plane reads it (FORGE_JOBS_FILE) to auto-register on boot.
 export const JOBS_FILE = 'forge.jobs.json';
-// Where the sidecar reads the app's repo (FORGE_APP_REPO_PATH); the jobs file mounts here.
+// The app's declared theme (C16) — brands every platform-served page (auth + status).
+// The data-plane reads it (FORGE_THEME_FILE) to render branded UI in production.
+export const THEME_FILE = 'forge.theme.json';
+// Where the sidecar reads the app's repo (FORGE_APP_REPO_PATH); the jobs/theme files mount here.
 const APP_REPO_MOUNT = '/app';
 
 // A container healthcheck (node fetch) — the roll (C7) gates on this container
@@ -242,6 +271,7 @@ export function generateProdCompose(opts: ProdComposeOptions): string {
     certResolver,
   } = opts;
   const withJobs = opts.withJobs ?? false;
+  const withTheme = opts.withTheme ?? false;
   const proxyNet = opts.proxyNet ?? 'proxy';
   const db = dbNameFor(appName);
   // Traefik router/service keys must be a safe slug.
@@ -320,6 +350,11 @@ ${labels.join('\n')}`;
     '      - FORGE_STATE_DIR=/forge-state',
     // C5 vault master key — without it the sidecar can't decrypt secrets (C1 → 503).
     '      - FORGE_SECRETS_KEY=${FORGE_SECRETS_KEY:-}',
+    // How the sidecar reaches the web tier over the internal network — the C2 scheduler
+    // callback AND the C15 status page's live C6 health probe use these.
+    '      - FORGE_APP_CALLBACK_HOST=web',
+    `      - FORGE_APP_CALLBACK_PORT=${port}`,
+    `      - FORGE_READINESS_PATH=${readinessPath}`,
   ];
   for (const s of secrets) dpEnv.push(`      - ${s}=\${${s}:-}`);
   const dpVolumes: string[] = ['      - forge_state:/forge-state'];
@@ -332,6 +367,15 @@ ${labels.join('\n')}`;
   } else {
     // No declared jobs — leave the seam optional so an operator can still point at one.
     dpEnv.push('      - FORGE_JOBS_FILE=${FORGE_JOBS_FILE:-}');
+  }
+  if (withTheme) {
+    // The app declares a theme (C16) — mount it read-only and pin FORGE_THEME_FILE so
+    // the hosted auth + status pages render branded in production.
+    dpEnv.push(`      - FORGE_THEME_FILE=${APP_REPO_MOUNT}/${THEME_FILE}`);
+    dpVolumes.push(`      - ./${THEME_FILE}:${APP_REPO_MOUNT}/${THEME_FILE}:ro`);
+  } else {
+    // No declared theme — the seam stays optional; pages fall back to the neutral default.
+    dpEnv.push('      - FORGE_THEME_FILE=${FORGE_THEME_FILE:-}');
   }
 
   const dataPlane = `  data-plane:

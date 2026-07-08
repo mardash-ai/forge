@@ -9,6 +9,56 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-07-08
+
+### Added
+- **C16 — app theming for platform-served UI: one declarative contract brands every hosted page.**
+  A single `forge.theme.json` at the app repo root now brands **all** platform-served UI the app
+  leverages — the C10 hosted auth pages, the new C15 status page, and any future UI capability — from
+  **one token set**, not per-capability knobs.
+  - **Schema** (`src/shared/theme.ts`, pure/testable): app display `name`, `logo`, `favicon`, `mode`
+    (`auto`|`light`|`dark`), `font`, `radius`, a full `colors` palette (primary + auto-derived
+    contrast, accent, background, surface, text, textMuted, border, success, warning, danger), an
+    optional `dark` override block, and a sandboxed `custom_css` / `custom_css_path` escape hatch.
+    Every declared value is sanitized (colors/font/size against allowlists; asset URLs against a
+    scheme allowlist — no `javascript:`) so a theme value can never break out of the page `<style>`.
+  - **Token set:** pages render from CSS custom properties (`--forge-color-primary`, `--forge-font`,
+    `--forge-radius`, …) — the **same** properties across every UI capability, so theming once themes
+    auth + status together. Light/dark switch at the token level (`mode:auto` emits a light `:root`
+    plus a dark `@media` override).
+  - **Serving:** a new **`GET /theme.css`** (both planes, public) serves the token set + sandboxed
+    custom CSS as a linkable/cacheable stylesheet; the auth + status pages ALSO inline the same tokens
+    so they render with no flash-of-unthemed-content and no extra round trip.
+  - **Escape hatch:** an optional custom CSS (inline or file) is injected as a trailing `<style>`,
+    sandboxed CSS-only — HTML/script breakout, `@import`, `expression()`, IE `behavior`, and
+    non-https/data `url()` are all stripped.
+  - **Neutral default:** an app that declares no theme gets a clean, professional default look.
+  - **`forge productionize` scaffolds + carries it:** a neutral starter `forge.theme.json` is written
+    once (never clobbered), mounted read-only into the data-plane sidecar, and pinned via
+    `FORGE_THEME_FILE`, so the hosted pages render branded in production.
+- **C15 — public status page (Phase 1): a per-app, themed health dashboard.**
+  A **public, no-auth** `GET /status` (+ `GET /status.json`) served by the platform on both planes
+  (like `/auth/*`; the app proxies it same-origin — no app page code). It aggregates the app's **live
+  C6 health** into a Statuspage-style **overall banner** (*All Systems Operational / Degraded
+  Performance / Partial Outage / Major Outage*) plus **per-component rows** (the web tier, each C6
+  check, and the serving platform plane). Rendered through the C16 theme — responsive, light/dark,
+  brandable. Uptime history, incident management, and subscriptions (Phase 2/3) are explicitly
+  deferred.
+
+### Changed
+- **C10 hosted auth pages are now theme-driven.** Login / signup / verify / reset / logout and the
+  interstitial pages render from the C16 `--forge-*` tokens (brand color, surface, text, radius,
+  font, status colors) with the app's logo, display name (in the `<title>`), favicon, and custom-CSS
+  override applied. No behavior change to auth — purely presentational.
+- **`forge productionize` now wires the app-callback env into the data-plane sidecar**
+  (`FORGE_APP_CALLBACK_HOST=web`, `FORGE_APP_CALLBACK_PORT`, `FORGE_READINESS_PATH`), so the C15
+  status page can probe the app's C6 health over the internal network in production (this is also the
+  documented config the C2 scheduler's prod callback expects).
+- **Refactor:** the live C6 health probe (`resolveAppBase` + fetch/parse) is extracted to
+  `src/shared/health-probe.ts` and shared by `forge inspect health` and the C15 status page — one
+  definition of "where the app is" and "what its health says." `forge inspect health` output is
+  unchanged.
+
 ## [0.17.0] — 2026-07-07
 
 ### Added
@@ -564,7 +614,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/mardash-ai/forge/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/mardash-ai/forge/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/mardash-ai/forge/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/mardash-ai/forge/compare/v0.15.0...v0.15.1

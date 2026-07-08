@@ -11,6 +11,8 @@ import { registerAppEventRoutes } from './app-events-routes';
 import { registerNotificationRoutes } from './notifications-routes';
 import { registerAuthRoutes } from './auth-routes';
 import { registerOwnerRoutes } from './owner-routes';
+import { registerThemeRoutes } from './theme-routes';
+import { registerStatusRoutes } from './status-routes';
 import { logPath } from '../shared/paths';
 
 // The Forge HTTP API. Capability APIs perform behavior; Resource/Event APIs
@@ -89,6 +91,16 @@ registerAuthRoutes(app);
 // records (C3/C4/C1) to a seeded owner. Owner-scoping itself is just an added dimension on the C3/C4/C1
 // routes above; this is only the migration primitive.
 registerOwnerRoutes(app);
+
+// App theming (C16) — `GET /theme.css`: the app's `--forge-*` token set + sandboxed custom CSS.
+// The auth (C10) + status (C15) pages render from these SAME tokens, so theming once themes all
+// platform-served UI. Public; per-app resolved (dev is multi-app, so no default).
+registerThemeRoutes(app);
+
+// Status page (C15) — `GET /status` (+ `/status.json`): a PUBLIC, themed dashboard aggregating the
+// app's live C6 health into an overall banner + per-component rows. Served here for dev; the
+// data-plane sidecar serves the same routes in production (like /auth).
+registerStatusRoutes(app, { planeLabel: 'Forge control plane' });
 
 // Event APIs.
 app.get('/events', async (req) => {

@@ -14,6 +14,8 @@ import { registerAppEventRoutes } from '../api/app-events-routes';
 import { registerNotificationRoutes } from '../api/notifications-routes';
 import { registerAuthRoutes } from '../api/auth-routes';
 import { registerOwnerRoutes } from '../api/owner-routes';
+import { registerThemeRoutes } from '../api/theme-routes';
+import { registerStatusRoutes } from '../api/status-routes';
 import { logPath } from '../shared/paths';
 
 // The Forge DATA PLANE server — the production/runtime counterpart to the control
@@ -101,6 +103,16 @@ registerAuthRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 // Owner-scoping migration (C11) — one-time `claim-legacy` cutover assigning owner-less C3/C4/C1
 // records to a seeded owner. Runs on the data plane so a production cutover needs no control plane.
 registerOwnerRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
+
+// App theming (C16) — `GET /theme.css`: the app's `--forge-*` tokens + sandboxed custom CSS. The
+// theme is resolved from FORGE_THEME_FILE (the sidecar mount productionize wires). Defaults the app
+// to this sidecar's FORGE_APP_NAME.
+registerThemeRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
+
+// Status page (C15) — `GET /status` (+ `/status.json`): the PUBLIC themed health dashboard. In prod
+// this sidecar reaches the app's C6 health over the compose network (FORGE_APP_CALLBACK_HOST/PORT +
+// FORGE_READINESS_PATH, which productionize sets). Defaults the app to this sidecar's FORGE_APP_NAME.
+registerStatusRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME, planeLabel: 'Forge data plane' });
 
 // In production there is no `./forge provision`, so seed a minimal Application
 // record for the app this sidecar serves — enough for schedule-job/inspect to
