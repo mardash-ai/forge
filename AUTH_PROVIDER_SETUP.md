@@ -81,9 +81,55 @@ assemble the URL):
 | Brevo | `smtp-relay.brevo.com` | 587 | your Brevo login email | SMTP key from the dashboard |
 | Mailgun | `smtp.mailgun.org` | 587 | `postmaster@<your-domain>` | the domain's SMTP password |
 | Amazon SES | `email-smtp.<region>.amazonaws.com` | 587 | SES SMTP username | SES SMTP password |
+| Gmail / Workspace | `smtp.gmail.com` (or `smtp-relay.gmail.com`) | 587 | full email address | App Password |
 
-**Gotcha:** if the password contains reserved URL characters (`@ : / #`), URL-encode them (e.g. `@` →
-`%40`) since it's embedded in the `smtp://user:pass@host` URL. SendGrid keys are URL-safe.
+**Gotcha:** if the username or password contains reserved URL characters (`@ : / #`), URL-encode them
+(e.g. `@` → `%40`) since they're embedded in the `smtp://user:pass@host` URL. This bites the
+Gmail/Workspace rows especially — the **username is an email**, so its `@` must become `%40`. SendGrid
+keys are URL-safe.
+
+### Alternative: send via Google Workspace / Gmail SMTP
+
+If you have Google Workspace (or a Gmail account), you can send through it instead of a dedicated
+provider — fine for low-volume transactional mail like auth verification + reset.
+
+**Method A — App Password (simplest).** Prerequisites: the sending account has **2-Step Verification
+enabled**, and your Workspace admin allows **App Passwords** (some orgs disable them — then use Method
+B).
+
+1. **Enable 2-Step Verification** — Google Account → **Security** → **2-Step Verification** → turn on.
+2. **Create an App Password** — go to <https://myaccount.google.com/apppasswords> → name it (e.g.
+   `<app> smtp`) → **Create** → copy the **16-character** password (drop the spaces).
+3. **SMTP settings** (fixed): host `smtp.gmail.com`, port `587`; username = the **full email address**
+   of the account; password = the app password.
+4. **Assemble** — the username is an email, so its `@` **must be URL-encoded to `%40`**:
+
+   ```
+   SMTP_URL=smtp://you%40<your-domain>:xxxxxxxxxxxxxxxx@smtp.gmail.com:587
+   EMAIL_FROM=<App> <you@<your-domain>>
+   ```
+
+   **From-address rule:** Gmail sends as the **authenticated account**, so `EMAIL_FROM` must be that
+   account's own address (or a "Send mail as" alias verified in Gmail → **Settings → Accounts**). For a
+   clean `no-reply@<your-domain>`, create a dedicated Workspace user (e.g. `no-reply@`) and use its
+   credentials. **Limits:** ~2,000 messages/day for a Workspace account.
+
+**Method B — Workspace SMTP relay (admin-configured; send from any domain address, higher volume).**
+
+1. Admin console (<https://admin.google.com>) → **Apps → Google Workspace → Gmail → Routing** →
+   **SMTP relay service** → add a setting (allowed senders; require **SMTP AUTH** and/or an **allowed
+   IP**; require **TLS**).
+2. Use host `smtp-relay.gmail.com`, port `587`, with an account's SMTP AUTH credentials:
+
+   ```
+   SMTP_URL=smtp://you%40<your-domain>:app-password@smtp-relay.gmail.com:587
+   EMAIL_FROM=<App> <no-reply@<your-domain>>
+   ```
+
+   This lets `EMAIL_FROM` be **any** address in your domain.
+
+**Deliverability:** because it's your own Workspace domain, SPF/DKIM are usually already set — confirm
+**DKIM is on** at Admin console → **Apps → Google Workspace → Gmail → Authenticate email**.
 
 ## Apply it
 
