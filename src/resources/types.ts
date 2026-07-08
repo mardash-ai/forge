@@ -11,6 +11,7 @@ export const RESOURCE_TYPES = [
   'TestRun',
   'CheckRun',
   'Inspection',
+  'Verification',
   'Analysis',
   'Plan',
   'Secret',
@@ -119,6 +120,37 @@ export interface Inspection extends BaseResource {
   inspection_type: string;
   summary: string;
   data: unknown;
+}
+
+// A Verification — the durable record of ONE post-deploy contract smoke run (C14):
+// the read-only HTTP assertions `forge verify` made against a deployed app's public
+// host, checking the platform contracts it adopted (C6 health + the C10 auth gates +
+// /auth/config). State only; behavior lives in the Verify Capability. `passed` is the
+// overall gate (true iff no assertion failed; skips don't fail). Non-destructive:
+// records only status codes + which contract each assertion checked, never any body
+// or credential.
+export interface Verification extends BaseResource {
+  type: 'Verification';
+  // The public host/base URL that was probed (normalized, e.g. https://app.example.com).
+  host: string;
+  passed: boolean;
+  summary: string;
+  total: number;
+  failed: number;
+  skipped: number;
+  // Each contract assertion's outcome (name, title, pass/fail/skip, target, expected, actual, detail).
+  assertions: VerificationAssertion[];
+  checked_at: string;
+}
+
+export interface VerificationAssertion {
+  name: string;
+  title: string;
+  status: 'pass' | 'fail' | 'skip';
+  target: string;
+  expected: string;
+  actual: string;
+  detail?: string;
 }
 
 export interface Analysis extends BaseResource {
@@ -286,6 +318,7 @@ export type AnyResource =
   | TestRun
   | CheckRun
   | Inspection
+  | Verification
   | Analysis
   | Plan
   | Secret

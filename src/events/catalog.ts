@@ -19,6 +19,7 @@ export const EVENT_TYPES = [
   'CheckRunSucceeded',
   'CheckRunFailed',
   'InspectionCreated',
+  'VerificationCompleted',
   'AnalysisCreated',
   'PlanCreated',
   'SecretSet',

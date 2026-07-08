@@ -7,6 +7,7 @@ import { buildCapability } from './build/index';
 import { testCapability } from './test/index';
 import { lintCapability } from './lint/index';
 import { inspect } from './inspect/index';
+import { verify } from './verify/index';
 import { explainFailure } from './explain-failure/index';
 import { generateFeaturePlan } from './generate-feature-plan/index';
 import { setSecretCapability } from './set-secret/index';
@@ -28,6 +29,7 @@ export const capabilities: Capability<any, any>[] = [
   testCapability,
   lintCapability,
   inspect,
+  verify,
   explainFailure,
   generateFeaturePlan,
   setSecretCapability,

@@ -120,6 +120,17 @@ export function compact(resource: Any): Any {
       };
     case 'Inspection':
       return { resource: r.id, inspection_type: r.inspection_type, summary: r.summary, data: r.data };
+    case 'Verification':
+      return {
+        resource: r.id,
+        passed: r.passed,
+        host: r.host,
+        total: r.total,
+        failed: r.failed,
+        skipped: r.skipped,
+        summary: r.summary,
+        assertions: (r.assertions ?? []).map((a: Any) => ({ name: a.name, status: a.status, target: a.target, actual: a.actual, ...(a.detail ? { detail: a.detail } : {}) })),
+      };
     case 'Analysis':
       return {
         resource: r.id,

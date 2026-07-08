@@ -71,6 +71,24 @@ async function runCapability(slug: string, body: Record<string, unknown>): Promi
   output(result);
 }
 
+// Render a Verification (C14 `forge verify`) result. JSON/raw modes emit the machine
+// report; otherwise a human-readable pass/fail list. The caller sets the exit code.
+function renderVerify(v: any): void {
+  if (globalOpts.json || globalOpts.raw) {
+    process.stdout.write(JSON.stringify(v, null, globalOpts.raw ? 2 : 0) + '\n');
+    return;
+  }
+  const mark = (s: string) => (s === 'pass' ? 'PASS' : s === 'fail' ? 'FAIL' : 'SKIP');
+  const lines: string[] = [];
+  lines.push(`Verify ${v.host}  —  ${v.passed ? 'PASSED' : 'FAILED'} (${v.total - v.skipped - v.failed}/${v.total - v.skipped} passed${v.skipped ? `, ${v.skipped} skipped` : ''}${v.failed ? `, ${v.failed} failed` : ''})`);
+  for (const a of v.assertions ?? []) {
+    lines.push(`  ${mark(a.status)}  ${a.title} — ${a.target} — ${a.actual}`);
+    if (a.detail) lines.push(`        ↳ ${a.detail}`);
+  }
+  lines.push(v.summary);
+  process.stdout.write(lines.join('\n') + '\n');
+}
+
 const program = new Command();
 program
   .name('forge')
@@ -255,6 +273,48 @@ program
   .option('--owner <id>', 'scope owner-aware views (app-events | notifications | agent-runs) to one opaque user id (C11)')
   .action(async (type, opts) => {
     await runCapability('inspect', { app: opts.app, type, ...(opts.owner ? { owner: opts.owner } : {}) });
+  });
+
+// --- verify (C14) ----------------------------------------------------------
+program
+  .command('verify')
+  .description('Post-deploy contract smoke: check a deployed app honors the platform contracts it adopted — C6 health + C10 auth gates + /auth/config. Read-only; exits non-zero on any failed assertion (Verify).')
+  .requiredOption('--app <app>')
+  .requiredOption('--host <host>', 'public host or base URL of the deployed app, e.g. app.example.com (https assumed)')
+  .option('--page-path <path>', 'unauthenticated page to probe for the C10 page gate (302 → /auth/login)', '/')
+  .option('--health-path <path>', 'C6 health/readiness path', '/api/health')
+  .option('--api-path <path>', 'protected API path expected to 401 unauthenticated (C10 API gate); repeatable', collect, [])
+  .option('--cron-path <path>', 'cron/service path expected to 403 with no service token (C10 service gate)')
+  .option('--expect <list>', 'comma list of auth methods expected enabled in /auth/config: google,email,password-signup')
+  .option('--expect-google', 'assert Google sign-in is enabled in /auth/config')
+  .option('--expect-email', 'assert email delivery is configured in /auth/config')
+  .option('--expect-password-signup', 'assert email/password sign-up is enabled in /auth/config')
+  .option('--check-refresh', 'also assert POST /auth/refresh with no cookies → 401')
+  .option('--timeout-ms <n>', 'per-request timeout in milliseconds')
+  .action(async (opts) => {
+    const expectList = String(opts.expect ?? '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const body = {
+      app: opts.app,
+      host: opts.host,
+      page_path: opts.pagePath,
+      health_path: opts.healthPath,
+      api_paths: opts.apiPath,
+      ...(opts.cronPath ? { cron_path: opts.cronPath } : {}),
+      expect_google: Boolean(opts.expectGoogle) || expectList.includes('google'),
+      expect_email: Boolean(opts.expectEmail) || expectList.includes('email'),
+      expect_password_signup:
+        Boolean(opts.expectPasswordSignup) || expectList.includes('password-signup') || expectList.includes('password_signup'),
+      check_refresh: Boolean(opts.checkRefresh),
+      ...(opts.timeoutMs ? { timeout_ms: Number.parseInt(opts.timeoutMs, 10) } : {}),
+    };
+    const result = await api('POST', '/capabilities/verify', body);
+    const v = result.resource ?? result;
+    renderVerify(v);
+    // Non-zero exit on any failed assertion — the CI post-deploy gate.
+    process.exit(v.passed ? 0 : 1);
   });
 
 // --- explain ---------------------------------------------------------------

@@ -34,6 +34,52 @@ export function resolveReadinessPath(manifest: Record<string, unknown>): string 
   return production.readiness_path ?? '/api/health';
 }
 
+// ---------------------------------------------------------------------------
+// Generic HTTP probe — the ONE never-throws fetch primitive the platform uses to
+// reach a deployed app read-only. `probeHealth` (C6/C15) and the C14 contract
+// checks (`shared/contract-checks.ts`) both build on this, so there is a single
+// definition of "make a safe outbound request and report what came back."
+// ---------------------------------------------------------------------------
+
+export interface HttpProbeResult {
+  reachable: boolean;
+  status?: number;
+  // The `Location` header, when present (a redirect target). Captured so a caller
+  // using `redirect:'manual'` can assert WHERE a gate redirected to.
+  location?: string;
+  contentType?: string;
+  body?: string;
+  // Present only when unreachable/timed-out.
+  error?: string;
+}
+
+// Make one read-only HTTP request that NEVER throws. `redirect:'manual'` (the
+// default here) surfaces a 3xx as-is (status + Location) rather than following it,
+// so gate assertions can see the redirect; pass `redirect:'follow'` to chase it.
+export async function httpProbe(
+  url: string,
+  opts: { method?: string; timeoutMs?: number; redirect?: 'follow' | 'manual'; headers?: Record<string, string> } = {},
+): Promise<HttpProbeResult> {
+  try {
+    const res = await fetch(url, {
+      method: opts.method ?? 'GET',
+      redirect: opts.redirect ?? 'manual',
+      headers: opts.headers,
+      signal: AbortSignal.timeout(opts.timeoutMs ?? HEALTH_TIMEOUT_MS),
+    });
+    const body = await res.text();
+    return {
+      reachable: true,
+      status: res.status,
+      location: res.headers.get('location') ?? undefined,
+      contentType: res.headers.get('content-type') ?? undefined,
+      body,
+    };
+  } catch (e) {
+    return { reachable: false, error: String((e as Error)?.message ?? e) };
+  }
+}
+
 export interface HealthProbeResult {
   url: string;
   reachable: boolean;
@@ -44,32 +90,40 @@ export interface HealthProbeResult {
   // Present when reachable but the body does NOT conform.
   parseError?: string;
   bodyPreview?: string;
+  // The `Location` header when the endpoint answered with a redirect (only
+  // observable under `redirect:'manual'`) — lets a caller detect a health path
+  // that is (wrongly) behind an auth gate instead of public.
+  redirectLocation?: string;
   // Present when unreachable.
   error?: string;
 }
 
 // Probe a health URL. Never throws: an unreachable/timed-out endpoint returns
 // `{ reachable:false, error }`; a reachable-but-malformed one returns
-// `{ reachable:true, conforms:false, parseError }`.
-export async function probeHealth(url: string, timeoutMs = HEALTH_TIMEOUT_MS): Promise<HealthProbeResult> {
+// `{ reachable:true, conforms:false, parseError }`. Follows redirects by default
+// (the C6/C15 behavior); pass `redirect:'manual'` to keep a 3xx visible (C14 uses
+// this to assert `/api/health` is PUBLIC, not gated behind a login redirect).
+export async function probeHealth(
+  url: string,
+  timeoutMs = HEALTH_TIMEOUT_MS,
+  opts: { redirect?: 'follow' | 'manual' } = {},
+): Promise<HealthProbeResult> {
+  const res = await httpProbe(url, {
+    timeoutMs,
+    redirect: opts.redirect ?? 'follow',
+    headers: { 'cache-control': 'no-cache', pragma: 'no-cache' },
+  });
+  if (!res.reachable) return { url, reachable: false, error: res.error };
+  const text = res.body ?? '';
+  let json: unknown;
   try {
-    const res = await fetch(url, {
-      headers: { 'cache-control': 'no-cache', pragma: 'no-cache' },
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const text = await res.text();
-    let json: unknown;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      json = undefined;
-    }
-    const parsed = parseHealthResponse(json);
-    if (parsed.ok) {
-      return { url, reachable: true, httpStatus: res.status, conforms: true, health: parsed.value };
-    }
-    return { url, reachable: true, httpStatus: res.status, conforms: false, parseError: parsed.error, bodyPreview: text.slice(0, 200) };
-  } catch (e) {
-    return { url, reachable: false, error: String((e as Error)?.message ?? e) };
+    json = JSON.parse(text);
+  } catch {
+    json = undefined;
   }
+  const parsed = parseHealthResponse(json);
+  if (parsed.ok) {
+    return { url, reachable: true, httpStatus: res.status, conforms: true, health: parsed.value, redirectLocation: res.location };
+  }
+  return { url, reachable: true, httpStatus: res.status, conforms: false, parseError: parsed.error, bodyPreview: text.slice(0, 200), redirectLocation: res.location };
 }

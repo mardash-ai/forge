@@ -9,6 +9,38 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-07-08
+
+### Added
+- **C14 — `forge verify`: a generic post-deploy contract smoke for deployed apps.** One read-only
+  command asserts that a deployed forge app actually honors the platform contracts it adopted, against
+  its public host, and **exits non-zero on any failed assertion** (the CI post-deploy gate). It is the
+  platform lift of an app-local smoke suite: the app declares which of its own paths/methods to probe;
+  the platform owns the contract assertions, so **forge-starter inherits post-deploy smoke for free**.
+  - **Command:** `forge verify --app <app> --host <host>` (host may be a bare `app.example.com` — https
+    is assumed — or a full URL). Flags: `--page-path` (default `/`), `--health-path` (default
+    `/api/health`), `--api-path <path>` (repeatable), `--cron-path <path>`, `--expect google,email,password-signup`
+    (or `--expect-google` / `--expect-email` / `--expect-password-signup`), `--check-refresh`,
+    `--timeout-ms`. Human-readable pass/fail report by default; `--json` emits the machine-readable
+    `Verification` resource.
+  - **Assertions (read-only; a fresh request each; redirects not followed):** (1) **C6 health** — `GET
+    /api/health` is 200, **public** (not behind an auth redirect/401), and matches the standard schema;
+    (2) **C10 page gate** — an unauthenticated page 302-redirects to `/auth/login?next=…`; (3) **C10 API
+    gate** — each `--api-path` is 401 unauthenticated (skipped-with-note if none given, never guessing
+    app routes); (4) **C10 service gate** — `--cron-path` is **403** (not 401) with no service token
+    (optional); (5) **C10 `/auth/config`** — 200 + the `{methods,configured}` shape, and any declared
+    `--expect` methods are enabled; (6) optional **`/auth/refresh`** — a cookie-less POST is 401.
+  - **Shares the C15/C6 logic, not a duplicate.** The health assertion reuses the same `probeHealth` +
+    C6 schema recognizer the C15 status page uses (`src/shared/health-probe.ts` + `src/shared/health.ts`).
+    `probeHealth` is refactored onto a new generic never-throws `httpProbe` primitive (with redirect
+    control) that all the contract checks build on; `forge inspect health` + `/status` output are
+    unchanged. New `src/shared/contract-checks.ts` holds the parameterized assertions.
+  - **Domain:** new **Verify** Capability (`plane: 'both'` — usable from CI against the control plane and
+    from the data plane), a **Verification** Resource (durable record: host, `passed`, per-assertion
+    outcomes — status codes only, never a body or credential), and a **VerificationCompleted** Event.
+    Non-destructive: GET-only (plus the optional cookie-less refresh POST); never writes, never needs
+    credentials.
+
 ## [0.19.0] — 2026-07-08
 
 ### Fixed
@@ -650,7 +682,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/mardash-ai/forge/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/mardash-ai/forge/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/mardash-ai/forge/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/mardash-ai/forge/compare/v0.16.0...v0.17.0
