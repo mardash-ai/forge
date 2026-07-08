@@ -9,6 +9,35 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.21.1] — 2026-07-08
+
+### Fixed
+- **P16 — `forge deploy` aborted on a relative `--env-file`, breaking `make deploy`.** An operator
+  running `forge deploy --app <app> --env-file app/.env.prod` (a relative path, as `make deploy`
+  passes) failed immediately with `node: app/.env.prod: not found` (exit 9), **before any rollout** —
+  never reaching the P14 drift gate.
+  - **Root cause (the CLI launch, not the deploy path).** The `forge` wrapper ran the CLI as
+    `tsx src/cli/index.ts "$@"`. `tsx` hoists **any** node CLI flag it finds in argv — even one that
+    appears *after* the script — into the underlying `node` process. `--env-file` **is** such a node
+    flag, so node consumed the operator's `--env-file app/.env.prod`, resolved it against the
+    control-plane container's **process CWD (`/forge`)** — which holds no app files — and aborted at
+    startup, so forge's own parser (which resolves against **`FORGE_WORKSPACE`**, where Compose runs)
+    never ran. `--compose-file` was unaffected (it is not a node flag). This is a launch-layer trap,
+    **not** the 0.19.0 P14 refactor: the deploy/rollout path code is byte-identical to 0.18.0.
+  - **Fix.** The `forge` wrapper now launches the CLI as `tsx -- src/cli/index.ts "$@"`. The `--`
+    tells `tsx` that everything after is the script + its args, so operator flags reach forge's own
+    parser and a relative `--env-file`/`--compose-file` resolves under `FORGE_WORKSPACE` (never CWD).
+    Absolute paths still pass through unchanged.
+  - **Hardening.** The Deploy capability's env-file existence probe now uses `path.resolve(workspace,
+    arg)` instead of `path.join`, so an **absolute** `--env-file` is no longer mis-joined under the
+    workspace (which would have silently dropped a valid absolute env-file); relative args still
+    resolve under `FORGE_WORKSPACE`.
+  - **P14 drift gate intact.** No rollout/drift logic changed — a deploy now finds the env/compose
+    files, runs the start-first roll, and reaches the running-vs-pinned drift gate (recreate-on-pin
+    change + fail-loud-on-drift) exactly as before. New regression tests lock both the CLI launch
+    (a relative `--env-file` reaches forge instead of aborting node) and the workspace-relative /
+    absolute-passthrough path math; the existing deploy-rollout + drift tests stay green.
+
 ## [0.21.0] — 2026-07-08
 
 ### Added
@@ -716,7 +745,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.21.1...HEAD
+[0.21.1]: https://github.com/mardash-ai/forge/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/mardash-ai/forge/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/mardash-ai/forge/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/mardash-ai/forge/compare/v0.18.0...v0.19.0

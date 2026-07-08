@@ -36,6 +36,18 @@ const inputSchema = z.object({
 });
 type Input = z.infer<typeof inputSchema>;
 
+// Resolve an operator-supplied `--env-file` / `--compose-file` arg against the app's
+// WORKSPACE ROOT (FORGE_WORKSPACE) — exactly the dir `docker compose` runs from during the
+// roll. A RELATIVE arg (the `app/.env.prod` / `app/compose.prod.yaml` defaults, or `make
+// deploy`'s relative flags) resolves UNDER the workspace; an ABSOLUTE arg passes through
+// unchanged. It is NEVER resolved against the control-plane container's process CWD
+// (`/forge`), which holds no app files — the base-dir trap behind P16. `path.resolve` (not
+// `path.join`) is deliberate: `path.join(ws, '/abs')` would mis-join an absolute path UNDER
+// the workspace, silently dropping a valid absolute env-file; `path.resolve` returns it as-is.
+export function resolveWorkspacePath(workspace: string, arg: string): string {
+  return path.resolve(workspace, arg);
+}
+
 // Deploy — a zero-downtime release of the app's PRODUCTION stack. The technology
 // (docker compose start-first roll behind Traefik) is an Implementation; the
 // contract is "deploy the app with no outage window and record a Deployment".
@@ -65,7 +77,7 @@ export const deployCapability: Capability<Input, Deployment> = {
     // auto-read still applies.
     let envFile: string | undefined;
     try {
-      await stat(path.join(cwd, input.env_file));
+      await stat(resolveWorkspacePath(cwd, input.env_file));
       envFile = input.env_file;
     } catch {
       envFile = undefined;

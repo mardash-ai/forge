@@ -18,6 +18,13 @@ if ! docker compose ps --status=running --services 2>/dev/null | grep -qx api; t
   done
 fi
 
+# The `--` after `tsx` is load-bearing (P16): tsx hoists ANY node CLI flag it finds
+# anywhere in argv — even after the script — into the underlying node process. Without
+# the separator, `forge deploy … --env-file app/.env.prod` hands `--env-file` to NODE,
+# which resolves it against the container CWD (`/forge`, no app files) and aborts at
+# startup with `node: app/.env.prod: not found` before the CLI ever runs. `--` tells tsx
+# everything after is the script + its args, so the operator's flags reach forge's own
+# parser and resolve against FORGE_WORKSPACE (where Compose runs). Do NOT remove it.
 exec docker compose exec -T \
   -e FORGE_API_URL=http://localhost:3717 \
-  api ./node_modules/.bin/tsx src/cli/index.ts "$@"
+  api ./node_modules/.bin/tsx -- src/cli/index.ts "$@"
