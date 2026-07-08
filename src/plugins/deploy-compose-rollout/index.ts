@@ -57,6 +57,7 @@ const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 export interface RolloutOptions {
   cwd: string; // project root where the compose file + relative bind-mounts live
   composeFile: string; // e.g. "compose.prod.yaml"
+  envFile?: string; // --env-file Compose interpolates vars from (e.g. "app/.env.prod"); omit = Compose's default .env auto-read
   service: string; // the public service to roll start-first (e.g. "web")
   context?: string; // docker context of the target daemon; undefined = local
   proxyNet: string; // reverse-proxy network to drain the old replica out of (e.g. "proxy")
@@ -75,11 +76,15 @@ export interface RolloutResult {
 }
 
 export async function rollout(opts: RolloutOptions, log: string[] = []): Promise<RolloutResult> {
-  const { cwd, composeFile, service, context, proxyNet, pull, timeoutMs, drainMs } = opts;
+  const { cwd, composeFile, envFile, service, context, proxyNet, pull, timeoutMs, drainMs } = opts;
   const step = (m: string): void => {
     log.push(m);
   };
-  const compose = (...args: string[]): string[] => dockerArgs(context, ['compose', '-f', composeFile, ...args]);
+  // `--env-file` names the file Compose interpolates the compose vars from (P10). It is
+  // a top-level option (before the subcommand), so every compose call — starting with
+  // `config`, which fails on an unfilled `${VAR:?}` — resolves from the documented file.
+  const envArgs = envFile ? ['--env-file', envFile] : [];
+  const compose = (...args: string[]): string[] => dockerArgs(context, ['compose', '-f', composeFile, ...envArgs, ...args]);
   const docker = (...args: string[]): string[] => dockerArgs(context, args);
   const sh = (args: string[], timeout = 5 * 60_000): ReturnType<typeof run> =>
     run('docker', args, { cwd, timeoutMs: timeout });
@@ -95,6 +100,7 @@ export async function rollout(opts: RolloutOptions, log: string[] = []): Promise
     throw new Error(`service "${service}" not in ${composeFile} (has: ${services.join(', ') || 'none'})`);
   }
   step(`services: ${services.join(', ')}`);
+  step(envFile ? `env-file: ${envFile}` : 'env-file: none (Compose default .env only)');
 
   // 1. Pull images — NON-FATAL (a Docker-Desktop keychain over SSH can block it; cached images still deploy).
   let pulled = false;

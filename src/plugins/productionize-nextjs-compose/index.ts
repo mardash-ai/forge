@@ -16,6 +16,8 @@
 // what a start-first roll expects. Every function here is PURE (string in/out) so it
 // is unit-testable with no Docker — the Capability does the file I/O.
 
+import { forgeNextConfig } from '../../shared/next-config';
+
 export const IMPLEMENTATION = 'productionize-nextjs-compose';
 
 // ---------------------------------------------------------------------------
@@ -126,16 +128,11 @@ export interface StandalonePatchResult {
 
 const STANDALONE_LINE = "  output: 'standalone',";
 
-// A fresh Next config with standalone output, used when the app has no config file.
+// A fresh Next config used when the app has no config file: standalone output (the
+// slim image needs it) + the always-on C10 `/auth/*` data-plane rewrite (shared with
+// the scaffold, so a from-scratch app matches a scaffolded one).
 export function defaultNextConfig(): string {
-  return `/** @type {import('next').NextConfig} */
-const nextConfig = {
-  output: 'standalone',
-  reactStrictMode: true,
-};
-
-export default nextConfig;
-`;
+  return forgeNextConfig({ standalone: true });
 }
 
 // Idempotently ensure `output: 'standalone'` in an existing Next config's TEXT.

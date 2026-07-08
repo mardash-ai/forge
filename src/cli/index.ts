@@ -202,6 +202,7 @@ program
   .option('--service <service>', 'public service rolled start-first', 'web')
   .option('--context <context>', 'docker context for a remote target (default: local daemon)')
   .option('--compose-file <file>', 'production compose manifest (default: what `forge productionize` writes, app/compose.prod.yaml)', 'app/compose.prod.yaml')
+  .option('--env-file <file>', 'env file Compose interpolates secrets from (default: what `forge productionize` documents, app/.env.prod)', 'app/.env.prod')
   .option('--proxy-net <name>', 'reverse-proxy network to drain the old replica from', 'proxy')
   .option('--no-pull', 'skip pulling images first')
   .option('--drain-seconds <n>', 'seconds to let in-flight requests settle before removing the old', '3')
@@ -212,6 +213,7 @@ program
       service: opts.service,
       context: opts.context,
       compose_file: opts.composeFile,
+      env_file: opts.envFile,
       proxy_net: opts.proxyNet,
       pull: opts.pull,
       drain_seconds: Number.parseInt(opts.drainSeconds, 10),

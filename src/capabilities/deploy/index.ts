@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { Capability } from '../../core/types';
 import type { Deployment } from '../../resources/types';
@@ -19,6 +19,14 @@ const inputSchema = z.object({
   // the single-app layout `provision` uses) — so a plain `forge deploy` finds it with
   // no flag, and the compose file's relative bind-mounts resolve from ./app (P7.2).
   compose_file: z.string().default('app/compose.prod.yaml'),
+  // Env file Compose interpolates the compose vars from. Defaults to what
+  // `forge productionize` documents — `app/.env.prod` (the copy of `.env.prod.example`
+  // the operator fills in) — the SAME file the compose interpolation hint names. Without
+  // this, Compose auto-reads only `app/.env`, so secrets in the documented file are
+  // silently ignored and a `${VAR:?}` interpolation aborts the deploy (P10). Passed only
+  // when it exists (Compose errors on an explicitly-named env-file that isn't there, and
+  // an app with no secrets legitimately ships none).
+  env_file: z.string().default('app/.env.prod'),
   // Reverse-proxy network the old replica is drained out of before removal.
   proxy_net: z.string().default('proxy'),
   // Pull images first (non-fatal — a locked keychain over SSH still deploys cached images).
@@ -50,6 +58,18 @@ export const deployCapability: Capability<Input, Deployment> = {
     // The prod compose manifest + its relative bind-mounts live at the project root,
     // which the control plane has mounted at the identical host==container path.
     const cwd = workspaceDir();
+
+    // Resolve the env-file Compose interpolates from (P10). Pass it only when it
+    // exists: Compose aborts on an explicitly-named env-file that isn't present, and an
+    // app with no secrets legitimately has none — in which case Compose's own `app/.env`
+    // auto-read still applies.
+    let envFile: string | undefined;
+    try {
+      await stat(path.join(cwd, input.env_file));
+      envFile = input.env_file;
+    } catch {
+      envFile = undefined;
+    }
 
     const resource: Deployment = {
       ...baseResource('Deployment', appId),
@@ -83,6 +103,7 @@ export const deployCapability: Capability<Input, Deployment> = {
         {
           cwd,
           composeFile: input.compose_file,
+          envFile,
           service: input.service,
           context: input.context,
           proxyNet: input.proxy_net,

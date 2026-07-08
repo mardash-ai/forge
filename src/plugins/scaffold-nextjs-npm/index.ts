@@ -5,6 +5,8 @@
 // Capabilities understand. npm is used because it is universally available in
 // Node images — the Capability stays `InitializeApp`, not `InitializeNextNpmApp`.
 
+import { forgeNextConfig } from '../../shared/next-config';
+
 export const IMPLEMENTATION = 'scaffold-nextjs-npm';
 
 export interface ScaffoldOptions {
@@ -83,13 +85,11 @@ export function scaffold(opts: ScaffoldOptions): ScaffoldResult {
       2,
     ) + '\n',
 
-    'next.config.mjs': `/** @type {import('next').NextConfig} */
-const nextConfig = {
-  reactStrictMode: true,
-};
-
-export default nextConfig;
-`,
+    // Dev shape: no `output: 'standalone'` (Productionize injects that), but it DOES
+    // carry the always-on C10 `/auth/*` data-plane rewrite from birth, so an app that
+    // adopts auth never has to hand-roll a config that gets it wrong (P11). Shared with
+    // Productionize's fallback config — one source of truth.
+    'next.config.mjs': forgeNextConfig(),
 
     '.eslintrc.json': JSON.stringify(
       { extends: 'next/core-web-vitals', ignorePatterns: ['tests/', 'vitest.config.ts'] },

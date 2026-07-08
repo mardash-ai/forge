@@ -349,3 +349,34 @@ describe('deploy ⇄ productionize compose path agree by default (P7.2)', () => 
     expect(parsed.compose_file).toBe('app/compose.prod.yaml');
   });
 });
+
+// P10 — three names for one thing must agree: the example productionize emits
+// (.env.prod.example → .env.prod), the compose interpolation hint (`${VAR:?… in
+// .env.prod}`), and the env-file `forge deploy` interpolates from. Before the fix,
+// deploy passed no --env-file, so Compose read only app/.env and the documented
+// secrets were silently ignored (the deploy then aborted at a `${VAR:?}`).
+describe('deploy ⇄ productionize env-file agree by default (P10)', () => {
+  it('forge deploy defaults --env-file to the productionized .env.prod (app/.env.prod)', () => {
+    const parsed = deployCapability.inputSchema.parse({ app: 'acme' });
+    expect(parsed.env_file).toBe('app/.env.prod');
+  });
+
+  it('the deploy env-file, the compose interpolation hint, and the emitted example all name .env.prod', () => {
+    const parsed = deployCapability.inputSchema.parse({ app: 'acme' });
+    // deploy default resolves to the `.env.prod` copy of the example.
+    expect(parsed.env_file.endsWith('.env.prod')).toBe(true);
+    // compose interpolation hint points at .env.prod (the `${VAR:?}` fail message).
+    const yaml = generateProdCompose(base);
+    expect(yaml).toContain('POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.prod}');
+    // the emitted example documents .env.prod as the copy target + the deploy consumer.
+    const env = generateEnvProdExample({
+      appName: 'acme',
+      host: 'app.example.com',
+      withPostgres: true,
+      withRedis: false,
+      secrets: [],
+    });
+    expect(env).toContain('Copy to .env.prod');
+    expect(env).toContain('--env-file .env.prod');
+  });
+});

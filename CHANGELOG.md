@@ -9,6 +9,32 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-07-07
+
+### Fixed
+- **P10 — a plain `forge deploy` now loads the documented secrets file (`app/.env.prod`).** The
+  Productionize generator emits the secrets template as `.env.prod.example` and the generated
+  `compose.prod.yaml` interpolation hints name `.env.prod` (`${POSTGRES_PASSWORD:?… in .env.prod}`),
+  but `forge deploy` ran `docker compose -f app/compose.prod.yaml` with **no `--env-file`**, so
+  Compose auto-read only `app/.env` — secrets placed in the documented file were **silently ignored**
+  and the deploy aborted at interpolation (`required variable … is missing a value`). `forge deploy`
+  now **defaults `--env-file` to `app/.env.prod`** (mirroring the P7.2 `--compose-file` default), so
+  the emitted example, the compose hint, and the deploy default all name the **same** file and a
+  flag-less deploy interpolates the secrets. It is passed only when the file is present (Compose
+  errors on a named-but-absent env-file, and a secret-less app legitimately ships none — Compose's
+  own `app/.env` auto-read still applies).
+- **P11 — the generated `next.config.mjs` no longer compiles the `/auth/*` rewrite out of the image.**
+  C10 apps proxy `/auth/*` to the data-plane sidecar via Next `rewrites()`. Next evaluates
+  `rewrites()` (like `headers()`/`redirects()`) at **build** time, so a config gating the destination
+  on a **runtime-only** env (`FORGE_DATA_PLANE_URL`, set by compose but absent at `next build` in CI)
+  returned `[]` and baked the rewrite **out** of the image → `/auth/login` 404'd in prod. The
+  generated config now **always emits** the `/auth/:path*` rewrite with the destination **defaulted to
+  the in-cluster `http://data-plane:3718`**; a runtime `FORGE_DATA_PLANE_URL`/`FORGE_EVENTS_URL` still
+  **overrides** it (e.g. `next dev`). Fixed in **one shared config** (`src/shared/next-config.ts`) used
+  by both the Productionize generator and the `init app` scaffold, so neither a productionized nor a
+  newly-scaffolded app re-discovers it. **forge-starter inherits the generator**, so its template is
+  corrected too.
+
 ## [0.15.0] — 2026-07-07
 
 ### Added
