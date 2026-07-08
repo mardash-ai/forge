@@ -133,6 +133,8 @@ alone leaves Google disabled.
      (e.g. for host `forge-os.mardash.ai` → `https://forge-os.mardash.ai/auth/google/callback`).
   4. Create. Copy the **Client ID** (ends in `.apps.googleusercontent.com`) and the **Client secret**.
   5. (You may also need to configure the OAuth consent screen the first time.)
+
+  → **Step-by-step walkthrough:** [AUTH_PROVIDER_SETUP.md](AUTH_PROVIDER_SETUP.md#google-oauth-client-google_client_id--google_client_secret).
 - **Set:**
   ```sh
   ./forge secrets set --app <app> --name GOOGLE_CLIENT_ID     --value '<id>.apps.googleusercontent.com'
@@ -143,6 +145,7 @@ alone leaves Google disabled.
 #### `SMTP_URL` + `EMAIL_FROM` — C12 transactional email · Optional
 Enables email/password **signup + verification + password reset** (C10 relies on C12 for these).
 - **External setup:** obtain SMTP creds from your provider (an app password / API-SMTP credentials).
+  → **Step-by-step walkthrough (SendGrid + others):** [AUTH_PROVIDER_SETUP.md](AUTH_PROVIDER_SETUP.md#smtp-provider-smtp_url--email_from).
 - **Format:** `SMTP_URL=smtp://USER:PASSWORD@HOST:PORT` (URL-encode reserved characters in the
   password). `EMAIL_FROM=Display Name <no-reply@your-domain>` on a domain you're authorized to send from.
 - **Set:**
@@ -168,6 +171,9 @@ Configure **at least one**:
 - **Google** (`GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET`) → "Sign in with Google" works immediately,
   **no email dependency**. Fastest unblock.
 - **SMTP** (`SMTP_URL` + `EMAIL_FROM`) → email/password **signup + verification + password reset** work.
+
+For step-by-step, human-facing walkthroughs of creating each credential (Google Cloud Console + an SMTP
+provider), see **[AUTH_PROVIDER_SETUP.md](AUTH_PROVIDER_SETUP.md)**.
 
 `AUTH_SESSION_SECRET` must be set for either to function (it signs the session). Everything is
 **detectable**: `GET /auth/config` reports which methods are enabled (`methods.google`,
