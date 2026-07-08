@@ -62,11 +62,11 @@ async function loadManifest(repoPath: string): Promise<Record<string, unknown>> 
   }
 }
 
-// Sample ONE app: probe its C6 health, compute the status, record a snapshot. Never
-// throws (an unreachable app records a snapshot with the web component down — that IS
-// the outage the timeline should show). Exported for tests.
+// Sample ONE app: probe its C6 health, compute the status, and PERSIST the snapshot
+// through the uptime store (line below) — this is the write that makes history
+// accrue. Never throws (an unreachable app records a snapshot with the web component
+// down — that IS the outage the timeline should show). Exported for tests.
 export async function sampleApp(
-  store: Store,
   app: Application,
   opts: { planeLabel: string; now?: Date },
 ): Promise<HealthSnapshot> {
@@ -90,7 +90,7 @@ export async function sampleAll(store: Store, opts: { planeLabel: string; now?: 
   const apps = (await store.listResources({ type: 'Application' })) as Application[];
   for (const app of apps) {
     try {
-      await sampleApp(store, app, opts);
+      await sampleApp(app, opts);
     } catch {
       // a wedged app must never crash the sampler
     }

@@ -83,9 +83,15 @@ describe('sampleApp — reuses probeHealth + computeStatus, records a snapshot',
     process.env.FORGE_APP_CALLBACK_PORT = String(port);
     const app = await seedApp();
 
-    const snap = await sampleApp(store, app, { planeLabel: 'Forge data plane' });
+    const snap = await sampleApp(app, { planeLabel: 'Forge data plane' });
     expect(snap.overall).toBe('operational');
     expect(snap.components.map((c) => c.name)).toEqual([`${APP} (web)`, 'db', 'Forge data plane']);
+
+    // A tick must PERSIST to disk (not compute-and-drop): the raw JSONL exists and
+    // holds exactly the snapshot the sampler returned.
+    const rawLines = (await readFile(uptimeRawFile(APP_ID), 'utf8')).trim().split('\n').filter(Boolean);
+    expect(rawLines.length).toBe(1);
+    expect(JSON.parse(rawLines[0]!)).toMatchObject({ overall: 'operational', at: snap.at });
 
     const h = await uptimeStore.getHistory(APP_ID, { windowDays: 90 });
     expect(h.sample_count).toBe(1);
@@ -98,7 +104,7 @@ describe('sampleApp — reuses probeHealth + computeStatus, records a snapshot',
   it('records the outage (web down) when the app is unreachable — never throws', async () => {
     process.env.FORGE_APP_CALLBACK_PORT = '1'; // closed port
     const app = await seedApp();
-    const snap = await sampleApp(store, app, { planeLabel: 'Forge data plane' });
+    const snap = await sampleApp(app, { planeLabel: 'Forge data plane' });
     expect(snap.overall).toBe('major_outage');
     const h = await uptimeStore.getHistory(APP_ID, { windowDays: 90 });
     expect(h.components.find((c) => c.name === `${APP} (web)`)!.days.at(-1)!.state).toBe('down');
