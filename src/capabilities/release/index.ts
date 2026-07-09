@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Capability } from '../../core/types';
 import type { Release, ReleasePhaseRecord, Deployment, ProductionArtifacts, Verification } from '../../resources/types';
-import { appRefInput, resolveApp, baseResource } from '../_shared';
+import { appRefInput, resolveAppLenient, baseResource } from '../_shared';
 import { productionize } from '../productionize/index';
 import { deployCapability } from '../deploy/index';
 import { verify } from '../verify/index';
@@ -104,7 +104,11 @@ export const releaseCapability: Capability<Input, Release> = {
   requiresDocker: true,
   plane: 'control',
   async execute(input, ctx) {
-    const app = await resolveApp(ctx.store, input.app);
+    // Resolve the target the SAME lenient way `forge deploy` does — a store-registered
+    // Application is optional on a prod host, inferred from the single-app layout +
+    // `app/forge.app.json` when the store lacks it (P19). Assess must never require a box-side
+    // `forge init app`; the repin/verify phases it composes resolve the same way (below).
+    const app = await resolveAppLenient(ctx.store, input.app);
     const repo = app.repo_path;
     const docker = dockerRunner(input.context);
     const composeFile = input.compose_file ?? DEFAULT_COMPOSE;

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { Capability } from '../../core/types';
 import type { Verification } from '../../resources/types';
-import { appRefInput, resolveApp, baseResource } from '../_shared';
+import { appRefInput, resolveAppLenient, baseResource } from '../_shared';
 import { runContractChecks, type ExpectMethods } from '../../shared/contract-checks';
 
 // Verify (C14) — a generic post-deploy smoke that checks the platform contracts a
@@ -61,7 +61,10 @@ export const verify: Capability<Input, Verification> = {
   // An observe surface useful from the control plane (CI post-deploy) and the data plane.
   plane: 'both',
   async execute(input, ctx) {
-    const app = await resolveApp(ctx.store, input.app);
+    // Deploy-time resolution (P19): the post-deploy gate must run on a prod host whose store may
+    // never have had `forge init app` — resolve the app leniently (store record optional; inferred
+    // from `app/forge.app.json`), matching how `forge deploy` / the `release` pipeline resolve it.
+    const app = await resolveAppLenient(ctx.store, input.app);
     const baseUrl = toBaseUrl(input.host);
 
     const expect: ExpectMethods = {

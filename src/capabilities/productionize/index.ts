@@ -3,7 +3,7 @@ import { writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Capability } from '../../core/types';
 import type { ProductionArtifacts } from '../../resources/types';
-import { appRefInput, resolveApp, baseResource } from '../_shared';
+import { appRefInput, resolveAppLenient, baseResource } from '../_shared';
 import { parseComposeInfra, type PrevInfra } from '../provision-environment/converge';
 import {
   IMPLEMENTATION,
@@ -59,7 +59,11 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
   requiresDocker: false,
   plane: 'control',
   async execute(input, ctx) {
-    const app = await resolveApp(ctx.store, input.app);
+    // Deploy-time resolution (P19): a store Application is optional on a prod host — infer the
+    // repo from the single-app layout + `app/forge.app.json` when the store lacks it, so the
+    // `release` repin phase (and a standalone re-productionize on the box) never require a
+    // box-side `forge init app`. Matches how `forge deploy` resolves the same app.
+    const app = await resolveAppLenient(ctx.store, input.app);
     const repo = app.repo_path;
     const manifestPath = path.join(repo, 'forge.app.json');
 

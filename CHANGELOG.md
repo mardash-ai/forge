@@ -9,6 +9,42 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.24.1] — 2026-07-09
+
+### Fixed
+- **P19 — `forge release` failed at ASSESS on a deploy host whose control-plane store was never
+  populated by `forge init app`.** Symptom, deterministic on the box: `forge release --app forge-os
+  --host forge-os.mardash.ai …` aborted with `not_found: No Application named "forge-os". Run: forge
+  init app --name forge-os` — even though the **same app deployed fine via `forge deploy`** on that
+  same host, and `forge release --dry-run` planned all five phases on a *local* control plane where
+  the store **did** have the app.
+  - **Root cause: the release path's app lookup was STRICTER than the `forge deploy` it composes.**
+    `forge deploy` resolves the target **leniently** — a store-registered `Application` is optional;
+    it infers the app from the single-app layout + the committed `app/forge.app.json` (name, host,
+    current `web_image` pin), so a prod host that only ever ran `forge deploy`/`forge productionize`
+    (never `forge init app`) deploys fine with an empty store. `forge release`, by contrast, resolved
+    the app with the strict `resolveApp` (a store `Application` lookup by name that throws
+    `not_found`) — so it broke exactly where the store lacked the registration. The strictness was
+    **not** unique to assess: the `productionize` (repin) and `verify` (post-deploy gate) capabilities
+    that `release` composes used the same strict lookup, so a real (non-dry-run) release of a new
+    commit would also have failed at repin/verify on that host, not only at assess.
+  - **Fix — the deploy-time capabilities now share one lenient resolver, so they can't drift apart.**
+    A new `resolveAppLenient` in `capabilities/_shared.ts` resolves a store `Application` when present
+    (its id still links Resources/Events) and otherwise infers the app from the single-app layout +
+    `app/forge.app.json` — the SAME repo `forge deploy` operates on. `release` (assess), `productionize`
+    (repin), and `verify` (the gate) all resolve through it now; a store record's **absence is no
+    longer fatal** when `forge.app.json` resolves the app, so none of them require a box-side `forge
+    init app`. `forge deploy` itself is unchanged (already lenient; it needs no repo path). If NEITHER
+    a store record NOR a usable `app/forge.app.json` resolves the app, it still fails clearly with a
+    `not_found` that names the fix. Everything else about `forge release` — the 5 phases, the fail-safe
+    abort, the idempotent resume — is intact.
+  - **Verified.** New hermetic regression tests (`tests/release-app-resolution.test.ts`) lock the box
+    condition: `resolveAppLenient` resolves from `app/forge.app.json` with an empty store (previously
+    `not_found`), a store record still wins, and a truly-unresolvable app still fails 404. Driven
+    end-to-end in-process: with **0** registered Applications, the real `release` capability
+    `--dry-run` for a `forge.app.json`-only app now **succeeds at assess** and plans all five phases
+    (assess → publish → repin → deploy → verify), recovering the host + current pin from the manifest.
+
 ## [0.24.0] — 2026-07-09
 
 ### Added
@@ -875,7 +911,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.24.1...HEAD
+[0.24.1]: https://github.com/mardash-ai/forge/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/mardash-ai/forge/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/mardash-ai/forge/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/mardash-ai/forge/compare/v0.21.1...v0.22.0
