@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { compact, summarize } from './render';
-import { resolveApiBaseUrl } from './api-base';
+import { resolveApiBaseUrl, longRunningDispatcher } from './api-base';
 
 // The Forge CLI is a THIN API client. It implements no Capability itself — it
 // builds a request, calls the API, and renders a compact, token-conscious view.
@@ -29,10 +29,10 @@ function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
-async function api(method: string, path: string, body?: unknown): Promise<any> {
+async function api(method: string, path: string, body?: unknown, opts?: { longRunning?: boolean }): Promise<any> {
   let res: Response;
   try {
-    res = await fetch(`${API}${path}`, {
+    const init: RequestInit = {
       method,
       headers: {
         'content-type': 'application/json',
@@ -40,7 +40,14 @@ async function api(method: string, path: string, body?: unknown): Promise<any> {
         'x-forge-actor-id': 'cli',
       },
       body: body ? JSON.stringify(body) : undefined,
-    });
+    };
+    // A long-running capability (today: `forge release`) blocks the response while the server
+    // publishes/repins/deploys/verifies — work that can run well past undici's default 300s
+    // `headersTimeout` and abort the fetch (surfacing here as "Cannot reach Forge API"). Dial
+    // the SAME URL with the SAME fetch, only through a no-timeout dispatcher so the CLI waits
+    // for the server exactly as the fast `--dry-run` path already does. See api-base.ts (P22).
+    if (opts?.longRunning) init.dispatcher = longRunningDispatcher;
+    res = await fetch(`${API}${path}`, init);
   } catch (err) {
     return fail(`Cannot reach Forge API at ${API}. Is the platform running? (make up)`, String(err));
   }
@@ -397,7 +404,11 @@ program
       ...(expectList.includes('password-signup') || expectList.includes('password_signup') ? { expect_password_signup: true } : {}),
       ...(opts.checkRefresh ? { check_refresh: true } : {}),
     };
-    const result = await api('POST', '/capabilities/release', body);
+    // Release is long-running: the request blocks through publish→repin→deploy→verify. Use the
+    // no-timeout dispatcher (P22) so a real run's server wait doesn't trip undici's 300s
+    // headers timeout and read as "Cannot reach Forge API". BOTH dry-run and real go through
+    // this same call, so their connection is identical — the only difference is `dry_run`.
+    const result = await api('POST', '/capabilities/release', body, { longRunning: true });
     const r = result.resource ?? result;
     renderRelease(r);
     // Non-zero exit on a failed release — the deploy-safety gate.

@@ -9,6 +9,36 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.26.3] — 2026-07-09
+
+### Fixed
+- **P22 — a real `forge release` reported `Cannot reach Forge API` while `--dry-run` reached it fine
+  (client-side headers-timeout on the long-running request).** `forge release` is the platform's one
+  LONG-RUNNING capability: the CLI issues a single blocking `POST /capabilities/release` and the request
+  stays open while the server does real work — publish POLLS GHCR for the commit's image up to `--timeout`
+  (default **600s**), then repin → deploy → verify. Node's global `fetch` (undici) applies a **default
+  `headersTimeout`/`bodyTimeout` of 300s** to every request, so on a box where the wait is real (the
+  commit's image is not yet resolvable in the registry) the server can't send response headers within 300s
+  and undici **aborts the fetch with `UND_ERR_HEADERS_TIMEOUT`** — which the CLI's `api()` catch surfaces as
+  `{"error":{"message":"Cannot reach Forge API at http://127.0.0.1:3717 …"},"details":"TypeError: fetch
+  failed"}`, even though the API is healthy (plain `node` and the dry-run both reach it). `--dry-run`
+  assesses + prints the plan and returns in ~1s, so it **never approaches the ceiling** — that wait-time gap
+  is the entire dry-vs-real divergence, and why the failure is box-specific (a box where the image is
+  already published skips the publish poll and finishes fast). The CLI now sends a long-running capability
+  request through a dispatcher with `headersTimeout`/`bodyTimeout` **= 0** (unlimited), so it waits exactly
+  as long as the server legitimately needs (the server keeps its OWN bounded budget via `--timeout`). Same
+  `resolveApiBaseUrl` (127.0.0.1), same global `fetch`, no alternate client and no global-dispatcher swap —
+  **dry-run and real now use a byte-for-byte identical connection**, the only difference being the request
+  body's `dry_run` flag (`src/cli/api-base.ts` → `longRunningDispatcher`, wired into `api()` in
+  `src/cli/index.ts`).
+
+### Added
+- **P22 guard — `tests/cli-release-longrunning.test.ts`.** Reproduces the exact abort: a deliberately
+  slow-to-respond server trips a short client headers timeout with `TypeError: fetch failed` (the production
+  symptom), while the shared `longRunningDispatcher` lets the SAME slow response through; also asserts the
+  dispatcher disables both timeouts and that dry-run and real dial the same `resolveApiBaseUrl` release
+  endpoint through the same dispatcher (no alternate-client / global-dispatcher divergence).
+
 ## [0.26.2] — 2026-07-09
 
 ### Changed
@@ -1047,7 +1077,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.26.2...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.26.3...HEAD
+[0.26.3]: https://github.com/mardash-ai/forge/compare/v0.26.2...v0.26.3
 [0.26.2]: https://github.com/mardash-ai/forge/compare/v0.26.1...v0.26.2
 [0.26.1]: https://github.com/mardash-ai/forge/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/mardash-ai/forge/compare/v0.25.0...v0.26.0
