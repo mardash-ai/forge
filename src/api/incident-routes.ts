@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { store } from '../storage/store';
 import { incidentStore } from '../storage/incident-store';
+import { resolveAppLenient } from '../capabilities/_shared';
 import type { Actor } from '../shared/domain';
 import {
   type Incident,
@@ -25,8 +26,12 @@ import {
 //   GET  /status/incidents          ?app=                                                -> { incidents } (active then recent-resolved)
 //
 // `app` defaults to the server's own app (data-plane: FORGE_APP_NAME) so a single-app
-// operator needn't pass it. These are WRITE/operator routes — unlike `/status` +
-// `/status.json` (the public read surface), they are not meant to be publicly proxied.
+// operator needn't pass it, and is resolved LENIENTLY — a store-registered Application when
+// there is one, else the single-app `app/forge.app.json` — so an operator can declare incidents
+// on a box provisioned via deploy/productionize whose Application store was never populated by
+// `forge init app` (P25; the same store-optional resolution `forge release`/`deploy` use, P19).
+// These are WRITE/operator routes — unlike `/status` + `/status.json` (the public read surface),
+// they are not meant to be publicly proxied.
 //
 // Each mutation emits the matching platform fact (IncidentOpened / IncidentUpdated /
 // IncidentResolved) into the ForgeEvent log, like the other status facts.
@@ -42,11 +47,29 @@ export function registerIncidentRoutes(
   app: FastifyInstance,
   opts: { defaultApp?: () => string | undefined } = {},
 ): void {
-  const resolveAppId = async (name?: string): Promise<string | null> => {
+  // Resolve the app to a STABLE incident-store key, the SAME lenient way `forge release` /
+  // `deploy` / `productionize` resolve their target (P19 → P25). A store-registered Application
+  // WINS — its id links the `/status` render + the emitted facts. But on a box PROVISIONED via
+  // deploy/productionize, whose control-plane Application store was NEVER populated by
+  // `forge init app`, the app is inferred from the single-app layout + the committed
+  // `app/forge.app.json` (exactly like `forge release`). Before this, `status incident` used the
+  // STRICT lookup and 404'd `not_found` on that store-less box even with FORGE_APP_NAME set.
+  //
+  // The key is `id ?? name`: on the DATA PLANE (where the public `/status` renders these) the boot
+  // `ensureApp` registers the app, so `id` is present and BOTH the incident write and the `/status`
+  // read key by that same id — the incident store is the one, data-plane-resident `forge_state`
+  // store `/status` reads. A store-less box keys by the app NAME (its only stable ref). Returns
+  // null only when NEITHER a store record NOR a readable `app/forge.app.json` resolves the app —
+  // the honest unknown-app case that still 404s.
+  const resolveAppKey = async (name?: string): Promise<string | null> => {
     const n = name ?? opts.defaultApp?.();
     if (!n) return null;
-    const a = await store.findAppByName(n);
-    return a && a.type === 'Application' ? a.id : null;
+    try {
+      const target = await resolveAppLenient(store, n);
+      return target.id ?? target.name;
+    } catch {
+      return null;
+    }
   };
   const unknownApp = { error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } };
   const notFound = { error: { code: 'not_found', message: 'no such incident for this app.', retry: 'change-input' } };
@@ -84,7 +107,7 @@ export function registerIncidentRoutes(
     if (!isIncidentImpact(b.impact)) {
       return reply.status(422).send(invalid(`\`impact\` must be one of: ${INCIDENT_IMPACTS.join(', ')}.`));
     }
-    const app_id = await resolveAppId(b.app);
+    const app_id = await resolveAppKey(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
     const inc = await incidentStore.create(app_id, {
       title: b.title.trim(),
@@ -106,7 +129,7 @@ export function registerIncidentRoutes(
     if (!isIncidentStatus(b.status)) {
       return reply.status(422).send(invalid(`\`status\` must be one of: ${INCIDENT_STATUSES.join(', ')}.`));
     }
-    const app_id = await resolveAppId(b.app);
+    const app_id = await resolveAppKey(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
     const inc = await incidentStore.update(app_id, b.id, {
       status: b.status,
@@ -124,7 +147,7 @@ export function registerIncidentRoutes(
   app.post('/status/incidents/resolve', async (req, reply) => {
     const b = (req.body ?? {}) as { app?: string; id?: string; body?: string };
     if (!b.id || typeof b.id !== 'string') return reply.status(422).send(invalid('resolve requires the incident `id`.'));
-    const app_id = await resolveAppId(b.app);
+    const app_id = await resolveAppKey(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
     const inc = await incidentStore.resolve(app_id, b.id, {
       ...(typeof b.body === 'string' ? { body: b.body } : {}),
@@ -137,7 +160,7 @@ export function registerIncidentRoutes(
   // List incidents (active newest-first, then recent-resolved).
   app.get('/status/incidents', async (req, reply) => {
     const q = req.query as { app?: string };
-    const app_id = await resolveAppId(q.app);
+    const app_id = await resolveAppKey(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
     const all = await incidentStore.list(app_id);
     const incidents = [...orderActive(all), ...orderResolved(all)].map(incidentJson);

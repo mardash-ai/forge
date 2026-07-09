@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
@@ -431,5 +431,133 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
     expect((await s2.inject({ method: 'POST', url: '/status/incidents', payload: { title: 't', status: 'investigating', impact: 'minor' } })).statusCode).toBe(404);
     expect((await s2.inject({ method: 'GET', url: '/status/incidents' })).statusCode).toBe(404);
     await s2.close();
+  });
+});
+
+// ============================================================================
+// P25 — store-less box (Application store EMPTY; resolved via app/forge.app.json)
+// ============================================================================
+//
+// The exact prod condition: a box provisioned via `forge deploy`/`productionize` (never
+// `forge init app`), so the control-plane Application store is empty. Before the fix, the
+// operator write path used the STRICT `findAppByName` and 404'd `not_found` even with
+// FORGE_APP_NAME set. The fix switches it to the store-OPTIONAL `resolveAppLenient` (the same
+// resolver `forge release` uses), inferring the app from the single-app layout + the committed
+// `app/forge.app.json`. These also prove the incident store is the ONE data-plane-resident
+// store: what `create` writes is exactly what a subsequent read (the same store `/status` reads)
+// returns — keyed by the app name when store-less, no second store.
+describe('C15 Phase 3 — P25 store-less box (empty Application store → app/forge.app.json)', () => {
+  let sdir: string;
+  let wdir: string;
+  let server2: FastifyInstance;
+  let prevState2: string | undefined;
+  let prevWs: string | undefined;
+  let prevLayout: string | undefined;
+
+  beforeEach(async () => {
+    prevState2 = process.env.FORGE_STATE_DIR;
+    prevWs = process.env.FORGE_WORKSPACE;
+    prevLayout = process.env.FORGE_APP_LAYOUT;
+    sdir = await mkdtemp(path.join(tmpdir(), 'forge-p25-state-'));
+    wdir = await mkdtemp(path.join(tmpdir(), 'forge-p25-ws-'));
+    process.env.FORGE_STATE_DIR = sdir;
+    process.env.FORGE_WORKSPACE = wdir;
+    process.env.FORGE_APP_LAYOUT = 'single'; // one repo == one app, living at <ws>/app
+    // The committed app manifest — the SAME file `forge deploy` reads — carries the app name.
+    // No Application record is ever saved to the store (the store-less box condition).
+    await mkdir(path.join(wdir, 'app'), { recursive: true });
+    await writeFile(path.join(wdir, 'app', 'forge.app.json'), JSON.stringify({ name: 'forge-os' }));
+    await store.init();
+    server2 = Fastify({ logger: false });
+    registerIncidentRoutes(server2, { defaultApp: () => process.env.FORGE_APP_NAME });
+    await server2.ready();
+  });
+  afterEach(async () => {
+    await server2.close();
+    const restore = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
+    restore('FORGE_STATE_DIR', prevState2);
+    restore('FORGE_WORKSPACE', prevWs);
+    restore('FORGE_APP_LAYOUT', prevLayout);
+    await rm(sdir, { recursive: true, force: true });
+    await rm(wdir, { recursive: true, force: true });
+  });
+
+  it('create/list resolve an app that exists ONLY via app/forge.app.json (was not_found)', async () => {
+    // the store genuinely has no Application record — the exact box condition
+    expect(await store.findAppByName('forge-os')).toBeNull();
+
+    // create — previously 404 not_found; now 200 and persisted
+    const created = await server2.inject({
+      method: 'POST',
+      url: '/status/incidents',
+      payload: { app: 'forge-os', title: 'Partner API down', status: 'investigating', impact: 'major', body: 'upstream 5xx' },
+    });
+    expect(created.statusCode).toBe(200);
+    const inc = created.json().incident;
+    expect(inc.id).toMatch(/^inc_/);
+    expect(inc.title).toBe('Partner API down');
+
+    // list resolves the SAME store-less app and shows it
+    const list = (await server2.inject({ method: 'GET', url: '/status/incidents?app=forge-os' })).json();
+    expect(list.incidents).toHaveLength(1);
+    expect(list.incidents[0].title).toBe('Partner API down');
+
+    // …and the write landed in the ONE incident store `/status` reads (`incidentStore.list`),
+    // keyed by the app name when store-less — proving there is no separate control-plane store.
+    const direct = await incidentStore.list('forge-os');
+    expect(direct.map((i) => i.title)).toEqual(['Partner API down']);
+  });
+
+  it('create → resolve moves the store-less incident to resolved history', async () => {
+    const inc = (await server2.inject({
+      method: 'POST',
+      url: '/status/incidents',
+      payload: { app: 'forge-os', title: 'Cache cold', status: 'investigating', impact: 'minor' },
+    })).json().incident;
+
+    const res = await server2.inject({
+      method: 'POST',
+      url: '/status/incidents/resolve',
+      payload: { app: 'forge-os', id: inc.id, body: 'recovered' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().incident.status).toBe('resolved');
+    expect(res.json().incident.resolved_at).toBeTruthy();
+
+    const after = (await server2.inject({ method: 'GET', url: '/status/incidents?app=forge-os' })).json();
+    expect(after.incidents).toHaveLength(1);
+    expect(after.incidents[0].status).toBe('resolved');
+  });
+
+  it('FORGE_APP_NAME is honored when --app is omitted (single-app operator)', async () => {
+    process.env.FORGE_APP_NAME = 'forge-os';
+    try {
+      const created = await server2.inject({
+        method: 'POST',
+        url: '/status/incidents',
+        payload: { title: 'No --app needed', status: 'investigating', impact: 'minor' },
+      });
+      expect(created.statusCode).toBe(200);
+      const list = (await server2.inject({ method: 'GET', url: '/status/incidents' })).json();
+      expect(list.incidents.map((i: { title: string }) => i.title)).toEqual(['No --app needed']);
+    } finally {
+      delete process.env.FORGE_APP_NAME;
+    }
+  });
+
+  it('still 404s when NEITHER a store record NOR app/forge.app.json resolves the app', async () => {
+    process.env.FORGE_APP_LAYOUT = 'multi'; // apps/<name>/forge.app.json — none exists for "ghost"
+    const s3 = Fastify({ logger: false });
+    registerIncidentRoutes(s3, { defaultApp: () => 'ghost' });
+    await s3.ready();
+    const r = await s3.inject({
+      method: 'POST',
+      url: '/status/incidents',
+      payload: { app: 'ghost', title: 't', status: 'investigating', impact: 'minor' },
+    });
+    expect(r.statusCode).toBe(404);
+    expect(r.json().error.code).toBe('not_found');
+    expect((await s3.inject({ method: 'GET', url: '/status/incidents?app=ghost' })).statusCode).toBe(404);
+    await s3.close();
   });
 });

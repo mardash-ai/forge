@@ -9,6 +9,39 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.26.5] — 2026-07-09
+
+### Fixed
+- **P25 — an operator could not declare a status incident on a box provisioned via
+  `forge deploy`/`productionize` (a store-less box), because `forge status incident
+  create/update/resolve/list` resolved the app the STRICT way and 404'd `not_found` even with
+  `FORGE_APP_NAME` set.** The operator write surface (`src/api/incident-routes.ts`) resolved
+  `--app`/`FORGE_APP_NAME` via `store.findAppByName` — the strict lookup that requires an
+  Application record from `forge init app`. On a real production host that record never exists
+  (the box only ever ran `forge deploy`/`productionize`), so `forge status incident create --app
+  forge-os` returned `{"error":{"code":"not_found","message":"unknown app (pass app or set
+  FORGE_APP_NAME)."}}` — the **exact P19 store-less condition** that `forge release`/`deploy`/
+  `verify` were already immune to via `resolveAppLenient`, but which the `status incident` family
+  was never switched to. It now resolves through the SAME store-optional `resolveAppLenient`: a
+  store-registered Application still wins (its id links the `/status` render + the emitted
+  `Incident*` facts), else the app is inferred from the single-app layout + the committed
+  `app/forge.app.json`, exactly like `forge release`. `--app`/`FORGE_APP_NAME` are still honored,
+  and a genuinely unresolvable app (no store record AND no readable `app/forge.app.json`) still
+  cleanly 404s. The incident store is unchanged — it was already the ONE data-plane-resident
+  `forge_state` incident store the public `/status` + `/status.json` render from (the data plane
+  keys both the write and the read by the same app id its boot `ensureApp` registers; a store-less
+  box keys by the app name), so no second store was introduced and none was needed — the only
+  defect was the strict app resolution on the write path.
+  (`src/api/incident-routes.ts` → `resolveAppKey` wraps `resolveAppLenient` and keys the store by
+  `id ?? name`.)
+
+### Added
+- **P25 guard — store-less incident-resolution tests in `tests/incidents.test.ts`.** With an EMPTY
+  Application store and only `app/forge.app.json` present (the box condition), `forge status
+  incident create`/`list`/`resolve` now succeed (previously `not_found`), the created incident
+  round-trips through the same `incidentStore` the `/status` render reads, `FORGE_APP_NAME` is
+  honored when `--app` is omitted, and a truly unresolvable app still 404s.
+
 ## [0.26.4] — 2026-07-09
 
 ### Fixed
@@ -1112,7 +1145,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.26.4...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.26.5...HEAD
+[0.26.5]: https://github.com/mardash-ai/forge/compare/v0.26.4...v0.26.5
 [0.26.4]: https://github.com/mardash-ai/forge/compare/v0.26.3...v0.26.4
 [0.26.3]: https://github.com/mardash-ai/forge/compare/v0.26.2...v0.26.3
 [0.26.2]: https://github.com/mardash-ai/forge/compare/v0.26.1...v0.26.2
