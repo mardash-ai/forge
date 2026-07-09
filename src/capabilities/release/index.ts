@@ -14,13 +14,13 @@ import {
   IMPLEMENTATION,
   runRelease,
   ReleaseError,
-  targetImageRef,
+  candidateImageRefs,
   gitHeadCommit,
   gitWorkingTreeClean,
   gitRemoteOwner,
   dockerRunner,
-  resolveDigest,
-  waitForDigest,
+  resolveAnyDigest,
+  waitForAnyDigest,
   buildAndPush,
   type ReleaseExecutor,
   type Observed,
@@ -151,23 +151,31 @@ export const releaseCapability: Capability<Input, Release> = {
         // explicit --commit means the caller pinned exactly what to ship).
         const workingTreeClean = input.commit ? undefined : await gitWorkingTreeClean(repo);
 
-        // Image ref: explicit --image-ref, else ghcr.io/<owner>/<app>-app:sha-<commit>.
-        let imageRef = input.image_ref?.trim();
-        if (!imageRef) {
+        // Image ref: an explicit --image-ref pins exactly one tag; otherwise derive the
+        // candidates the standard publish workflow could have produced — `sha-<short>` first
+        // (docker/metadata-action's `type=sha` default), with `sha-<full>` as a fallback (P23).
+        // `commit` stays FULL for the Release resource id + git ops; only the image TAG shortens.
+        let candidates: string[];
+        const explicit = input.image_ref?.trim();
+        if (explicit) {
+          candidates = [explicit];
+        } else {
           const owner = (input.owner ?? (await gitRemoteOwner(repo)))?.trim();
           if (!owner) {
             throw new Error('could not resolve the GHCR owner — pass --owner <org>, or --image-ref <full ref>, or set the repo’s origin remote');
           }
-          imageRef = targetImageRef({ registry: input.registry, owner, app: app.name, commit, suffix: input.image_suffix });
+          candidates = candidateImageRefs({ registry: input.registry, owner, app: app.name, commit, suffix: input.image_suffix });
         }
 
         const prod = await readProduction(repo);
-        const publishedDigest = await resolveDigest(docker, imageRef); // best-effort probe
+        const hit = await resolveAnyDigest(docker, candidates); // best-effort probe (short OR full tag)
         return {
           commit,
           workingTreeClean,
-          imageRef,
-          publishedDigest,
+          // Record the tag that actually resolved; else the primary (short-SHA) tag CI produces.
+          imageRef: hit?.ref ?? candidates[0]!,
+          imageRefCandidates: candidates,
+          publishedDigest: hit?.digest,
           currentPin: prod.web_image,
           host: input.host ?? prod.host,
         };
@@ -177,10 +185,15 @@ export const releaseCapability: Capability<Input, Release> = {
         if (input.publish_mode === 'build') {
           return buildAndPush(docker, { repo, ref: imageRef, dockerfile: path.join(repo, 'Dockerfile') });
         }
-        return waitForDigest(docker, imageRef, {
+        // Poll ALL candidate tags (short + full) so the wait resolves against whichever the app's
+        // publish workflow actually landed — no more waiting out the timeout on a tag CI never
+        // creates (P23). The final digest pin is tag-stripped, so which tag won does not matter.
+        const refs = observed.imageRefCandidates?.length ? observed.imageRefCandidates : [imageRef];
+        const { digest } = await waitForAnyDigest(docker, refs, {
           timeoutMs: input.timeout_seconds * 1000,
           intervalMs: input.poll_interval_seconds * 1000,
         });
+        return digest;
       },
 
       async isDeployCurrent(targetPin): Promise<boolean> {

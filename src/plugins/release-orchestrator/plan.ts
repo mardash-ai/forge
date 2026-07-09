@@ -40,6 +40,35 @@ export function targetImageRef(parts: ImageRefParts): string {
   return `${registry}/${parts.owner}/${parts.app}${suffix}:sha-${commit}`;
 }
 
+// The standard app publish workflow tags its image with the SHORT git SHA. GitHub Actions'
+// `docker/metadata-action` `type=sha` uses `format=short` by default, which is the FIRST 7
+// characters of the commit SHA (`${GITHUB_SHA:0:7}`) — NOT `git rev-parse --short`'s minimum-
+// unique abbreviation. `forge release` MUST derive its poll tag the same way, or it waits the
+// full --timeout for a `sha-<full40>` tag the workflow never creates (P23: every real release
+// silently blocked). We keep the FULL sha for git operations + the Release resource id; only the
+// image TAG is shortened.
+export const SHORT_SHA_LEN = 7;
+export function shortSha(sha: string): string {
+  const s = sha.trim();
+  return s.length > SHORT_SHA_LEN ? s.slice(0, SHORT_SHA_LEN) : s;
+}
+
+// The ordered, deduped list of tagged refs to try when resolving THIS commit's published image.
+// The standard workflow publishes `sha-<short>` (docker/metadata-action default), so that is
+// tried FIRST; `sha-<full>` is retained as a robustness fallback so a repo/workflow that instead
+// tags with the long SHA still resolves. `forge release` probes AND polls the whole list and
+// takes whichever the registry actually has — so the tag-derivation drift that caused P23 (short
+// vs. full SHA) can no longer wedge a release, and existing `--image-ref`/`--image-suffix`/
+// `--owner`/`--registry` overrides still flow through `targetImageRef`.
+export function candidateImageRefs(parts: ImageRefParts): string[] {
+  const full = parts.commit.trim();
+  const refs = [
+    targetImageRef({ ...parts, commit: shortSha(full) }), // what the standard workflow publishes
+    targetImageRef({ ...parts, commit: full }), // fallback: a workflow that tags the long SHA
+  ];
+  return [...new Set(refs)]; // dedup when the commit is already ≤ 7 chars (short === full)
+}
+
 // Strip a `:tag` from an image ref WITHOUT eating a `:port` in the registry host. The tag,
 // when present, is the last `:` that comes AFTER the last `/` (a registry port's colon
 // precedes the first `/`). A ref that is already digest-pinned (`@sha256:…`) is returned as-is.

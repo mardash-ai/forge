@@ -9,6 +9,41 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.26.4] — 2026-07-09
+
+### Fixed
+- **P23 — `forge release` polled GHCR for an image tag the app's publish workflow never creates
+  (full-SHA vs. short-SHA), so every real release timed out its whole `--timeout` and never rolled.**
+  With P22's fetch-timeout fixed, the publish phase (ci mode) correctly WAITED — and surfaced the true
+  bug: it derived the poll tag from the **FULL 40-char** git SHA (`git rev-parse HEAD`), e.g.
+  `ghcr.io/<owner>/<app>-app:sha-dae6c6a14afedc315f43823c6700e3b8f7e53ad8`, but the app's standard publish
+  workflow (GitHub Actions `docker/metadata-action` with `type=sha`) tags the image with the **SHORT
+  7-char** SHA — `…:sha-dae6c6a` (the `format=short` default is `${GITHUB_SHA:0:7}`). The full-SHA tag
+  never exists, so `waitForDigest` polled a tag that would NEVER appear and failed `publish` after the
+  full 600s budget — silently blocking **every** production release. `forge release` now derives the poll
+  tag from the **short** SHA (matching what the workflow publishes) while keeping the **full** SHA for git
+  operations + the `Release` resource id. **Made robust against this class of drift:** assess and the
+  publish poll now try **both** `sha-<short>` and `sha-<full>` and resolve against whichever the registry
+  actually has (short first, since that is the standard workflow's output); `--image-ref` / `--image-suffix`
+  / `--owner` / `--registry` overrides still flow through unchanged. The final digest pin is tag-stripped
+  (`<repo>@sha256:…`), so which tag won never affects the deployed pin.
+  (`src/plugins/release-orchestrator/plan.ts` → `shortSha` + `candidateImageRefs`;
+  `src/plugins/release-orchestrator/ghcr.ts` → `resolveAnyDigest` + `waitForAnyDigest`;
+  `src/capabilities/release/index.ts` assess/publish wired to the candidate list.)
+  NOTE: Forge does **not** generate the app's publish workflow (that lives in the app repo — forge-starter /
+  forge-os own their `.github/workflows`), so there is no forge-side generator to share a helper with; the
+  fix aligns release with the standard `docker/metadata-action` `type=sha` short-SHA convention and hardens
+  it with the short/full dual-tag probe.
+
+### Added
+- **P23 guard — short-SHA publish-resolution tests in `tests/release-plan.test.ts`.** Locks in the
+  derivation + robustness with the exact production condition: `shortSha` returns the first 7 chars (not
+  `git rev-parse --short`'s minimum-unique abbreviation); `candidateImageRefs` puts `sha-<short>` first with
+  `sha-<full>` as a fallback (honoring overrides, deduping a ≤7-char commit); and `resolveAnyDigest` /
+  `waitForAnyDigest`, driven by a per-ref docker fake where **only** `sha-<short>` exists and `sha-<full>`
+  is 404, resolve the short-SHA image (and still resolve via the full tag when only that exists) — proving
+  the release no longer wedges on the timeout, plus a timeout error that names every candidate.
+
 ## [0.26.3] — 2026-07-09
 
 ### Fixed
@@ -1077,7 +1112,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.26.3...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.26.4...HEAD
+[0.26.4]: https://github.com/mardash-ai/forge/compare/v0.26.3...v0.26.4
 [0.26.3]: https://github.com/mardash-ai/forge/compare/v0.26.2...v0.26.3
 [0.26.2]: https://github.com/mardash-ai/forge/compare/v0.26.1...v0.26.2
 [0.26.1]: https://github.com/mardash-ai/forge/compare/v0.26.0...v0.26.1

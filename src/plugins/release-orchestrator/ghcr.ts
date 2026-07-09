@@ -118,6 +118,27 @@ export async function resolveDigest(docker: DockerRunner, ref: string): Promise<
   }
 }
 
+// A resolved image: the tag that actually exists in the registry + its index digest.
+export interface DigestHit {
+  ref: string;
+  digest: string;
+}
+
+// Probe a LIST of candidate refs (e.g. `sha-<short>` then `sha-<full>`) and return the first
+// that resolves — the robustness that fixes P23, where the tag `forge release` derived (full
+// SHA) never matched the tag the publish workflow produced (short SHA). Best-effort per ref.
+export async function resolveAnyDigest(docker: DockerRunner, refs: string[]): Promise<DigestHit | undefined> {
+  for (const ref of dedupe(refs)) {
+    const digest = await resolveDigest(docker, ref);
+    if (digest) return { ref, digest };
+  }
+  return undefined;
+}
+
+function dedupe(refs: string[]): string[] {
+  return [...new Set(refs.map((r) => r.trim()).filter(Boolean))];
+}
+
 const delay = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms));
 
 export interface PollOptions {
@@ -128,34 +149,46 @@ export interface PollOptions {
   onAttempt?: (attempt: number, elapsedMs: number) => void;
 }
 
-// Poll the registry until the ref resolves to a digest, or the timeout is hit. Transient
-// errors and "not found yet" both just retry — this is the resilience that recovers the manual
-// flow's "died twice on transient API errors mid-roll." Throws a precise error on timeout.
-export async function waitForDigest(docker: DockerRunner, ref: string, opts: PollOptions): Promise<string> {
+// Poll the registry until ANY of the candidate refs resolves to a digest, or the timeout is hit.
+// Every interval, each candidate is inspected in order (`sha-<short>` then `sha-<full>`), so a
+// release finds whichever tag the app's publish workflow actually lands — the drift that caused
+// P23 (release polled the full-SHA tag; the workflow only ever pushed the short-SHA tag) can no
+// longer wedge the wait. Transient errors and "not found yet" both just retry — the resilience
+// that recovers the manual flow's "died twice on transient API errors mid-roll." Throws a
+// precise error naming every candidate on timeout.
+export async function waitForAnyDigest(docker: DockerRunner, refs: string[], opts: PollOptions): Promise<DigestHit> {
   const now = opts.now ?? Date.now;
   const sleep = opts.sleep ?? delay;
   const deadline = now() + opts.timeoutMs;
+  const candidates = dedupe(refs);
   let attempt = 0;
   let lastReason = 'not published yet';
   for (;;) {
     attempt++;
     opts.onAttempt?.(attempt, now() - (deadline - opts.timeoutMs));
-    const r = await docker(['buildx', 'imagetools', 'inspect', ref, '--format', '{{json .Manifest.Digest}}'], 60_000);
-    if (r.code === 0) {
-      const digest = parseImageDigest(r.out);
-      if (digest) return digest;
-      lastReason = 'inspect returned no digest';
-    } else {
-      lastReason = isNotFound(r.out) ? 'not published yet' : `transient registry error: ${r.out.trim().split('\n').slice(-1)[0] ?? 'unknown'}`;
+    for (const ref of candidates) {
+      const r = await docker(['buildx', 'imagetools', 'inspect', ref, '--format', '{{json .Manifest.Digest}}'], 60_000);
+      if (r.code === 0) {
+        const digest = parseImageDigest(r.out);
+        if (digest) return { ref, digest };
+        lastReason = 'inspect returned no digest';
+      } else {
+        lastReason = isNotFound(r.out) ? 'not published yet' : `transient registry error: ${r.out.trim().split('\n').slice(-1)[0] ?? 'unknown'}`;
+      }
     }
     if (now() >= deadline) {
       throw new Error(
-        `timed out after ${Math.round(opts.timeoutMs / 1000)}s waiting for ${ref} (${lastReason}). ` +
+        `timed out after ${Math.round(opts.timeoutMs / 1000)}s waiting for ${candidates.join(' or ')} (${lastReason}). ` +
           `Did the app's publish workflow run and go green for this commit? Check GitHub Actions, then re-run \`forge release\` (it resumes).`,
       );
     }
     await sleep(opts.intervalMs);
   }
+}
+
+// Single-ref wrapper (back-compat): poll one ref until it resolves, returning just the digest.
+export async function waitForDigest(docker: DockerRunner, ref: string, opts: PollOptions): Promise<string> {
+  return (await waitForAnyDigest(docker, [ref], opts)).digest;
 }
 
 // Build a multi-arch (amd64+arm64) image from the app repo and push it, returning the pushed

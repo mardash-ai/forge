@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   isSha256,
   targetImageRef,
+  shortSha,
+  candidateImageRefs,
   stripTag,
   toDigestPin,
   needsPublish,
@@ -13,6 +15,8 @@ import {
   parseImageDigest,
   isNotFound,
   waitForDigest,
+  waitForAnyDigest,
+  resolveAnyDigest,
   type DockerRunner,
 } from '../src/plugins/release-orchestrator/ghcr';
 
@@ -53,6 +57,40 @@ describe('release plan — image ref + digest pin helpers', () => {
 
   it('toDigestPin drops the commit tag in favor of the immutable digest (R1)', () => {
     expect(toDigestPin('ghcr.io/acme/shop-app:sha-abc', DIGEST)).toBe(`ghcr.io/acme/shop-app@${DIGEST}`);
+  });
+});
+
+// P23 — the tag the app's publish workflow (docker/metadata-action `type=sha`) produces is the
+// SHORT 7-char SHA. `forge release` used to derive its poll tag from the FULL 40-char SHA, so it
+// waited out the whole --timeout for a `sha-<full>` tag the workflow never creates. These lock in
+// the short-SHA derivation + the short/full dual-tag robustness that fixes it.
+describe('release plan — short-SHA tag derivation (P23)', () => {
+  // The exact production values that surfaced P23.
+  const FULL = 'dae6c6a14afedc315f43823c6700e3b8f7e53ad8';
+  const SHORT = 'dae6c6a';
+
+  it('shortSha takes the first 7 chars (docker/metadata-action type=sha default), not git --short', () => {
+    expect(shortSha(FULL)).toBe(SHORT);
+    expect(shortSha('  ' + FULL + '  ')).toBe(SHORT); // trimmed
+    expect(shortSha('abc12')).toBe('abc12'); // already ≤ 7 → unchanged
+    expect(shortSha(SHORT)).toBe(SHORT);
+  });
+
+  it('candidateImageRefs puts the short-SHA tag FIRST (what the workflow publishes), full as fallback', () => {
+    const refs = candidateImageRefs({ owner: 'mardash-ai', app: 'forge-os', commit: FULL });
+    expect(refs).toEqual([
+      `ghcr.io/mardash-ai/forge-os-app:sha-${SHORT}`, // primary — the standard workflow's tag
+      `ghcr.io/mardash-ai/forge-os-app:sha-${FULL}`, // fallback — a workflow tagging the long SHA
+    ]);
+  });
+
+  it('candidateImageRefs honors registry/owner/suffix overrides and dedups a ≤7-char commit', () => {
+    expect(candidateImageRefs({ registry: 'reg.example.com', owner: 'acme', app: 'shop', commit: FULL, suffix: '-web' })).toEqual([
+      `reg.example.com/acme/shop-web:sha-${SHORT}`,
+      `reg.example.com/acme/shop-web:sha-${FULL}`,
+    ]);
+    // A commit already ≤ 7 chars → short === full → a single deduped candidate.
+    expect(candidateImageRefs({ owner: 'acme', app: 'shop', commit: 'abc1234' })).toEqual(['ghcr.io/acme/shop-app:sha-abc1234']);
   });
 });
 
@@ -158,5 +196,63 @@ describe('release ghcr — waitForDigest (transient-error-resilient poll)', () =
         sleep: clock.sleep,
       }),
     ).rejects.toThrow(/timed out.*waiting for .*not published yet/s);
+  });
+});
+
+// A docker runner that answers per-ref: the SHORT-SHA tag exists (the workflow's real output),
+// the FULL-SHA tag is 404 — the exact production condition that surfaced P23. `imagetools
+// inspect` puts the ref at args[3].
+function refAwareDocker(present: Record<string, string>): DockerRunner {
+  return async (args) => {
+    const ref = args[3] ?? '';
+    const digest = present[ref];
+    return digest ? { code: 0, out: `"${digest}"` } : { code: 1, out: `${ref}: not found` };
+  };
+}
+
+describe('release ghcr — dual-tag resolution finds the workflow\'s short-SHA image (P23)', () => {
+  const FULL = 'dae6c6a14afedc315f43823c6700e3b8f7e53ad8';
+  const SHORT = 'dae6c6a';
+  const REPO = 'ghcr.io/mardash-ai/forge-os-app';
+  const SHORT_REF = `${REPO}:sha-${SHORT}`;
+  const FULL_REF = `${REPO}:sha-${FULL}`;
+  const PROD_DIGEST = 'sha256:b3b6c75061fdf8196822a65906f984768675745b6ddd4cd43d8f05b408a482b8';
+  const refs = candidateImageRefs({ owner: 'mardash-ai', app: 'forge-os', commit: FULL });
+
+  it('resolveAnyDigest resolves the SHORT tag when only the short-SHA image is published (the prod case)', async () => {
+    // Only sha-<short> exists — exactly what docker/metadata-action `type=sha` pushed; sha-<full> is 404.
+    const docker = refAwareDocker({ [SHORT_REF]: PROD_DIGEST });
+    const hit = await resolveAnyDigest(docker, refs);
+    expect(hit).toEqual({ ref: SHORT_REF, digest: PROD_DIGEST });
+  });
+
+  it('resolveAnyDigest still resolves via the FULL tag when only the long-SHA image exists (robustness)', async () => {
+    const docker = refAwareDocker({ [FULL_REF]: PROD_DIGEST });
+    const hit = await resolveAnyDigest(docker, refs);
+    expect(hit).toEqual({ ref: FULL_REF, digest: PROD_DIGEST });
+  });
+
+  it('resolveAnyDigest is undefined when neither tag is published yet', async () => {
+    const hit = await resolveAnyDigest(refAwareDocker({}), refs);
+    expect(hit).toBeUndefined();
+  });
+
+  it('waitForAnyDigest lands on the short-SHA tag while the full-SHA tag stays 404 — no more timeout wedge', async () => {
+    const clock = fakeClock();
+    const docker = refAwareDocker({ [SHORT_REF]: PROD_DIGEST }); // short exists, full never will
+    const hit = await waitForAnyDigest(docker, refs, {
+      timeoutMs: 600_000,
+      intervalMs: 10_000,
+      now: clock.now,
+      sleep: clock.sleep,
+    });
+    expect(hit).toEqual({ ref: SHORT_REF, digest: PROD_DIGEST });
+  });
+
+  it('waitForAnyDigest names every candidate in the timeout error when nothing lands', async () => {
+    const clock = fakeClock();
+    await expect(
+      waitForAnyDigest(refAwareDocker({}), refs, { timeoutMs: 100, intervalMs: 50, now: clock.now, sleep: clock.sleep }),
+    ).rejects.toThrow(new RegExp(`timed out.*${SHORT_REF}.*or.*${FULL_REF}.*not published yet`, 's'));
   });
 });

@@ -27,7 +27,9 @@ import {
 export interface Observed {
   commit: string; // the commit being released (git HEAD or --commit)
   workingTreeClean?: boolean; // undefined = could not determine (e.g. git unavailable)
-  imageRef: string; // the tagged ref for this commit's build (ghcr.io/<owner>/<app>-app:sha-<commit>)
+  imageRef: string; // the tagged ref for this commit's build (the resolved one, else the primary
+  // short-SHA candidate ghcr.io/<owner>/<app>-app:sha-<short> the standard workflow publishes)
+  imageRefCandidates?: string[]; // the ordered tags to probe/poll: [sha-<short>, sha-<full>]
   publishedDigest?: string; // sha256:… if the image is already resolvable in the registry
   currentPin?: string; // the web_image pin already in compose/forge.app.json, if any
   host?: string; // public host recovered from the app's persisted production config, if any
