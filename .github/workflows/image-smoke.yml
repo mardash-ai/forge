@@ -1,0 +1,26 @@
+name: Image smoke
+
+# P21 GUARD — the `ci.yml` job runs the unit tests from SOURCE, which cannot catch a bug that lives
+# only in the BUILT image (a runtime dep that survives the dev tree but is dropped by the image's
+# install, a file that isn't COPY'd, a non-reproducible lockless install that drifts onto a broken
+# version). This job builds the control-plane AND data-plane images the way they actually ship and
+# probes each container's in-container /health, asserting HTTP 200 — so "the image doesn't serve" fails
+# a check instead of a production host.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the images and probe /health
+        run: bash tests/smoke/image-serves.sh

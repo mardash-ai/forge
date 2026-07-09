@@ -30,8 +30,16 @@ RUN apt-get update \
 
 WORKDIR /forge
 
-COPY package.json ./
-RUN npm install
+# Install from the COMMITTED lockfile so the built image's dependency tree is
+# byte-identical to what source + CI test (P21). The old `COPY package.json` +
+# `npm install` ignored package-lock.json, making every image build resolve deps
+# FRESH — so a rebuild could drift onto a different (newer, possibly broken)
+# transitive version than the audited lockfile, i.e. "works from source, fails in
+# the built image." `npm ci` pins to the lockfile (all deps — the control plane
+# needs its dev toolchain: tsx/tsc/vitest); the `|| npm install` fallback keeps the
+# build resilient if the lockfile is ever momentarily out of sync.
+COPY package.json package-lock.json* ./
+RUN npm ci || npm install
 
 COPY tsconfig.json ./
 COPY src ./src

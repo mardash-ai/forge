@@ -9,6 +9,36 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.26.2] — 2026-07-09
+
+### Changed
+- **P21 — the control-plane image build is now reproducible (installs from the committed lockfile).**
+  The control-plane `Dockerfile` used to `COPY package.json` (only) and run `npm install`, which
+  **ignores `package-lock.json`** — so every image build resolved dependencies **fresh** and could drift
+  onto a different (newer, possibly broken) transitive version than the audited lockfile that source +
+  CI test. That is the one and only structural *"works from source, fails in the built image"* gap
+  (the reported P21 shape: `:0.26.1` container `Running` but its API never reachable at `:3717`, while
+  the same code served fine from `tsx src/api/server.ts`). It now `COPY`s `package-lock.json` and runs
+  `npm ci` (all deps — the control plane keeps its `tsx`/`tsc`/`vitest` toolchain; `|| npm install`
+  fallback if the lock is ever momentarily out of sync), matching the data-plane image, so the image's
+  dependency tree is **byte-identical to source**. NOTE: the exact not-serving symptom could **not** be
+  reproduced from Forge alone — the published `:0.26.1` (amd64 + arm64), a HEAD build, a fresh lockless
+  install, and `--omit=dev` all bind `:3717` and answer `/health` 200 on a clean host (incl. under
+  128 MB / 0.25 CPU); this change removes the non-determinism that is the most likely real cause and the
+  guards below turn the whole class into a failing check.
+
+### Added
+- **P21 guard (static) — `tests/runtime-deps.test.ts`.** Asserts every external package imported by
+  `src/**` is declared in `dependencies` (not merely a `devDependency` or a transitive that the dev tree
+  happens to have). This is the exact failure class it guards: a route that `import`s a package which is
+  present in dev but **dropped by the slim `--omit=dev` data-plane image** would throw at import before
+  the server could `.listen()`. Parsed with the TypeScript compiler, so specifiers that appear only
+  inside string literals (e.g. the scaffold plugin's Next.js code templates) are correctly ignored.
+- **P21 guard (runtime) — `tests/smoke/image-serves.sh` + the `image-smoke` CI job.** Builds the
+  control-plane **and** data-plane images the way they actually ship and probes each container's
+  in-container `/health`, asserting HTTP 200 — the check a source-only test can never make. Now runs on
+  every PR / push to `main`, so *"the built image doesn't serve"* fails CI instead of a production host.
+
 ## [0.26.1] — 2026-07-09
 
 ### Fixed
@@ -1017,7 +1047,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.26.1...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.26.2...HEAD
+[0.26.2]: https://github.com/mardash-ai/forge/compare/v0.26.1...v0.26.2
 [0.26.1]: https://github.com/mardash-ai/forge/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/mardash-ai/forge/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/mardash-ai/forge/compare/v0.24.1...v0.25.0
