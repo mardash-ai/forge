@@ -1,10 +1,14 @@
 import { Command } from 'commander';
 import { compact, summarize } from './render';
+import { resolveApiBaseUrl } from './api-base';
 
 // The Forge CLI is a THIN API client. It implements no Capability itself — it
 // builds a request, calls the API, and renders a compact, token-conscious view.
 
-const API = process.env.FORGE_API_URL ?? 'http://localhost:3717';
+// P20: default to the IPv4 loopback literal (127.0.0.1), not `localhost` — the API
+// binds IPv4 0.0.0.0 while `localhost` resolves to ::1 first on the base image. See
+// ./api-base.ts.
+const API = resolveApiBaseUrl();
 
 interface GlobalOpts {
   summary?: boolean;

@@ -9,6 +9,24 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.26.1] — 2026-07-09
+
+### Fixed
+- **P20 — `forge release` could not reach a healthy control-plane API (IPv4/IPv6 loopback mismatch).**
+  The CLI runs in-container (the `./forge` wrapper `docker compose exec … src/cli/index.ts`) and dialed
+  the co-located API by the name `localhost`. The API binds IPv4 `0.0.0.0`, but on the base image
+  `localhost` resolves to IPv6 `::1` **first** (`getent hosts localhost` → `::1  localhost …`), and Node 22
+  keeps DNS results in resolver order by default. So `fetch('http://localhost:3717')` dialed `[::1]:3717`,
+  which the IPv4-only server refuses (ECONNREFUSED); Happy-Eyeballs' IPv4 fallback did not fire within the
+  release fetch's window, so `forge release` reported `Cannot reach Forge API at http://localhost:3717 …`
+  even though the API was up. The CLI now dials the **IPv4 loopback literal `127.0.0.1`** for the local
+  control plane — both the code default (`src/cli/api-base.ts` → `resolveApiBaseUrl`) and the `./forge`
+  wrapper's `FORGE_API_URL` / boot-probe — matching the `0.0.0.0` bind with no `::1` detour and no reliance
+  on fallback. The server bind is unchanged (IPv4 `0.0.0.0`); `127.0.0.1` + `0.0.0.0` is the clean,
+  guaranteed-matching pair. Regression origin: the client host has been `localhost` since the first commit
+  — nothing in Forge code changed it between 0.23.0 and 0.24.1; the regression was environmental (base-image
+  loopback ordering under Node's `verbatim` DNS), which the literal-IPv4 dial removes the dependency on.
+
 ## [0.26.0] — 2026-07-09
 
 ### Added
@@ -999,7 +1017,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.26.1...HEAD
+[0.26.1]: https://github.com/mardash-ai/forge/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/mardash-ai/forge/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/mardash-ai/forge/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/mardash-ai/forge/compare/v0.24.0...v0.24.1

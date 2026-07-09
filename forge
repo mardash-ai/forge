@@ -11,7 +11,7 @@ if ! docker compose ps --status=running --services 2>/dev/null | grep -qx api; t
   docker compose up -d --build api >&2
   # Wait for the API to answer before handing off.
   for _ in $(seq 1 30); do
-    if docker compose exec -T api node -e "fetch('http://localhost:3717/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; then
+    if docker compose exec -T api node -e "fetch('http://127.0.0.1:3717/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; then
       break
     fi
     sleep 1
@@ -25,6 +25,8 @@ fi
 # startup with `node: app/.env.prod: not found` before the CLI ever runs. `--` tells tsx
 # everything after is the script + its args, so the operator's flags reach forge's own
 # parser and resolve against FORGE_WORKSPACE (where Compose runs). Do NOT remove it.
+# P20: dial the IPv4 loopback literal, not `localhost`. The API binds IPv4 0.0.0.0
+# but `localhost` resolves to ::1 first in-container, so `localhost` misses the server.
 exec docker compose exec -T \
-  -e FORGE_API_URL=http://localhost:3717 \
+  -e FORGE_API_URL=http://127.0.0.1:3717 \
   api ./node_modules/.bin/tsx -- src/cli/index.ts "$@"
