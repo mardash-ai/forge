@@ -9,6 +9,49 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-07-09
+
+### Added
+- **Status page Phase 3 (C15) — operator-declared INCIDENTS on top of the public `/status`
+  page.** Phases 1+2 aggregate live C6 health into a banner + per-component rows and an opt-in
+  uptime timeline; Phase 3 lets an operator DECLARE an incident the probes can't see (a partner
+  API down, a data issue, maintenance) with a status, an impact, affected components, and an
+  ordered timeline of updates. Incidents are a separate FACT from measured health: they colour
+  the LIVE banner but never rewrite the sampled uptime history.
+  - **Operator CLI (control-plane).** A new `forge status incident …` family:
+    - `create --app --title --status <investigating|identified|monitoring|resolved> --impact <none|minor|major|critical> [--component <key> …] [--body <text>]` → the created incident.
+    - `update --app --incident <id> --status <…> [--body <text>]` — append an update, moving status.
+    - `resolve --app --incident <id> [--body <text>]` — force `status:resolved`, stamp `resolved_at`, append a final update.
+    - `list --app` — active (newest-first) then recent-resolved.
+    These hit the incident routes (`POST /status/incidents`, `/status/incidents/update`,
+    `/status/incidents/resolve`, `GET /status/incidents`), registered on BOTH planes (dev control
+    plane + prod data-plane sidecar), like the other status/notification routes.
+  - **Public rendering (data-plane, no auth — same as `/status`).** `/status` renders an **Active
+    Incidents** section (title, current-status pill, impact, affected components, and the update
+    timeline newest-first) above the component rows while anything is unresolved, plus a
+    resolved-incident **Past incidents** disclosure — all themed through the existing C16
+    `--forge-*` tokens (no new theming path). `/status.json` gains an additive **`incidents`**
+    array (`id, title, status, impact, affected_components, updates[], created_at, resolved_at`),
+    active then recent-resolved.
+  - **Banner precedence (documented).** The live `overall` is `max(measured health, incident
+    floor)` on the `operational < degraded < partial_outage < major_outage` ladder — an
+    operator-declared outage can only make the banner WORSE, never better. Only UNRESOLVED
+    incidents contribute: `critical → major_outage`, `major → partial_outage`, `minor → degraded`,
+    `none → no floor`. So an unresolved critical forces at least **Major Outage** even when every
+    probe is green; resolving it lets the banner recover.
+  - **Bounded per-app store.** Incidents persist to a per-app JSON doc under the state dir
+    (`/forge-state/incidents/<appId>.json`), OUT of the generic `/resources` API — like the C2
+    uptime + C4 notification stores. Every write serializes under a per-app async mutex and
+    replaces the file atomically (temp + rename); retention keeps all active incidents plus a
+    bounded resolved-history (most-recent 50, resolved within 90 days), pruned on every write.
+  - **Events.** Emits `IncidentOpened` / `IncidentUpdated` / `IncidentResolved` platform facts
+    (carrying only the incident id/title/status/impact — no PII).
+  - **Backward compatible.** An app that has declared NO incidents renders `/status` **byte-for-
+    byte** the Phase-2 page (the incident section + its `<style>` are emitted only when an incident
+    exists), and `/status.json`'s existing `overall`/`components`/`uptime` fields are unchanged
+    (the `incidents` array is additive). Subscriptions/notification of subscribers are explicitly
+    **out of scope** for this phase (deferred to a separate delivery-channels capability).
+
 ## [0.23.0] — 2026-07-09
 
 ### Added
@@ -832,7 +875,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/mardash-ai/forge/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/mardash-ai/forge/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/mardash-ai/forge/compare/v0.21.1...v0.22.0
 [0.21.1]: https://github.com/mardash-ai/forge/compare/v0.21.0...v0.21.1

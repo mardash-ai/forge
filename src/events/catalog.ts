@@ -50,6 +50,11 @@ export const EVENT_TYPES = [
   'PasswordResetRequested',
   'PasswordChanged',
   'OwnerSeeded',
+  // Status incidents (C15 Phase 3) — operator-declared facts shown on the public
+  // status page. Carry only the incident id/title/status/impact, never PII.
+  'IncidentOpened',
+  'IncidentUpdated',
+  'IncidentResolved',
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];

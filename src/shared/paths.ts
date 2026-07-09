@@ -77,6 +77,19 @@ export function uptimeRollupFile(appId: string): string {
   return path.join(uptimeDir(), `${appId}.rollup.json`);
 }
 
+// Per-app incident store (C15 Phase 3) — one JSON doc per app (a keyed map of
+// operator-declared incidents), since incidents are low-volume durable STATE
+// (create/update/resolve + a bounded resolved-history), like the C4 notification
+// store. Kept OUT of the generic Resource store (like uptime/notifications/auth), so
+// operator incidents never surface through the inspectable `/resources` API.
+export function incidentsDir(): string {
+  return path.join(stateDir(), 'incidents');
+}
+
+export function incidentsFile(appId: string): string {
+  return path.join(incidentsDir(), `${appId}.json`);
+}
+
 export function logsDir(): string {
   return path.join(stateDir(), 'logs');
 }

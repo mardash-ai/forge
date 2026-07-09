@@ -17,6 +17,7 @@ import { registerAuthRoutes } from '../api/auth-routes';
 import { registerOwnerRoutes } from '../api/owner-routes';
 import { registerThemeRoutes } from '../api/theme-routes';
 import { registerStatusRoutes } from '../api/status-routes';
+import { registerIncidentRoutes } from '../api/incident-routes';
 import { logPath } from '../shared/paths';
 
 // The Forge DATA PLANE server — the production/runtime counterpart to the control
@@ -114,6 +115,11 @@ registerThemeRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 // this sidecar reaches the app's C6 health over the compose network (FORGE_APP_CALLBACK_HOST/PORT +
 // FORGE_READINESS_PATH, which productionize sets). Defaults the app to this sidecar's FORGE_APP_NAME.
 registerStatusRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME, planeLabel: 'Forge data plane' });
+
+// Status incidents (C15 Phase 3) — the operator write surface (create/update/resolve/list) an
+// operator reaches over the internal network to declare an incident against production; the public
+// `/status` render above reads the same store. Defaults the app to this sidecar's FORGE_APP_NAME.
+registerIncidentRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 
 // In production there is no `./forge provision`, so seed a minimal Application
 // record for the app this sidecar serves — enough for schedule-job/inspect to

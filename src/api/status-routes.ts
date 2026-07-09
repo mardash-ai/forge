@@ -27,6 +27,15 @@ import {
   type HistoryComponent,
   type DayState,
 } from '../shared/uptime';
+import { incidentStore } from '../storage/incident-store';
+import {
+  type Incident,
+  type IncidentImpact,
+  applyIncidentFloor,
+  orderActive,
+  orderResolved,
+  incidentsJson,
+} from '../incidents/types';
 
 // C15 — the PUBLIC per-app status page, modeled on a Statuspage-style dashboard and
 // rendered through the C16 theme.
@@ -44,6 +53,13 @@ import {
 // from the durable uptime store, and `/status.json` gains an additive `uptime`
 // section. The live banner/components are unchanged; an app that never enabled
 // sampling reads an empty history and renders exactly the Phase-1 page.
+//
+// Phase 3 (incidents): operator-declared incidents (see `incident-routes.ts` for the
+// write surface) render here — an Active Incidents section above the component rows and
+// a resolved-history disclosure — and `/status.json` gains an additive `incidents`
+// array. An unresolved major/critical incident FLOORS the live banner (an operator-
+// declared outage is real even when probes are green). An app with NO incidents renders
+// byte-for-byte the Phase-2 page.
 
 // The status aggregation now lives in `src/shared/status.ts` (shared with the health
 // sampler). Re-exported here so existing importers keep importing it from this route.
@@ -74,6 +90,14 @@ const TICK_TOKEN: Record<DayState, string> = {
   degraded: '--forge-color-warning',
   down: '--forge-color-danger',
   nodata: '--forge-color-border',
+};
+
+// Incident accent colour by impact (Phase 3), from the C16 theme tokens.
+const IMPACT_TOKEN: Record<IncidentImpact, string> = {
+  none: '--forge-color-text-muted',
+  minor: '--forge-color-warning',
+  major: '--forge-color-danger',
+  critical: '--forge-color-danger',
 };
 
 const STATUS_CSS = `
@@ -122,10 +146,101 @@ function timelineHtml(c: HistoryComponent): string {
   );
 }
 
-function statusPageHtml(theme: Theme, appName: string, report: StatusReport, history: HistoryReport): string {
+// Incident CSS (Phase 3). Emitted as an ADDITIONAL, SEPARATE <style> block only when
+// an incident is present — so the base page (no incidents) stays byte-for-byte the
+// Phase-2 output. Token-driven (C16), so incidents inherit the app's theme + dark mode.
+const INCIDENT_CSS = `
+.incidents{margin:0 0 26px}
+.sectlabel{font-size:11.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--forge-color-text-muted);margin:0 0 10px}
+.inc{background:var(--forge-color-surface);border:1px solid var(--forge-color-border);border-left:4px solid var(--_ic);border-radius:var(--forge-radius-lg);padding:16px 18px;margin-bottom:14px}
+.inc:last-child{margin-bottom:0}
+.inc .ihead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.inc .ititle{font-weight:650;font-size:15.5px}
+.inc .ipill{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:650;text-transform:capitalize;color:var(--_ic);white-space:nowrap}
+.inc .ipill .dot{width:9px;height:9px;border-radius:50%;background:var(--_ic);flex:none}
+.inc .imeta{color:var(--forge-color-text-muted);font-size:12.5px;margin-top:4px}
+.inc .iupd{margin-top:12px;padding-top:12px;border-top:1px solid var(--forge-color-border);display:flex;flex-direction:column;gap:11px}
+.inc .u .ustatus{font-weight:600;text-transform:capitalize;color:var(--forge-color-text)}
+.inc .u .ubody{color:var(--forge-color-text);margin-top:1px}
+.inc .u .utime{color:var(--forge-color-text-muted);font-size:11.5px;margin-top:2px}
+details.history{margin:18px 0 0}
+details.history>summary{cursor:pointer;color:var(--forge-color-text-muted);font-size:13px;font-weight:600;list-style:revert}
+details.history[open]>summary{margin-bottom:12px}
+`;
+
+// Capitalize the first letter (status/impact labels — the value is a fixed enum token).
+function cap(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+// One incident card: title + current-status pill + impact/affected meta + the update
+// timeline (newest-first). All operator-supplied text is HTML-escaped (no injection).
+function incidentHtml(inc: Incident): string {
+  const icToken = IMPACT_TOKEN[inc.impact];
+  const comps = inc.affected_components.length
+    ? `<div class="imeta">Affected: ${inc.affected_components.map(escapeHtml).join(', ')}</div>`
+    : '';
+  const resolved = inc.resolved_at ? ` · Resolved ${escapeHtml(inc.resolved_at)}` : '';
+  const updates = [...inc.updates]
+    .reverse()
+    .map((u) => {
+      const body = u.body ? `<div class="ubody">${escapeHtml(u.body)}</div>` : '';
+      return (
+        `<div class="u"><span class="ustatus">${escapeHtml(cap(u.status))}</span>${body}` +
+        `<div class="utime">${escapeHtml(u.timestamp)}</div></div>`
+      );
+    })
+    .join('');
+  return (
+    `<div class="inc" style="--_ic:var(${icToken})">` +
+    `<div class="ihead"><span class="ititle">${escapeHtml(inc.title)}</span>` +
+    `<span class="ipill"><span class="dot"></span>${escapeHtml(cap(inc.status))}</span></div>` +
+    `<div class="imeta">Impact: ${escapeHtml(cap(inc.impact))}${resolved}</div>` +
+    comps +
+    `<div class="iupd">${updates}</div>` +
+    `</div>`
+  );
+}
+
+// The Active Incidents section (above the component rows) — only when something is
+// unresolved; otherwise ''. `active` is already ordered newest-first.
+function activeIncidentsHtml(active: Incident[]): string {
+  if (!active.length) return '';
+  return `<div class="incidents"><div class="sectlabel">Active Incidents</div>${active.map(incidentHtml).join('')}</div>`;
+}
+
+// The recent-history disclosure of resolved incidents — only when some exist; else ''.
+// `resolved` is already ordered most-recently-resolved first.
+function historyIncidentsHtml(resolved: Incident[]): string {
+  if (!resolved.length) return '';
+  return (
+    `<details class="history"><summary>Past incidents (${resolved.length})</summary>` +
+    resolved.map(incidentHtml).join('') +
+    `</details>`
+  );
+}
+
+// Exported for tests: proves the incidents param, when empty, changes nothing (the
+// no-incident page is byte-for-byte the Phase-2 render).
+export function statusPageHtml(
+  theme: Theme,
+  appName: string,
+  report: StatusReport,
+  history: HistoryReport,
+  incidents: Incident[] = [],
+): string {
   const heading = theme.name ?? appName;
   const logo = themeLogoImg(theme, 'forge-brand-logo');
   const ovToken = OVERALL_TOKEN[report.overall];
+
+  // Phase 3 (incidents). All three pieces are '' when there are NO incidents at all, so
+  // the page is byte-for-byte the Phase-2 output for an app that has never declared one.
+  const active = orderActive(incidents);
+  const resolved = orderResolved(incidents);
+  const hasIncidents = incidents.length > 0;
+  const incidentStyle = hasIncidents ? `<style id="forge-incidents">${INCIDENT_CSS}</style>` : '';
+  const activeHtml = activeIncidentsHtml(active);
+  const historyHtml = historyIncidentsHtml(resolved);
 
   const byName = new Map(history.components.map((c) => [c.name, c]));
   const hasHistory = history.sample_count > 0;
@@ -144,11 +259,13 @@ function statusPageHtml(theme: Theme, appName: string, report: StatusReport, his
   const checked = escapeHtml(report.checked_at);
   return (
     `<!doctype html><html lang="en"><head>${themeMetaHead(theme, themeTitle(theme, 'Status'))}` +
-    `<style id="forge-base">${STATUS_CSS}</style></head><body>${themeCustomStyleTag(theme)}` +
+    `<style id="forge-base">${STATUS_CSS}</style>${incidentStyle}</head><body>${themeCustomStyleTag(theme)}` +
     `<div class="wrap">` +
     `<div class="head">${logo}<div><h1>${escapeHtml(heading)} Status</h1><div class="sub">Live service status</div></div></div>` +
     `<div class="banner" style="--_ov:var(${ovToken})"><span class="dot"></span><span class="txt">${escapeHtml(report.banner)}</span></div>` +
+    activeHtml +
     `<div class="card">${rows}</div>` +
+    historyHtml +
     `<div class="foot"><span>Last checked ${checked}</span><span>Status by Forge</span></div>` +
     `</div></body></html>`
   );
@@ -176,28 +293,33 @@ export function registerStatusRoutes(
 
   async function build(
     reqApp: { id: string; name: string; repoPath: string },
-  ): Promise<{ theme: Theme; report: StatusReport; history: HistoryReport }> {
-    const [theme, manifest, history] = await Promise.all([
+  ): Promise<{ theme: Theme; report: StatusReport; history: HistoryReport; incidents: Incident[] }> {
+    const [theme, manifest, history, incidents] = await Promise.all([
       resolveThemeForApp(reqApp.id),
       loadManifest(reqApp.repoPath),
       // Always safe: an app that never enabled sampling reads an empty history.
       uptimeStore.getHistory(reqApp.id, { windowDays: DEFAULT_WINDOW_DAYS }),
+      // Always safe: an app that never declared an incident reads an empty list.
+      incidentStore.list(reqApp.id),
     ]);
     const url = `${resolveAppBase(manifest)}${resolveReadinessPath(manifest)}`;
     const probe = await probeHealth(url);
-    const report = computeStatus(probe, { appName: reqApp.name, planeLabel });
-    return { theme, report, history };
+    // Measured health first, then let an unresolved major/critical incident floor the
+    // banner (an operator-declared outage is real even when probes are green). Resolved
+    // incidents never affect the banner — the app recovers as soon as one is resolved.
+    const report = applyIncidentFloor(computeStatus(probe, { appName: reqApp.name, planeLabel }), incidents);
+    return { theme, report, history, incidents };
   }
 
   app.get('/status', async (req, reply: FastifyReply) => {
     const resolved = await resolveApp(req, opts.defaultApp);
     if (!resolved) return unknownAppHtml(reply);
-    const { theme, report, history } = await build(resolved);
+    const { theme, report, history, incidents } = await build(resolved);
     reply
       .code(200)
       .type('text/html; charset=utf-8')
       .header('cache-control', 'no-store')
-      .send(statusPageHtml(theme, resolved.name, report, history));
+      .send(statusPageHtml(theme, resolved.name, report, history, incidents));
   });
 
   app.get('/status.json', async (req, reply: FastifyReply) => {
@@ -205,13 +327,15 @@ export function registerStatusRoutes(
     if (!resolved) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } });
     }
-    const { report, history } = await build(resolved);
+    const { report, history, incidents } = await build(resolved);
     // Additive: the Phase-1 fields (overall/banner/components/checked_at) are
-    // unchanged; `uptime` is the new Phase-2 history section.
+    // unchanged (`overall`/`banner` already reflect any active-incident floor);
+    // `uptime` is the Phase-2 history section and `incidents` the Phase-3 array
+    // (active newest-first, then recent-resolved).
     return reply
       .code(200)
       .header('cache-control', 'no-store')
-      .send({ app: resolved.name, ...report, uptime: uptimeJson(report, history) });
+      .send({ app: resolved.name, ...report, uptime: uptimeJson(report, history), incidents: incidentsJson(incidents) });
   });
 }
 

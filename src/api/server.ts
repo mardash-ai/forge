@@ -14,6 +14,7 @@ import { registerAuthRoutes } from './auth-routes';
 import { registerOwnerRoutes } from './owner-routes';
 import { registerThemeRoutes } from './theme-routes';
 import { registerStatusRoutes } from './status-routes';
+import { registerIncidentRoutes } from './incident-routes';
 import { logPath } from '../shared/paths';
 
 // The Forge HTTP API. Capability APIs perform behavior; Resource/Event APIs
@@ -102,6 +103,11 @@ registerThemeRoutes(app);
 // app's live C6 health into an overall banner + per-component rows. Served here for dev; the
 // data-plane sidecar serves the same routes in production (like /auth).
 registerStatusRoutes(app, { planeLabel: 'Forge control plane' });
+
+// Status incidents (C15 Phase 3) — the OPERATOR write surface (create/update/resolve/list)
+// behind `forge status incident …`. The public rendering rides `/status` above; served here
+// for dev, and on the data-plane sidecar in prod.
+registerIncidentRoutes(app);
 
 // Event APIs.
 app.get('/events', async (req) => {

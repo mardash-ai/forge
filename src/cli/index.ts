@@ -565,6 +565,72 @@ owner
     process.stdout.write(JSON.stringify(data) + '\n');
   });
 
+// --- status incidents (C15 Phase 3) ----------------------------------------
+// Operator surface for the public status page: declare / update / resolve / list
+// incidents. These hit the incident routes directly (not a Capability), like
+// `auth seed-owner`. The public /status page renders whatever is declared here.
+const status = program.command('status').description('Operate the public status page (C15)');
+const incident = status.command('incident').description('Operator-declared incidents shown on /status');
+incident
+  .command('create')
+  .description('Declare a new incident (IncidentOpened)')
+  .requiredOption('--app <app>')
+  .requiredOption('--title <title>', 'short incident title')
+  .requiredOption('--status <status>', 'investigating | identified | monitoring | resolved')
+  .requiredOption('--impact <impact>', 'none | minor | major | critical')
+  .option('--component <key>', 'affected component key, matching a /status row (repeatable)', collect, [])
+  .option('--body <text>', 'initial update note')
+  .action(async (opts) => {
+    const data = await api('POST', '/status/incidents', {
+      app: opts.app,
+      title: opts.title,
+      status: opts.status,
+      impact: opts.impact,
+      ...(opts.component && opts.component.length ? { components: opts.component } : {}),
+      ...(opts.body ? { body: opts.body } : {}),
+    });
+    output(data);
+  });
+incident
+  .command('update')
+  .description('Append an update to an incident, moving its status (IncidentUpdated)')
+  .requiredOption('--app <app>')
+  .requiredOption('--incident <id>', 'incident id (from create/list)')
+  .requiredOption('--status <status>', 'investigating | identified | monitoring | resolved')
+  .option('--body <text>', 'update note')
+  .action(async (opts) => {
+    const data = await api('POST', '/status/incidents/update', {
+      app: opts.app,
+      id: opts.incident,
+      status: opts.status,
+      ...(opts.body ? { body: opts.body } : {}),
+    });
+    output(data);
+  });
+incident
+  .command('resolve')
+  .description('Resolve an incident — sets status:resolved + appends a final update (IncidentResolved)')
+  .requiredOption('--app <app>')
+  .requiredOption('--incident <id>', 'incident id (from create/list)')
+  .option('--body <text>', 'final update note')
+  .action(async (opts) => {
+    const data = await api('POST', '/status/incidents/resolve', {
+      app: opts.app,
+      id: opts.incident,
+      ...(opts.body ? { body: opts.body } : {}),
+    });
+    output(data);
+  });
+incident
+  .command('list')
+  .description('List incidents for an app (active first, then recent-resolved)')
+  .requiredOption('--app <app>')
+  .action(async (opts) => {
+    const params = new URLSearchParams({ app: opts.app });
+    const data = await api('GET', `/status/incidents?${params.toString()}`);
+    process.stdout.write(JSON.stringify(data.incidents ?? data) + '\n');
+  });
+
 // --- read-only surfaces ----------------------------------------------------
 program
   .command('capabilities')
