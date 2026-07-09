@@ -11,6 +11,7 @@ import { RESOURCE_TYPES, type ResourceType } from '../resources/types';
 import { registerAppEventRoutes } from './app-events-routes';
 import { registerNotificationRoutes } from './notifications-routes';
 import { registerSearchRoutes } from './search-routes';
+import { registerBlobRoutes } from './blobs-routes';
 import { registerAuthRoutes } from './auth-routes';
 import { registerOwnerRoutes } from './owner-routes';
 import { registerThemeRoutes } from './theme-routes';
@@ -90,6 +91,11 @@ registerNotificationRoutes(app);
 // (owner-scoped, BM25-ranked). Served here for dev; the data-plane sidecar serves the same routes
 // in production, like app-events/notifications.
 registerSearchRoutes(app);
+
+// File / blob storage (C20) — the app uploads a user's file (multipart), gets an opaque `blob_id`, and
+// streams the bytes back owner-scoped. Served here for dev; the data-plane sidecar serves the same
+// routes in production, like app-events/notifications/search.
+registerBlobRoutes(app);
 
 // Identity / auth (C10) — hosted login/signup/verify/reset/OAuth/sign-out pages + session accessor.
 // Served here for dev; the data-plane sidecar serves the same routes in production.

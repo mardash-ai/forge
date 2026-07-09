@@ -9,7 +9,57 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
-## [0.25.0] — 2026-07-09
+## [0.26.0] — 2026-07-09
+
+### Added
+- **C20 — File / blob storage.** A generic, per-app, owner-scoped blob store. An app uploads a user's
+  file (avatar, attachment, export, …), gets back an opaque `blob_id`, and later streams the bytes back —
+  reached server-side the same way the app reaches the C3 app-event log / C4 notifications / C19 search
+  (base URL via `FORGE_EVENTS_URL`; the `app` field defaults to the sidecar's `FORGE_APP_NAME`). The
+  endpoints are **data-plane**, registered on BOTH the control-plane API (dev) and the data-plane sidecar
+  (prod), like app-events/notifications/search:
+  - `POST /blobs` — **app-proxied multipart upload** (`multipart/form-data`: a `file` part + fields
+    `{ app?, owner (required), content_type, filename?, attrs? }`) → `201 { blob_id, content_type, size,
+    checksum (sha256), filename?, created_at }`. The upload is **streamed** (never buffered whole) through
+    an incremental hash + size counter into a durable temp file.
+  - `GET /blobs/:id?owner=<userId>` — streams the bytes with `Content-Type`, `Content-Length`, an
+    `ETag` (the sha256), `Cache-Control`, and `Accept-Ranges`; supports a single **Range** request (206 /
+    416) and conditional `If-None-Match` (304).
+  - `DELETE /blobs/:id?owner=` — owner-scoped, removes bytes + metadata; **204** on success, **404** if
+    absent/already-gone/not-owner (idempotent by effect).
+  - `GET /blobs?owner=` — the owner's blobs (newest-first) + a `usage` readout `{ bytes, count,
+    quota_bytes, quota_objects }`.
+- **Owner-scoping is structural (mandatory).** Every blob is stamped with `owner` on upload; the metadata
+  store is keyed by `(owner, blob_id)`, so a `get`/`delete`/`list` for one owner can only ever name records
+  in that owner's slice — a blob owned by someone else is therefore **404, absent, never 403** (the
+  "absent not forbidden" rule). The consuming app fronts these with its own auth-checked route; Forge
+  enforces owner on the raw GET/DELETE as defense-in-depth. Trust model is app-asserted (the private
+  data-plane trusts the verified `owner` the app sends, exactly as C3/C4/C1/C19 do); no per-user token
+  scheme.
+- **Content allowlist + magic-byte sniffing (security).** Only allowlisted types are accepted
+  (`image/png` · `image/jpeg` · `image/webp` · `image/gif` · `application/pdf` · `text/plain` ·
+  `text/markdown`, configurable via `FORGE_BLOB_ALLOWED_TYPES`); the declared `content_type` is validated
+  against the actual leading bytes, so a spoofed header (declaring `image/png` while sending a PDF, or
+  `text/plain` while sending a PNG) is rejected **415**, not stored.
+- **Per-file + per-owner limits.** Configurable max file size (`FORGE_BLOB_MAX_BYTES`, default **15 MB**)
+  and per-owner quota (`FORGE_BLOB_QUOTA_BYTES`, default **500 MB**, and `FORGE_BLOB_QUOTA_OBJECTS`,
+  default **1000**). **Upload is NOT best-effort** (the app needs the `blob_id`), so it surfaces real
+  errors: file too large → **413**; disallowed type / magic-byte mismatch → **415**; owner byte quota →
+  **413**; owner object quota → **409**; missing owner → **422**; client abort mid-stream → **400** with
+  **nothing persisted**; disk-full/IO → **507/503**; not-found/not-owner → **404**.
+- **Durable, atomic backend — no new dependency.** Metadata is one JSON doc per app (a keyed map,
+  atomic temp-and-rename, per-app mutex) and the bytes are one opaque file per blob, both on the SAME
+  durable state volume the data-plane already uses (`FORGE_STATE_DIR`, e.g. `/forge-state` on the
+  `forge_state` named volume) — so uploads survive a redeploy like C10 auth / C5 secrets. Writes are
+  atomic: a fully-streamed temp file is quota-checked and only then moved into place + recorded (or fully
+  cleaned up), so a failed or aborted upload never orphans bytes. An object store (S3/MinIO) is a
+  documented scale-out swap behind the SAME API — the app only ever sees the `blob_id`. The optional
+  presigned-URL / signed-URL direct paths are documented generic alternatives; C20 ships the multipart
+  proxy + owner-scoped serve first.
+
+### Changed
+- The control-plane API and the data-plane sidecar both register the C20 blob routes (via
+  `@fastify/multipart`), alongside app-events/notifications/search.
 
 ### Added
 - **C19 — Search / indexing.** A generic, per-app, owner-scoped full-text search capability. An app
@@ -949,7 +999,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/mardash-ai/forge/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/mardash-ai/forge/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/mardash-ai/forge/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/mardash-ai/forge/compare/v0.23.0...v0.24.0

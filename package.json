@@ -1,6 +1,6 @@
 {
   "name": "forge",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "private": true,
   "type": "module",
   "description": "Forge — the AI-native software creation platform for Builders. Docker-first, API-first.",
@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fastify/multipart": "^8.3.1",
     "commander": "^12.1.0",
     "fastify": "^4.28.1",
     "tsx": "^4.19.2",

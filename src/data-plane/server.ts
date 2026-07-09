@@ -14,6 +14,7 @@ import { nowIso } from '../shared/time';
 import { registerAppEventRoutes } from '../api/app-events-routes';
 import { registerNotificationRoutes } from '../api/notifications-routes';
 import { registerSearchRoutes } from '../api/search-routes';
+import { registerBlobRoutes } from '../api/blobs-routes';
 import { registerAuthRoutes } from '../api/auth-routes';
 import { registerOwnerRoutes } from '../api/owner-routes';
 import { registerThemeRoutes } from '../api/theme-routes';
@@ -102,6 +103,11 @@ registerNotificationRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME }
 // the internal network (owner-scoped, BM25-ranked, best-effort writes). Defaults the app to this
 // sidecar's FORGE_APP_NAME, so the app needn't pass it.
 registerSearchRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
+
+// File / blob storage (C20) — the running app uploads a user's file over the internal network and
+// streams the bytes back owner-scoped. Bytes ride the durable forge_state volume (FORGE_STATE_DIR), so
+// uploads survive a redeploy like auth/secrets. Defaults the app to this sidecar's FORGE_APP_NAME.
+registerBlobRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 
 // Identity / auth (C10) — the HOSTED login/signup/verify/reset/OAuth/sign-out pages + the session
 // accessor. The app proxies `/auth/*` here (same-origin) and gates the rest of itself by verifying

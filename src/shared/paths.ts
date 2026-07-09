@@ -128,3 +128,32 @@ export function searchDir(): string {
 export function searchFile(appId: string): string {
   return path.join(searchDir(), `${appId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
 }
+
+// Per-app blob / file store (C20). Two parts, both under the SAME durable state volume the data-plane
+// already uses (FORGE_STATE_DIR, e.g. /forge-state on the `forge_state` named volume) — NO new external
+// dependency:
+//   - METADATA: one JSON doc per app, a keyed map `{ [owner\0blob_id]: BlobMetadata }` (owner-stamped,
+//     mutable durable STATE, upsert/delete in place — the C4/C19 store shape). Keyed by owner so a
+//     cross-owner lookup can't build the right key (owner-scoping is structural).
+//   - BYTES: one opaque file per blob under `bytes/<appId>/<blob_id>` — content-addressed by the
+//     server-minted `blob_id`. Never surfaces through the inspectable `/resources` API (like
+//     search/auth/secrets). Object store (S3/MinIO) is a scale-out swap behind the same store API.
+function safeSeg(s: string): string {
+  return s.replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
+export function blobsDir(): string {
+  return path.join(stateDir(), 'blobs');
+}
+
+export function blobsMetaFile(appId: string): string {
+  return path.join(blobsDir(), `${safeSeg(appId)}.json`);
+}
+
+export function blobsBytesDir(appId: string): string {
+  return path.join(blobsDir(), 'bytes', safeSeg(appId));
+}
+
+export function blobBytesFile(appId: string, blobId: string): string {
+  return path.join(blobsBytesDir(appId), safeSeg(blobId));
+}
