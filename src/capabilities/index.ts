@@ -15,6 +15,7 @@ import { unsetSecretCapability } from './unset-secret/index';
 import { scheduleJob } from './schedule-job/index';
 import { deployCapability } from './deploy/index';
 import { productionize } from './productionize/index';
+import { releaseCapability } from './release/index';
 import { agentRun } from './agent-run/index';
 import { sendEmail } from './send-email/index';
 
@@ -37,6 +38,7 @@ export const capabilities: Capability<any, any>[] = [
   scheduleJob,
   deployCapability,
   productionize,
+  releaseCapability,
   agentRun,
   sendEmail,
 ];

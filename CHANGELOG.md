@@ -9,6 +9,44 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-07-09
+
+### Added
+- **`forge release` (C18) — one command runs the ENTIRE production deploy pipeline, end-to-end,
+  idempotently and fail-safe.** The capstone over Deploy (C7), Productionize/repin (C8), and
+  Verify (C14): given a committed app it goes to *deployed + verified* without a human or an
+  agent hand-orchestrating the ~10 steps. Phases, in order: **assess** (resolve the commit +
+  the target image ref `ghcr.io/<owner>/<app>-app:sha-<commit>`, probe whether it is already
+  published, read the current pin + host) → **publish** (ensure the commit's web image is in
+  GHCR and resolve its digest) → **repin** (`forge productionize --web-image <ref>@sha256:…`,
+  keeping the data-plane pin) → **deploy** (the C7 start-first roll + the P14 drift gate) →
+  **verify** (the C14 post-deploy contract smoke — the final gate). It **reuses** those
+  capabilities' code paths in-process; it reimplements none of them.
+  - **Idempotent + resumable.** A re-run after a partial/interrupted release **assesses current
+    state** and continues from the first unfinished phase: publish is skipped when the commit's
+    digest already resolves, repin when the compose is already pinned to that digest, deploy when
+    the running web container is already on the target image (compared by local image id, the
+    same identity the drift gate uses). A fully-landed release re-run is a **no-op** — only the
+    read-only verify re-confirms. (Built for the failure the manual flow hit: it died twice on
+    transient GHCR API errors mid-roll and had to be recovered by hand; `forge release` self-
+    recovers — the CI-mode publish poll retries through transient errors + not-found until a
+    configurable timeout.)
+  - **Fail-safe.** ANY phase failing (CI never publishes → timeout, a digest mismatch, the P14
+    drift gate catching a stale image, a non-zero `forge verify`) **aborts with a precise,
+    actionable error and leaves prod on the last-good version** — no later phase runs, so a
+    deploy is never half-applied. Exits non-zero on failure. Non-destructive: it recreates
+    containers but never touches volumes/DB.
+  - **Observable.** Prints each phase with progress; `--json` for a machine-readable Release
+    resource; `--dry-run` shows the plan (which phases would run vs. skip) mutating nothing; a
+    configurable GHCR poll `--timeout` / `--poll-interval`. `--publish-mode ci` (default) waits
+    for the app's publish workflow; `--publish-mode build` cross-builds + pushes a multi-arch
+    image itself. A `Release` Resource records the ordered per-phase outcome and links the
+    Deployment (C7) + Verification (C14) it produced; `ReleaseStarted` / `ReleaseCompleted` /
+    `ReleaseFailed` events are emitted.
+  - The control-plane image now carries **git** (resolve the app's HEAD commit + GHCR owner) and
+    the **Buildx** plugin (resolve an image's registry digest via `docker buildx imagetools
+    inspect`; cross-build in `--publish-mode build`).
+
 ## [0.22.0] — 2026-07-08
 
 ### Fixed
@@ -794,7 +832,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/mardash-ai/forge/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/mardash-ai/forge/compare/v0.21.1...v0.22.0
 [0.21.1]: https://github.com/mardash-ai/forge/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/mardash-ai/forge/compare/v0.20.0...v0.21.0

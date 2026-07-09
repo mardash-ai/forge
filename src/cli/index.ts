@@ -89,6 +89,25 @@ function renderVerify(v: any): void {
   process.stdout.write(lines.join('\n') + '\n');
 }
 
+// Render a Release (C18 `forge release`) result. JSON/raw modes emit the machine report;
+// otherwise a human-readable per-phase progress list. The caller sets the exit code.
+function renderRelease(r: any): void {
+  if (globalOpts.json || globalOpts.raw) {
+    process.stdout.write(JSON.stringify(r, null, globalOpts.raw ? 2 : 0) + '\n');
+    return;
+  }
+  const mark = (s: string) => (s === 'ran' ? ' ok ' : s === 'skipped' ? 'skip' : 'FAIL');
+  const lines: string[] = [];
+  const head = r.dry_run ? 'Release (dry-run)' : 'Release';
+  lines.push(`${head} ${r.app}${r.commit ? ` @ ${String(r.commit).slice(0, 12)}` : ''} — ${r.status === 'succeeded' ? 'SUCCEEDED' : 'FAILED'}${r.failed_phase ? ` at ${r.failed_phase}` : ''}`);
+  for (const p of r.phases ?? []) {
+    lines.push(`  [${mark(p.status)}] ${p.phase} — ${p.detail}`);
+  }
+  if (r.web_image_pin) lines.push(`  pin: ${r.web_image_pin}`);
+  if (r.error_summary) lines.push(`  error: ${r.error_summary}`);
+  process.stdout.write(lines.join('\n') + '\n');
+}
+
 const program = new Command();
 program
   .name('forge')
@@ -315,6 +334,70 @@ program
     renderVerify(v);
     // Non-zero exit on any failed assertion — the CI post-deploy gate.
     process.exit(v.passed ? 0 : 1);
+  });
+
+// --- release (C18) ---------------------------------------------------------
+program
+  .command('release')
+  .description('Run the full production deploy pipeline end-to-end, idempotently and fail-safe: publish/await the commit’s image → repin (C8) → deploy (C7 + P14 drift gate) → verify (C14). Resumable; leaves prod on the last-good version on any failure. Exits non-zero on failure (Release).')
+  .requiredOption('--app <app>')
+  .option('--host <host>', 'public host for the post-deploy verify gate (recovered from productionize config if omitted)')
+  .option('--publish-mode <mode>', "how the commit's image reaches GHCR: ci (wait for the app's publish workflow) | build (build+push a multi-arch image here)", 'ci')
+  .option('--dry-run', 'assess + print the plan without publishing, repinning, deploying, or verifying')
+  .option('--timeout <seconds>', 'GHCR poll budget in CI mode (seconds)', '600')
+  .option('--poll-interval <seconds>', 'GHCR poll interval in CI mode (seconds)', '10')
+  .option('--commit <sha>', 'commit to release (default: the app repo HEAD)')
+  .option('--image-ref <ref>', 'full tagged image ref to release (default: ghcr.io/<owner>/<app>-app:sha-<commit>)')
+  .option('--owner <org>', 'GHCR owner for the default image ref (default: the repo origin remote)')
+  .option('--registry <host>', 'registry host for the default image ref (default: ghcr.io)')
+  .option('--image-suffix <suffix>', 'repo suffix for the default image ref (default: -app)')
+  .option('--context <context>', 'docker context for a remote deploy target (default: local daemon)')
+  .option('--service <service>', 'public service rolled start-first (default: web)')
+  .option('--compose-file <file>', 'production compose manifest (default: app/compose.prod.yaml)')
+  .option('--env-file <file>', 'env file Compose interpolates secrets from (default: app/.env.prod)')
+  .option('--allow-dirty', 'release even with an uncommitted working tree (normally refused)')
+  .option('--api-path <path>', 'verify: protected API path expected to 401 unauthenticated; repeatable', collect, [])
+  .option('--cron-path <path>', 'verify: cron/service path expected to 403 with no service token')
+  .option('--page-path <path>', 'verify: unauthenticated page expected to 302 → /auth/login')
+  .option('--health-path <path>', 'verify: C6 health/readiness path')
+  .option('--expect <list>', 'verify: comma list of auth methods expected enabled: google,email,password-signup')
+  .option('--check-refresh', 'verify: also assert POST /auth/refresh with no cookies → 401')
+  .action(async (opts) => {
+    const expectList = String(opts.expect ?? '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const body = {
+      app: opts.app,
+      ...(opts.host ? { host: opts.host } : {}),
+      publish_mode: opts.publishMode,
+      dry_run: Boolean(opts.dryRun),
+      timeout_seconds: Number.parseInt(opts.timeout, 10),
+      poll_interval_seconds: Number.parseInt(opts.pollInterval, 10),
+      ...(opts.commit ? { commit: opts.commit } : {}),
+      ...(opts.imageRef ? { image_ref: opts.imageRef } : {}),
+      ...(opts.owner ? { owner: opts.owner } : {}),
+      ...(opts.registry ? { registry: opts.registry } : {}),
+      ...(opts.imageSuffix ? { image_suffix: opts.imageSuffix } : {}),
+      ...(opts.context ? { context: opts.context } : {}),
+      ...(opts.service ? { service: opts.service } : {}),
+      ...(opts.composeFile ? { compose_file: opts.composeFile } : {}),
+      ...(opts.envFile ? { env_file: opts.envFile } : {}),
+      allow_dirty: Boolean(opts.allowDirty),
+      ...(opts.apiPath && opts.apiPath.length ? { api_paths: opts.apiPath } : {}),
+      ...(opts.cronPath ? { cron_path: opts.cronPath } : {}),
+      ...(opts.pagePath ? { page_path: opts.pagePath } : {}),
+      ...(opts.healthPath ? { health_path: opts.healthPath } : {}),
+      ...(expectList.includes('google') ? { expect_google: true } : {}),
+      ...(expectList.includes('email') ? { expect_email: true } : {}),
+      ...(expectList.includes('password-signup') || expectList.includes('password_signup') ? { expect_password_signup: true } : {}),
+      ...(opts.checkRefresh ? { check_refresh: true } : {}),
+    };
+    const result = await api('POST', '/capabilities/release', body);
+    const r = result.resource ?? result;
+    renderRelease(r);
+    // Non-zero exit on a failed release — the deploy-safety gate.
+    process.exit(r.status === 'succeeded' ? 0 : 1);
   });
 
 // --- explain ---------------------------------------------------------------

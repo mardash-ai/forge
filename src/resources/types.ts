@@ -18,6 +18,7 @@ export const RESOURCE_TYPES = [
   'ScheduledJob',
   'Deployment',
   'ProductionArtifacts',
+  'Release',
   'AgentTask',
   'Artifact',
   'EmailDelivery',
@@ -252,6 +253,43 @@ export interface ProductionArtifacts extends BaseResource {
   compose_file: string;
 }
 
+// A Release — the durable record of ONE end-to-end `forge release` run (C18): the capstone
+// that takes a committed app to DEPLOYED + VERIFIED through publish → repin → deploy → verify.
+// State only; the release-orchestrator Implementation owns the fail-safe, idempotent sequencing.
+// Records the commit released, the resolved digest pin, the ordered per-phase outcome (so a
+// re-run's skips are visible), and links to the Deployment (C7) + Verification (C14) it
+// produced. A failed release names the phase it stopped at — prod is on the last-good version.
+export interface Release extends BaseResource {
+  type: 'Release';
+  status: 'succeeded' | 'failed';
+  app: string;
+  // The commit whose build was released, and the tagged ref for it.
+  commit: string;
+  image_ref: string;
+  // The R1 digest pin repinned into compose.prod.yaml (once publish resolved it).
+  web_image_pin?: string;
+  host?: string;
+  publish_mode: 'ci' | 'build';
+  dry_run: boolean;
+  implementation: string;
+  // The ordered phase log — assess/publish/repin/deploy/verify, each ran|skipped|failed.
+  phases: ReleasePhaseRecord[];
+  // Cross-links to the Resources the release created (present when those phases ran).
+  deployment_id?: string;
+  verification_id?: string;
+  // On failure: the phase that stopped the release + the actionable reason.
+  failed_phase?: string;
+  error_summary?: string;
+  duration_ms: number;
+}
+
+export interface ReleasePhaseRecord {
+  phase: 'assess' | 'publish' | 'repin' | 'deploy' | 'verify';
+  status: 'ran' | 'skipped' | 'failed';
+  detail: string;
+  duration_ms: number;
+}
+
 // An Artifact — the durable, first-class RESULT produced by an agent run (C1). State
 // only. Holds the parsed structured output (conforming to the run's schema) plus the
 // schema it was enforced against, echoed so the consumer can POST-VALIDATE the untrusted
@@ -325,6 +363,7 @@ export type AnyResource =
   | ScheduledJob
   | Deployment
   | ProductionArtifacts
+  | Release
   | AgentTask
   | Artifact
   | EmailDelivery;

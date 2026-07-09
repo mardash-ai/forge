@@ -14,15 +14,18 @@ LABEL org.opencontainers.image.description="Forge developer/orchestration runtim
 LABEL com.mardash-ai.plane="control"
 
 # Docker CLI + Compose plugin, so the platform can run app builds/tests in Docker.
+# Also: git (Release/C18 resolves the app's HEAD commit + GHCR owner) and the Buildx
+# plugin (Release resolves an image's registry digest via `docker buildx imagetools
+# inspect`, and `--publish-mode build` cross-builds a multi-arch image).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+ && apt-get install -y --no-install-recommends ca-certificates curl gnupg git \
  && install -m 0755 -d /etc/apt/keyrings \
  && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
  && chmod a+r /etc/apt/keyrings/docker.asc \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
       > /etc/apt/sources.list.d/docker.list \
  && apt-get update \
- && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
+ && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin docker-buildx-plugin \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /forge
