@@ -10,6 +10,7 @@ import type { Actor } from '../shared/domain';
 import { RESOURCE_TYPES, type ResourceType } from '../resources/types';
 import { registerAppEventRoutes } from './app-events-routes';
 import { registerNotificationRoutes } from './notifications-routes';
+import { registerSearchRoutes } from './search-routes';
 import { registerAuthRoutes } from './auth-routes';
 import { registerOwnerRoutes } from './owner-routes';
 import { registerThemeRoutes } from './theme-routes';
@@ -84,6 +85,11 @@ registerAppEventRoutes(app);
 
 // Notifications (C4) — the app upserts/dismisses/clears its derived notifications here.
 registerNotificationRoutes(app);
+
+// Search / indexing (C19) — the app indexes its own resources and queries them full-text here
+// (owner-scoped, BM25-ranked). Served here for dev; the data-plane sidecar serves the same routes
+// in production, like app-events/notifications.
+registerSearchRoutes(app);
 
 // Identity / auth (C10) — hosted login/signup/verify/reset/OAuth/sign-out pages + session accessor.
 // Served here for dev; the data-plane sidecar serves the same routes in production.

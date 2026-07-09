@@ -13,6 +13,7 @@ import { newResourceId } from '../shared/ids';
 import { nowIso } from '../shared/time';
 import { registerAppEventRoutes } from '../api/app-events-routes';
 import { registerNotificationRoutes } from '../api/notifications-routes';
+import { registerSearchRoutes } from '../api/search-routes';
 import { registerAuthRoutes } from '../api/auth-routes';
 import { registerOwnerRoutes } from '../api/owner-routes';
 import { registerThemeRoutes } from '../api/theme-routes';
@@ -96,6 +97,11 @@ registerAppEventRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 // Notifications (C4) — the app upserts/dismisses/clears its derived notifications here. A scheduled
 // job (C2) can upsert while the user is away so the inbox is current before they open the app.
 registerNotificationRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
+
+// Search / indexing (C19) — the running app indexes its own resources and queries them full-text over
+// the internal network (owner-scoped, BM25-ranked, best-effort writes). Defaults the app to this
+// sidecar's FORGE_APP_NAME, so the app needn't pass it.
+registerSearchRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 
 // Identity / auth (C10) — the HOSTED login/signup/verify/reset/OAuth/sign-out pages + the session
 // accessor. The app proxies `/auth/*` here (same-origin) and gates the rest of itself by verifying

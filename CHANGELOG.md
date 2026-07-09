@@ -9,6 +9,44 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-07-09
+
+### Added
+- **C19 — Search / indexing.** A generic, per-app, owner-scoped full-text search capability. An app
+  indexes its own resources and queries them back over the internal network, reached server-side the
+  same way the app reaches the C3 app-event log + C4 notifications (base URL via `FORGE_EVENTS_URL`;
+  the `app` field defaults to the sidecar's `FORGE_APP_NAME`). Four **data-plane** endpoints,
+  registered on BOTH the control-plane API (dev) and the data-plane sidecar (prod), like
+  app-events/notifications:
+  - `POST /index` — upsert one indexable document, **idempotent by `(owner, type, id)`** (re-indexing
+    updates in place, exactly the C4 upsert-by-key pattern). Best-effort: the app calls it alongside
+    its mutations and fire-and-forgets.
+  - `POST /index/delete` — remove one document by `{owner, type, id}` (idempotent).
+  - `POST /reindex` — bulk-upsert an array (backfill / cutover reconciliation).
+  - `POST /search` — `{ owner, q, types?, limit?, offset?, date_from?, date_to? }` →
+    `{ hits: [{ type, id, title, snippet, score, attrs?, created_at? }], total, took_ms }`.
+- **Type-agnostic indexable document** `{ owner (required), type, id, title, body?, tags?, attrs?,
+  created_at?, updated_at? }` — the app's resource kinds (goal/task/note/…) are just `type` values, so
+  one index serves everything the app owns. `attrs` is a small denormalized bag round-tripped verbatim
+  on every hit so the app can render a result without a second lookup.
+- **Owner-scoping is structural (mandatory).** Every write is stamped with (and keyed by) `owner`, and
+  every search filters to `owner` **before** ranking — a `/search` is implicitly `WHERE owner =
+  <caller>` and can never return another owner's document; two owners may hold the same `(type, id)` as
+  distinct records. Trust model is app-asserted (the private data-plane trusts the verified `owner` the
+  app sends, exactly as C3/C4/C1 do). The document shape + `/search` are designed so a future
+  `mode: 'semantic' | 'hybrid'` (vector/RAG search) extends cleanly; **semantic search is out of C19
+  scope.**
+- **BM25(F)-lite ranking** over a self-contained inverted view built per query (no Postgres dependency
+  — Forge's own data-plane state is file-backed, so C19 ships in the slim data-plane image like the
+  C3/C4/C15 stores). `title` is weighted above `body` (a title match outranks a body-only match),
+  tokens are case-folded and lightly stemmed, the snippet is a highlighted excerpt with matched terms
+  wrapped in HTML `<mark>…</mark>` (surrounding doc text HTML-escaped), and the tie-break is
+  deterministic (`updated_at` desc, then `id`).
+- **Failure modes.** Index writes are best-effort (non-fatal; `/reindex` is the backstop); a
+  user-invoked `/search` degrades on an internal store failure to a **503 `search_unavailable`** the
+  app can soft-handle (empty results), **never a 500**; an empty `q` → **400**; pagination past the end
+  → empty hits (a 200, not an error); `limit` is clamped server-side to `[1, 100]` (default 20).
+
 ## [0.24.1] — 2026-07-09
 
 ### Fixed
@@ -911,7 +949,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.24.1...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/mardash-ai/forge/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/mardash-ai/forge/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/mardash-ai/forge/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/mardash-ai/forge/compare/v0.22.0...v0.23.0

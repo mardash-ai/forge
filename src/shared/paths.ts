@@ -115,3 +115,16 @@ export function authFile(appId: string): string {
 export function logPath(resourceId: string): string {
   return path.join(logsDir(), `${resourceId}.log`);
 }
+
+// Per-app search index store (C19) — one JSON doc per app: a keyed map `{ [owner\0type\0id]: doc }`
+// of the app's indexable documents (owner-stamped). Mutable, durable STATE (upsert/delete in place),
+// so it mirrors the C4 notification store's shape rather than an append-only log. Kept OUT of the
+// generic Resource store (like notifications/auth/incidents), so indexed app rows never surface
+// through the inspectable `/resources` API.
+export function searchDir(): string {
+  return path.join(stateDir(), 'search');
+}
+
+export function searchFile(appId: string): string {
+  return path.join(searchDir(), `${appId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
+}
