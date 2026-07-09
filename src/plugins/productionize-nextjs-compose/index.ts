@@ -21,6 +21,7 @@ import { DEFAULT_LIGHT, DEFAULT_FONT, DEFAULT_RADIUS } from '../../shared/theme'
 import {
   describeSecret,
   requirementLabel,
+  secretInterpolation,
   type SecretSpec,
   AUTH_SESSION_SECRET_NAME,
   GOOGLE_SECRET_NAMES,
@@ -288,8 +289,11 @@ export function generateProdCompose(opts: ProdComposeOptions): string {
 
   // Web environment: prod NODE_ENV, the data-plane sidecar base URL, DB/Redis URLs
   // from infra, and one interpolation line per declared secret (`${NAME:-}` keeps it
-  // defined-but-empty when unset, so the app degrades instead of crashing; real
-  // values come from .env.prod, never this file). The data-plane base is published
+  // defined-but-empty when unset, so the app degrades instead of crashing — EXCEPT a
+  // deploy-required secret like AUTH_SESSION_SECRET, which the catalog emits as
+  // `${NAME:?…}` so a missing/empty session-signing key FAILS the deploy loudly instead
+  // of silently logging every user out. Real values come from .env.prod, never this
+  // file). The data-plane base is published
   // under BOTH names: FORGE_EVENTS_URL is the contract the shipped C1/C3/C4 app
   // clients actually read; FORGE_DATA_PLANE_URL is kept as a compatible alias.
   const webEnv: string[] = [
@@ -305,7 +309,7 @@ export function generateProdCompose(opts: ProdComposeOptions): string {
     );
   }
   if (withRedis) webEnv.push('      - REDIS_URL=redis://redis:6379');
-  for (const s of secrets) webEnv.push(`      - ${s}=\${${s}:-}`);
+  for (const s of secrets) webEnv.push(`      - ${s}=${secretInterpolation(s)}`);
 
   // Traefik ingress: host rule + the loadbalancer healthcheck the roll relies on.
   const labels: string[] = [
@@ -361,7 +365,15 @@ ${labels.join('\n')}`;
     `      - FORGE_APP_CALLBACK_PORT=${port}`,
     `      - FORGE_READINESS_PATH=${readinessPath}`,
   ];
-  for (const s of secrets) dpEnv.push(`      - ${s}=\${${s}:-}`);
+  for (const s of secrets) dpEnv.push(`      - ${s}=${secretInterpolation(s)}`);
+  // The data-plane's ENTIRE state dir (FORGE_STATE_DIR=/forge-state) rides ONE durable
+  // named volume. This is load-bearing for auth: C10's users/sessions/`forge_refresh`
+  // records live at /forge-state/auth/<appId>.json, so the volume is what lets a signed-in
+  // user SURVIVE a deploy — `forge deploy` recreates this sidecar onto the new pin, and a
+  // named volume persists across that recreate (an ephemeral fs would wipe every session +
+  // refresh token → 401 on /auth/session AND /auth/refresh → every user logged out). The
+  // C5 secrets vault (/forge-state/secrets) rides the same volume, so its master key never
+  // regenerates across a recreate either. Do NOT drop forge_state.
   const dpVolumes: string[] = ['      - forge_state:/forge-state'];
   if (withJobs) {
     // The app declares scheduled jobs — mount the declaration read-only and pin

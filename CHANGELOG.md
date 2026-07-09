@@ -9,6 +9,55 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-07-08
+
+### Fixed
+- **A production deploy could silently log every signed-in user out.** Reported symptom: after
+  `forge deploy`, active users had to sign in again. Diagnosed to the auth/session/`forge_refresh`
+  store on the data-plane sidecar + the productionize-generated `compose.prod.yaml`.
+  - **The store itself is already durable — that half was a red herring.** C10's users, sessions,
+    and `forge_refresh` records live at `/forge-state/auth/<appId>.json`, and the generator has
+    (since C8) mounted the data-plane's whole state dir (`FORGE_STATE_DIR=/forge-state`) on the
+    **durable named volume `forge_state`**. `forge deploy` recreates the sidecar onto its new pin,
+    and a named volume **persists across that container recreate** — so a valid session/refresh
+    survives a deploy. Reproduced end-to-end: create a session → `docker compose up -d
+    --force-recreate data-plane` → `GET /auth/session` **200** and `POST /auth/refresh` **200**
+    (still authenticated). The negative control (same sidecar with the store on the container's
+    ephemeral fs, no volume) reproduced the exact symptom: **401 / 401** — every session + refresh
+    token wiped. The C5 secrets vault (`/forge-state/secrets`, including its master key) rides the
+    same volume, so it does not regenerate across a recreate either.
+  - **Root cause (the remaining silent-logout surface): the session-signing secret defaulted to
+    empty.** The generator injected every declared secret — including `AUTH_SESSION_SECRET`, the
+    HS256 key that BOTH signs (data-plane) AND verifies (app middleware) the `forge_session` access
+    token — as `${NAME:-}` (defined-but-**empty** when unset). If that required key was ever unset
+    or emptied in `.env.prod` (a typo, a dropped var), the whole stack silently came up with an
+    **empty** signing key: the data-plane could neither mint nor verify a session, so every user was
+    logged out — while `docker compose config` and the deploy still reported **success**. An empty
+    signing secret is the "silently rotate to nothing" footgun, not a durability problem.
+  - **Fix — a missing required auth secret now FAILS THE DEPLOY LOUDLY, never silently empties.**
+    `AUTH_SESSION_SECRET` is now emitted as `${AUTH_SESSION_SECRET:?…}` in **both** the web and
+    data-plane services — the exact fail-loud shape `POSTGRES_PASSWORD` already uses — so a
+    missing/empty value aborts `docker compose config` (the step the C7 roll runs) with a clear
+    message (`… logs every signed-in user out on deploy`) **before** any replica starts, instead of
+    shipping a stack that logs everyone out. A stable, operator-set value (the normal case)
+    interpolates fine and — with the durable `forge_state` store — keeps sessions alive across the
+    deploy. Verified: `docker compose config` now exits non-zero + names the fix when
+    `AUTH_SESSION_SECRET` is unset, and exits 0 when it is set.
+
+### Changed
+- **Productionize secret injection is catalog-driven and distinguishes *deploy-required* from
+  *optional* secrets.** The C13 secret catalog gains a `deploy_required_reason`, and a new
+  `secretInterpolation(name)` helper picks the compose interpolation per secret: a deploy-required
+  secret (currently only `AUTH_SESSION_SECRET`) renders fail-loud `${NAME:?reason}`; every other
+  secret keeps the defined-but-empty `${NAME:-}` so it still degrades detectably (real values come
+  from `.env.prod`, never the compose file). The optional sign-in **alternatives** — `GOOGLE_*`,
+  `SMTP_URL`, `EMAIL_FROM` — stay `${NAME:-}` on purpose: their absence disables one method, it does
+  not log anyone out. New regression tests lock (a) `AUTH_SESSION_SECRET` fail-loud in both tiers,
+  (b) the optional alternatives staying non-fatal, and (c) the deploy-survival guard that the
+  auth/session/refresh store is mounted on the durable named `forge_state` volume (so an ephemeral
+  regression can't silently return). No app re-scaffold needed; adopt by re-running
+  `forge productionize` (regenerates `compose.prod.yaml`) then `forge deploy`.
+
 ## [0.21.1] — 2026-07-08
 
 ### Fixed
@@ -745,7 +794,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.21.1...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/mardash-ai/forge/compare/v0.21.1...v0.22.0
 [0.21.1]: https://github.com/mardash-ai/forge/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/mardash-ai/forge/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/mardash-ai/forge/compare/v0.19.0...v0.20.0

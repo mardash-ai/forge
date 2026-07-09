@@ -27,6 +27,15 @@ export interface SecretSpec {
   obtain: string;
   // A concrete generate command when the value is self-minted (else undefined).
   generate?: string;
+  // When set, this secret is REQUIRED at deploy: once an app declares it, a MISSING or
+  // EMPTY value must FAIL THE DEPLOY LOUDLY (compose `${NAME:?<this reason>}`) rather than
+  // silently default to empty. Only for a secret whose absence breaks the capability
+  // OUTRIGHT and silently — e.g. AUTH_SESSION_SECRET signs AND verifies the session
+  // token, so an empty value means the data-plane can neither mint nor verify a session
+  // and EVERY signed-in user is logged out on the next deploy (with the deploy still
+  // reporting success). Contrast the optional sign-in ALTERNATIVES (GOOGLE_*/SMTP): their
+  // absence only disables one method, so they stay defined-but-empty (`${NAME:-}`).
+  deploy_required_reason?: string;
 }
 
 // Order is the recommended provisioning order (platform floor first, then per-capability).
@@ -65,6 +74,10 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     requires_note: 'Required for C10 auth. Without it sign-in is cleanly unavailable (503). The SAME value must reach both the data-plane (signs) and the app (verifies).',
     obtain: 'Generate a strong random secret; keep it stable (rotating it invalidates all live sessions).',
     generate: 'openssl rand -base64 48',
+    // The session-signing key: an empty value silently logs every user out on deploy, so a
+    // declaring app must fail the deploy loudly when it is unset rather than ship that.
+    deploy_required_reason:
+      'set AUTH_SESSION_SECRET in .env.prod (keep it STABLE across deploys) — a missing/empty session-signing key logs every signed-in user out on deploy',
   },
   AUTH_SERVICE_TOKEN: {
     name: 'AUTH_SERVICE_TOKEN',
@@ -131,6 +144,19 @@ export function describeSecret(name: string): SecretSpec {
       obtain: 'Provide the value the app expects for this secret.',
     }
   );
+}
+
+// The compose interpolation for a DECLARED secret's env line, catalog-driven:
+//   - a deploy-required secret (AUTH_SESSION_SECRET) → `${NAME:?<reason>}`, so a missing/
+//     empty value FAILS the deploy loudly at `docker compose config` (which the C7 roll
+//     runs) instead of silently defaulting to empty and logging every user out. This is
+//     the SAME fail-loud shape POSTGRES_PASSWORD already uses.
+//   - every other secret → `${NAME:-}`, defined-but-empty so the app degrades detectably
+//     (a real value still comes from .env.prod, never the compose file).
+// A stable, operator-set value (the normal case) interpolates fine either way.
+export function secretInterpolation(name: string): string {
+  const reason = SECRET_CATALOG[name]?.deploy_required_reason;
+  return reason ? `\${${name}:?${reason}}` : `\${${name}:-}`;
 }
 
 // A one-line requirement label for tables/checklists.

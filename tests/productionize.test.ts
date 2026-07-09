@@ -209,6 +209,49 @@ describe('generateProdCompose — Traefik + healthcheck + stop_grace + data-plan
     expect(dp).toContain('- ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}');
   });
 
+  // Deploy-logout fix — the session-signing key must FAIL the deploy loudly when missing,
+  // not silently default to empty (an empty AUTH_SESSION_SECRET means the data-plane can
+  // neither mint nor verify a session, so every signed-in user is logged out on deploy while
+  // the deploy still reports success). Same fail-loud shape as POSTGRES_PASSWORD.
+  it('emits AUTH_SESSION_SECRET as a FAIL-LOUD `${VAR:?}` in BOTH tiers (never silently empty)', () => {
+    const yaml = generateProdCompose({ ...base, secrets: ['AUTH_SESSION_SECRET'] });
+    const web = serviceBlock(yaml, 'web');
+    const dp = serviceBlock(yaml, 'data-plane');
+    // Fail-loud (`:?`), NOT the silent empty default (`:-`), in both the app and the sidecar.
+    expect(web).toContain('- AUTH_SESSION_SECRET=${AUTH_SESSION_SECRET:?');
+    expect(dp).toContain('- AUTH_SESSION_SECRET=${AUTH_SESSION_SECRET:?');
+    expect(web).not.toContain('AUTH_SESSION_SECRET=${AUTH_SESSION_SECRET:-}');
+    expect(dp).not.toContain('AUTH_SESSION_SECRET=${AUTH_SESSION_SECRET:-}');
+    // The abort message names the file and the consequence, so an operator can act.
+    expect(yaml).toContain('AUTH_SESSION_SECRET:?set AUTH_SESSION_SECRET in .env.prod');
+    expect(yaml).toContain('logs every signed-in user out on deploy');
+  });
+
+  it('keeps the optional sign-in ALTERNATIVES (Google/SMTP) defined-but-empty, not fail-loud', () => {
+    const yaml = generateProdCompose({ ...base, secrets: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SMTP_URL', 'EMAIL_FROM'] });
+    // Their absence only disables one method — they must NOT abort the deploy.
+    for (const n of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SMTP_URL', 'EMAIL_FROM']) {
+      expect(yaml).toContain(`- ${n}=\${${n}:-}`);
+      expect(yaml).not.toContain(`${n}:?`);
+    }
+  });
+
+  // Deploy-survival regression guard — the C10 auth/session/`forge_refresh` store lives on
+  // the data-plane's state dir (/forge-state/auth/<appId>.json). A deploy recreates this
+  // sidecar; only a DURABLE NAMED volume carries the store across that recreate. If this ever
+  // regresses to an ephemeral fs (or a bind mount that isn't declared), every session +
+  // refresh token is wiped on deploy and every user is logged out. Assert both halves: the
+  // sidecar MOUNTS forge_state at the state dir AND the volume is DECLARED at the top level.
+  it('persists the auth/session/refresh store on a durable named volume (deploy-survival guard)', () => {
+    const yaml = generateProdCompose(base);
+    const dp = serviceBlock(yaml, 'data-plane');
+    // The whole state dir (which holds /forge-state/auth) is the durable named volume.
+    expect(dp).toContain('FORGE_STATE_DIR=/forge-state');
+    expect(dp).toContain('- forge_state:/forge-state');
+    // The named volume is declared (not an anonymous/ephemeral mount that would be recreated).
+    expect(yaml).toMatch(/^volumes:\n(?:.*\n)*?\s{2}forge_state:\s*$/m);
+  });
+
   // P7.3 — a declared jobs file must be mounted + pinned, else C2 never registers it.
   it('mounts the jobs file and pins FORGE_JOBS_FILE at it when jobs are declared (P7.3)', () => {
     const dp = serviceBlock(generateProdCompose({ ...base, withJobs: true }), 'data-plane');
