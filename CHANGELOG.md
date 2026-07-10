@@ -30,6 +30,18 @@ Each released version maps to a published control-plane image tag
   and per-store atomicity/concurrency/durability — flagging that the C5 secrets vault and the
   generic Resource store are unguarded read-modify-write / plain-overwrite, unlike the mutex +
   atomic-rename engine stores (C4/C10/C15/C19/C20). Includes an un-abstracted storage diagram.
+- **Storage-strategy proposal (`docs/architecture/08-storage-strategy.md`).** A design-only proposal
+  (no code changed) to harden the single-node filesystem before a production-ambition consumer builds
+  on it: a real pluggable store-backend seam (semantic backend interface per store domain, selected by
+  config, with filesystem / Postgres / object-store implementations, capability code unchanged);
+  per-capability backend recommendations with justification (Postgres for C10 identity, C11/C29 authz,
+  C3 events, C4 notifications, C15; object-store for C20 blob bytes; Postgres FTS for C19 search;
+  filesystem stays for C16 theme); the C19 search recommendation (Postgres tsvector/GIN over a
+  dedicated engine, with the tie-breakers); making the data-plane sidecar datastore-aware
+  (`FORGE_DB_URL`, pooling, a separate `forge_platform` DB/role vs. the app DB, `forge provision`/
+  `productionize` wiring); folding in the P27 unguarded-store fix; and a contract-stable migration
+  sequence (identity + search first; backfill → dual-write → cutover). Honest about what it does not
+  solve (the sidecar SPOF, scheduler single-runner, Postgres as the new HA dependency).
 
 ## [0.26.5] — 2026-07-09
 
