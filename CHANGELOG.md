@@ -9,6 +9,18 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+### Added
+- **Platform architecture reference (`docs/architecture/`).** Authoritative, product-agnostic
+  developer documentation of the shipped architecture — the control-plane vs data-plane image
+  split, the production sidecar model, the deployed runtime topology (Traefik ingress, the
+  `internal`/`proxy` networks, the `forge_state` volume), runtime call-path sequence diagrams for
+  every data-plane capability (events, scheduler, agent, secrets, search, blobs, auth/session), a
+  capability catalog mapping each `Cn` to its plane + consumption mechanism, the app adoption model,
+  and a clearly-marked *PROPOSED, not yet built* extension-points section (remote MCP + OAuth 2.1
+  AS, outbound connector vault, inbound email, webhook ingestion, native push, policy engine,
+  multi-member identity, eval harness). Mermaid diagrams throughout. Docs-only — no image or
+  capability version change. `docs/architecture/README.md` indexes the set.
+
 ## [0.26.5] — 2026-07-09
 
 ### Fixed
