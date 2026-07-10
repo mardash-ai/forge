@@ -321,6 +321,8 @@ program
   .option('--expect-password-signup', 'assert email/password sign-up is enabled in /auth/config')
   .option('--check-refresh', 'also assert POST /auth/refresh with no cookies → 401')
   .option('--timeout-ms <n>', 'per-request timeout in milliseconds')
+  .option('--readiness-timeout-ms <n>', 'post-deploy warm-up wait: poll health until a clean C6 200 before asserting, up to n ms (0 = assert immediately)')
+  .option('--readiness-interval-ms <n>', 'base interval between readiness polls (ms)')
   .action(async (opts) => {
     const expectList = String(opts.expect ?? '')
       .split(',')
@@ -339,6 +341,8 @@ program
         Boolean(opts.expectPasswordSignup) || expectList.includes('password-signup') || expectList.includes('password_signup'),
       check_refresh: Boolean(opts.checkRefresh),
       ...(opts.timeoutMs ? { timeout_ms: Number.parseInt(opts.timeoutMs, 10) } : {}),
+      ...(opts.readinessTimeoutMs ? { readiness_timeout_ms: Number.parseInt(opts.readinessTimeoutMs, 10) } : {}),
+      ...(opts.readinessIntervalMs ? { readiness_interval_ms: Number.parseInt(opts.readinessIntervalMs, 10) } : {}),
     };
     const result = await api('POST', '/capabilities/verify', body);
     const v = result.resource ?? result;
@@ -373,6 +377,7 @@ program
   .option('--health-path <path>', 'verify: C6 health/readiness path')
   .option('--expect <list>', 'verify: comma list of auth methods expected enabled: google,email,password-signup')
   .option('--check-refresh', 'verify: also assert POST /auth/refresh with no cookies → 401')
+  .option('--verify-readiness-timeout-ms <n>', 'verify: deploy→verify warm-up wait — poll health for a clean C6 200 before asserting, up to n ms (default 30000; 0 = assert immediately)')
   .action(async (opts) => {
     const expectList = String(opts.expect ?? '')
       .split(',')
@@ -403,6 +408,7 @@ program
       ...(expectList.includes('email') ? { expect_email: true } : {}),
       ...(expectList.includes('password-signup') || expectList.includes('password_signup') ? { expect_password_signup: true } : {}),
       ...(opts.checkRefresh ? { check_refresh: true } : {}),
+      ...(opts.verifyReadinessTimeoutMs !== undefined ? { verify_readiness_timeout_ms: Number.parseInt(opts.verifyReadinessTimeoutMs, 10) } : {}),
     };
     // Release is long-running: the request blocks through publish→repin→deploy→verify. Use the
     // no-timeout dispatcher (P22) so a real run's server wait doesn't trip undici's 300s

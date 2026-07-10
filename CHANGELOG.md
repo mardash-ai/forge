@@ -9,7 +9,32 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.27.0] — 2026-07-10
+
+### Fixed
+- **P28 — `forge verify` / `forge release` no longer false-red on a start-first roll's warm-up window
+  (the "C19-deploy flake").** A C7 start-first deploy returns as soon as the NEW replica reports
+  container-healthy, but the public endpoint can still be a beat behind — the reverse proxy re-pointing
+  at the fresh replica, the app finishing its own warm-up. A post-deploy `forge verify` — including the
+  one `forge release` runs as its final gate — probing in that instant saw a transient miss (an
+  unreachable dial, a proxy 502, a half-booted non-conforming body) and reported a red, even though a
+  manual re-run a few seconds later passed. `verify`/`release` now poll the C6 health endpoint with a
+  bounded, backed-off retry until it answers a clean 200 **before** asserting, so the deploy→verify
+  handoff can't race the roll into a false failure. It **never turns a real failure green**: if the app
+  never warms up, the wait simply ends and the normal health assertion runs and fails. (New
+  `waitForHealthReady` in `src/shared/health-probe.ts`, wired through `src/shared/contract-checks.ts`,
+  C14 `verify`, C18 `release`, and the CLI.)
+
 ### Added
+- **P28 — a post-deploy warm-up readiness gate (opt-in inputs + the `waitForHealthReady` primitive).**
+  `verify` gains `readiness_timeout_ms` (default `0` — off, since a standalone `forge verify` runs after
+  a deploy has settled) + `readiness_interval_ms`; `release` gains `verify_readiness_timeout_ms` (default
+  `30000` — on for its deploy→verify handoff) + `verify_readiness_interval_ms`; and the CLI gains
+  `forge verify --readiness-timeout-ms/--readiness-interval-ms` and `forge release
+  --verify-readiness-timeout-ms`. Backward-compatible — unset keeps the prior immediate-assert behavior.
+  Deterministic coverage in `tests/readiness-wait.test.ts` (injectable clock/sleep exercise the first-200
+  fast path, backoff through transient misses, budget/no-overrun on timeout, the `timeoutMs<=0` no-op,
+  and the `verify`/`release` wiring).
 - **Platform architecture reference (`docs/architecture/`).** Authoritative, product-agnostic
   developer documentation of the shipped architecture — the control-plane vs data-plane image
   split, the production sidecar model, the deployed runtime topology (Traefik ingress, the
@@ -1179,7 +1204,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.26.5...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/mardash-ai/forge/compare/v0.26.5...v0.27.0
 [0.26.5]: https://github.com/mardash-ai/forge/compare/v0.26.4...v0.26.5
 [0.26.4]: https://github.com/mardash-ai/forge/compare/v0.26.3...v0.26.4
 [0.26.3]: https://github.com/mardash-ai/forge/compare/v0.26.2...v0.26.3

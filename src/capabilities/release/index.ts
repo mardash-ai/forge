@@ -66,6 +66,12 @@ const inputSchema = z.object({
   expect_password_signup: z.boolean().optional(),
   check_refresh: z.boolean().optional(),
   verify_timeout_ms: z.number().int().positive().optional(),
+  // Deploy→verify WARM-UP budget (ms): the post-deploy gate waits (bounded, backed-off) for the
+  // freshly-rolled replica to answer a clean C6 200 before asserting, so the roll's warm-up
+  // window can't false-red a release (the C19-deploy flake: `verify` raced the roll, failed the
+  // C6 check, and a manual re-run passed). Defaults to 30s; 0 asserts immediately (pre-fix).
+  verify_readiness_timeout_ms: z.number().int().nonnegative().default(30_000),
+  verify_readiness_interval_ms: z.number().int().positive().optional(),
 });
 type Input = z.infer<typeof inputSchema>;
 
@@ -258,6 +264,9 @@ export const releaseCapability: Capability<Input, Release> = {
             ...(input.expect_password_signup !== undefined ? { expect_password_signup: input.expect_password_signup } : {}),
             ...(input.check_refresh !== undefined ? { check_refresh: input.check_refresh } : {}),
             ...(input.verify_timeout_ms ? { timeout_ms: input.verify_timeout_ms } : {}),
+            // Deploy→verify warm-up wait (bounded) so the post-deploy gate does not race the roll.
+            readiness_timeout_ms: input.verify_readiness_timeout_ms,
+            ...(input.verify_readiness_interval_ms ? { readiness_interval_ms: input.verify_readiness_interval_ms } : {}),
           }),
           ctx,
         )) as Verification;

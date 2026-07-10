@@ -15,7 +15,7 @@
 // shared/health.ts), so "what a healthy contract looks like" is defined in one place.
 
 import { z } from 'zod';
-import { httpProbe, probeHealth, HEALTH_TIMEOUT_MS } from './health-probe';
+import { httpProbe, probeHealth, waitForHealthReady, HEALTH_TIMEOUT_MS, READINESS_INTERVAL_MS } from './health-probe';
 
 export type AssertionStatus = 'pass' | 'fail' | 'skip';
 
@@ -59,6 +59,13 @@ export interface ContractCheckOptions {
   // Also probe POST /auth/refresh with no cookies (expected 401).
   checkRefresh?: boolean;
   timeoutMs?: number;
+  // Post-deploy WARM-UP wait (deploy-reliability fix): when > 0, poll the health endpoint
+  // with a bounded, backed-off retry until it answers a clean C6 200 BEFORE running the
+  // assertions — so a start-first roll's warm-up window can't produce a false-red verify.
+  // <= 0 / omitted keeps the current behavior (assert immediately). Never turns a real
+  // failure green: if the app never warms up, the health assertion below still fails.
+  readinessTimeoutMs?: number;
+  readinessIntervalMs?: number;
 }
 
 export interface ContractReport {
@@ -256,6 +263,18 @@ export async function runContractChecks(opts: ContractCheckOptions): Promise<Con
   const pagePath = opts.pagePath ?? '/';
   const healthPath = opts.healthPath ?? '/api/health';
   const assertions: Assertion[] = [];
+
+  // Post-deploy warm-up gate (opt-in): wait for the freshly-rolled replica to answer a clean
+  // C6 200 before asserting, so the deploy→verify handoff doesn't race the roll's warm-up
+  // window into a false red. No-op when readinessTimeoutMs <= 0 (the default for a standalone
+  // `forge verify`, which runs after a deploy has settled).
+  if ((opts.readinessTimeoutMs ?? 0) > 0) {
+    await waitForHealthReady(`${baseUrl}${healthPath}`, {
+      timeoutMs: opts.readinessTimeoutMs!,
+      intervalMs: opts.readinessIntervalMs ?? READINESS_INTERVAL_MS,
+      probeTimeoutMs: timeoutMs,
+    });
+  }
 
   assertions.push(await checkHealth(baseUrl, healthPath, timeoutMs));
   assertions.push(await checkPageGate(baseUrl, pagePath, timeoutMs));

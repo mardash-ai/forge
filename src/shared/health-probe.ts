@@ -127,3 +127,72 @@ export async function probeHealth(
   }
   return { url, reachable: true, httpStatus: res.status, conforms: false, parseError: parsed.error, bodyPreview: text.slice(0, 200), redirectLocation: res.location };
 }
+
+// ---------------------------------------------------------------------------
+// Readiness wait — bridge the post-deploy WARM-UP window before asserting health.
+//
+// A start-first roll (C7) returns as soon as the NEW replica reports container-healthy,
+// but the public endpoint can still be a beat behind (the reverse proxy re-pointing at the
+// fresh replica, the app finishing its own warm-up). A post-deploy `forge verify` that
+// probes in that instant sees a transient miss — an unreachable dial, a proxy 502, a
+// half-booted non-conforming body — and reports a FALSE red, even though a manual re-run a
+// few seconds later passes (the exact C19-deploy flake). This gate polls the health URL with
+// a bounded, backed-off retry until it answers a clean C6 200 (reachable + conforming — the
+// SAME bar `checkHealth` passes on, so a legitimately degraded-but-up app is still "ready"),
+// or the budget elapses. It NEVER throws and NEVER turns a real failure green: if the app
+// never warms up, the wait simply ends and the normal `checkHealth` assertion runs and fails.
+// ---------------------------------------------------------------------------
+
+export const READINESS_INTERVAL_MS = 2_000; // base poll interval between readiness attempts
+const READINESS_INTERVAL_CAP_MS = 5_000; // backoff never waits longer than this between polls
+
+export interface ReadinessWaitOptions {
+  timeoutMs: number; // total budget to wait for readiness (<= 0 disables the wait entirely)
+  intervalMs?: number; // base interval between polls (backs off up to a cap)
+  probeTimeoutMs?: number; // per-probe timeout
+  redirect?: 'follow' | 'manual';
+  now?: () => number; // injectable clock (tests)
+  sleep?: (ms: number) => Promise<void>; // injectable sleep (tests)
+  onAttempt?: (attempt: number, result: HealthProbeResult) => void;
+}
+
+export interface ReadinessResult {
+  ready: boolean; // did the endpoint reach a clean C6 200 within the budget?
+  attempts: number;
+  waitedMs: number;
+  last: HealthProbeResult; // the final probe (what `checkHealth` will then see)
+}
+
+// A clean, warm C6 200 — the readiness bar. Matches `checkHealth`'s pass condition
+// (200 + conforming schema), so this waits out exactly the transient states (unreachable,
+// non-200, non-conforming boot output) and stops the instant the app is genuinely serving.
+function isReady(p: HealthProbeResult): boolean {
+  return p.reachable === true && p.httpStatus === 200 && p.conforms === true;
+}
+
+const readinessDelay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+// Poll `url` until it answers a clean C6 200 or the budget elapses. Returns the outcome +
+// the last probe (never throws). A non-positive budget is a no-op (one probe, no waiting) so
+// callers can leave the gate off by default and opt in with a real budget (the release path).
+export async function waitForHealthReady(url: string, opts: ReadinessWaitOptions): Promise<ReadinessResult> {
+  const now = opts.now ?? Date.now;
+  const sleep = opts.sleep ?? readinessDelay;
+  const base = Math.max(1, opts.intervalMs ?? READINESS_INTERVAL_MS);
+  const start = now();
+  const deadline = start + Math.max(0, opts.timeoutMs);
+  let attempts = 0;
+  let interval = base;
+  for (;;) {
+    attempts++;
+    const probe = await probeHealth(url, opts.probeTimeoutMs ?? HEALTH_TIMEOUT_MS, { redirect: opts.redirect ?? 'manual' });
+    opts.onAttempt?.(attempts, probe);
+    if (isReady(probe)) return { ready: true, attempts, waitedMs: now() - start, last: probe };
+    // Out of budget (or the gate is disabled with timeoutMs<=0): stop and hand the last probe back.
+    if (now() >= deadline) return { ready: false, attempts, waitedMs: now() - start, last: probe };
+    // Don't overrun the deadline on the final sleep.
+    const remaining = deadline - now();
+    await sleep(Math.min(interval, Math.max(0, remaining)));
+    interval = Math.min(Math.round(interval * 1.5), READINESS_INTERVAL_CAP_MS);
+  }
+}

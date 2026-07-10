@@ -38,6 +38,13 @@ const inputSchema = z.object({
   check_refresh: z.boolean().default(false),
   // Per-request timeout (ms).
   timeout_ms: z.number().int().positive().optional(),
+  // Post-deploy WARM-UP wait (ms). When > 0, `verify` first polls the health endpoint with a
+  // bounded, backed-off retry until it answers a clean C6 200 — so a start-first roll's warm-up
+  // window can't produce a false-red health check (the C19-deploy flake). Defaults to 0 for a
+  // standalone `forge verify` (which runs after a deploy has settled); the `release` pipeline
+  // supplies a budget for its deploy→verify handoff. Never turns a real failure green.
+  readiness_timeout_ms: z.number().int().nonnegative().default(0),
+  readiness_interval_ms: z.number().int().positive().optional(),
 });
 type Input = z.infer<typeof inputSchema>;
 
@@ -82,6 +89,8 @@ export const verify: Capability<Input, Verification> = {
       expect,
       checkRefresh: input.check_refresh,
       timeoutMs: input.timeout_ms,
+      readinessTimeoutMs: input.readiness_timeout_ms,
+      ...(input.readiness_interval_ms ? { readinessIntervalMs: input.readiness_interval_ms } : {}),
     });
 
     const summary = report.passed
