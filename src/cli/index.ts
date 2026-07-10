@@ -718,22 +718,34 @@ const storage = program.command('storage').description('Platform storage operati
 storage
   .command('migrate')
   .description('Backfill a platform store from the filesystem into Postgres. Requires FORGE_DB_URL.')
-  .option('--store <name>', 'store to migrate', 'identity')
+  .option('--store <name>', 'store to migrate: identity | search', 'identity')
   .option('--app <name>', 'migrate only this app (default: every app with filesystem state)')
   .action(async (opts) => {
-    if (opts.store !== 'identity') fail(`unknown store "${opts.store}" (increment 1 supports: identity)`);
+    if (opts.store !== 'identity' && opts.store !== 'search') {
+      fail(`unknown store "${opts.store}" (supported: identity, search)`);
+    }
     const dbUrl = process.env.FORGE_DB_URL;
     if (!dbUrl) fail('FORGE_DB_URL is required to migrate into Postgres (e.g. postgres://forge_platform:***@postgres:5432/forge_platform).');
     const { Pool } = await import('pg');
-    const { FsIdentityBackend } = await import('../storage/backends/identity/fs');
-    const { PgIdentityBackend, ensureIdentitySchema } = await import('../storage/backends/identity/pg');
-    const { backfillIdentity, listFsIdentityApps } = await import('../storage/backends/identity/migrate');
     const pool = new Pool({ connectionString: dbUrl });
     try {
-      await ensureIdentitySchema(pool);
-      const apps = opts.app ? [opts.app] : await listFsIdentityApps();
-      const migrated = await backfillIdentity(new FsIdentityBackend(), new PgIdentityBackend(pool), apps);
-      process.stdout.write(JSON.stringify({ store: 'identity', apps: apps.length, migrated }, null, 2) + '\n');
+      if (opts.store === 'identity') {
+        const { FsIdentityBackend } = await import('../storage/backends/identity/fs');
+        const { PgIdentityBackend, ensureIdentitySchema } = await import('../storage/backends/identity/pg');
+        const { backfillIdentity, listFsIdentityApps } = await import('../storage/backends/identity/migrate');
+        await ensureIdentitySchema(pool);
+        const apps = opts.app ? [opts.app] : await listFsIdentityApps();
+        const migrated = await backfillIdentity(new FsIdentityBackend(), new PgIdentityBackend(pool), apps);
+        process.stdout.write(JSON.stringify({ store: 'identity', apps: apps.length, migrated }, null, 2) + '\n');
+      } else {
+        const { FsSearchBackend } = await import('../storage/backends/search/fs');
+        const { PgSearchBackend, ensureSearchSchema } = await import('../storage/backends/search/pg');
+        const { backfillSearch, listFsSearchApps } = await import('../storage/backends/search/migrate');
+        await ensureSearchSchema(pool);
+        const apps = opts.app ? [opts.app] : await listFsSearchApps();
+        const migrated = await backfillSearch(new FsSearchBackend(), new PgSearchBackend(pool), apps);
+        process.stdout.write(JSON.stringify({ store: 'search', apps: apps.length, migrated }, null, 2) + '\n');
+      }
     } finally {
       await pool.end();
     }

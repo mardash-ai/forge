@@ -9,6 +9,33 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.29.0] — 2026-07-10
+
+### Added
+- **P26 (increment 2) — C19 search on Postgres full-text (a real inverted index).** A `PgSearchBackend`
+  behind the pluggable `SearchBackend` interface: a `tsvector` (title **A** / tags **B** / body **C** via
+  `setweight`, maintained by a trigger) indexed with **GIN**, queried with `websearch_to_tsquery` +
+  `ts_rank`. This **eliminates the filesystem backend's O(owned-docs) in-memory BM25 rescan** — a search
+  is now a GIN-indexed lookup. Config-selected (`FORGE_SEARCH_BACKEND=postgres`; filesystem stays the
+  default), sharing the same pool + `FORGE_DB_URL` as identity. Contract-stable: `/index`, `/index/delete`,
+  `/reindex`, `/search` payloads + owner-scoping are unchanged — `src/storage/search-store.ts` is now a
+  forwarding facade, and the SAME store + route suite passes on both backends.
+- **Owner-scoping via the O4 `(owner, group_id, visibility)` model.** The search schema carries
+  `group_id` + `visibility` (default `private`); every search is `WHERE owner = <caller> AND visibility =
+  'private'` — the same scope model as identity, with the columns baked in + defaulted so group-shared
+  results (households / C31) light up with **no second migration**.
+- **Snippet security parity on Postgres.** `ts_headline` marks matches with sentinels; the backend then
+  HTML-escapes the snippet and reveals the marks as `<mark>` — so raw HTML in document content can never
+  reach the rendered snippet (matching the FS ranker's escaping), while matches still highlight.
+- **Search migration + backfill.** `forge storage migrate --store search` copies each app's filesystem
+  index into Postgres with `(owner, type, id)` keys preserved (no app re-index needed); a
+  `DualWriteSearchBackend` (`FORGE_SEARCH_DUAL_WRITE=1`) reads Postgres while mirroring writes to the
+  filesystem for a reversible cutover.
+- **CI covers search on Postgres.** The `test-postgres` job now runs the suite with BOTH
+  `FORGE_IDENTITY_BACKEND` and `FORGE_SEARCH_BACKEND` on Postgres; `tests/pg-search.test.ts` adds
+  Postgres-specific coverage (the GIN index is present + used, the O4 scope `WHERE`, snippet escaping,
+  and id-preserving backfill parity).
+
 ## [0.28.0] — 2026-07-10
 
 ### Added
@@ -1252,7 +1279,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/mardash-ai/forge/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/mardash-ai/forge/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/mardash-ai/forge/compare/v0.26.5...v0.27.0
 [0.26.5]: https://github.com/mardash-ai/forge/compare/v0.26.4...v0.26.5

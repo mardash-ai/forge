@@ -13,6 +13,7 @@ export default defineConfig({
     fileParallelism: false,
     env: {
       FORGE_IDENTITY_BACKEND: 'postgres',
+      FORGE_SEARCH_BACKEND: 'postgres',
     },
   },
 });
