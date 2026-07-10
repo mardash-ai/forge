@@ -20,6 +20,7 @@ config**. That boundary is the whole design.
 | 4 | [Capability catalog](04-capability-catalog.md) | Every shipped capability, which **plane** it lives in, and the concrete consumption mechanism (env var / injected config / HTTP endpoint / CLI). |
 | 5 | [Adoption model](05-adoption-model.md) | How a consumer app *adopts* a capability: image pins, `provision` flags, injected config/env, client-side patterns, and the reference modules the app mirrors. |
 | 6 | [Planned capabilities](06-planned-capabilities.md) | **PROPOSED, not yet built.** Where remote-MCP hosting + OAuth, an outbound-connector vault, inbound email, webhooks, mobile push, a policy engine, multi-member identity, and an eval harness plug into the architecture. |
+| 7 | [Data storage](07-data-storage.md) | The concrete, per-capability backing stores (no "state blob"): exact on-disk layout on `forge_state`, what C19 search actually is (in-TS BM25, not a search engine), the store-interface + Postgres/S3 swap status, what really uses Postgres/Redis, and per-store atomicity/concurrency/durability. |
 
 ## The one idea behind everything: two planes
 

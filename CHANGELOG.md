@@ -20,6 +20,16 @@ Each released version maps to a published control-plane image tag
   AS, outbound connector vault, inbound email, webhook ingestion, native push, policy engine,
   multi-member identity, eval harness). Mermaid diagrams throughout. Docs-only — no image or
   capability version change. `docs/architecture/README.md` indexes the set.
+- **Data-storage reference (`docs/architecture/07-data-storage.md`).** A rigorous, code-verified,
+  de-abstracted account of every backing store: the exact per-capability on-disk layout on the
+  `forge_state` volume (path / format / write model per capability); the truth about C19 search
+  (a pure in-TypeScript BM25(F)-lite ranker over a per-app JSON document map — no Solr/ES/Redis, no
+  persistent inverted index); the store-interface reality (a method-surface seam only — the
+  Postgres/S3 swap is planned, not implemented; no pluggable-backend interface exists today);
+  confirmation that no Forge capability uses Postgres/Redis (those are app-only, provisioned-only);
+  and per-store atomicity/concurrency/durability — flagging that the C5 secrets vault and the
+  generic Resource store are unguarded read-modify-write / plain-overwrite, unlike the mutex +
+  atomic-rename engine stores (C4/C10/C15/C19/C20). Includes an un-abstracted storage diagram.
 
 ## [0.26.5] — 2026-07-09
 

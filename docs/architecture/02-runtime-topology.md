@@ -65,22 +65,31 @@ flowchart TB
     secrets/vault-<appId>.json   AES-256-GCM sealed secrets                             (C5)
     app-events/<appId>.jsonl     append-only domain event log                          (C3)
     notifications/<appId>.json   keyed, upsert/dismiss/clear                            (C4)
-    search/<appId>.json          per-app inverted index (owner-stamped docs)           (C19)
+    search/<appId>.json          document map, BM25 recomputed per query (NOT an       (C19)
+                                  engine — see 07-data-storage.md §2)
     blobs/<appId>.json           blob metadata   +   blobs/bytes/<appId>/<blobId>       (C20)
     uptime/<appId>.{jsonl,rollup.json}   health snapshots + per-day rollups             (C15)
     incidents/<appId>.json       operator-declared incidents                           (C15)
+    resources/<Type>/<id>.json   Resource store: C1/C2/C7/C12/C14 + core (one file/id)
+    events/events.jsonl          append-only platform fact log
   ```
 
-  Keeping this on a **named** volume is what lets a signed-in user and stored data **survive a redeploy**:
-  `forge deploy` recreates the sidecar container onto the new pinned image, and a named volume persists
-  across that recreate. An ephemeral filesystem would wipe every session + refresh token (→ everyone
-  logged out) and every stored blob.
+  **This is a summary — the rigorous, code-verified per-capability layout (format, write model, and
+  concurrency-safety of each store) is [07 · Data storage](07-data-storage.md).** Keeping this on a
+  **named** volume is what lets a signed-in user and stored data **survive a redeploy**: `forge deploy`
+  recreates the sidecar container onto the new pinned image, and a named volume persists across that
+  recreate. An ephemeral filesystem would wipe every session + refresh token (→ everyone logged out) and
+  every stored blob.
 
-- **`postgres_data`** — the app's own SQL database volume (when a DB is provisioned). The app owns its
-  schema; Forge only wires the container + URL.
+- **`postgres_data`** — the app's **own** SQL database volume, present only when the app was provisioned
+  with a DB. The app owns its schema; Forge only wires the container + injects `DATABASE_URL` into the
+  `web` container. **No Forge capability stores platform state in Postgres or Redis** (see
+  [07 · Data storage §4](07-data-storage.md)).
 
-> The v1 store is **filesystem JSON/JSONL**. The store interface is the seam: a Postgres-backed store (and
-> an S3/MinIO blob backend) are documented swap-ins behind the same API without changing any capability.
+> The v1 platform store is **filesystem JSON/JSONL/binary** — there is no database engine behind any
+> Forge capability. Capabilities depend on a store object's *method surface* (not on files directly), so a
+> Postgres/S3 backend is a feasible future swap — but that swap is **planned, not implemented** (no
+> pluggable-backend interface exists today; see [07 · Data storage §3](07-data-storage.md)).
 
 ## What the control plane does during a deploy
 
