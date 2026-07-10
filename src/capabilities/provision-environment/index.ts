@@ -24,6 +24,10 @@ const inputSchema = z.object({
   // Additive: merged with what's already declared. Forge injects the values from
   // its encrypted store at run time; they never appear in the generated compose.
   secrets: z.array(z.string()).default([]),
+  // P26 — where Forge's OWN platform state (C10 identity, …) lives: 'filesystem' (default) or
+  // 'postgres' (a separate forge_platform database the sidecar dials via FORGE_DB_URL). Remembered in
+  // the manifest so `productionize` wires the sidecar + compose. Carried forward convergently.
+  platform_store: z.enum(['filesystem', 'postgres']).optional(),
 });
 
 type Input = z.infer<typeof inputSchema>;
@@ -76,7 +80,11 @@ export const provisionEnvironment: Capability<Input, Environment> = {
       : [];
 
     // Converge. Throws (422) if a data-volume service would be dropped without --force.
-    const desired = convergeInfra(prev, input, appPort, legacySecrets);
+    const desired = convergeInfra(prev, input, appPort, legacySecrets) as ReturnType<typeof convergeInfra> & { platform_store?: string };
+    // P26 — carry the platform-store choice forward convergently (this call's flag wins, else the
+    // remembered value), so a flag-less re-provision never resets it.
+    const platformStore = input.platform_store ?? (prev as { platform_store?: string } | null)?.platform_store;
+    if (platformStore) desired.platform_store = platformStore;
 
     const compose = generateCompose({
       appName: app.name,

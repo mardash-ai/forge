@@ -710,4 +710,33 @@ program
     process.stdout.write(lines.slice(-max).join('\n') + '\n');
   });
 
+// P26 — platform storage operations. `forge storage migrate --store identity` backfills the
+// filesystem identity state into Postgres (ids preserved), the first step of the identity → Postgres
+// migration. Runs LOCALLY (inside the control-plane container, which has FORGE_STATE_DIR + FORGE_DB_URL),
+// not through the HTTP API — it is a one-shot operational command, not a Capability.
+const storage = program.command('storage').description('Platform storage operations (P26)');
+storage
+  .command('migrate')
+  .description('Backfill a platform store from the filesystem into Postgres. Requires FORGE_DB_URL.')
+  .option('--store <name>', 'store to migrate', 'identity')
+  .option('--app <name>', 'migrate only this app (default: every app with filesystem state)')
+  .action(async (opts) => {
+    if (opts.store !== 'identity') fail(`unknown store "${opts.store}" (increment 1 supports: identity)`);
+    const dbUrl = process.env.FORGE_DB_URL;
+    if (!dbUrl) fail('FORGE_DB_URL is required to migrate into Postgres (e.g. postgres://forge_platform:***@postgres:5432/forge_platform).');
+    const { Pool } = await import('pg');
+    const { FsIdentityBackend } = await import('../storage/backends/identity/fs');
+    const { PgIdentityBackend, ensureIdentitySchema } = await import('../storage/backends/identity/pg');
+    const { backfillIdentity, listFsIdentityApps } = await import('../storage/backends/identity/migrate');
+    const pool = new Pool({ connectionString: dbUrl });
+    try {
+      await ensureIdentitySchema(pool);
+      const apps = opts.app ? [opts.app] : await listFsIdentityApps();
+      const migrated = await backfillIdentity(new FsIdentityBackend(), new PgIdentityBackend(pool), apps);
+      process.stdout.write(JSON.stringify({ store: 'identity', apps: apps.length, migrated }, null, 2) + '\n');
+    } finally {
+      await pool.end();
+    }
+  });
+
 program.parseAsync(process.argv).catch((err) => fail(String(err?.message ?? err)));

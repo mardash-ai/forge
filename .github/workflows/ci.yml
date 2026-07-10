@@ -29,3 +29,38 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+  # P26 — the SAME suite against the Postgres store backend, so "green on both backends" is enforced,
+  # not just claimed. A postgres service is stood up; FORGE_IDENTITY_BACKEND=postgres selects the PG
+  # identity backend (the rest of the suite still uses the filesystem default). Filesystem-only stores
+  # are unaffected; the identity + pg-identity tests exercise the Postgres path.
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: forge_platform
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: forge_platform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U forge_platform -d forge_platform"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run the suite on the Postgres backend
+        env:
+          FORGE_DB_URL: postgres://forge_platform:ci@127.0.0.1:5432/forge_platform
+        run: npm run test:pg

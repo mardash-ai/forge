@@ -317,8 +317,16 @@ describe('identity store — durable, multi-user, unique email', () => {
     await authStore.putVerifyToken('app_tok', h3, u.id, 3600);
     const fs = await import('node:fs/promises');
     const { authFile } = await import('../src/shared/paths');
-    const onDisk = await fs.readFile(authFile('app_tok'), 'utf8');
-    expect(onDisk).toContain(h3);
-    expect(onDisk).not.toContain(raw);
+    // The raw token is never persisted — only its hash. On the FILESYSTEM backend we assert that
+    // against the on-disk doc; the Postgres backend enforces the same invariant in its schema
+    // (tests/pg-identity.test.ts). Assert only when an on-disk file exists, so this SAME test passes
+    // on both backends (P26).
+    try {
+      const onDisk = await fs.readFile(authFile('app_tok'), 'utf8');
+      expect(onDisk).toContain(h3);
+      expect(onDisk).not.toContain(raw);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
   });
 });

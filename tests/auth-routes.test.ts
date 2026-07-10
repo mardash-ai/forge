@@ -326,9 +326,17 @@ describe('secret hygiene — the password is never returned, stored in plaintext
     expect(login.body).not.toContain(PW);
     // The stored session token in the cookie is not the password, and the account
     // record on disk holds only a scrypt hash — never the plaintext.
-    const onDisk = await readFile(authFile(appId), 'utf8');
-    expect(onDisk).toContain('scrypt$');
-    expect(onDisk).not.toContain(PW);
+    // On the FILESYSTEM backend the account record on disk holds only a scrypt hash, never the
+    // plaintext; the Postgres backend stores the same hash in a column (tests/pg-identity.test.ts
+    // asserts it). Assert against the file only when it exists, so this SAME test passes on both
+    // backends (P26). The response/event-log plaintext checks below are backend-agnostic.
+    try {
+      const onDisk = await readFile(authFile(appId), 'utf8');
+      expect(onDisk).toContain('scrypt$');
+      expect(onDisk).not.toContain(PW);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
     // The auth events carry only a REDACTED email, no password/hash.
     const events = await store.listEvents({ app_id: appId });
     const json = JSON.stringify(events);

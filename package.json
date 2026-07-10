@@ -1,6 +1,6 @@
 {
   "name": "forge",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "private": true,
   "type": "module",
   "description": "Forge — the AI-native software creation platform for Builders. Docker-first, API-first.",
@@ -14,18 +14,21 @@
     "data-plane": "tsx src/data-plane/server.ts",
     "cli": "tsx src/cli/index.ts",
     "test": "vitest run",
+    "test:pg": "vitest run --config vitest.pg.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@fastify/multipart": "^8.3.1",
     "commander": "^12.1.0",
     "fastify": "^4.28.1",
+    "pg": "^8.22.0",
     "tsx": "^4.19.2",
     "undici": "^6.27.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "@types/pg": "^8.20.0",
     "typescript": "^5.6.3",
     "vitest": "^2.1.5"
   }

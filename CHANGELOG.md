@@ -9,6 +9,54 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.28.0] — 2026-07-10
+
+### Added
+- **P26 (increment 1) — a pluggable store-backend seam + C10 identity/sessions on Postgres.** Forge's
+  own platform state is no longer filesystem-only. A per-domain backend interface
+  (`src/storage/backends/identity/types.ts` → `IdentityBackend`) now has TWO implementations selected
+  by config — `filesystem` (the default; the legacy JSON-doc store, unchanged) and `postgres`
+  (transactional, multi-replica-safe). Selection: `FORGE_STORE_BACKEND` (global default) +
+  per-domain `FORGE_IDENTITY_BACKEND` + `FORGE_DB_URL`, wired once by a `makeBackends(cfg)` factory at
+  the composition root (`src/storage/backends/index.ts`). The C10 hosted-auth routes, `inspect`, and
+  the whole test suite are **contract-stable** — `plugins/auth-identity/store.ts` is now a thin facade
+  forwarding to the configured backend, with identical exported signatures.
+- **The `(owner, group_id, visibility)` ownership model, baked in now (O4).** The Postgres identity
+  schema carries `groups` + `group_members`; creating a user also creates a personal **group-of-one**
+  + an owner membership in the same transaction, and exposes `getUserScope()` — so multi-member
+  households (C31) light up later with **no second migration**. `StoredUser` gains an optional
+  `personal_group_id`.
+- **The data-plane sidecar is datastore-aware.** Both servers initialize the backends eagerly at boot
+  (`getBackends()`): a Postgres backend opens a small pooled connection + ensures the schema, and the
+  boot **fail-fasts** with a clear message if `FORGE_DB_URL` is missing or the DB is unreachable
+  (verified). `productionize`/`provision` wire a **separate `forge_platform` database + a
+  least-privilege role** (co-located on the app's Postgres by default, or a dedicated instance when the
+  app has no DB): `forge provision --platform-store postgres` (remembered convergently in the
+  manifest), and `productionize` emits the sidecar `FORGE_DB_URL`, the `forge_platform` init script
+  (`forge-platform-init.sh`), the `depends_on: postgres`, and the documented `FORGE_PLATFORM_DB_PASSWORD`
+  in `.env.prod.example`.
+- **Backfill + migration mechanism.** `forge storage migrate --store identity` copies each app's
+  filesystem identity state into Postgres with **ids preserved** (live cookies/sessions stay valid),
+  the first step of backfill → dual-write → cutover. A `DualWriteIdentityBackend`
+  (`FORGE_IDENTITY_DUAL_WRITE=1`) reads Postgres while mirroring writes back to the filesystem, so an
+  operator can roll a bad cutover back with no data loss.
+- **Both backends are proven green in CI.** A new `test-postgres` job runs the SAME suite against a
+  Postgres service (`npm run test:pg`), and `tests/pg-identity.test.ts` adds Postgres-specific coverage
+  (password/token hashing in the DB, the O4 group-of-one, backfill parity, and a P27 concurrent-rotation
+  race that yields exactly one success).
+
+### Fixed
+- **P27 — the unguarded read-modify-write on the identity store is eliminated on the Postgres backend.**
+  Every identity mutation runs in ONE transaction (refresh-token rotation locks the row `FOR UPDATE`;
+  single-use token consume is one conditional `UPDATE … RETURNING`), so the lost-update / rotation race
+  is structurally impossible — no application-level lock needed. (The filesystem backend keeps its
+  existing per-app mutex + atomic temp+rename.)
+
+### Changed
+- `plugins/auth-identity/store.ts` is now a forwarding facade over the pluggable backend (no behavior
+  change on the filesystem default). Adds the `pg` runtime dependency (pure JS — stays multi-arch and
+  ships in the slim data-plane image).
+
 ## [0.27.0] — 2026-07-10
 
 ### Fixed
@@ -1204,7 +1252,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/mardash-ai/forge/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/mardash-ai/forge/compare/v0.26.5...v0.27.0
 [0.26.5]: https://github.com/mardash-ai/forge/compare/v0.26.4...v0.26.5
 [0.26.4]: https://github.com/mardash-ai/forge/compare/v0.26.3...v0.26.4

@@ -18,6 +18,7 @@ import { registerThemeRoutes } from './theme-routes';
 import { registerStatusRoutes } from './status-routes';
 import { registerIncidentRoutes } from './incident-routes';
 import { logPath } from '../shared/paths';
+import { getBackends } from '../storage/backends';
 
 // The Forge HTTP API. Capability APIs perform behavior; Resource/Event APIs
 // expose state and facts. Humans and agents use these SAME contracts.
@@ -147,6 +148,9 @@ const port = Number(process.env.PORT ?? 3717);
 
 async function main() {
   await store.init();
+  // P26 — eager backend init: fail the boot on a bad datastore config (opens the Postgres pool +
+  // ensures the schema when selected; a cheap no-op for the filesystem default).
+  const backends = await getBackends();
   await app.listen({ port, host: '0.0.0.0' });
   // Resume durable scheduled work (C2) — jobs due while the plane was down fire now.
   startScheduler(store, {
@@ -156,7 +160,7 @@ async function main() {
   // per-app uptime history the status page renders. No-op when disabled.
   startHealthSampler(store, { planeLabel: 'Forge control plane' });
   // eslint-disable-next-line no-console
-  console.log(`forge api listening on http://0.0.0.0:${port}`);
+  console.log(`forge api listening on http://0.0.0.0:${port} (store ${backends.describe()})`);
 }
 
 main().catch((err) => {

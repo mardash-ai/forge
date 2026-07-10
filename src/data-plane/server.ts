@@ -21,6 +21,7 @@ import { registerThemeRoutes } from '../api/theme-routes';
 import { registerStatusRoutes } from '../api/status-routes';
 import { registerIncidentRoutes } from '../api/incident-routes';
 import { logPath } from '../shared/paths';
+import { getBackends } from '../storage/backends';
 
 // The Forge DATA PLANE server — the production/runtime counterpart to the control
 // plane. It ships in a SLIM image (no Docker CLI, no build/test/lint, no dev deps)
@@ -179,6 +180,11 @@ const port = Number(process.env.PORT ?? 3718);
 
 async function main() {
   await store.init();
+  // P26 — initialize the pluggable store backends EAGERLY so a bad datastore config fails the boot,
+  // not the first request. When a Postgres backend is selected (FORGE_IDENTITY_BACKEND=postgres) this
+  // opens the pool + ensures the schema, and throws (→ process exit below) if FORGE_DB_URL is missing
+  // or the database is unreachable. Filesystem (the default) is a cheap no-op.
+  const backends = await getBackends();
   const appName = process.env.FORGE_APP_NAME ?? 'app';
   await ensureApp(appName);
   const loaded = await loadJobsFile(appName);
@@ -190,7 +196,7 @@ async function main() {
   // per-app uptime history the status page renders. No-op when disabled.
   startHealthSampler(store, { planeLabel: 'Forge data plane' });
   // eslint-disable-next-line no-console
-  console.log(`forge data-plane listening on http://0.0.0.0:${port} (app=${appName}, jobs=${loaded})`);
+  console.log(`forge data-plane listening on http://0.0.0.0:${port} (app=${appName}, jobs=${loaded}, store ${backends.describe()})`);
 }
 
 main().catch((err) => {

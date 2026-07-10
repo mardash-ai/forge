@@ -15,7 +15,9 @@ import {
   generateEnvProdExample,
   generateProvisioningRunbook,
   generateStarterTheme,
+  generatePlatformDbInitSh,
   PROVISIONING_FILE,
+  PLATFORM_DB_INIT_FILE,
   applyStandaloneOutput,
   defaultNextConfig,
 } from '../../plugins/productionize-nextjs-compose/index';
@@ -102,6 +104,12 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
 
     const withPostgres = Boolean(infra.postgres);
     const withRedis = Boolean(infra.redis);
+    // P26 — platform storage on Postgres: opt-in via `forge provision --platform-store postgres`
+    // (remembered in the manifest infra) or the FORGE_PLATFORM_STORE=postgres env. Wires the sidecar
+    // (FORGE_DB_URL → a separate forge_platform DB) + the compose postgres service/init script.
+    const withPlatformDb =
+      (infra as { platform_store?: string }).platform_store === 'postgres' ||
+      process.env.FORGE_PLATFORM_STORE === 'postgres';
     const secrets = Array.isArray(infra.secrets) ? infra.secrets : [];
     // The app declares scheduled jobs (C2) by committing a `forge.jobs.json` at the
     // repo root — the same file the data-plane reads to auto-register on boot. When
@@ -149,14 +157,23 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
         certResolver: cfg.cert_resolver,
         withJobs,
         withTheme,
+        platformDb: withPlatformDb,
       }),
     );
+
+    // P26 — when platform storage is on Postgres AND the app has its OWN database, emit the first-init
+    // script that creates the separate least-priv forge_platform role + db on that instance (mounted
+    // into the postgres service by the compose above). A dedicated platform Postgres (no app DB) needs
+    // no script — its entrypoint initializes the role/db directly.
+    if (withPlatformDb && withPostgres) {
+      await writeFile(path.join(repo, PLATFORM_DB_INIT_FILE), generatePlatformDbInitSh());
+    }
 
     // 4. .env.prod.example — documents .env.prod (never a real value); each secret is
     //    now annotated (what it is + how to obtain it) from the C13 secret catalog.
     await writeFile(
       path.join(repo, '.env.prod.example'),
-      generateEnvProdExample({ appName: app.name, host: cfg.host, withPostgres, withRedis, secrets, withJobs }),
+      generateEnvProdExample({ appName: app.name, host: cfg.host, withPostgres, withRedis, secrets, withJobs, platformDb: withPlatformDb }),
     );
 
     // 5. PROVISIONING.md — the per-app operator runbook (C13): exactly the secrets THIS
@@ -171,8 +188,11 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
     manifest.production = cfg;
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
 
-    const services = ['web', 'data-plane', ...(withPostgres ? ['postgres'] : []), ...(withRedis ? ['redis'] : [])];
-    const files = ['Dockerfile', '.dockerignore', 'compose.prod.yaml', '.env.prod.example', PROVISIONING_FILE, THEME_FILE, found ?? 'next.config.mjs'];
+    const services = ['web', 'data-plane', ...(withPostgres || withPlatformDb ? ['postgres'] : []), ...(withRedis ? ['redis'] : [])];
+    const files = [
+      'Dockerfile', '.dockerignore', 'compose.prod.yaml', '.env.prod.example', PROVISIONING_FILE, THEME_FILE, found ?? 'next.config.mjs',
+      ...(withPlatformDb && withPostgres ? [PLATFORM_DB_INIT_FILE] : []),
+    ];
 
     const resource: ProductionArtifacts = {
       ...baseResource('ProductionArtifacts', app.id),
