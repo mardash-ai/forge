@@ -718,10 +718,10 @@ const storage = program.command('storage').description('Platform storage operati
 storage
   .command('migrate')
   .description('Backfill a platform store from the filesystem into Postgres. Requires FORGE_DB_URL.')
-  .option('--store <name>', 'store to migrate: identity | search | events | notifications', 'identity')
+  .option('--store <name>', 'store to migrate: identity | search | events | notifications | blobs', 'identity')
   .option('--app <name>', 'migrate only this app (default: every app with filesystem state)')
   .action(async (opts) => {
-    const supported = ['identity', 'search', 'events', 'notifications'];
+    const supported = ['identity', 'search', 'events', 'notifications', 'blobs'];
     if (!supported.includes(opts.store)) {
       fail(`unknown store "${opts.store}" (supported: ${supported.join(', ')})`);
     }
@@ -754,7 +754,7 @@ storage
         const apps = opts.app ? [opts.app] : await listFsEventApps();
         const migrated = await backfillEvents(new FsEventBackend(), new PgEventBackend(pool), apps);
         process.stdout.write(JSON.stringify({ store: 'events', apps: apps.length, migrated }, null, 2) + '\n');
-      } else {
+      } else if (opts.store === 'notifications') {
         const { FsNotificationBackend } = await import('../storage/backends/notifications/fs');
         const { PgNotificationBackend, ensureNotificationSchema } = await import('../storage/backends/notifications/pg');
         const { backfillNotifications, listFsNotificationApps } = await import('../storage/backends/notifications/migrate');
@@ -762,6 +762,21 @@ storage
         const apps = opts.app ? [opts.app] : await listFsNotificationApps();
         const migrated = await backfillNotifications(new FsNotificationBackend(), new PgNotificationBackend(pool), apps);
         process.stdout.write(JSON.stringify({ store: 'notifications', apps: apps.length, migrated }, null, 2) + '\n');
+      } else {
+        // blobs: bytes filesystem → S3/MinIO, metadata → Postgres. Needs the S3 settings too.
+        const { loadStoreConfig } = await import('../storage/backends/config');
+        const s3cfg = loadStoreConfig().s3;
+        if (!s3cfg) fail('FORGE_S3_ENDPOINT + FORGE_S3_BUCKET (and creds) are required to migrate blobs into the object store.');
+        const { blobStore } = await import('../storage/blob-store');
+        const { S3Client } = await import('../storage/backends/blobs/s3-client');
+        const { S3BlobBackend, ensureBlobSchema } = await import('../storage/backends/blobs/s3');
+        const { backfillBlobs, listFsBlobApps } = await import('../storage/backends/blobs/migrate');
+        await ensureBlobSchema(pool);
+        const s3 = new S3Client(s3cfg!);
+        await s3.ensureBucket();
+        const apps = opts.app ? [opts.app] : await listFsBlobApps();
+        const migrated = await backfillBlobs(blobStore, new S3BlobBackend(pool, s3), apps);
+        process.stdout.write(JSON.stringify({ store: 'blobs', apps: apps.length, migrated }, null, 2) + '\n');
       }
     } finally {
       await pool.end();

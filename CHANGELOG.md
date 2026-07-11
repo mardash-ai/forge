@@ -9,6 +9,37 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.32.0] — 2026-07-10
+
+### Added
+- **P26 (increment 5) — C20 blobs on an object store (S3/MinIO) + metadata in Postgres.** The first
+  store whose BYTES move off the filesystem. A pluggable `BlobBackend` interface with two
+  implementations: `filesystem` (bytes on the `forge_state` volume + metadata in a JSON map, the legacy
+  default) and `s3` (**bytes in an S3-compatible object store, metadata in a `forge_blobs` Postgres
+  table**). Config-selected: `FORGE_BLOBS_BACKEND=s3` (or `FORGE_STORE_BACKEND=postgres`) +
+  `FORGE_S3_ENDPOINT`/`FORGE_S3_BUCKET`/`FORGE_S3_ACCESS_KEY`/`FORGE_S3_SECRET_KEY`/`FORGE_S3_REGION` +
+  `FORGE_DB_URL`. The bucket is ensured at boot (fail-fast).
+- **A zero-dependency S3 client.** AWS Signature V4 (path-style) implemented on native `crypto` + `fetch`
+  (`src/storage/backends/blobs/s3-client.ts`) — no SDK, so the slim data-plane image stays clean and
+  multi-arch. It targets **MinIO** (dev/test) and AWS S3 (prod) identically, and preserves the C20
+  contract's **native ranged reads** (a Range `GetObject` streamed to the response) + ETag (still derived
+  from the metadata checksum).
+- **Contract-stable.** `POST /blobs` (multipart→`blob_id`), `GET /blobs/:id?owner=` (Range/ETag/304),
+  `DELETE /blobs/:id`, `GET /blobs` — payloads + owner-scoping + magic-byte/allowlist/size/quota checks
+  are unchanged. `blobs-routes.ts` now streams through the configured backend (`openRange` replaces the
+  filesystem `createReadStream`); the same store + route suite passes on **both** backends (filesystem
+  and s3+postgres). The per-owner access + quota checks are driven off the metadata table.
+- **O4 scope baked in.** `forge_blobs` carries `group_id` + `visibility` (default `private`) — same model
+  as the other stores — so group-shared files (households / C31) light up with no second migration.
+- **Blob migration + backfill.** `forge storage migrate --store blobs` copies each app's bytes into the
+  object store and metadata into Postgres with the **`blob_id` preserved** (the app's stored handle keeps
+  working); a `DualWriteBlobBackend` (`FORGE_BLOBS_DUAL_WRITE=1`) reads S3+Postgres while mirroring bytes
+  + metadata to the filesystem for a reversible cutover. Commit is atomic: a metadata-write failure rolls
+  back the just-PUT object (no orphan).
+- **CI covers blobs on the object store.** The `test-postgres` job now also stands up **MinIO**;
+  `tests/pg-blobs.test.ts` asserts bytes really land in the bucket, metadata + O4 columns in Postgres,
+  the rollback path, ranged reads, and id/bytes-preserving backfill.
+
 ## [0.31.0] — 2026-07-10
 
 ### Added
@@ -1343,7 +1374,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.31.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.32.0...HEAD
+[0.32.0]: https://github.com/mardash-ai/forge/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/mardash-ai/forge/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/mardash-ai/forge/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/mardash-ai/forge/compare/v0.28.0...v0.29.0

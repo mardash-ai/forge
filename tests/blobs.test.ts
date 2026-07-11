@@ -17,6 +17,13 @@ import type { Application } from '../src/resources/types';
 // (multipart upload + owner-scoped serve/delete/list) are driven against a throwaway FORGE_STATE_DIR /
 // Fastify instance, including a real round-trip of raw bytes.
 
+// P26 — one route test forces a FILESYSTEM temp-path write failure (spying on blobStore.prepareTemp).
+// That failure mode is filesystem-specific; on the object-store (s3) backend the route stages to a
+// different temp + PUTs to S3, so that specific test is skipped there (the S3 failure path is covered by
+// tests/pg-blobs.test.ts). Every other test — the pure sniffer, the FS store unit tests (which always
+// exercise the FS blobStore directly), and the contract route tests — runs on both backends.
+const S3_BLOBS = process.env.FORGE_BLOBS_BACKEND === 's3';
+
 // --- fixtures ---------------------------------------------------------------------------------------
 const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const png = (payload = 'forge-test-png-body'): Buffer => Buffer.concat([PNG_SIG, Buffer.from(payload)]);
@@ -336,7 +343,7 @@ describe('C20 — blob routes', () => {
     expect((await server.inject({ method: 'GET', url: '/blobs/blob_whatever' })).statusCode).toBe(400); // no owner
   });
 
-  it('ATOMIC on a write failure mid-upload: a broken temp target → 400, nothing persisted (no orphan)', async () => {
+  it.skipIf(S3_BLOBS)('ATOMIC on a write failure mid-upload (filesystem): a broken temp target → 400, nothing persisted (no orphan)', async () => {
     // Force the streamed write to fail by handing the route a temp path under a non-existent directory.
     vi.spyOn(blobStore, 'prepareTemp').mockResolvedValueOnce(path.join(dir, 'no', 'such', 'dir', 'x.tmp'));
     const r = await upload({ fields: { owner: 'A', content_type: 'image/png' }, file: { data: png('interrupted'), contentType: 'image/png' } });

@@ -1,11 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fastifyMultipart from '@fastify/multipart';
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { createWriteStream } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { store } from '../storage/store';
-import { blobStore } from '../storage/blob-store';
+import { getBackends } from '../storage/backends';
 import { newId } from '../shared/ids';
 import { nowIso } from '../shared/time';
 import {
@@ -168,7 +168,8 @@ export function registerBlobRoutes(
       return reply.status(415).send(blobError('unsupported_media_type', 'POST /blobs expects multipart/form-data with a `file` field.', 'change-input'));
     }
     const config = blobConfig();
-    const tmpPath = await blobStore.prepareTemp();
+    const backend = (await getBackends()).blobs;
+    const tmpPath = await backend.prepareTemp();
 
     let up: CollectedUpload;
     try {
@@ -260,7 +261,7 @@ export function registerBlobRoutes(
 
     let result;
     try {
-      result = await blobStore.commit(app_id, tmpPath, meta, config);
+      result = await backend.commit(app_id, tmpPath, meta, config);
     } catch (err) {
       await safeCleanup(tmpPath);
       return mapStreamError(reply, err as Error);
@@ -283,7 +284,8 @@ export function registerBlobRoutes(
     const app_id = await resolveAppId(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
 
-    const meta = await blobStore.get(app_id, owner, id);
+    const backend = (await getBackends()).blobs;
+    const meta = await backend.get(app_id, owner, id);
     if (!meta) return reply.status(404).send(notFound); // absent OR another owner's — never 403
 
     const etag = `"${meta.checksum}"`;
@@ -302,15 +304,14 @@ export function registerBlobRoutes(
     reply.header('Accept-Ranges', 'bytes');
     if (meta.filename) reply.header('Content-Disposition', `inline; filename="${meta.filename}"`);
 
-    const filePath = blobStore.bytesFile(app_id, id);
     if (range) {
       reply.status(206);
       reply.header('Content-Range', `bytes ${range.start}-${range.end}/${meta.size}`);
       reply.header('Content-Length', String(range.end - range.start + 1));
-      return reply.send(createReadStream(filePath, { start: range.start, end: range.end }));
+      return reply.send(await backend.openRange(app_id, id, { start: range.start, end: range.end }));
     }
     reply.header('Content-Length', String(meta.size));
-    return reply.send(createReadStream(filePath));
+    return reply.send(await backend.openRange(app_id, id));
   });
 
   // === DELETE /blobs/:id — owner-scoped, idempotent-by-effect (204 on success, 404 otherwise) ==========
@@ -323,7 +324,8 @@ export function registerBlobRoutes(
     const app_id = await resolveAppId(q.app ?? body.app);
     if (!app_id) return reply.status(404).send(unknownApp);
 
-    const deleted = await blobStore.delete(app_id, owner, id);
+    const backend = (await getBackends()).blobs;
+    const deleted = await backend.delete(app_id, owner, id);
     if (!deleted) return reply.status(404).send(notFound); // absent / already-gone / not-owner
     return reply.status(204).send();
   });
@@ -336,8 +338,9 @@ export function registerBlobRoutes(
     const app_id = await resolveAppId(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
     const config = blobConfig();
-    const metas = await blobStore.list(app_id, owner);
-    const usage = await blobStore.usage(app_id, owner);
+    const backend = (await getBackends()).blobs;
+    const metas = await backend.list(app_id, owner);
+    const usage = await backend.usage(app_id, owner);
     return reply.status(200).send({
       blobs: metas.map(toDescriptor),
       usage: { bytes: usage.bytes, count: usage.count, quota_bytes: config.quotaBytes, quota_objects: config.quotaObjects },

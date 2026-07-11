@@ -16,6 +16,11 @@ import type { NotificationBackend } from './notifications/types';
 import { FsNotificationBackend } from './notifications/fs';
 import { PgNotificationBackend, ensureNotificationSchema } from './notifications/pg';
 import { DualWriteNotificationBackend } from './notifications/dual';
+import type { BlobBackend } from './blobs/types';
+import { blobStore } from '../blob-store';
+import { S3Client } from './blobs/s3-client';
+import { S3BlobBackend, ensureBlobSchema } from './blobs/s3';
+import { DualWriteBlobBackend } from './blobs/dual';
 
 export { loadStoreConfig, needsDatabase } from './config';
 export type { StoreConfig, BackendKind } from './config';
@@ -30,6 +35,7 @@ export interface Backends {
   search: SearchBackend;
   events: EventBackend;
   notifications: NotificationBackend;
+  blobs: BlobBackend;
   // The Postgres pool, when one was opened (shared across domains as more migrate).
   pool?: Pool;
   describe(): string;
@@ -53,6 +59,7 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     if (cfg.search === 'postgres') await ensureSearchSchema(pool);
     if (cfg.events === 'postgres') await ensureEventSchema(pool);
     if (cfg.notifications === 'postgres') await ensureNotificationSchema(pool);
+    if (cfg.blobs === 's3') await ensureBlobSchema(pool);
   }
 
   // identity
@@ -107,19 +114,44 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     notificationsLabel = 'filesystem';
   }
 
+  // blobs (C20) — bytes+metadata on the filesystem, OR bytes in S3/MinIO + metadata in Postgres. The FS
+  // backend is the shared `blobStore` singleton (so the store's own unit tests + the route observe the
+  // same instance). The S3 backend needs both the pool (metadata) and S3 settings (bytes); the bucket is
+  // ensured at boot (fail-fast).
+  let blobs: BlobBackend;
+  let blobsLabel: string;
+  if (cfg.blobs === 's3') {
+    if (!cfg.s3) {
+      throw new Error(
+        'FORGE_S3_ENDPOINT + FORGE_S3_BUCKET are required when the S3 blob backend is selected ' +
+          '(FORGE_STORE_BACKEND=postgres or FORGE_BLOBS_BACKEND=s3). Also set FORGE_S3_ACCESS_KEY/FORGE_S3_SECRET_KEY.',
+      );
+    }
+    const s3 = new S3Client(cfg.s3);
+    await s3.ensureBucket();
+    const pg = new S3BlobBackend(pool!, s3);
+    blobs = cfg.blobsDualWrite ? new DualWriteBlobBackend(pg, blobStore) : pg;
+    blobsLabel = cfg.blobsDualWrite ? 's3+postgres+dualwrite' : 's3+postgres';
+  } else {
+    blobs = blobStore;
+    blobsLabel = 'filesystem';
+  }
+
   return {
     identity,
     search,
     events,
     notifications,
+    blobs,
     pool,
     describe: () =>
-      `identity=${identityLabel} search=${searchLabel} events=${eventsLabel} notifications=${notificationsLabel}`,
+      `identity=${identityLabel} search=${searchLabel} events=${eventsLabel} notifications=${notificationsLabel} blobs=${blobsLabel}`,
     async close() {
       await identity.close?.();
       await search.close?.();
       await events.close?.();
       await notifications.close?.();
+      await blobs.close?.();
       if (pool) await pool.end();
     },
   };

@@ -1,7 +1,13 @@
 import { mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
+import { Readable } from 'node:stream';
 import path from 'node:path';
 import { blobsDir, blobsMetaFile, blobsBytesDir, blobBytesFile } from '../shared/paths';
 import type { BlobConfig, BlobMetadata } from '../blobs/types';
+import type { BlobBackend, MigratableBlobBackend, OwnerUsage, CommitResult } from './backends/blobs/types';
+
+export type { OwnerUsage, CommitResult } from './backends/blobs/types';
 
 // C20 — the durable, per-app FILE / BLOB store.
 //
@@ -42,16 +48,11 @@ async function safeUnlink(p: string): Promise<void> {
   }
 }
 
-export interface OwnerUsage {
-  bytes: number;
-  count: number;
-}
-
-export type CommitResult =
-  | { ok: true; meta: BlobMetadata }
-  | { ok: false; reason: 'quota_bytes' | 'quota_objects'; usage: OwnerUsage };
-
-export class BlobStore {
+// P26 — the FILESYSTEM blob backend (the legacy C20 behavior, unchanged): bytes on the forge_state
+// volume, metadata in a per-app JSON map. The DEFAULT backend. Keeps `bytesFile` + `writeMap` (used by
+// the store's own unit tests) alongside the pluggable BlobBackend surface (`openRange` + the migration
+// methods).
+export class BlobStore implements BlobBackend, MigratableBlobBackend {
   private locks = new Map<string, Promise<unknown>>();
 
   private withLock<T>(appId: string, fn: () => Promise<T>): Promise<T> {
@@ -183,6 +184,31 @@ export class BlobStore {
     return Object.values(map)
       .filter((m) => m.owner === owner)
       .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
+  }
+
+  // Serve the blob's bytes (optionally a byte range) — the route pipes this to the response. The metadata
+  // (hence owner scoping + in-bounds range) has already been resolved by the route via get().
+  async openRange(appId: string, blobId: string, range?: { start: number; end: number }): Promise<Readable> {
+    const filePath = this.bytesFile(appId, blobId);
+    return range ? createReadStream(filePath, { start: range.start, end: range.end }) : createReadStream(filePath);
+  }
+
+  // --- migration surface ---------------------------------------------------
+  async exportMeta(appId: string): Promise<BlobMetadata[]> {
+    return Object.values(await this.readMap(appId));
+  }
+
+  async openBytes(appId: string, blobId: string): Promise<Readable> {
+    return createReadStream(this.bytesFile(appId, blobId));
+  }
+
+  async importOne(appId: string, meta: BlobMetadata, bytes: Readable): Promise<void> {
+    const finalPath = this.bytesFile(appId, meta.blob_id);
+    await mkdir(blobsBytesDir(appId), { recursive: true });
+    await pipeline(bytes, createWriteStream(finalPath));
+    const map = await this.readMap(appId);
+    map[storageKey(meta.owner, meta.blob_id)] = meta;
+    await this.writeMap(appId, map);
   }
 }
 

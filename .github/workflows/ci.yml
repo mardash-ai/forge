@@ -30,10 +30,10 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-  # P26 — the SAME suite against the Postgres store backend, so "green on both backends" is enforced,
-  # not just claimed. A postgres service is stood up; FORGE_IDENTITY_BACKEND=postgres selects the PG
-  # identity backend (the rest of the suite still uses the filesystem default). Filesystem-only stores
-  # are unaffected; the identity + pg-identity tests exercise the Postgres path.
+  # P26 — the SAME suite against the Postgres + object-store backends, so "green on both backends" is
+  # enforced, not just claimed. A Postgres service + a MinIO container are stood up; the vitest.pg.config
+  # selects Postgres for identity/search/events/notifications and s3 (MinIO) for blob bytes (metadata in
+  # Postgres). The filesystem-only stores are unaffected; the pg-* tests exercise the Postgres/S3 paths.
   test-postgres:
     runs-on: ubuntu-latest
     services:
@@ -60,7 +60,22 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Run the suite on the Postgres backend
+      # MinIO is started as a container (a `services:` block can't pass the required `server /data` arg).
+      - name: Start MinIO (S3-compatible object store)
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio server /data
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9000/minio/health/live >/dev/null; then echo "minio up"; break; fi
+            sleep 1
+          done
+
+      - name: Run the suite on the Postgres + object-store backends
         env:
           FORGE_DB_URL: postgres://forge_platform:ci@127.0.0.1:5432/forge_platform
+          FORGE_S3_ENDPOINT: http://127.0.0.1:9000
+          FORGE_S3_BUCKET: forge-ci-blobs
+          FORGE_S3_ACCESS_KEY: minioadmin
+          FORGE_S3_SECRET_KEY: minioadmin
         run: npm run test:pg

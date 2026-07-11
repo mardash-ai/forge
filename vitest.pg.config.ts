@@ -16,6 +16,13 @@ export default defineConfig({
       FORGE_SEARCH_BACKEND: 'postgres',
       FORGE_EVENTS_BACKEND: 'postgres',
       FORGE_NOTIFICATIONS_BACKEND: 'postgres',
+      FORGE_BLOBS_BACKEND: 's3',
+      // S3 defaults for the local MinIO the test:pg run + CI use; overridable from the environment.
+      FORGE_S3_ENDPOINT: process.env.FORGE_S3_ENDPOINT ?? 'http://127.0.0.1:59000',
+      FORGE_S3_BUCKET: process.env.FORGE_S3_BUCKET ?? 'forge-test-blobs',
+      FORGE_S3_ACCESS_KEY: process.env.FORGE_S3_ACCESS_KEY ?? 'minioadmin',
+      FORGE_S3_SECRET_KEY: process.env.FORGE_S3_SECRET_KEY ?? 'minioadmin',
+      FORGE_S3_REGION: process.env.FORGE_S3_REGION ?? 'us-east-1',
     },
   },
 });
