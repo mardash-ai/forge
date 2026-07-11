@@ -718,11 +718,11 @@ const storage = program.command('storage').description('Platform storage operati
 storage
   .command('migrate')
   .description('Backfill a platform store from the filesystem into Postgres. Requires FORGE_DB_URL.')
-  .option('--store <name>', 'store to migrate: identity | search', 'identity')
+  .option('--store <name>', 'store to migrate: identity | search | events', 'identity')
   .option('--app <name>', 'migrate only this app (default: every app with filesystem state)')
   .action(async (opts) => {
-    if (opts.store !== 'identity' && opts.store !== 'search') {
-      fail(`unknown store "${opts.store}" (supported: identity, search)`);
+    if (opts.store !== 'identity' && opts.store !== 'search' && opts.store !== 'events') {
+      fail(`unknown store "${opts.store}" (supported: identity, search, events)`);
     }
     const dbUrl = process.env.FORGE_DB_URL;
     if (!dbUrl) fail('FORGE_DB_URL is required to migrate into Postgres (e.g. postgres://forge_platform:***@postgres:5432/forge_platform).');
@@ -737,7 +737,7 @@ storage
         const apps = opts.app ? [opts.app] : await listFsIdentityApps();
         const migrated = await backfillIdentity(new FsIdentityBackend(), new PgIdentityBackend(pool), apps);
         process.stdout.write(JSON.stringify({ store: 'identity', apps: apps.length, migrated }, null, 2) + '\n');
-      } else {
+      } else if (opts.store === 'search') {
         const { FsSearchBackend } = await import('../storage/backends/search/fs');
         const { PgSearchBackend, ensureSearchSchema } = await import('../storage/backends/search/pg');
         const { backfillSearch, listFsSearchApps } = await import('../storage/backends/search/migrate');
@@ -745,6 +745,14 @@ storage
         const apps = opts.app ? [opts.app] : await listFsSearchApps();
         const migrated = await backfillSearch(new FsSearchBackend(), new PgSearchBackend(pool), apps);
         process.stdout.write(JSON.stringify({ store: 'search', apps: apps.length, migrated }, null, 2) + '\n');
+      } else {
+        const { FsEventBackend } = await import('../storage/backends/events/fs');
+        const { PgEventBackend, ensureEventSchema } = await import('../storage/backends/events/pg');
+        const { backfillEvents, listFsEventApps } = await import('../storage/backends/events/migrate');
+        await ensureEventSchema(pool);
+        const apps = opts.app ? [opts.app] : await listFsEventApps();
+        const migrated = await backfillEvents(new FsEventBackend(), new PgEventBackend(pool), apps);
+        process.stdout.write(JSON.stringify({ store: 'events', apps: apps.length, migrated }, null, 2) + '\n');
       }
     } finally {
       await pool.end();

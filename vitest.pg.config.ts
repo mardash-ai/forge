@@ -14,6 +14,7 @@ export default defineConfig({
     env: {
       FORGE_IDENTITY_BACKEND: 'postgres',
       FORGE_SEARCH_BACKEND: 'postgres',
+      FORGE_EVENTS_BACKEND: 'postgres',
     },
   },
 });

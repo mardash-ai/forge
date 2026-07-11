@@ -17,6 +17,7 @@ import type { Notification } from '../notifications/types';
 import { newEventId, newId } from '../shared/ids';
 import type { Actor } from '../shared/domain';
 import { nowIso } from '../shared/time';
+import { getBackends } from './backends';
 
 // Filesystem-backed Resource + Event store. Intentionally simple for v1 local
 // mode (JSON documents + append-only JSONL). Postgres comes later in service
@@ -176,9 +177,11 @@ export class Store {
     return events;
   }
 
-  // --- Application event log (C3) -------------------------------------------------
-  // A per-app append-only log of app DOMAIN facts, separate from the ForgeEvent log
-  // above. `type`/`subject` are app-defined; `data` is a denormalized snapshot.
+  // --- Application event log (C3) — P26: pluggable EventBackend -------------------
+  // A per-app append-only log of app DOMAIN facts, separate from the ForgeEvent log above. These four
+  // methods forward to the configured EventBackend (filesystem default, or Postgres via
+  // FORGE_EVENTS_BACKEND=postgres); the method signatures are unchanged, so the C3 routes, `inspect
+  // app-events`, and the claim-legacy migration are contract-stable and never know which backend runs.
 
   async appendAppEvent(input: {
     app_id: string;
@@ -188,88 +191,30 @@ export class Store {
     owner?: string;
     data?: Record<string, unknown>;
   }): Promise<AppEvent> {
-    const event: AppEvent = {
-      id: newId('aevt'),
-      app_id: input.app_id,
-      type: input.type,
-      subject: input.subject,
-      owner: input.owner,
-      data: input.data ?? {},
-      at: nowIso(),
-    };
-    await mkdir(appEventsDir(), { recursive: true });
-    await appendFile(appEventsFile(input.app_id), JSON.stringify(event) + '\n');
-    return event;
-  }
-
-  // Read + parse an app's raw event log (newest-LAST as written). A missing log reads empty.
-  private async readAppEvents(app_id: string): Promise<AppEvent[]> {
-    let raw: string;
-    try {
-      raw = await readFile(appEventsFile(app_id), 'utf8');
-    } catch {
-      return [];
-    }
-    const out: AppEvent[] = [];
-    for (const line of raw.split('\n')) {
-      if (line.trim().length === 0) continue;
-      try {
-        out.push(JSON.parse(line) as AppEvent);
-      } catch {
-        // skip corrupt line
-      }
-    }
-    return out;
+    const { events } = await getBackends();
+    return events.append(input.app_id, { type: input.type, subject: input.subject, owner: input.owner, data: input.data });
   }
 
   // The per-app feed, newest-first, optionally filtered to a single subject and/or `owner` (C11).
-  // When `owner` is supplied the feed returns ONLY that owner's events (cross-owner reads come back
-  // empty — user A can never see user B); when omitted the feed is app-scoped (all owners), so a
-  // C10-less caller and legacy owner-less events read exactly as before. A missing log reads as an
-  // empty feed (best-effort — the app must degrade, never crash).
+  // An owner-scoped read returns ONLY that owner's events; omitted = app-scoped (all owners). A missing
+  // log reads as an empty feed (best-effort — the app must degrade, never crash).
   async listAppEvents(filter: { app_id: string; subject?: string; owner?: string; limit?: number }): Promise<AppEvent[]> {
-    let events = await this.readAppEvents(filter.app_id);
-    if (filter.owner !== undefined) events = events.filter((e) => e.owner === filter.owner);
-    if (filter.subject !== undefined) events = events.filter((e) => e.subject === filter.subject);
-    events.reverse(); // newest first
-    const limit = Math.min(Math.max(filter.limit ?? 100, 1), 500);
-    return events.slice(0, limit);
+    const { events } = await getBackends();
+    return events.list(filter.app_id, { subject: filter.subject, owner: filter.owner, limit: filter.limit });
   }
 
-  // Latest event time per subject — the primitive cold-subject detection needs (e.g. "goals
-  // with no activity in N days"). Events without a subject are ignored. When `owner` (C11) is
-  // supplied, only that owner's events count, so one user's activity never resets another's clock.
+  // Latest event time per subject (cold-subject detection). Subject-less events are ignored; when
+  // `owner` (C11) is supplied, only that owner's events count.
   async latestAppEventTimes(app_id: string, owner?: string): Promise<Record<string, string>> {
-    const latest: Record<string, string> = {};
-    for (const e of await this.readAppEvents(app_id)) {
-      if (owner !== undefined && e.owner !== owner) continue;
-      if (!e.subject) continue;
-      const prev = latest[e.subject];
-      if (!prev || prev < e.at) latest[e.subject] = e.at;
-    }
-    return latest;
+    const { events } = await getBackends();
+    return events.latestTimes(app_id, owner);
   }
 
-  // Assign every owner-less app event for an app to `owner` (C11 one-time migration). Rewrites the
-  // per-app JSONL atomically (temp + rename), stamping `owner` onto legacy lines while leaving
-  // already-owned events untouched. Returns the number of events claimed.
+  // Assign every owner-less app event for an app to `owner` (C11 one-time claim-legacy migration).
+  // Idempotent — already-owned events are untouched. Returns the number of events claimed.
   async assignAppEventOwner(app_id: string, owner: string): Promise<number> {
-    const events = await this.readAppEvents(app_id);
-    let n = 0;
-    const rewritten = events.map((e) => {
-      if (e.owner === undefined) {
-        n++;
-        return { ...e, owner };
-      }
-      return e;
-    });
-    if (n === 0) return 0;
-    await mkdir(appEventsDir(), { recursive: true });
-    const file = appEventsFile(app_id);
-    const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-    await writeFile(tmp, rewritten.map((e) => JSON.stringify(e)).join('\n') + '\n');
-    await rename(tmp, file);
-    return n;
+    const { events } = await getBackends();
+    return events.assignOwner(app_id, owner);
   }
 
   // --- Notifications (C4) ---------------------------------------------------------

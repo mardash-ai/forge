@@ -9,6 +9,34 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.30.0] — 2026-07-10
+
+### Added
+- **P26 (increment 3) — C3 events/timeline on Postgres (the highest-write store).** A `PgEventBackend`
+  behind the pluggable `EventBackend` interface: an **append table** (`forge_app_events`) with B-tree
+  indexes on `(app_id, owner, at)` and `(app_id, subject)`. The per-(app, owner) feed is an indexed
+  range read (newest-first), and **"latest time per subject" is a single `DISTINCT ON`** — no more
+  whole-file scan-and-parse. A monotonic `seq` (IDENTITY) preserves append order as the deterministic
+  newest-first tiebreak, so events sharing an `at` millisecond keep insertion order exactly like the
+  JSONL backend; timestamps (`at`) are stored **verbatim** and ids are preserved. Config-selected
+  (`FORGE_EVENTS_BACKEND=postgres`; filesystem stays the default), sharing the same pool + `FORGE_DB_URL`.
+- **Contract-stable.** `POST /app-events`, `GET /app-events?owner=&subject=&limit=`,
+  `GET /app-events/latest`, and the control-plane `inspect app-events` payloads + owner-scoping (C11,
+  incl. the `claim-legacy` migration) are unchanged — the four `store` app-event methods now forward to
+  the configured backend, and the SAME store + route suite passes on both backends.
+- **O4 scope baked in.** The events schema carries `group_id` + `visibility` (default `private`), the
+  same ownership model as identity/search, so group-shared timelines (households / C31) light up with
+  **no second migration**. The active C3 owner-scoping (owner-scoped read = that owner's events;
+  owner-less read = app-scoped) is unchanged.
+- **Events migration + backfill.** `forge storage migrate --store events` copies each app's JSONL log
+  into Postgres **oldest-first**, preserving ids, timestamps, AND append order (the app never re-emits);
+  a `DualWriteEventBackend` (`FORGE_EVENTS_DUAL_WRITE=1`) reads Postgres while faithfully mirroring each
+  append (O(1), no whole-log rewrite) to the filesystem for a reversible cutover.
+- **CI covers events on Postgres.** The `test-postgres` job now runs the suite with identity, search,
+  AND events on Postgres; `tests/pg-events.test.ts` adds Postgres-specific coverage (the B-tree indexes,
+  the `DISTINCT ON` latest-per-subject, the same-millisecond append-order tiebreak, verbatim timestamps,
+  the O4 columns, and id/timestamp/order-preserving backfill).
+
 ## [0.29.0] — 2026-07-10
 
 ### Added
@@ -1279,7 +1307,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/mardash-ai/forge/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/mardash-ai/forge/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/mardash-ai/forge/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/mardash-ai/forge/compare/v0.26.5...v0.27.0

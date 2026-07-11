@@ -12,6 +12,7 @@ beforeEach(async () => {
   const b = await getBackends();
   await b.identity.__truncateAllForTests?.();
   await b.search.__truncateAllForTests?.();
+  await b.events.__truncateAllForTests?.();
 });
 
 // Close the pool at the end of each file (vitest isolates modules per file, so the singleton — and its

@@ -8,6 +8,10 @@ import type { SearchBackend } from './search/types';
 import { FsSearchBackend } from './search/fs';
 import { PgSearchBackend, ensureSearchSchema } from './search/pg';
 import { DualWriteSearchBackend } from './search/dual';
+import type { EventBackend } from './events/types';
+import { FsEventBackend } from './events/fs';
+import { PgEventBackend, ensureEventSchema } from './events/pg';
+import { DualWriteEventBackend } from './events/dual';
 
 export { loadStoreConfig, needsDatabase } from './config';
 export type { StoreConfig, BackendKind } from './config';
@@ -20,6 +24,7 @@ export type { StoreConfig, BackendKind } from './config';
 export interface Backends {
   identity: IdentityBackend;
   search: SearchBackend;
+  events: EventBackend;
   // The Postgres pool, when one was opened (shared across domains as more migrate).
   pool?: Pool;
   describe(): string;
@@ -41,6 +46,7 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     // schema of every domain that is on Postgres.
     if (cfg.identity === 'postgres') await ensureIdentitySchema(pool);
     if (cfg.search === 'postgres') await ensureSearchSchema(pool);
+    if (cfg.events === 'postgres') await ensureEventSchema(pool);
   }
 
   // identity
@@ -69,14 +75,29 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     searchLabel = 'filesystem';
   }
 
+  // events (C3 timeline)
+  const fsEvents = new FsEventBackend();
+  let events: EventBackend;
+  let eventsLabel: string;
+  if (cfg.events === 'postgres') {
+    const pg = new PgEventBackend(pool!);
+    events = cfg.eventsDualWrite ? new DualWriteEventBackend(pg, fsEvents) : pg;
+    eventsLabel = cfg.eventsDualWrite ? 'postgres+dualwrite' : 'postgres';
+  } else {
+    events = fsEvents;
+    eventsLabel = 'filesystem';
+  }
+
   return {
     identity,
     search,
+    events,
     pool,
-    describe: () => `identity=${identityLabel} search=${searchLabel}`,
+    describe: () => `identity=${identityLabel} search=${searchLabel} events=${eventsLabel}`,
     async close() {
       await identity.close?.();
       await search.close?.();
+      await events.close?.();
       if (pool) await pool.end();
     },
   };
