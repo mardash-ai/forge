@@ -18,6 +18,8 @@ import { registerThemeRoutes } from './theme-routes';
 import { registerStatusRoutes } from './status-routes';
 import { registerIncidentRoutes } from './incident-routes';
 import { registerAuthzRoutes } from './authz-routes';
+import { registerOAuthRoutes } from './oauth-routes';
+import { registerMcpRoutes } from './mcp-routes';
 import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
 
@@ -126,6 +128,17 @@ registerIncidentRoutes(app);
 // Authorization / policy engine (C29) — the deterministic `POST /authorize` (evaluate + C3 audit),
 // policy CRUD, and the progressive-autonomy approvals surface. Served on both planes.
 registerAuthzRoutes(app);
+
+// OAuth 2.1 authorization server (C23) — dynamic client registration, the authorize + consent flow
+// (PKCE), and the token endpoint that mints scoped access + rotating refresh tokens the MCP host verifies.
+// The app proxies `/oauth/*` + `/.well-known/oauth-authorization-server` same-origin. Served on both planes.
+registerOAuthRoutes(app);
+
+// Remote MCP server hosting (C23) — `POST /mcp` (JSON-RPC over Streamable-HTTP, OAuth-gated) serves the
+// app's registered tools + dispatches each call to the app's handler (C2 callback) with scope enforcement +
+// C3 attribution; the `/mcp/*` management routes register tools, version the instruction block, and
+// schedule proactive prompts via C2. Served on both planes.
+registerMcpRoutes(app);
 
 // Event APIs.
 app.get('/events', async (req) => {

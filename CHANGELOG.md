@@ -9,6 +9,60 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.35.0] — 2026-07-11
+
+### Added
+- **C23 — remote MCP-server hosting + an OAuth 2.1 authorization server + a versioned agent "training"
+  block + proactive scheduling.** The platform hosts a consuming app's declared tool surface as a **remote
+  MCP server** reachable by the OpenAI Apps SDK + the Anthropic MCP connector, gates it with the app as an
+  **OAuth 2.1 authorization server**, serves a **versioned instruction/training block** to the connecting
+  host, and can **proactively nudge** the connected agent via C2 — all generic and product-agnostic (an app
+  publishes its OWN tools + instruction text + scopes; their meaning is the app's domain).
+- **Remote MCP server (`POST /mcp`).** JSON-RPC 2.0 over the **Streamable-HTTP** transport
+  (request/response; no persistent SSE server-push in v1, per O1): `initialize` (returns serverInfo + the
+  latest instruction block), `tools/list` (the app's registered surface), `tools/call` (dispatched to the
+  app's handler), and `ping`. Each call is gated by an OAuth access token; a missing/invalid token → **401
+  with `WWW-Authenticate` + the RFC 9728 protected-resource pointer**, which kicks off the OAuth flow.
+- **Tool registration + dispatch.** An app registers tool schemas (name, description, input/output JSON
+  Schema, required **scope**, read/write/action **family**, high-risk hint, handler path). The platform
+  serves them as MCP tools and **dispatches each `tools/call` to the app's handler** using the SAME
+  sidecar→app callback the C2 scheduler uses (`FORGE_APP_CALLBACK_HOST/PORT`, service-token authenticated) —
+  the callback resolver is now shared between C2 and C23.
+- **OAuth 2.1 authorization server (`/oauth/*`).** Dynamic client registration (RFC 7591, public/PKCE by
+  default), the authorize + **consent** flow (the consent screen is **C16-themed**; the logged-in user comes
+  from **C10** — the app is the authorization *server* here, distinct from C10's app-as-client sign-in),
+  **mandatory PKCE (S256)**, short-lived **scoped** access tokens + **rotating** refresh tokens (one-shot
+  rotation; replay of a rotated token is rejected), scope narrowing on refresh, and token revocation
+  (RFC 7009). Discovery at `/.well-known/oauth-authorization-server` (RFC 8414). The **token → { user,
+  scopes }** verifier is the mirrorable resource-server seam.
+- **Governance.** Per-tool **scope enforcement** against the granted token (a call lacking the tool's scope
+  is refused with a JSON-RPC `insufficient_scope` error and audited); the platform passes the user + the
+  tool's safety **family**/high-risk hint into the handler so the app runs its **C29 `authorize()`** on
+  write/act tools — the platform enforces scopes, the app decides allow/stage/deny.
+- **Versioned instruction/training block + proactive scheduling.** `POST /mcp/instructions` appends a
+  monotonically-versioned block (A/B-testable later); `initialize` serves the latest. `POST /mcp/proactive`
+  registers a per-app **C2 ScheduledJob** that periodically calls back into the app to prompt the connected
+  agent toward a designated tool (the app names the tool + cadence + callback path).
+- **Attribution.** Every host tool call (and every scope denial) is recorded to the **C3** audit trail
+  (`mcp.tool_call`, owner-scoped, keyed by tool, carrying the connecting host + outcome).
+- **New pluggable P26 store domain (`mcp`).** Tool registrations, instruction versions, OAuth client
+  registrations, **consent grants**, and issued authorization codes + access/refresh tokens live behind the
+  `McpBackend` interface: **filesystem default**, `FORGE_MCP_BACKEND=postgres` opt-in (five tables:
+  `forge_mcp_tools|instructions|clients|consents|grants`, jsonb + projected + O4 columns), a `DualWrite`
+  impl, and `forge storage migrate --store mcp`. **Secrets are hashed at rest** (token/code/client-secret
+  HASHES only, never a raw value — like the C10 vault); codes + refresh tokens are **one-shot** (an atomic
+  delete-returning, so no double-spend). The `test-postgres` CI job now also covers the mcp store.
+- **CLI.** `forge mcp register-tool|list-tools|delete-tool|set-instructions|get-instructions|proactive`.
+- **Public edge (O1).** The app proxies `/mcp`, `/oauth/*`, and `/.well-known/*` **same-origin** to the
+  sidecar (the proven C10 `/auth/*` pattern); the issuer/base URL derives from forwarded headers (or
+  `FORGE_OAUTH_PUBLIC_URL`), so the whole surface can relocate to a dedicated public edge later **without
+  changing tool contracts**.
+
+### Changed
+- The C2 scheduler's app-callback resolution (`appCallbackBase` + service-auth headers) moved to a shared
+  `shared/app-callback.ts` and is now reused by the C23 MCP tool dispatch — one address resolver for both
+  sidecar→app callbacks. No behavior change to the scheduler.
+
 ## [0.34.0] — 2026-07-10
 
 ### Added
@@ -1445,7 +1499,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.34.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.35.0...HEAD
+[0.35.0]: https://github.com/mardash-ai/forge/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/mardash-ai/forge/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/mardash-ai/forge/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/mardash-ai/forge/compare/v0.31.0...v0.32.0

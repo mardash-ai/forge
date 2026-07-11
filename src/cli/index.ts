@@ -718,10 +718,10 @@ const storage = program.command('storage').description('Platform storage operati
 storage
   .command('migrate')
   .description('Backfill a platform store from the filesystem into Postgres. Requires FORGE_DB_URL.')
-  .option('--store <name>', 'store to migrate: identity | search | events | notifications | secrets | resources | blobs', 'identity')
+  .option('--store <name>', 'store to migrate: identity | search | events | notifications | secrets | resources | policy | mcp | blobs', 'identity')
   .option('--app <name>', 'migrate only this app (default: every app with filesystem state)')
   .action(async (opts) => {
-    const supported = ['identity', 'search', 'events', 'notifications', 'secrets', 'resources', 'policy', 'blobs'];
+    const supported = ['identity', 'search', 'events', 'notifications', 'secrets', 'resources', 'policy', 'mcp', 'blobs'];
     if (!supported.includes(opts.store)) {
       fail(`unknown store "${opts.store}" (supported: ${supported.join(', ')})`);
     }
@@ -785,6 +785,14 @@ storage
         const apps = opts.app ? [opts.app] : await listFsPolicyApps();
         const migrated = await backfillPolicies(new FsPolicyBackend(), new PgPolicyBackend(pool), apps);
         process.stdout.write(JSON.stringify({ store: 'policy', apps: apps.length, migrated }, null, 2) + '\n');
+      } else if (opts.store === 'mcp') {
+        const { FsMcpBackend } = await import('../storage/backends/mcp/fs');
+        const { PgMcpBackend, ensureMcpSchema } = await import('../storage/backends/mcp/pg');
+        const { backfillMcp, listFsMcpApps } = await import('../storage/backends/mcp/migrate');
+        await ensureMcpSchema(pool);
+        const apps = opts.app ? [opts.app] : await listFsMcpApps();
+        const migrated = await backfillMcp(new FsMcpBackend(), new PgMcpBackend(pool), apps);
+        process.stdout.write(JSON.stringify({ store: 'mcp', apps: apps.length, migrated }, null, 2) + '\n');
       } else {
         // blobs: bytes filesystem → S3/MinIO, metadata → Postgres. Needs the S3 settings too.
         const { loadStoreConfig } = await import('../storage/backends/config');
@@ -856,6 +864,99 @@ policy
     if (opts.app) qs.set('app', opts.app);
     const r = await api('DELETE', `/policies/${encodeURIComponent(id)}?${qs.toString()}`);
     process.stdout.write(JSON.stringify(r, null, 2) + '\n');
+  });
+
+// C23 — remote MCP-server hosting + OAuth 2.1. Management surface: an app registers its tool surface,
+// versions the instruction/training block, and schedules proactive prompts. Control-plane is multi-app, so
+// `--app <name>` is passed through.
+const mcp = program.command('mcp').description('C23 remote MCP-server hosting + OAuth');
+mcp
+  .command('list-tools')
+  .description('List an app’s registered MCP tools')
+  .option('--app <name>', 'app name')
+  .action(async (opts) => {
+    const qs = new URLSearchParams();
+    if (opts.app) qs.set('app', opts.app);
+    const r = await api('GET', `/mcp/tools?${qs.toString()}`);
+    process.stdout.write(JSON.stringify(r.tools ?? r, null, 2) + '\n');
+  });
+mcp
+  .command('register-tool')
+  .description('Register or update an MCP tool')
+  .requiredOption('--name <name>', 'tool name (a-zA-Z0-9_-)')
+  .requiredOption('--handler-path <path>', 'app path the call dispatches to, e.g. /api/mcp/tools/create_note')
+  .option('--app <name>', 'app name')
+  .option('--description <text>', 'tool description')
+  .option('--scope <scope>', 'OAuth scope required to call it')
+  .option('--family <family>', 'read | write | action', 'action')
+  .option('--high-risk', 'flag this tool as a high-risk class (C29 seam hint)')
+  .option('--input-schema <json>', 'input JSON Schema')
+  .option('--output-schema <json>', 'output JSON Schema')
+  .action(async (opts) => {
+    const body: Record<string, unknown> = { name: opts.name, handler_path: opts.handlerPath, family: opts.family };
+    if (opts.app) body.app = opts.app;
+    if (opts.description) body.description = opts.description;
+    if (opts.scope) body.scope = opts.scope;
+    if (opts.highRisk) body.high_risk = true;
+    if (opts.inputSchema) { try { body.input_schema = JSON.parse(opts.inputSchema); } catch { fail('--input-schema must be valid JSON'); } }
+    if (opts.outputSchema) { try { body.output_schema = JSON.parse(opts.outputSchema); } catch { fail('--output-schema must be valid JSON'); } }
+    const r = await api('POST', '/mcp/tools', body);
+    process.stdout.write(JSON.stringify(r.tool ?? r, null, 2) + '\n');
+  });
+mcp
+  .command('delete-tool')
+  .description('Unregister an MCP tool by name')
+  .argument('<name>')
+  .option('--app <name>', 'app name')
+  .action(async (name, opts) => {
+    const qs = new URLSearchParams();
+    if (opts.app) qs.set('app', opts.app);
+    const r = await api('DELETE', `/mcp/tools/${encodeURIComponent(name)}?${qs.toString()}`);
+    process.stdout.write(JSON.stringify(r, null, 2) + '\n');
+  });
+mcp
+  .command('set-instructions')
+  .description('Append a new versioned instruction/training block')
+  .requiredOption('--text <text>', 'the connector description / tool preamble (prompt-shaped)')
+  .option('--app <name>', 'app name')
+  .option('--label <label>', 'optional A/B label')
+  .action(async (opts) => {
+    const body: Record<string, unknown> = { text: opts.text };
+    if (opts.app) body.app = opts.app;
+    if (opts.label) body.label = opts.label;
+    const r = await api('POST', '/mcp/instructions', body);
+    process.stdout.write(JSON.stringify(r.instructions ?? r, null, 2) + '\n');
+  });
+mcp
+  .command('get-instructions')
+  .description('Show the latest (or a specific) instruction block')
+  .option('--app <name>', 'app name')
+  .option('--version <n>', 'a specific version (default: latest)')
+  .action(async (opts) => {
+    const qs = new URLSearchParams();
+    if (opts.app) qs.set('app', opts.app);
+    if (opts.version) qs.set('version', opts.version);
+    const r = await api('GET', `/mcp/instructions?${qs.toString()}`);
+    process.stdout.write(JSON.stringify(r.instructions ?? r, null, 2) + '\n');
+  });
+mcp
+  .command('proactive')
+  .description('Schedule (or remove) a proactive prompt that periodically nudges the agent to use a tool (via C2)')
+  .requiredOption('--tool <name>', 'the tool to nudge toward')
+  .option('--app <name>', 'app name')
+  .option('--target-path <path>', 'app cron path the fire calls back, e.g. /api/cron/whats-next')
+  .option('--every <dur>', 'recurring interval, e.g. 6h')
+  .option('--cron <expr>', 'recurring 5-field cron (UTC)')
+  .option('--remove', 'remove the proactive job')
+  .action(async (opts) => {
+    const body: Record<string, unknown> = { tool: opts.tool };
+    if (opts.app) body.app = opts.app;
+    if (opts.targetPath) body.target_path = opts.targetPath;
+    if (opts.every) body.every = opts.every;
+    if (opts.cron) body.cron = opts.cron;
+    if (opts.remove) body.remove = true;
+    const r = await api('POST', '/mcp/proactive', body);
+    process.stdout.write(JSON.stringify(r.proactive ?? r, null, 2) + '\n');
   });
 
 program.parseAsync(process.argv).catch((err) => fail(String(err?.message ?? err)));

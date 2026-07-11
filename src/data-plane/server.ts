@@ -21,6 +21,8 @@ import { registerThemeRoutes } from '../api/theme-routes';
 import { registerStatusRoutes } from '../api/status-routes';
 import { registerIncidentRoutes } from '../api/incident-routes';
 import { registerAuthzRoutes } from '../api/authz-routes';
+import { registerOAuthRoutes } from '../api/oauth-routes';
+import { registerMcpRoutes } from '../api/mcp-routes';
 import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
 
@@ -138,6 +140,18 @@ registerIncidentRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 // Authorization / policy engine (C29) — deterministic `POST /authorize` (+ C3 audit), policy CRUD, and
 // the progressive-autonomy approvals surface. The running app calls these over the internal network.
 registerAuthzRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
+
+// OAuth 2.1 authorization server (C23) — the app proxies `/oauth/*` + `/.well-known/oauth-authorization-server`
+// here (same-origin). Dynamic client registration + the authorize/consent flow (PKCE) + the token endpoint
+// mint the scoped access/refresh tokens the MCP host verifies. Defaults the app to this sidecar's FORGE_APP_NAME.
+registerOAuthRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
+
+// Remote MCP server hosting (C23) — the app proxies `/mcp` + `/.well-known/oauth-protected-resource` here.
+// `POST /mcp` (OAuth-gated JSON-RPC) serves the app's tools + dispatches each call back into the app over the
+// compose network (like the scheduler), with scope enforcement + C3 attribution. The `/mcp/*` management
+// routes register tools, version the instruction block, and schedule proactive prompts via C2. Defaults the
+// app to this sidecar's FORGE_APP_NAME.
+registerMcpRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 
 // In production there is no `./forge provision`, so seed a minimal Application
 // record for the app this sidecar serves — enough for schedule-job/inspect to

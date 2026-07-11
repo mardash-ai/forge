@@ -140,6 +140,19 @@ export function policiesFile(appId: string): string {
   return path.join(policiesDir(), `${appId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
 }
 
+// Per-app MCP-host / OAuth store (C23) — one JSON doc per app holding the app's declared tool surface,
+// versioned instruction blocks, OAuth dynamic client registrations, consent grants, and issued (hashed)
+// authorization codes + access/refresh tokens. Sensitive material (token/secret HASHES only, never a raw
+// token) lives under the gitignored state dir like the C10 identity vault, and is NEVER surfaced through
+// the inspectable `/resources` API.
+export function mcpDir(): string {
+  return path.join(stateDir(), 'mcp');
+}
+
+export function mcpFile(appId: string): string {
+  return path.join(mcpDir(), `${appId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
+}
+
 // Per-app blob / file store (C20). Two parts, both under the SAME durable state volume the data-plane
 // already uses (FORGE_STATE_DIR, e.g. /forge-state on the `forge_state` named volume) — NO new external
 // dependency:

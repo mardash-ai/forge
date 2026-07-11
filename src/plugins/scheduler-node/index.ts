@@ -1,9 +1,7 @@
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
 import type { Store } from '../../storage/store';
-import type { Application, ScheduledJob } from '../../resources/types';
+import type { ScheduledJob } from '../../resources/types';
 import { SYSTEM_ACTOR } from '../../shared/domain';
-import { SERVICE_TOKEN_HEADER } from '../../shared/session';
+import { appCallbackBase, serviceAuthHeaders } from '../../shared/app-callback';
 import { resolveServiceToken } from '../auth-identity/index';
 import { isDue, advanceJob } from './schedule';
 
@@ -21,53 +19,18 @@ export const IMPLEMENTATION = 'scheduler-node';
 const TICK_MS = 20_000;
 const INVOKE_TIMEOUT_MS = 30_000;
 
-// Where the control plane reaches a Builder app's HTTP server. The app is
-// port-mapped to the host; from inside the control-plane container the host is
-// `host.docker.internal` (overridable for Linux/CI). The port is the app's web
-// host port (persisted infra, else the manifest port).
-async function appCallbackBase(store: Store, appId?: string): Promise<string | null> {
-  const host = process.env.FORGE_APP_CALLBACK_HOST ?? 'host.docker.internal';
-  // Prod sidecar mode: the app's address is given by env (host + port), so the
-  // scheduler needs no provisioned Resource/manifest — e.g. FORGE_APP_CALLBACK_HOST=web
-  // FORGE_APP_CALLBACK_PORT=3000 on the deploy compose network.
-  const envPort = process.env.FORGE_APP_CALLBACK_PORT;
-  if (process.env.FORGE_APP_CALLBACK_HOST && envPort) {
-    return `http://${host}:${envPort}`;
-  }
-  // Dev mode: resolve the app's web host port from its provisioned manifest.
-  if (!appId) return null;
-  const app = (await store.getResource('Application', appId)) as Application | null;
-  if (!app) return null;
-  let port = 3000;
-  try {
-    const manifest = JSON.parse(await readFile(path.join(app.repo_path, 'forge.app.json'), 'utf8'));
-    const webPort = manifest?.infra?.ports?.web;
-    port = typeof webPort === 'number' ? webPort : typeof manifest.port === 'number' ? manifest.port : 3000;
-  } catch {
-    /* default */
-  }
-  return `http://${host}:${port}`;
-}
-
 async function invokeTarget(
   base: string,
   target: ScheduledJob['target'],
   serviceToken: string | null,
 ): Promise<{ ok: boolean; status?: number; error?: string }> {
   try {
-    // C10 §5 — authenticate as a SERVICE (not a user session). The app's session
-    // gate lets `/api/cron/*` through only when it carries the valid service token,
-    // closing what used to be fully-open cron endpoints. Sent under both a dedicated
-    // header and Bearer so the app can check whichever it prefers. When no token is
-    // configured, none is sent and the app's gate rejects it (detectable, not silent).
-    const headers: Record<string, string> = {};
-    if (serviceToken) {
-      headers[SERVICE_TOKEN_HEADER] = serviceToken;
-      headers['authorization'] = `Bearer ${serviceToken}`;
-    }
+    // C10 §5 — authenticate as a SERVICE (not a user session). The app's session gate lets `/api/cron/*`
+    // through only when it carries the valid service token, closing what used to be fully-open cron
+    // endpoints.
     const res = await fetch(`${base}${target.path}`, {
       method: target.method,
-      headers,
+      headers: serviceAuthHeaders(serviceToken),
       signal: AbortSignal.timeout(INVOKE_TIMEOUT_MS),
     });
     return { ok: res.ok, status: res.status };
