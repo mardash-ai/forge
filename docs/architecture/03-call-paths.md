@@ -223,3 +223,92 @@ Why this shape:
   is a C5 secret injected into **both** the sidecar (which signs) and the app (which verifies).
 - **Ownership (C11)** is just the `userId` from the verified session, passed as `owner` to the data-plane
   routes — the same dimension that partitions events, notifications, agent runs, search, and blobs.
+
+## H · Response schemas (field-level reference)
+
+The sequence diagrams above abbreviate response bodies; a consumer reading these surfaces under strict
+zero-bleed needs the exact fields. This is the authoritative field/type list a client can bind to. All
+timestamps are ISO-8601 strings unless noted; every error uses the standard envelope
+`{ error: { code, message, retry: 'no' | 'change-input' | 'backoff' } }`.
+
+**C10 session cookie (`forge_session`).** A compact HS256 JWS —
+`base64url(header).base64url(payload).base64url(sig)`, `header = { "alg": "HS256", "typ": "JWT" }`,
+`sig = HMAC-SHA256(header + '.' + payload, AUTH_SESSION_SECRET)`. The claims a resource server reads:
+
+| claim | type | meaning |
+|---|---|---|
+| `userId` | string | the platform user id — **this is the id passed as `owner`** (not `sub`/`uid`) |
+| `email` | string | the user's email |
+| `sessionId` | string | the server-side (revocable) session id |
+| `iat` | number | issued-at, **epoch seconds** |
+| `exp` | number | expiry, **epoch seconds** — a verifier MUST reject when `exp <= now` |
+
+Verification (mirror `shared/session.ts`): constant-time-compare the signature, require `exp > now`, and
+require both `userId` and `sessionId` present; otherwise treat as no session. `GET /auth/session` returns
+`{ userId, email, exp }` (or 401).
+
+**C3 app-events.** `POST /app-events` → `{ event: AppEvent }`; `GET /app-events` → `{ events: AppEvent[] }`
+(newest-first); `GET /app-events/latest` → `{ latest: { [subject: string]: string /* ISO */ } }`.
+
+```
+AppEvent = {
+  id: string;                       // "evt_…"
+  app_id: string;
+  type: string;                     // app-defined, e.g. "goal.created"
+  subject?: string;                 // app-defined filter key (e.g. a goal id)
+  owner?: string;                   // C11 user id; absent = app-scoped/legacy
+  data: Record<string, unknown>;    // denormalized snapshot the app supplied
+  at: string;                       // ISO-8601 emit time
+}
+```
+
+**C19 search.** `POST /search` → `{ hits: SearchHit[], total, took_ms? }` — an **envelope**, not a bare
+array. `total` is the pre-paging match count; `took_ms` is best-effort. (`POST /index` → `{ document }`;
+`POST /index/delete` → `{ deleted: boolean }`; `POST /reindex` → `{ indexed: number }`.)
+
+```
+SearchHit = {
+  type: string;                     // the app's resource kind
+  id: string;                       // the app's row id
+  title: string;
+  snippet: string;                  // HTML excerpt, matched terms wrapped in <mark>…</mark>
+  score: number;                    // BM25 relevance
+  attrs?: Record<string, unknown>;  // the denormalized bag from the indexed doc, verbatim
+  created_at?: string;              // ISO, if supplied at index time
+}
+```
+
+**C20 blobs.** `POST /blobs` (201) → a `BlobDescriptor`; `GET /blobs` →
+`{ blobs: BlobDescriptor[], usage: { bytes, count, quota_bytes, quota_objects } }`. `GET /blobs/:id`
+streams the bytes (200 / 206 with `ETag`, `Accept-Ranges`, `Content-Range`), not JSON; `DELETE` → 204.
+
+```
+BlobDescriptor = {
+  blob_id: string;                  // server-minted opaque id — the only handle the app holds
+  content_type: string;             // validated (allowlisted + magic-byte-confirmed) MIME
+  size: number;                     // exact byte length
+  checksum: string;                 // lowercase hex SHA-256 (also the ETag source)
+  filename?: string;                // sanitized basename, if provided
+  attrs?: Record<string, unknown>;  // the small denormalized bag, verbatim
+  created_at: string;               // ISO
+}
+```
+(The stored `BlobMetadata` also carries `owner`, but the public descriptor never exposes it or the storage-key scheme.)
+
+**C4 notifications.** `GET /notifications` → `{ notifications: Notification[] }` (newest-first; excludes
+dismissed unless `?include_dismissed=true`). `POST /notifications` → `{ notification: Notification }`;
+`/dismiss` → `{ dismissed: boolean }`; `/clear` → `{ cleared: boolean }`.
+
+```
+Notification = {
+  key: string;                      // stable app-defined identity (dedupe key)
+  title: string;
+  body?: string;
+  data: Record<string, unknown>;    // denormalized payload the inbox renders
+  subject?: string;                 // optional ref (e.g. a goal id)
+  owner?: string;                   // C11 user id; absent = app-scoped/legacy
+  dismissed: boolean;
+  created_at: string;               // ISO
+  updated_at: string;               // ISO
+}
+```
