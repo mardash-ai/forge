@@ -22,6 +22,7 @@ config**. That boundary is the whole design.
 | 6 | [Planned capabilities](06-planned-capabilities.md) | **PROPOSED, not yet built.** Where remote-MCP hosting + OAuth, an outbound-connector vault, inbound email, webhooks, mobile push, a policy engine, multi-member identity, and an eval harness plug into the architecture. |
 | 7 | [Data storage](07-data-storage.md) | The concrete, per-capability backing stores (no "state blob"): exact on-disk layout on `forge_state`, what C19 search actually is (in-TS BM25, not a search engine), the store-interface + Postgres/S3 swap status, what really uses Postgres/Redis, and per-store atomicity/concurrency/durability. |
 | 8 | [Storage strategy](08-storage-strategy.md) | **PROPOSAL (design only).** Hardening the single-node filesystem into a pluggable store-backend seam: per-capability backend recommendations (Postgres / object-store / stays-FS), the C19 search recommendation, making the sidecar datastore-aware, the P27 fix, and a contract-stable migration sequence (identity + search first). |
+| 9 | [Deployable-consumer scaffolding](09-deployable-consumer.md) | **The canonical "what a consumer needs to be deployable via `forge release`" (current to 0.35.0).** The `app/` repo layout, the verbatim generic root tooling (`compose.yaml`, `./forge`, `Makefile`, `forge.jobs.json`), the provision→productionize→release command sequence, the `.env.prod` secret contract (incl. C23 needs no new secret), and the multi-app isolation rules for a shared host. |
 
 ## The one idea behind everything: two planes
 
