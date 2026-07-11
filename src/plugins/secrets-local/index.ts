@@ -2,33 +2,30 @@ import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'node:
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { secretsDir } from '../../shared/paths';
+import { getBackends } from '../../storage/backends';
+import type { Sealed } from '../../storage/backends/secrets/types';
 
 // Plugin: secrets-local.
 //
-// The first Implementation of Forge's secret storage — a real technology
-// boundary (a secrets backend) that a future secrets-vault / cloud-KMS
-// Implementation can replace WITHOUT touching the SetSecret Capability contract.
+// Forge's secret storage. Secrets are encrypted at rest (AES-256-GCM) under a master key and only ever
+// decrypted in memory to be injected into an app's runtime by a Capability — the plaintext never lands
+// in source, a compose file, or an image layer.
 //
-// Secrets are encrypted at rest (AES-256-GCM) under a master key, and are only
-// ever decrypted in memory to be injected into an app's runtime by a Capability.
-// The plaintext value never lands in source, a compose file, or an image layer.
+// P26 (increment 6): this module now SEALS/OPENS under the master key and forwards the SEALED bytes to
+// the configured SecretsBackend (filesystem default, or Postgres via FORGE_SECRETS_BACKEND=postgres).
+// The backend stores only ciphertext; the P27 unguarded read-modify-write is gone — the FS backend
+// serializes + writes atomically, and the Postgres backend upserts one sealed row. The exported function
+// signatures are unchanged, so `forge secrets set/unset/list` and the C1/C10/C12 runtime injection are
+// contract-stable.
 
 export const IMPLEMENTATION = 'secrets-local';
 export const ALGO = 'aes-256-gcm';
 
-interface Sealed {
-  iv: string; // base64 nonce
-  tag: string; // base64 GCM auth tag
-  data: string; // base64 ciphertext
-}
-
-type Vault = Record<string, Sealed>;
-
 let cachedKey: Buffer | null = null;
 
-// The 32-byte master key. Prefer an externally-provided key (FORGE_SECRETS_KEY)
-// so a real deployment never persists key material on disk; otherwise fall back
-// to a locally generated 0600 key file under the (gitignored) state dir for dev.
+// The 32-byte master key. Prefer an externally-provided key (FORGE_SECRETS_KEY) so a real deployment
+// never persists key material; otherwise fall back to a locally generated 0600 key file under the
+// (gitignored) state dir for dev.
 async function masterKey(): Promise<Buffer> {
   if (cachedKey) return cachedKey;
   const fromEnv = process.env.FORGE_SECRETS_KEY;
@@ -66,47 +63,24 @@ function open(key: Buffer, s: Sealed): string {
   return Buffer.concat([decipher.update(Buffer.from(s.data, 'base64')), decipher.final()]).toString('utf8');
 }
 
-function vaultPath(appId: string): string {
-  return path.join(secretsDir(), `vault-${appId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
-}
+const backend = () => getBackends().then((b) => b.secrets);
 
-async function readVault(appId: string): Promise<Vault> {
-  try {
-    return JSON.parse(await readFile(vaultPath(appId), 'utf8')) as Vault;
-  } catch {
-    return {};
-  }
-}
-
-async function writeVault(appId: string, vault: Vault): Promise<void> {
-  await mkdir(secretsDir(), { recursive: true });
-  await writeFile(vaultPath(appId), JSON.stringify(vault, null, 2), { mode: 0o600 });
-}
-
-// Store (or replace) one secret for an app, encrypted at rest.
+// Store (or replace) one secret for an app, encrypted at rest. A single upsert — no whole-vault RMW.
 export async function setSecret(appId: string, name: string, value: string): Promise<void> {
   const key = await masterKey();
-  const vault = await readVault(appId);
-  vault[name] = seal(key, value);
-  await writeVault(appId, vault);
+  await (await backend()).setSecret(appId, name, seal(key, value));
 }
 
-// Remove one secret's encrypted entry from an app's vault. IDEMPOTENT: removing an absent secret
-// is a no-op success (returns false). Returns whether an entry existed and was removed. Never reads,
-// decrypts, logs, or returns the value — this only revokes it. An empty vault is left as `{}`.
+// Remove one secret's encrypted entry from an app's vault. Idempotent (false when absent). Never reads,
+// decrypts, logs, or returns the value.
 export async function unsetSecret(appId: string, name: string): Promise<boolean> {
-  const vault = await readVault(appId);
-  if (!(name in vault)) return false;
-  delete vault[name];
-  await writeVault(appId, vault);
-  return true;
+  return (await backend()).unsetSecret(appId, name);
 }
 
-// Decrypt every secret for an app, for injection into its runtime. An entry that
-// can't be decrypted (e.g. the key rotated) is skipped, never fatal — the app
-// then simply sees the value as absent and degrades gracefully.
+// Decrypt every secret for an app, for injection into its runtime. An entry that can't be decrypted
+// (e.g. the key rotated) is skipped, never fatal — the app then simply sees the value as absent.
 export async function readSecrets(appId: string): Promise<Record<string, string>> {
-  const vault = await readVault(appId);
+  const vault = await (await backend()).readVault(appId);
   const names = Object.keys(vault);
   if (names.length === 0) return {};
   const key = await masterKey();
@@ -125,5 +99,5 @@ export async function readSecrets(appId: string): Promise<Record<string, string>
 
 // The names of the secrets set for an app — never the values.
 export async function listSecretNames(appId: string): Promise<string[]> {
-  return Object.keys(await readVault(appId)).sort();
+  return (await backend()).listNames(appId);
 }

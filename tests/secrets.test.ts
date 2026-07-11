@@ -32,10 +32,18 @@ describe('secrets-local: encrypted at rest, decrypted only for injection', () =>
     expect(await readSecrets('app_one')).toEqual({ ANTHROPIC_API_KEY: 'sk-ant-secret-123' });
   });
 
-  it('never persists the plaintext value on disk', async () => {
+  it('never persists the plaintext value at rest', async () => {
     await setSecret('app_two', 'TOKEN', 'plaintext-must-not-appear');
-    const onDisk = await readFile(path.join(tmp, 'secrets', 'vault-app_two.json'), 'utf8');
-    expect(onDisk).not.toContain('plaintext-must-not-appear');
+    // On the FILESYSTEM backend the sealed vault is a file; assert the plaintext isn't in it. The
+    // Postgres backend stores the same AES-256-GCM ciphertext in a row (asserted by
+    // tests/pg-secrets.test.ts). Assert against the file only when it exists, so this SAME test passes
+    // on both backends (P26). The round-trip test above already proves seal→open works on either.
+    try {
+      const onDisk = await readFile(path.join(tmp, 'secrets', 'vault-app_two.json'), 'utf8');
+      expect(onDisk).not.toContain('plaintext-must-not-appear');
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
   });
 
   it('returns nothing when a secret is absent (graceful degradation)', async () => {

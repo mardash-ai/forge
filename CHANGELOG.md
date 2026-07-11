@@ -9,6 +9,43 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.33.0] — 2026-07-10
+
+### Added
+- **P26 (increment 6) — C5 secrets vault + the generic Resource store on Postgres (transactional).**
+  Two `SecretsBackend` + `ResourceBackend` implementations behind the pluggable interface:
+  filesystem (default) and Postgres. **Secrets:** one SEALED row per (app, name) in `forge_secrets`
+  (still AES-256-GCM at rest — the row holds ciphertext, never plaintext; sealing/opening stays in the
+  facade under the master key). **Resources:** one `jsonb` row per resource in `forge_resources`
+  (PK `(type, id)`; the full object round-trips via `data`, with type/id/app_id/owner/timestamps
+  projected into indexed columns). Config-selected (`FORGE_SECRETS_BACKEND`/`FORGE_RESOURCES_BACKEND=postgres`
+  or `FORGE_STORE_BACKEND=postgres`; filesystem stays default), sharing the pool + `FORGE_DB_URL`.
+- **Contract-stable.** `forge secrets set/unset/list` + the C1/C10/C12 runtime injection, and the whole
+  `store` resource surface (`saveResource`/`getResource`/`deleteResource`/`findResourceById`/
+  `listResources`/`assignResourceOwner`/`findAppByName`) + the `/resources` routes + `inspect` + the
+  `AgentTask`/`Artifact`/`ScheduledJob`/`Deployment`/`EmailDelivery`/`Verification` shapes — all
+  unchanged. The five secrets + seven resource methods forward to the configured backend; the SAME
+  store + route suite (every capability that seeds an Application) passes on both backends.
+- **O4 scope baked in.** `forge_resources` carries `group_id` + `visibility` (default `private`), so
+  owner-scoped resources (C1 agent-runs) extend to group scoping (C31) with no second migration. Active
+  C11 owner-scoping (owner-scoped list, `claim-legacy`) is unchanged.
+- **Migration + backfill.** `forge storage migrate --store secrets` moves the sealed vault verbatim;
+  `--store resources` copies every resource with ids preserved. `DualWriteSecretsBackend` /
+  `DualWriteResourceBackend` (`FORGE_SECRETS_DUAL_WRITE=1` / `FORGE_RESOURCES_DUAL_WRITE=1`) for a
+  reversible cutover. The `test-postgres` CI job now runs identity/search/events/notifications/**secrets**/
+  **resources** on Postgres (+ blobs on MinIO); new `tests/pg-secrets.test.ts` + `tests/pg-resources.test.ts`.
+
+### Fixed
+- **P27 fully CLOSED — no unguarded read-modify-write / torn write remains in any platform store.** The
+  two stores flagged in `docs/architecture/07-data-storage.md` §5 are now safe on BOTH backends: the C5
+  secrets vault (FS: per-app mutex + atomic temp+rename; PG: single-row upsert) and the generic Resource
+  store (FS: atomic temp+rename on save; PG: transactional upsert). Proven by concurrency tests that fire
+  40 concurrent distinct-key writes and lose none.
+- **Blob upload hard-ceiling guard wired.** `HARD_FILE_CEILING` (2 GB) in `blobs-routes.ts` was declared
+  but never applied (dead since C20 shipped). It is now the busboy `fileSize` limit as
+  `min(configured, ceiling)` — so a misconfigured (absurdly high) `FORGE_BLOB_MAX_BYTES` can no longer
+  buffer an unbounded upload; the default 15 MB behavior is unchanged.
+
 ## [0.32.0] — 2026-07-10
 
 ### Added
@@ -1374,7 +1411,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.32.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.33.0...HEAD
+[0.33.0]: https://github.com/mardash-ai/forge/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/mardash-ai/forge/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/mardash-ai/forge/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/mardash-ai/forge/compare/v0.29.0...v0.30.0

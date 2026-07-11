@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, readdir, appendFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, appendFile } from 'node:fs/promises';
 import path from 'node:path';
 import { resourcesDir, eventsFile, logsDir, stateDir } from '../shared/paths';
 import type { AnyResource, ResourceType, BaseResource } from '../resources/types';
@@ -20,111 +20,38 @@ export class Store {
     await mkdir(path.dirname(eventsFile()), { recursive: true });
   }
 
-  private resourceTypeDir(type: ResourceType): string {
-    return path.join(resourcesDir(), type);
-  }
-
-  private resourcePath(type: ResourceType, id: string): string {
-    return path.join(this.resourceTypeDir(type), `${id}.json`);
-  }
+  // --- Resource store (C1/C2/C7/C12/C14 + core) — P26: pluggable ResourceBackend ------------------
+  // These methods forward to the configured ResourceBackend (filesystem default, or Postgres via
+  // FORGE_RESOURCES_BACKEND=postgres); the signatures are unchanged, so every capability + the
+  // `/resources` routes + `inspect` are contract-stable and never know which backend runs. Writes are
+  // atomic (FS temp+rename) / transactional (PG upsert) — closing the P27 torn-write on this store.
 
   async saveResource<T extends BaseResource>(resource: T): Promise<T> {
-    await mkdir(this.resourceTypeDir(resource.type), { recursive: true });
-    await writeFile(this.resourcePath(resource.type, resource.id), JSON.stringify(resource, null, 2));
-    return resource;
+    return (await getBackends()).resources.save(resource);
   }
 
   async deleteResource(type: ResourceType, id: string): Promise<boolean> {
-    try {
-      await rm(this.resourcePath(type, id));
-      return true;
-    } catch {
-      return false;
-    }
+    return (await getBackends()).resources.delete(type, id);
   }
 
-  async getResource<T extends AnyResource = AnyResource>(
-    type: ResourceType,
-    id: string,
-  ): Promise<T | null> {
-    try {
-      const raw = await readFile(this.resourcePath(type, id), 'utf8');
-      return JSON.parse(raw) as T;
-    } catch {
-      return null;
-    }
+  async getResource<T extends AnyResource = AnyResource>(type: ResourceType, id: string): Promise<T | null> {
+    return (await getBackends()).resources.get<T>(type, id);
   }
 
-  // Find a resource by id across all types (used when the caller only has an id).
   async findResourceById(id: string): Promise<AnyResource | null> {
-    for (const type of await this.listTypes()) {
-      const r = await this.getResource(type, id);
-      if (r) return r;
-    }
-    return null;
+    return (await getBackends()).resources.findById(id);
   }
 
-  private async listTypes(): Promise<ResourceType[]> {
-    try {
-      const entries = await readdir(resourcesDir(), { withFileTypes: true });
-      return entries.filter((e) => e.isDirectory()).map((e) => e.name as ResourceType);
-    } catch {
-      return [];
-    }
+  async listResources(filter: { type?: ResourceType; app_id?: string; owner?: string } = {}): Promise<AnyResource[]> {
+    return (await getBackends()).resources.list(filter);
   }
 
-  // List resources, optionally scoped. `owner` (C11) is the opaque per-user id: when supplied the
-  // result is filtered to `resource.owner === owner` (per-user resources like C1 agent-runs never
-  // leak across users); when omitted the query is app-scoped (all owners), so a C10-less caller and
-  // every pre-C11 record still read exactly as before.
-  async listResources(
-    filter: { type?: ResourceType; app_id?: string; owner?: string } = {},
-  ): Promise<AnyResource[]> {
-    const types = filter.type ? [filter.type] : await this.listTypes();
-    const out: AnyResource[] = [];
-    for (const type of types) {
-      let files: string[] = [];
-      try {
-        files = await readdir(this.resourceTypeDir(type));
-      } catch {
-        continue;
-      }
-      for (const file of files) {
-        if (!file.endsWith('.json')) continue;
-        try {
-          const raw = await readFile(path.join(this.resourceTypeDir(type), file), 'utf8');
-          const r = JSON.parse(raw) as AnyResource;
-          if (filter.app_id && r.app_id !== filter.app_id) continue;
-          if (filter.owner !== undefined && r.owner !== filter.owner) continue;
-          out.push(r);
-        } catch {
-          // skip corrupt entries
-        }
-      }
-    }
-    out.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-    return out;
-  }
-
-  // Assign every owner-less resource of a type for an app to `owner` (C11 one-time migration). This
-  // is the platform-side counterpart to a consumer backfilling ITS OWN tables on cutover: legacy
-  // app-scoped C1 agent-runs/artifacts (owner absent) get claimed by the seeded owner so they show
-  // up under owner-scoped queries. Idempotent — already-owned records are left untouched. Returns
-  // the number of records claimed.
   async assignResourceOwner(type: ResourceType, app_id: string, owner: string): Promise<number> {
-    const orphans = (await this.listResources({ type, app_id })).filter((r) => r.owner === undefined);
-    let n = 0;
-    for (const r of orphans) {
-      const updated = { ...r, owner, updated_at: nowIso() } as AnyResource;
-      await this.saveResource(updated as BaseResource);
-      n++;
-    }
-    return n;
+    return (await getBackends()).resources.assignOwner(type, app_id, owner);
   }
 
   async findAppByName(name: string): Promise<AnyResource | null> {
-    const apps = await this.listResources({ type: 'Application' });
-    return apps.find((a) => (a as { name?: string }).name === name) ?? null;
+    return (await getBackends()).resources.findAppByName(name);
   }
 
   async appendEvent(input: {

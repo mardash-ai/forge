@@ -45,8 +45,10 @@ import {
 //   NOTHING persisted · disk-full/IO → 507/503 · not-found/not-owner → 404. Writes are atomic (temp +
 //   rename + metadata, or full cleanup), so a failed upload never orphans bytes.
 
-// A high, absolute ceiling for busboy so a pathological request can't buffer unbounded — the real,
-// configurable per-file max (default 15 MB) is applied per request via the parts() limit below.
+// A high, absolute ceiling for busboy so a pathological / MISCONFIGURED request can't buffer unbounded.
+// The real, configurable per-file max (default 15 MB) is what normally applies; this only bites if an
+// operator sets FORGE_BLOB_MAX_BYTES absurdly high. Wired into the parts() fileSize limit below as
+// min(configured, ceiling), so the upload buffer is ALWAYS bounded.
 const HARD_FILE_CEILING = 2 * 1024 * 1024 * 1024; // 2 GB
 
 interface CollectedUpload {
@@ -118,7 +120,7 @@ export function registerBlobRoutes(
       found: false, size: 0, checksum: '', head: Buffer.alloc(0),
       truncated: false, partMimetype: '', partFilename: undefined, fields: {}, streamError: null,
     };
-    const parts = req.parts({ limits: { fileSize: config.maxBytes, files: 1, fields: 25, fieldSize: 1_000_000 } });
+    const parts = req.parts({ limits: { fileSize: Math.min(config.maxBytes, HARD_FILE_CEILING), files: 1, fields: 25, fieldSize: 1_000_000 } });
     for await (const part of parts) {
       if (part.type === 'file' && part.fieldname === 'file' && !out.found) {
         out.found = true;

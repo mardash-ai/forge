@@ -14,6 +14,8 @@ beforeEach(async () => {
   await b.search.__truncateAllForTests?.();
   await b.events.__truncateAllForTests?.();
   await b.notifications.__truncateAllForTests?.();
+  await b.secrets.__truncateAllForTests?.();
+  await b.resources.__truncateAllForTests?.();
   await b.blobs.__truncateAllForTests?.();
 });
 
