@@ -1,20 +1,11 @@
-import { mkdir, readFile, writeFile, readdir, appendFile, rm, rename } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, appendFile, rm } from 'node:fs/promises';
 import path from 'node:path';
-import {
-  resourcesDir,
-  eventsFile,
-  appEventsDir,
-  appEventsFile,
-  notificationsDir,
-  notificationsFile,
-  logsDir,
-  stateDir,
-} from '../shared/paths';
+import { resourcesDir, eventsFile, logsDir, stateDir } from '../shared/paths';
 import type { AnyResource, ResourceType, BaseResource } from '../resources/types';
 import type { ForgeEvent, EventType } from '../events/catalog';
 import type { AppEvent } from '../events/app-events';
 import type { Notification } from '../notifications/types';
-import { newEventId, newId } from '../shared/ids';
+import { newEventId } from '../shared/ids';
 import type { Actor } from '../shared/domain';
 import { nowIso } from '../shared/time';
 import { getBackends } from './backends';
@@ -217,153 +208,43 @@ export class Store {
     return events.assignOwner(app_id, owner);
   }
 
-  // --- Notifications (C4) ---------------------------------------------------------
-  // Durable, per-app, keyed notifications. The app derives WHICH conditions matter and upserts
-  // by a stable key; Forge persists + tracks dismissal + clear. One JSON doc (keyed map) per app.
-  //
-  // A mutation is a read-modify-write of the whole per-app map. That RMW is NOT atomic on its
-  // own, so two concurrent mutations (even to DIFFERENT keys) would both read the same map, each
-  // apply only its own change, and the later write would clobber the earlier one — a lost update.
-  // `withNotifLock` serializes every mutation for a given app so the RMW runs one-at-a-time, and
-  // `writeNotifications` replaces the file atomically (temp + rename) so a concurrent reader never
-  // observes a half-written file. Reads do not take the lock.
+  // --- Notifications (C4) — P26: pluggable NotificationBackend --------------------
+  // Durable, per-app, keyed notifications (upsert by key; dismiss/clear/list). These methods forward to
+  // the configured NotificationBackend (filesystem default, or Postgres via
+  // FORGE_NOTIFICATIONS_BACKEND=postgres); the signatures are unchanged, so the C4 routes and the
+  // claim-legacy migration are contract-stable and never know which backend runs. On Postgres, upsert is
+  // an INSERT … ON CONFLICT (no whole-map rewrite) and dismiss/clear are targeted UPDATE/DELETE, so
+  // concurrent mutations to distinct keys can't lose an update (the P5/P27 race is gone by construction).
 
-  // Per-app promise chain (async mutex). Keyed by app_id so different apps never block each other.
-  private notifLocks = new Map<string, Promise<unknown>>();
-
-  private withNotifLock<T>(app_id: string, fn: () => Promise<T>): Promise<T> {
-    const prev = this.notifLocks.get(app_id) ?? Promise.resolve();
-    // Run fn after the previous holder settles, whether it resolved or rejected.
-    const run = prev.then(fn, fn);
-    // The lock tail must never reject, or a failed mutation would wedge the next waiter.
-    this.notifLocks.set(
-      app_id,
-      run.then(
-        () => undefined,
-        () => undefined,
-      ),
-    );
-    return run;
-  }
-
-  private async readNotifications(app_id: string): Promise<Record<string, Notification>> {
-    try {
-      return JSON.parse(await readFile(notificationsFile(app_id), 'utf8')) as Record<string, Notification>;
-    } catch {
-      return {};
-    }
-  }
-
-  // The per-app map's STORAGE key for a notification (C11). Owner-less notifications keep the bare
-  // app key (unchanged on-disk format — pre-C11 files still load). Owner-scoped notifications are
-  // namespaced by owner with a NUL separator (which never appears in a normal key), so two users
-  // may hold the SAME app `key` (e.g. "cold:g1") as distinct records that never clobber each other.
-  private notifStorageKey(owner: string | undefined, key: string): string {
-    return owner === undefined ? key : `${owner} ${key}`;
-  }
-
-  // Atomic replace: write a sibling temp file then rename over the target. rename(2) is atomic on
-  // the same filesystem, so a reader sees either the whole old file or the whole new one.
-  private async writeNotifications(app_id: string, map: Record<string, Notification>): Promise<void> {
-    await mkdir(notificationsDir(), { recursive: true });
-    const file = notificationsFile(app_id);
-    const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-    await writeFile(tmp, JSON.stringify(map, null, 2));
-    await rename(tmp, file);
-  }
-
-  // Upsert by (app, key). Re-deriving the same condition updates in place (idempotent) and
-  // PRESERVES the dismissed flag + created_at — so a dismissed-but-still-true condition stays
-  // dismissed instead of resurfacing.
-  // Upsert by (app, owner, key). `owner` (C11) namespaces the record so two users may hold the same
-  // `key` as distinct notifications; the returned `.key` is always the caller's app key (the owner
-  // namespacing is internal). Re-deriving the same condition updates in place (idempotent) and
-  // PRESERVES the dismissed flag + created_at — so a dismissed-but-still-true condition stays
-  // dismissed instead of resurfacing.
   async upsertNotification(
     app_id: string,
     input: { key: string; title: string; body?: string; data?: Record<string, unknown>; subject?: string; owner?: string },
   ): Promise<Notification> {
-    return this.withNotifLock(app_id, async () => {
-      const map = await this.readNotifications(app_id);
-      const now = nowIso();
-      const storageKey = this.notifStorageKey(input.owner, input.key);
-      const prev = map[storageKey];
-      const n: Notification = {
-        key: input.key,
-        title: input.title,
-        body: input.body,
-        data: input.data ?? {},
-        subject: input.subject,
-        owner: input.owner,
-        dismissed: prev?.dismissed ?? false,
-        created_at: prev?.created_at ?? now,
-        updated_at: now,
-      };
-      map[storageKey] = n;
-      await this.writeNotifications(app_id, map);
-      return n;
-    });
+    const { notifications } = await getBackends();
+    return notifications.upsert(app_id, input);
   }
 
   async dismissNotification(app_id: string, key: string, owner?: string): Promise<boolean> {
-    return this.withNotifLock(app_id, async () => {
-      const map = await this.readNotifications(app_id);
-      const n = map[this.notifStorageKey(owner, key)];
-      if (!n) return false;
-      n.dismissed = true;
-      n.updated_at = nowIso();
-      await this.writeNotifications(app_id, map);
-      return true;
-    });
+    const { notifications } = await getBackends();
+    return notifications.dismiss(app_id, key, owner);
   }
 
-  // Remove a notification entirely — its condition no longer applies. Scoped by (app, owner, key).
   async clearNotification(app_id: string, key: string, owner?: string): Promise<boolean> {
-    return this.withNotifLock(app_id, async () => {
-      const map = await this.readNotifications(app_id);
-      const storageKey = this.notifStorageKey(owner, key);
-      if (!(storageKey in map)) return false;
-      delete map[storageKey];
-      await this.writeNotifications(app_id, map);
-      return true;
-    });
+    const { notifications } = await getBackends();
+    return notifications.clear(app_id, key, owner);
   }
 
-  // List notifications. When `owner` (C11) is supplied, returns ONLY that owner's notifications
-  // (cross-owner reads come back empty); when omitted, the list is app-scoped (all owners), so a
-  // C10-less caller and legacy owner-less notifications read exactly as before.
   async listNotifications(
     app_id: string,
     opts: { includeDismissed?: boolean; owner?: string } = {},
   ): Promise<Notification[]> {
-    const map = await this.readNotifications(app_id);
-    let list = Object.values(map);
-    if (opts.owner !== undefined) list = list.filter((n) => n.owner === opts.owner);
-    if (!opts.includeDismissed) list = list.filter((n) => !n.dismissed);
-    list.sort((a, b) => (a.created_at < b.created_at ? 1 : -1)); // newest-first
-    return list;
+    const { notifications } = await getBackends();
+    return notifications.list(app_id, opts);
   }
 
-  // Assign every owner-less notification for an app to `owner` (C11 one-time migration): stamp
-  // `owner` onto each legacy record AND re-key it from the bare app key to the owner-namespaced
-  // storage key. Already-owned records and any that would collide with an existing owner-scoped
-  // key are left as-is. Serialized under the per-app notif lock. Returns the number claimed.
   async assignNotificationOwner(app_id: string, owner: string): Promise<number> {
-    return this.withNotifLock(app_id, async () => {
-      const map = await this.readNotifications(app_id);
-      let n = 0;
-      for (const [storageKey, note] of Object.entries(map)) {
-        if (note.owner !== undefined) continue; // already owned
-        const target = this.notifStorageKey(owner, note.key);
-        if (target in map) continue; // owner already has this key — don't clobber
-        delete map[storageKey];
-        map[target] = { ...note, owner, updated_at: nowIso() };
-        n++;
-      }
-      if (n > 0) await this.writeNotifications(app_id, map);
-      return n;
-    });
+    const { notifications } = await getBackends();
+    return notifications.assignOwner(app_id, owner);
   }
 
   stateDir(): string {

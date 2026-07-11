@@ -9,12 +9,14 @@ export interface StoreConfig {
   identity: BackendKind;
   search: BackendKind;
   events: BackendKind;
+  notifications: BackendKind;
   // Migration window: when a Postgres backend is selected, ALSO write-through to the filesystem
   // (read from Postgres). Lets a deploy de-risk the cutover — flip reads back to FS with no data
   // loss — and retire the FS write once Postgres is proven. See docs/architecture/08-storage-strategy.md.
   identityDualWrite: boolean;
   searchDualWrite: boolean;
   eventsDualWrite: boolean;
+  notificationsDualWrite: boolean;
   dbUrl?: string;
   poolMax: number;
 }
@@ -33,9 +35,11 @@ export function loadStoreConfig(env: NodeJS.ProcessEnv = process.env): StoreConf
     identity: pick(env.FORGE_IDENTITY_BACKEND, def),
     search: pick(env.FORGE_SEARCH_BACKEND, def),
     events: pick(env.FORGE_EVENTS_BACKEND, def),
+    notifications: pick(env.FORGE_NOTIFICATIONS_BACKEND, def),
     identityDualWrite: flag(env.FORGE_IDENTITY_DUAL_WRITE),
     searchDualWrite: flag(env.FORGE_SEARCH_DUAL_WRITE),
     eventsDualWrite: flag(env.FORGE_EVENTS_DUAL_WRITE),
+    notificationsDualWrite: flag(env.FORGE_NOTIFICATIONS_DUAL_WRITE),
     dbUrl: env.FORGE_DB_URL,
     poolMax: Number(env.FORGE_DB_POOL_MAX ?? 8),
   };
@@ -43,5 +47,10 @@ export function loadStoreConfig(env: NodeJS.ProcessEnv = process.env): StoreConf
 
 // Whether any selected domain needs the Postgres pool.
 export function needsDatabase(cfg: StoreConfig): boolean {
-  return cfg.identity === 'postgres' || cfg.search === 'postgres' || cfg.events === 'postgres';
+  return (
+    cfg.identity === 'postgres' ||
+    cfg.search === 'postgres' ||
+    cfg.events === 'postgres' ||
+    cfg.notifications === 'postgres'
+  );
 }

@@ -12,6 +12,10 @@ import type { EventBackend } from './events/types';
 import { FsEventBackend } from './events/fs';
 import { PgEventBackend, ensureEventSchema } from './events/pg';
 import { DualWriteEventBackend } from './events/dual';
+import type { NotificationBackend } from './notifications/types';
+import { FsNotificationBackend } from './notifications/fs';
+import { PgNotificationBackend, ensureNotificationSchema } from './notifications/pg';
+import { DualWriteNotificationBackend } from './notifications/dual';
 
 export { loadStoreConfig, needsDatabase } from './config';
 export type { StoreConfig, BackendKind } from './config';
@@ -25,6 +29,7 @@ export interface Backends {
   identity: IdentityBackend;
   search: SearchBackend;
   events: EventBackend;
+  notifications: NotificationBackend;
   // The Postgres pool, when one was opened (shared across domains as more migrate).
   pool?: Pool;
   describe(): string;
@@ -47,6 +52,7 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     if (cfg.identity === 'postgres') await ensureIdentitySchema(pool);
     if (cfg.search === 'postgres') await ensureSearchSchema(pool);
     if (cfg.events === 'postgres') await ensureEventSchema(pool);
+    if (cfg.notifications === 'postgres') await ensureNotificationSchema(pool);
   }
 
   // identity
@@ -88,16 +94,32 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     eventsLabel = 'filesystem';
   }
 
+  // notifications (C4)
+  const fsNotifications = new FsNotificationBackend();
+  let notifications: NotificationBackend;
+  let notificationsLabel: string;
+  if (cfg.notifications === 'postgres') {
+    const pg = new PgNotificationBackend(pool!);
+    notifications = cfg.notificationsDualWrite ? new DualWriteNotificationBackend(pg, fsNotifications) : pg;
+    notificationsLabel = cfg.notificationsDualWrite ? 'postgres+dualwrite' : 'postgres';
+  } else {
+    notifications = fsNotifications;
+    notificationsLabel = 'filesystem';
+  }
+
   return {
     identity,
     search,
     events,
+    notifications,
     pool,
-    describe: () => `identity=${identityLabel} search=${searchLabel} events=${eventsLabel}`,
+    describe: () =>
+      `identity=${identityLabel} search=${searchLabel} events=${eventsLabel} notifications=${notificationsLabel}`,
     async close() {
       await identity.close?.();
       await search.close?.();
       await events.close?.();
+      await notifications.close?.();
       if (pool) await pool.end();
     },
   };

@@ -9,6 +9,42 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.31.0] — 2026-07-10
+
+### Added
+- **P26 (increment 4) — C4 notifications on Postgres.** A `PgNotificationBackend` behind the pluggable
+  `NotificationBackend` interface: keyed durable state in a table `forge_notifications` (PK
+  `(app_id, owner, key)`). Upsert is one **`INSERT … ON CONFLICT (app_id, owner, key) DO UPDATE`** — **no
+  whole-map read-modify-write** (preserving `dismissed` + `created_at`); dismiss/clear are targeted
+  `UPDATE`/`DELETE`; the list is an indexed read (`(app_id, owner, created_at DESC)`). So concurrent
+  mutations to distinct keys can't lose an update — the **P5/P27 lost-update race is gone by
+  construction**, no application lock. Config-selected (`FORGE_NOTIFICATIONS_BACKEND=postgres`;
+  filesystem stays default), sharing the same pool + `FORGE_DB_URL`.
+- **Contract-stable.** `POST /notifications`, `/notifications/dismiss`, `/notifications/clear`, and
+  `GET /notifications` payloads + owner-scoping (C11, incl. `claim-legacy`) are unchanged — the five
+  `store` notification methods now forward to the configured backend, and the SAME store + route + P5
+  concurrency suite passes on both backends. Legacy/app-scoped (owner-less) records use an empty-string
+  owner sentinel so a NULL doesn't defeat the `(app, owner, key)` uniqueness (owner-less re-derive stays
+  idempotent).
+- **O4 scope baked in.** `group_id` + `visibility` (default `private`) columns — same model as
+  identity/search/events — so group-shared inboxes (households / C31) light up with **no second
+  migration**. Active C4 owner-scoping unchanged.
+- **Notifications migration + backfill.** `forge storage migrate --store notifications` copies each app's
+  keyed map into Postgres verbatim (owner/key/dismissed/created_at preserved); a
+  `DualWriteNotificationBackend` (`FORGE_NOTIFICATIONS_DUAL_WRITE=1`) reads Postgres while mirroring to
+  the filesystem for a reversible cutover.
+- **CI covers notifications on Postgres.** The `test-postgres` job now runs the suite with identity,
+  search, events, AND notifications on Postgres; `tests/pg-notifications.test.ts` adds Postgres-specific
+  coverage (ON-CONFLICT upsert preserving dismissed/created_at, the owner sentinel + O4 columns, native
+  concurrency with 50 distinct-key upserts, and backfill parity).
+
+### Removed
+- **Dead code the facade refactors left behind.** Trimmed now-unused imports from
+  `src/storage/store.ts` — `rename`, `appEventsDir`, `appEventsFile`, `notificationsDir`,
+  `notificationsFile`, `newId` — and the private notification helpers (`notifLocks`, `withNotifLock`,
+  `readNotifications`, `notifStorageKey`, `writeNotifications`) now that C3 events + C4 notifications live
+  in their backends.
+
 ## [0.30.0] — 2026-07-10
 
 ### Added
@@ -1307,7 +1343,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.30.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/mardash-ai/forge/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/mardash-ai/forge/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/mardash-ai/forge/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/mardash-ai/forge/compare/v0.27.0...v0.28.0

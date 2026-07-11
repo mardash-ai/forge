@@ -15,6 +15,7 @@ export default defineConfig({
       FORGE_IDENTITY_BACKEND: 'postgres',
       FORGE_SEARCH_BACKEND: 'postgres',
       FORGE_EVENTS_BACKEND: 'postgres',
+      FORGE_NOTIFICATIONS_BACKEND: 'postgres',
     },
   },
 });
