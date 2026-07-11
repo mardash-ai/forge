@@ -9,6 +9,40 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.34.0] — 2026-07-10
+
+### Added
+- **C29 — the deterministic authorization / policy engine.** A generic, product-agnostic decision
+  capability: given an actor + an action + the app's policies it returns
+  `{ decision: 'allow' | 'needs-approval' | 'deny', rule, reason, high_risk, action_class }`.
+  **Fully deterministic — no model calls, no I/O in the decision core** (`src/authz/authorize.ts`):
+  same inputs always yield the same decision, and it names the rule that governed it. Precedence is
+  **deny-overrides → non-overridable safety floor → highest-priority matching allow/needs-approval →
+  default posture**.
+- **Non-overridable safety floor.** High-risk action classes — external message sends (email/sms/push/
+  webhook/call), spending money, contacting a new/unknown recipient, and irreversible actions — ALWAYS
+  return `needs-approval` regardless of any policy (a rule can never downgrade a high-risk action to
+  auto-allow; only a matching `deny` is stricter). The high-risk class-set is **configurable by the app**
+  (`AuthorizeOptions.highRiskClasses`), but "always stage" itself is non-overridable.
+- **Structured policy rules over many dimensions.** A `PolicyRule` matches on tool, action type, contact,
+  domain, channel, project, location, device, data sensitivity, reversibility, actor role, a monetary
+  ceiling (`max_amount`), and a time window (UTC days + start/end) — conditions ANDed, an empty match =
+  matches all. Rules carry `effect` + `priority` and the O4 `(owner, group_id, visibility)` scope.
+- **Policy store — a new pluggable P26 store domain.** `PolicyBackend` behind the same interface as the
+  other stores: **filesystem default**, `FORGE_POLICY_BACKEND=postgres` opt-in (one `jsonb` row per
+  `(app_id, id)` in `forge_policies`, O4 columns projected + indexed on `(app_id, owner)`), a
+  `DualWrite` impl (`FORGE_POLICY_DUAL_WRITE=1`) + `forge storage migrate --store policies`. CRUD surface;
+  the `test-postgres` CI job now also runs policies on Postgres (via the shared pg vitest env).
+- **The consume contract — two-plane HTTP/CLI + a mirrorable core.** `POST /authorize` (loads the
+  actor's policies, evaluates, and **records the decision to the C3 audit trail** as `authz.decision`,
+  owner-scoped, keyed by `action_class`); `GET/POST /policies`, `GET/DELETE /policies/:id` for policy
+  management. `authorize()` itself is exported as a **pure, mirrorable function** (like `shared/session.ts`
+  / `shared/health.ts`) — a consumer can evaluate locally or call the plane. CLI: `forge policy list/set/delete`.
+- **Progressive autonomy (mechanism, not UX).** `POST /authz/approvals` records an approval to C3; 
+  `GET /authz/approvals?owner=&action_class=&threshold=` surfaces "this action class was approved N times"
+  with a `suggest_policy` flag at the threshold — the raw signal a consumer's UX turns into a "always
+  allow this?" prompt. The platform ships the count; the app owns the plain-language authoring UX.
+
 ## [0.33.0] — 2026-07-10
 
 ### Added
@@ -1411,7 +1445,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.33.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/mardash-ai/forge/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/mardash-ai/forge/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/mardash-ai/forge/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/mardash-ai/forge/compare/v0.30.0...v0.31.0

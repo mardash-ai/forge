@@ -1,0 +1,151 @@
+import {
+  DEFAULT_HIGH_RISK,
+  actionClass,
+  type Actor,
+  type Action,
+  type PolicyRule,
+  type PolicyMatch,
+  type AuthzDecision,
+  type HighRiskSpec,
+  type Decision,
+} from './types';
+
+// C29 — the PURE, DETERMINISTIC enforcement point. No I/O, no model calls: given the same actor + action
+// + policies it always returns the same decision. This is the mirrorable core (like `shared/session.ts`
+// and `shared/health.ts`): a consumer app can copy it and evaluate locally, or call the platform's
+// POST /authorize (which loads the policies + records the decision to C3). Recording + persistence are
+// the caller's / the route's job — this function is a pure decision.
+
+export interface AuthorizeOptions {
+  // The high-risk class set (non-overridable by any policy). Configurable per app; defaults to the
+  // shipped conservative set (external sends, spending, new contacts, irreversible, send/pay/… types).
+  highRiskClasses?: HighRiskSpec;
+  // The decision when NO policy matches and the action is not high-risk. Conservative default:
+  // 'needs-approval' (progressive autonomy — grant autonomy explicitly via policies). Apps may set 'allow'.
+  defaultDecision?: Decision;
+  // Injectable clock (ISO). Defaults to action.at, then now — so decisions are reproducible in tests.
+  now?: string;
+}
+
+// True iff the action falls into a configured high-risk class. This is the SAFETY FLOOR input — its
+// result forces `needs-approval` and cannot be downgraded by any policy.
+export function isHighRisk(action: Action, spec: HighRiskSpec = DEFAULT_HIGH_RISK): boolean {
+  if (spec.tools && action.tool !== undefined && spec.tools.includes(action.tool)) return true;
+  if (spec.action_types && action.type !== undefined && spec.action_types.includes(action.type)) return true;
+  if (spec.channels && action.channel !== undefined && spec.channels.includes(action.channel)) return true;
+  if ((spec.irreversible ?? true) && action.reversibility === 'irreversible') return true;
+  if ((spec.spending ?? true) && typeof action.amount === 'number' && action.amount > (spec.minAmount ?? 0)) return true;
+  if ((spec.newContact ?? true) && action.contact !== undefined && action.contact !== '' && action.contact_known !== true) return true;
+  return false;
+}
+
+// A list-dimension matches when the rule sets no constraint, or the action's value is present AND in the
+// set. (An absent constraint never narrows; an absent action value fails a present constraint.)
+function inSet(set: string[] | undefined, value: string | undefined): boolean {
+  if (!set || set.length === 0) return true;
+  return value !== undefined && set.includes(value);
+}
+
+const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+function inTimeWindow(win: NonNullable<PolicyMatch['time']>, nowIso: string): boolean {
+  const d = new Date(nowIso);
+  if (Number.isNaN(d.getTime())) return false;
+  if (win.days && win.days.length > 0) {
+    const dow = d.getUTCDay();
+    const ok = win.days.some((entry) => {
+      const e = String(entry).toLowerCase();
+      return e === DAY_NAMES[dow] || e === String(dow);
+    });
+    if (!ok) return false;
+  }
+  if (win.start || win.end) {
+    const mins = d.getUTCHours() * 60 + d.getUTCMinutes();
+    const toMin = (s?: string): number | undefined => {
+      if (!s) return undefined;
+      const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim());
+      return m ? Number(m[1]) * 60 + Number(m[2]) : undefined;
+    };
+    const start = toMin(win.start);
+    const end = toMin(win.end);
+    if (start !== undefined && mins < start) return false;
+    if (end !== undefined && mins > end) return false;
+  }
+  return true;
+}
+
+// Whether a rule's conditions all hold for this actor + action (conditions are ANDed; empty match = all).
+function matchApplies(match: PolicyMatch, actor: Actor, action: Action, nowIso: string): boolean {
+  if (!inSet(match.tool, action.tool)) return false;
+  if (!inSet(match.type, action.type)) return false;
+  if (!inSet(match.contact, action.contact)) return false;
+  if (!inSet(match.domain, action.domain)) return false;
+  if (!inSet(match.channel, action.channel)) return false;
+  if (!inSet(match.project, action.project)) return false;
+  if (!inSet(match.location, action.location)) return false;
+  if (!inSet(match.device, action.device)) return false;
+  if (!inSet(match.data_sensitivity, action.data_sensitivity)) return false;
+  if (!inSet(match.reversibility, action.reversibility)) return false;
+  if (!inSet(match.role, actor.role)) return false;
+  if (match.max_amount !== undefined) {
+    if (typeof action.amount !== 'number' || action.amount > match.max_amount) return false;
+  }
+  if (match.time && !inTimeWindow(match.time, nowIso)) return false;
+  return true;
+}
+
+// The actor's applicable policies, HIGHEST-PRIORITY first (deterministic id tiebreak). A policy applies
+// when it is app-wide (no owner) OR belongs to the actor's owner, and its match holds. (A matching DENY
+// is deny-overrides — handled in `authorize` before priority, so a low-priority deny still beats a
+// high-priority allow.)
+export function applicablePolicies(actor: Actor, action: Action, policies: PolicyRule[], nowIso: string): PolicyRule[] {
+  return policies
+    .filter((p) => p.owner === undefined || p.owner === null || p.owner === actor.owner)
+    .filter((p) => matchApplies(p.match, actor, action, nowIso))
+    .sort((a, b) => b.priority - a.priority || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+// THE enforcement point. Deterministic. Order of precedence:
+//   1. A matching DENY policy wins (strictest) — even over the safety floor.
+//   2. SAFETY FLOOR: a high-risk action ALWAYS returns needs-approval — NON-OVERRIDABLE (an allow policy
+//      can never downgrade it).
+//   3. Otherwise the strongest matching policy's effect (allow | needs-approval) — priority-ordered.
+//   4. No policy matched → the default posture (conservative 'needs-approval'; configurable to 'allow').
+export function authorize(actor: Actor, action: Action, policies: PolicyRule[], opts: AuthorizeOptions = {}): AuthzDecision {
+  const now = opts.now ?? action.at ?? new Date().toISOString();
+  const spec = opts.highRiskClasses ?? DEFAULT_HIGH_RISK;
+  const cls = actionClass(action);
+  const highRisk = isHighRisk(action, spec);
+  const applicable = applicablePolicies(actor, action, policies, now);
+
+  const deny = applicable.find((p) => p.effect === 'deny');
+  if (deny) {
+    return { decision: 'deny', rule: deny.id, reason: deny.reason ?? 'denied by policy', high_risk: highRisk, action_class: cls };
+  }
+  if (highRisk) {
+    return {
+      decision: 'needs-approval',
+      rule: `safety-floor:${cls}`,
+      reason: 'high-risk action class always requires approval (non-overridable safety floor)',
+      high_risk: true,
+      action_class: cls,
+    };
+  }
+  const governing = applicable[0];
+  if (governing) {
+    return {
+      decision: governing.effect,
+      rule: governing.id,
+      reason: governing.reason ?? `governed by policy ${governing.id}`,
+      high_risk: false,
+      action_class: cls,
+    };
+  }
+  return {
+    decision: opts.defaultDecision ?? 'needs-approval',
+    rule: 'default',
+    reason: 'no policy matched; default posture',
+    high_risk: false,
+    action_class: cls,
+  };
+}

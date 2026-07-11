@@ -20,6 +20,7 @@ import { registerOwnerRoutes } from '../api/owner-routes';
 import { registerThemeRoutes } from '../api/theme-routes';
 import { registerStatusRoutes } from '../api/status-routes';
 import { registerIncidentRoutes } from '../api/incident-routes';
+import { registerAuthzRoutes } from '../api/authz-routes';
 import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
 
@@ -133,6 +134,10 @@ registerStatusRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME, planeL
 // operator reaches over the internal network to declare an incident against production; the public
 // `/status` render above reads the same store. Defaults the app to this sidecar's FORGE_APP_NAME.
 registerIncidentRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
+
+// Authorization / policy engine (C29) — deterministic `POST /authorize` (+ C3 audit), policy CRUD, and
+// the progressive-autonomy approvals surface. The running app calls these over the internal network.
+registerAuthzRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 
 // In production there is no `./forge provision`, so seed a minimal Application
 // record for the app this sidecar serves — enough for schedule-job/inspect to

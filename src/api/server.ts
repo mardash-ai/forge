@@ -17,6 +17,7 @@ import { registerOwnerRoutes } from './owner-routes';
 import { registerThemeRoutes } from './theme-routes';
 import { registerStatusRoutes } from './status-routes';
 import { registerIncidentRoutes } from './incident-routes';
+import { registerAuthzRoutes } from './authz-routes';
 import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
 
@@ -121,6 +122,10 @@ registerStatusRoutes(app, { planeLabel: 'Forge control plane' });
 // behind `forge status incident …`. The public rendering rides `/status` above; served here
 // for dev, and on the data-plane sidecar in prod.
 registerIncidentRoutes(app);
+
+// Authorization / policy engine (C29) — the deterministic `POST /authorize` (evaluate + C3 audit),
+// policy CRUD, and the progressive-autonomy approvals surface. Served on both planes.
+registerAuthzRoutes(app);
 
 // Event APIs.
 app.get('/events', async (req) => {

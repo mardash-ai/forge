@@ -129,6 +129,17 @@ export function searchFile(appId: string): string {
   return path.join(searchDir(), `${appId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
 }
 
+// Per-app policy store (C29) — one JSON doc per app: a keyed map `{ [id]: PolicyRule }` of the app's
+// authorization policies (owner-scoped or app-wide). Mutable durable STATE (put/delete in place). Kept
+// OUT of the generic Resource store, so policies never surface through the inspectable `/resources` API.
+export function policiesDir(): string {
+  return path.join(stateDir(), 'policies');
+}
+
+export function policiesFile(appId: string): string {
+  return path.join(policiesDir(), `${appId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
+}
+
 // Per-app blob / file store (C20). Two parts, both under the SAME durable state volume the data-plane
 // already uses (FORGE_STATE_DIR, e.g. /forge-state on the `forge_state` named volume) — NO new external
 // dependency:

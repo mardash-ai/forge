@@ -29,6 +29,10 @@ import type { ResourceBackend } from './resources/types';
 import { FsResourceBackend } from './resources/fs';
 import { PgResourceBackend, ensureResourceSchema } from './resources/pg';
 import { DualWriteResourceBackend } from './resources/dual';
+import type { PolicyBackend } from './policies/types';
+import { FsPolicyBackend } from './policies/fs';
+import { PgPolicyBackend, ensurePolicySchema } from './policies/pg';
+import { DualWritePolicyBackend } from './policies/dual';
 
 export { loadStoreConfig, needsDatabase } from './config';
 export type { StoreConfig, BackendKind } from './config';
@@ -45,6 +49,7 @@ export interface Backends {
   notifications: NotificationBackend;
   secrets: SecretsBackend;
   resources: ResourceBackend;
+  policy: PolicyBackend;
   blobs: BlobBackend;
   // The Postgres pool, when one was opened (shared across domains as more migrate).
   pool?: Pool;
@@ -71,6 +76,7 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     if (cfg.notifications === 'postgres') await ensureNotificationSchema(pool);
     if (cfg.secrets === 'postgres') await ensureSecretsSchema(pool);
     if (cfg.resources === 'postgres') await ensureResourceSchema(pool);
+    if (cfg.policy === 'postgres') await ensurePolicySchema(pool);
     if (cfg.blobs === 's3') await ensureBlobSchema(pool);
   }
 
@@ -152,6 +158,19 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     resourcesLabel = 'filesystem';
   }
 
+  // policy (C29) — authorization policies on the filesystem, OR in Postgres.
+  const fsPolicy = new FsPolicyBackend();
+  let policy: PolicyBackend;
+  let policyLabel: string;
+  if (cfg.policy === 'postgres') {
+    const pg = new PgPolicyBackend(pool!);
+    policy = cfg.policyDualWrite ? new DualWritePolicyBackend(pg, fsPolicy) : pg;
+    policyLabel = cfg.policyDualWrite ? 'postgres+dualwrite' : 'postgres';
+  } else {
+    policy = fsPolicy;
+    policyLabel = 'filesystem';
+  }
+
   // blobs (C20) — bytes+metadata on the filesystem, OR bytes in S3/MinIO + metadata in Postgres. The FS
   // backend is the shared `blobStore` singleton (so the store's own unit tests + the route observe the
   // same instance). The S3 backend needs both the pool (metadata) and S3 settings (bytes); the bucket is
@@ -182,10 +201,11 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     notifications,
     secrets,
     resources,
+    policy,
     blobs,
     pool,
     describe: () =>
-      `identity=${identityLabel} search=${searchLabel} events=${eventsLabel} notifications=${notificationsLabel} secrets=${secretsLabel} resources=${resourcesLabel} blobs=${blobsLabel}`,
+      `identity=${identityLabel} search=${searchLabel} events=${eventsLabel} notifications=${notificationsLabel} secrets=${secretsLabel} resources=${resourcesLabel} policy=${policyLabel} blobs=${blobsLabel}`,
     async close() {
       await identity.close?.();
       await search.close?.();
@@ -193,6 +213,7 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
       await notifications.close?.();
       await secrets.close?.();
       await resources.close?.();
+      await policy.close?.();
       await blobs.close?.();
       if (pool) await pool.end();
     },

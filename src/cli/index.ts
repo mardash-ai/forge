@@ -721,7 +721,7 @@ storage
   .option('--store <name>', 'store to migrate: identity | search | events | notifications | secrets | resources | blobs', 'identity')
   .option('--app <name>', 'migrate only this app (default: every app with filesystem state)')
   .action(async (opts) => {
-    const supported = ['identity', 'search', 'events', 'notifications', 'secrets', 'resources', 'blobs'];
+    const supported = ['identity', 'search', 'events', 'notifications', 'secrets', 'resources', 'policy', 'blobs'];
     if (!supported.includes(opts.store)) {
       fail(`unknown store "${opts.store}" (supported: ${supported.join(', ')})`);
     }
@@ -777,6 +777,14 @@ storage
         await ensureResourceSchema(pool);
         const migrated = await backfillResources(new FsResourceBackend(), new PgResourceBackend(pool));
         process.stdout.write(JSON.stringify({ store: 'resources', migrated }, null, 2) + '\n');
+      } else if (opts.store === 'policy') {
+        const { FsPolicyBackend } = await import('../storage/backends/policies/fs');
+        const { PgPolicyBackend, ensurePolicySchema } = await import('../storage/backends/policies/pg');
+        const { backfillPolicies, listFsPolicyApps } = await import('../storage/backends/policies/migrate');
+        await ensurePolicySchema(pool);
+        const apps = opts.app ? [opts.app] : await listFsPolicyApps();
+        const migrated = await backfillPolicies(new FsPolicyBackend(), new PgPolicyBackend(pool), apps);
+        process.stdout.write(JSON.stringify({ store: 'policy', apps: apps.length, migrated }, null, 2) + '\n');
       } else {
         // blobs: bytes filesystem → S3/MinIO, metadata → Postgres. Needs the S3 settings too.
         const { loadStoreConfig } = await import('../storage/backends/config');
@@ -796,6 +804,58 @@ storage
     } finally {
       await pool.end();
     }
+  });
+
+// C29 — authorization policies (management surface; the deterministic `authorize()` runs in-process /
+// via POST /authorize). Control-plane is multi-app, so `--app <name>` is passed through.
+const policy = program.command('policy').description('C29 authorization policies');
+policy
+  .command('list')
+  .description('List an app’s policies (optionally scoped to one owner)')
+  .option('--app <name>', 'app name')
+  .option('--owner <owner>', 'owner id (returns that owner’s + app-wide policies)')
+  .action(async (opts) => {
+    const qs = new URLSearchParams();
+    if (opts.app) qs.set('app', opts.app);
+    if (opts.owner) qs.set('owner', opts.owner);
+    const r = await api('GET', `/policies?${qs.toString()}`);
+    process.stdout.write(JSON.stringify(r.policies ?? r, null, 2) + '\n');
+  });
+policy
+  .command('set')
+  .description('Create or update a policy')
+  .requiredOption('--effect <effect>', 'allow | needs-approval | deny')
+  .option('--app <name>', 'app name')
+  .option('--id <id>', 'policy id (omit to create)')
+  .option('--owner <owner>', 'owner id (omit for an app-wide policy)')
+  .option('--priority <n>', 'priority (higher wins)')
+  .option('--match <json>', 'match conditions as JSON, e.g. \'{"tool":["send_email"]}\'')
+  .option('--reason <text>', 'human-readable reason')
+  .action(async (opts) => {
+    let match: unknown;
+    if (opts.match) {
+      try { match = JSON.parse(opts.match); } catch { fail('--match must be valid JSON'); }
+    }
+    const body: Record<string, unknown> = { effect: opts.effect };
+    if (opts.app) body.app = opts.app;
+    if (opts.id) body.id = opts.id;
+    if (opts.owner) body.owner = opts.owner;
+    if (opts.priority) body.priority = Number.parseInt(opts.priority, 10);
+    if (match !== undefined) body.match = match;
+    if (opts.reason) body.reason = opts.reason;
+    const r = await api('POST', '/policies', body);
+    process.stdout.write(JSON.stringify(r.policy ?? r, null, 2) + '\n');
+  });
+policy
+  .command('delete')
+  .description('Delete a policy by id')
+  .argument('<id>')
+  .option('--app <name>', 'app name')
+  .action(async (id, opts) => {
+    const qs = new URLSearchParams();
+    if (opts.app) qs.set('app', opts.app);
+    const r = await api('DELETE', `/policies/${encodeURIComponent(id)}?${qs.toString()}`);
+    process.stdout.write(JSON.stringify(r, null, 2) + '\n');
   });
 
 program.parseAsync(process.argv).catch((err) => fail(String(err?.message ?? err)));

@@ -23,6 +23,7 @@ export interface StoreConfig {
   notifications: BackendKind;
   secrets: BackendKind;
   resources: BackendKind;
+  policy: BackendKind;
   blobs: BlobBackendKind;
   s3?: S3Settings;
   // Migration window: when a Postgres backend is selected, ALSO write-through to the filesystem
@@ -34,6 +35,7 @@ export interface StoreConfig {
   notificationsDualWrite: boolean;
   secretsDualWrite: boolean;
   resourcesDualWrite: boolean;
+  policyDualWrite: boolean;
   blobsDualWrite: boolean;
   dbUrl?: string;
   poolMax: number;
@@ -77,6 +79,7 @@ export function loadStoreConfig(env: NodeJS.ProcessEnv = process.env): StoreConf
     notifications: pick(env.FORGE_NOTIFICATIONS_BACKEND, def),
     secrets: pick(env.FORGE_SECRETS_BACKEND, def),
     resources: pick(env.FORGE_RESOURCES_BACKEND, def),
+    policy: pick(env.FORGE_POLICY_BACKEND, def),
     blobs: pickBlob(env.FORGE_BLOBS_BACKEND, def),
     s3: loadS3(env),
     identityDualWrite: flag(env.FORGE_IDENTITY_DUAL_WRITE),
@@ -85,6 +88,7 @@ export function loadStoreConfig(env: NodeJS.ProcessEnv = process.env): StoreConf
     notificationsDualWrite: flag(env.FORGE_NOTIFICATIONS_DUAL_WRITE),
     secretsDualWrite: flag(env.FORGE_SECRETS_DUAL_WRITE),
     resourcesDualWrite: flag(env.FORGE_RESOURCES_DUAL_WRITE),
+    policyDualWrite: flag(env.FORGE_POLICY_DUAL_WRITE),
     blobsDualWrite: flag(env.FORGE_BLOBS_DUAL_WRITE),
     dbUrl: env.FORGE_DB_URL,
     poolMax: Number(env.FORGE_DB_POOL_MAX ?? 8),
@@ -101,6 +105,7 @@ export function needsDatabase(cfg: StoreConfig): boolean {
     cfg.notifications === 'postgres' ||
     cfg.secrets === 'postgres' ||
     cfg.resources === 'postgres' ||
+    cfg.policy === 'postgres' ||
     cfg.blobs === 's3'
   );
 }
