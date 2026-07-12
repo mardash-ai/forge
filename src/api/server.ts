@@ -20,6 +20,7 @@ import { registerIncidentRoutes } from './incident-routes';
 import { registerAuthzRoutes } from './authz-routes';
 import { registerOAuthRoutes } from './oauth-routes';
 import { registerMcpRoutes } from './mcp-routes';
+import { registerConnectRoutes } from './connect-routes';
 import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
 
@@ -139,6 +140,13 @@ registerOAuthRoutes(app);
 // C3 attribution; the `/mcp/*` management routes register tools, version the instruction block, and
 // schedule proactive prompts via C2. Served on both planes.
 registerMcpRoutes(app);
+
+// Third-party connectors / outbound OAuth (C24) — the app proxies `/connect/*` same-origin. Users connect
+// their own Google/Microsoft accounts; forge stores the tokens ENCRYPTED (C5 master key), refreshes them,
+// and brokers a fresh access token so the app can call the provider AS the user without ever handling raw
+// tokens. Owner comes from the C10 session; the broker also accepts the C10 service token for background
+// sends. Served on both planes.
+registerConnectRoutes(app);
 
 // Event APIs.
 app.get('/events', async (req) => {

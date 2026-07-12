@@ -101,3 +101,16 @@ export async function readSecrets(appId: string): Promise<Record<string, string>
 export async function listSecretNames(appId: string): Promise<string[]> {
   return (await backend()).listNames(appId);
 }
+
+// --- reusable envelope encryption under the C5 master key -----------------------
+// C24 reuses the SAME AES-256-GCM master key (FORGE_SECRETS_KEY) to encrypt third-party connector tokens
+// at rest — one key mechanism for all platform secret material, no second key to provision. These wrap the
+// module-private seal/open so the connector vault never re-implements key handling. The value is opaque to
+// the caller (a `Sealed` triple of base64 iv/tag/data) and is only ever the ciphertext.
+export async function sealValue(plaintext: string): Promise<Sealed> {
+  return seal(await masterKey(), plaintext);
+}
+
+export async function openValue(sealed: Sealed): Promise<string> {
+  return open(await masterKey(), sealed);
+}

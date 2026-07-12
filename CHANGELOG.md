@@ -9,6 +9,46 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.37.0] — 2026-07-12
+
+### Added
+- **C24 — third-party connector vault / outbound OAuth.** A generic, product-agnostic capability that lets a
+  consuming app's users connect their own third-party accounts (Gmail send + Calendar read via **Google**)
+  so the app can act **as them**, without the app ever handling raw tokens.
+  - **Provider registry** (`src/connectors/providers.ts`) — config-driven descriptors (`authorization_endpoint`,
+    `token_endpoint`, `revoke_endpoint`, default scopes, the offline/consent authorize params, PKCE). Google
+    ships as the MVP provider; **Microsoft** is registered too (endpoints known) to prove the architecture is
+    config-driven — it lights up the moment its creds are provisioned. Client credentials come from
+    **per-provider C5 secrets/env** (`GOOGLE_CONNECT_CLIENT_ID/SECRET`), never hardcoded, and are **distinct**
+    from the C10 `GOOGLE_CLIENT_ID` sign-in client.
+  - **Connect flow** — `GET /connect/:provider/start` (owner from the C10 session) mints a PKCE + `state`
+    pending request and 302s to the provider consent (offline access → refresh token); `GET
+    /connect/:provider/callback` exchanges the code and stores the tokens. Pending requests are one-shot and
+    short-lived; a callback whose session user differs from the initiator is rejected.
+  - **Vault + auto-refresh** — access + refresh tokens are **encrypted at rest** (AES-256-GCM under the C5
+    master key `FORGE_SECRETS_KEY`; the store only ever holds ciphertext) in a new **P26 `connections` store
+    domain** (`forge_connections` + `forge_connection_requests`; filesystem default / Postgres opt-in via
+    `FORGE_CONNECTIONS_BACKEND`, with dual-write + backfill). An expired access token is refreshed
+    transparently (in-process per-connection mutex prevents a refresh stampede); a dead refresh marks the
+    connection `expired` and returns `409 reconnect_required`.
+  - **Broker** — `POST /connect/:provider/token` returns a **fresh, valid access token** for
+    `(owner, provider)` so the app makes the provider call itself. Owner comes from the C10 **session**;
+    a background/server call authenticates with the C10 **service token** and passes `owner` (the same
+    trusted-internal model as the C2 scheduler / `/mcp/consents`). A future proxy mode can layer on this.
+  - **Management** — `GET /connect` lists a user's connections (provider, scopes, status, `account_label`,
+    timestamps — **never a token**); `DELETE /connect/:provider` revokes at the provider (when supported)
+    and deletes the stored tokens. `GET /connect/providers` advertises the registry + per-provider
+    configured-state. Connect / disconnect / token-issue are recorded to the C3 app-event log (no token).
+  - Served on **both planes** (the app proxies `/connect/*` same-origin, like `/auth`/`/oauth`/`/mcp`).
+- **Operator provisioning catalog (C13)** — added `GOOGLE_CONNECT_CLIENT_ID` / `GOOGLE_CONNECT_CLIENT_SECRET`
+  (optional; the Google connector degrades to a clean 503 until both are provisioned), with the Google Cloud
+  setup (Gmail + Calendar APIs, the `.../connect/google/callback` redirect URI, the requested scopes).
+
+### Changed
+- `secrets-local` now also exports `sealValue`/`openValue` — reusable envelope encryption under the **same**
+  C5 master key (`FORGE_SECRETS_KEY`), so the connector vault encrypts tokens with one key mechanism and no
+  second key to provision. The existing `set/unset/list`/runtime-injection contract is unchanged.
+
 ## [0.36.0] — 2026-07-12
 
 ### Fixed
@@ -1554,7 +1594,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.37.0...HEAD
+[0.37.0]: https://github.com/mardash-ai/forge/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/mardash-ai/forge/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/mardash-ai/forge/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/mardash-ai/forge/compare/v0.33.0...v0.34.0

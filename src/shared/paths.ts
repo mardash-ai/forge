@@ -181,3 +181,15 @@ export function blobsBytesDir(appId: string): string {
 export function blobBytesFile(appId: string, blobId: string): string {
   return path.join(blobsBytesDir(appId), safeSeg(blobId));
 }
+
+// Per-app third-party connector vault (C24) — one JSON doc per app holding the user's live provider
+// connections (SEALED access/refresh tokens — AES-256-GCM ciphertext, never plaintext) + short-lived
+// pending connect requests. Lives under the gitignored state dir like the C10 identity / C5 secrets vaults,
+// and is NEVER surfaced through the inspectable `/resources` API — connector tokens must not be readable.
+export function connectionsDir(): string {
+  return path.join(stateDir(), 'connections');
+}
+
+export function connectionsFile(appId: string): string {
+  return path.join(connectionsDir(), `${appId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
+}

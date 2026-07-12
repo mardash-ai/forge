@@ -131,6 +131,23 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     requires_note: 'Optional — paired with SMTP_URL; required for email delivery to work. Use a domain you’re authorized to send from.',
     obtain: 'Choose an address on a domain you control, e.g. `Acme <no-reply@acme.example>`.',
   },
+  GOOGLE_CONNECT_CLIENT_ID: {
+    name: 'GOOGLE_CONNECT_CLIENT_ID',
+    capability: 'C24 · Connectors (Google outbound OAuth)',
+    requirement: 'optional',
+    what: 'OAuth 2.0 Web client ID for CONNECTING a user’s Google account (Gmail send + Calendar read) — the app acting AS the user.',
+    requires_note: 'Optional — enables users to connect Google via `/connect/google`. DISTINCT from GOOGLE_CLIENT_ID (C10 sign-in): use a client whose consent screen requests the Gmail/Calendar scopes. Needs BOTH GOOGLE_CONNECT_CLIENT_ID and GOOGLE_CONNECT_CLIENT_SECRET; either alone leaves the connector unconfigured (clean 503).',
+    obtain:
+      'Google Cloud Console → APIs & Services → Credentials → Create credentials → OAuth client ID → type "Web application". Add the Authorized redirect URI `https://<host>/connect/google/callback`. Enable the Gmail API + Google Calendar API for the project, and add the scopes `.../auth/gmail.send` + `.../auth/calendar.readonly` on the OAuth consent screen. Copy the Client ID (ends in `.apps.googleusercontent.com`).',
+  },
+  GOOGLE_CONNECT_CLIENT_SECRET: {
+    name: 'GOOGLE_CONNECT_CLIENT_SECRET',
+    capability: 'C24 · Connectors (Google outbound OAuth)',
+    requirement: 'optional',
+    what: 'OAuth 2.0 Web client secret paired with GOOGLE_CONNECT_CLIENT_ID.',
+    requires_note: 'Optional — enables the Google connector. Needs BOTH creds; either alone leaves the connector unconfigured. Sealed into the app’s C5 vault (or injected as env) — never committed.',
+    obtain: 'From the same Google Cloud OAuth 2.0 Web client as GOOGLE_CONNECT_CLIENT_ID (shown once on creation; you can add a new secret later).',
+  },
 };
 
 // The C10 auth session secret — its presence in the declared set is how we detect an

@@ -23,6 +23,7 @@ import { registerIncidentRoutes } from '../api/incident-routes';
 import { registerAuthzRoutes } from '../api/authz-routes';
 import { registerOAuthRoutes } from '../api/oauth-routes';
 import { registerMcpRoutes } from '../api/mcp-routes';
+import { registerConnectRoutes } from '../api/connect-routes';
 import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
 
@@ -152,6 +153,13 @@ registerOAuthRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 // routes register tools, version the instruction block, and schedule proactive prompts via C2. Defaults the
 // app to this sidecar's FORGE_APP_NAME.
 registerMcpRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
+
+// Third-party connectors / outbound OAuth (C24) — the running app proxies `/connect/*` here (same-origin).
+// Users connect their Google/Microsoft accounts; forge stores the tokens ENCRYPTED at rest (C5 master key),
+// auto-refreshes them, and brokers a FRESH access token so the app calls the provider AS the user without
+// ever handling raw tokens. Owner comes from the C10 session; the broker also accepts the C10 service token
+// for background sends (e.g. the outbound-email capability). Defaults the app to this sidecar's FORGE_APP_NAME.
+registerConnectRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 
 // In production there is no `./forge provision`, so seed a minimal Application
 // record for the app this sidecar serves — enough for schedule-job/inspect to

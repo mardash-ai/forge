@@ -18,6 +18,7 @@ beforeEach(async () => {
   await b.resources.__truncateAllForTests?.();
   await b.policy.__truncateAllForTests?.();
   await b.mcp.__truncateAllForTests?.();
+  await b.connections.__truncateAllForTests?.();
   await b.blobs.__truncateAllForTests?.();
 });
 
