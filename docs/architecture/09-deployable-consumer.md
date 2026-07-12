@@ -63,8 +63,10 @@ services:
   api:
     image: ghcr.io/mardash-ai/forge-control-plane:0.35.0
     # (default CMD runs the API: tsx src/api/server.ts on :3717)
-    ports:
-      - "127.0.0.1:3717:3717"      # loopback only — the CLI execs in; nothing dials it over the network
+    # NOTE (P30): NO host `ports:` publish. The `./forge` wrapper reaches the control plane via
+    # `docker compose exec` INTO this container (it dials 127.0.0.1:3717 from inside), so publishing the
+    # port to the host is vestigial — and a fixed host publish makes a SECOND forge app on a shared host
+    # fail `make up` with "port is already allocated". Omit it; nothing on the host dials :3717.
     environment:
       - PORT=3717
       # Single-app layout: the one app lives at <workspace>/app.
@@ -184,9 +186,19 @@ present, `forge productionize` bind-mounts it read-only into the data-plane side
 
 Each entry: `name` (kebab-case, unique per app), exactly one of `every` (`30s`/`5m`/`6h`/`7d`) | `cron`
 (5-field, UTC) | `at` (ISO one-shot), `target_path` (the app path the fire calls back, `/`-absolute), and
-optional `method` (`GET`|`POST`, default `POST`) / `disabled`. The fire is service-authenticated
-(`AUTH_SERVICE_TOKEN` when set), so the app gates `/api/cron/*` on it. C23's proactive scheduling
+optional `method` (`GET`|`POST`, default `POST`) / `disabled`. C23's proactive scheduling
 (`POST /mcp/proactive`) registers the same kind of job through this mechanism.
+
+**The cron fire is authenticated — and it MUST be (P36).** Traefik routes all `/api/*` **publicly**, so a
+consumer's `/api/cron/*` are reachable from the internet. On each fire the C2 scheduler calls
+`method target_path` presenting `AUTH_SERVICE_TOKEN` under **both** an `Authorization: Bearer <token>`
+header **and** an `x-forge-service-token: <token>` header. The app **must** gate `/api/cron/*` by
+comparing the presented token to `AUTH_SERVICE_TOKEN` with a **constant-time** compare (reject when
+absent). Because an unset token would mean the scheduler fires bare, unauthenticated POSTs at open
+endpoints, `forge productionize` makes `AUTH_SERVICE_TOKEN` **deploy-required** (`${AUTH_SERVICE_TOKEN:?…}`
+in **both** containers) whenever `forge.jobs.json` is present — a missing token **fails the deploy** rather
+than silently shipping open cron. (The app-side guard is scaffolded by **forge-starter**; the platform
+provides the token + the fire, the app enforces it.) Generate it URL-agnostic: `openssl rand -hex 32`.
 
 ---
 
@@ -256,9 +268,9 @@ vault first, then process env**):
 | Var | Required? | What it is |
 |---|---|---|
 | `FORGE_SECRETS_KEY` | **Always** | C5 vault master key the data-plane uses to decrypt secrets at rest. `openssl rand -base64 32`. Keep stable. |
-| `FORGE_PLATFORM_DB_PASSWORD` | When `platform-store=postgres` | Password for the least-priv `forge_platform` role that owns the separate `forge_platform` DB (Forge's own state, incl. **C23** OAuth). `openssl rand -base64 24`. **Not** the app DB password. |
+| `FORGE_PLATFORM_DB_PASSWORD` | When `platform-store=postgres` | Password for the least-priv `forge_platform` role that owns the separate `forge_platform` DB (Forge's own state, incl. **C23** OAuth). **URL-safe hex** — `openssl rand -hex 32` (it's interpolated into `FORGE_DB_URL`; a base64 `/ + =` breaks the URL, P32). **Not** the app DB password. |
 | `AUTH_SESSION_SECRET` | For C10 auth **and C23** | HMAC key signing the `forge_session` JWS (HS256). **C23's OAuth AS reuses this** to read the logged-in user during authorize/consent — C23 adds **no new secret**. `openssl rand -base64 48`. Keep stable. |
-| `POSTGRES_PASSWORD` | Only if `--with-postgres` (the app has its own DB) | Password for the app's `forge` DB role; also builds `DATABASE_URL`. `openssl rand -base64 24`. |
+| `POSTGRES_PASSWORD` | Only if `--with-postgres` (the app has its own DB) | Password for the app's `forge` DB role; also builds `DATABASE_URL`. **URL-safe hex** — `openssl rand -hex 32` (base64 `/ + =` breaks the URL, P32). |
 | `ANTHROPIC_API_KEY` | Only if the app uses C1 agent-run | Model API key. |
 | `AUTH_SERVICE_TOKEN` | Optional | Token the C2 scheduler/cron presents to `/api/cron/*`. `openssl rand -hex 32`. |
 | `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` | Optional | Enable "Continue with Google" (no email dependency). Redirect URI: `https://<DOMAIN>/auth/google/callback`. |
@@ -278,9 +290,23 @@ the OAuth/MCP edge is relocated off same-origin), and `FORGE_OAUTH_{CODE,ACCESS,
 
 **Platform store selection is automatic.** When `platform-store=postgres`, the generated
 `compose.prod.yaml` sets `FORGE_STORE_BACKEND=postgres` + `FORGE_DB_URL=…/forge_platform` on the
-data-plane and makes it depend on a healthy Postgres — flipping **all** platform domains (identity,
-events, notifications, search, secrets, resources, policy, **mcp**) onto Postgres. Filesystem is the
-default when omitted (fine for a single replica; not for horizontal scale — see §8).
+data-plane and makes it depend on a healthy Postgres — flipping the **structured** platform domains
+(identity, events, notifications, search, secrets, resources, policy, **mcp**) onto Postgres. Filesystem is
+the default when omitted (fine for a single replica; not for horizontal scale — see §8).
+
+**Blobs (C20) are decoupled from the structured store (P33).** Flipping the structured stores to Postgres
+does **not** move blob *bytes* — they stay on the durable `forge_state` volume by default, so a single-node
+`platform-store=postgres` deploy with **no** object store comes up clean (it used to hard-fail demanding
+`FORGE_S3_ENDPOINT`). To put blobs in an S3-compatible object store instead, opt in explicitly with
+`forge productionize --blobs-backend s3` (persisted in `forge.app.json` `production.blobs_backend`); the
+data-plane then gets `FORGE_BLOBS_BACKEND=s3` and you supply `FORGE_S3_ENDPOINT/BUCKET/ACCESS_KEY/SECRET_KEY`
+(+ optional `FORGE_S3_REGION`) in `.env.prod`. Object storage is what enables horizontal scale for blobs.
+
+**Optional sign-in providers are wired automatically (P34).** When the app uses hosted auth (declares
+`AUTH_SESSION_SECRET`), `forge productionize` wires the optional provider vars — `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET`, `SMTP_URL`, `EMAIL_FROM` — into the **data-plane** env as defined-but-empty, even
+when they aren't separately declared as secrets. So `.env.prod` is the **single source of truth**: fill a
+value and redeploy to enable Google or email — no `--secret` re-declare + re-productionize round trip.
 
 ---
 
@@ -318,3 +344,35 @@ shared `proxy` network exists, and run its own `./forge release` — its stack, 
 its own, and no command ever references another app's project. The one destructive footgun to avoid:
 `docker compose down -v` (or `down --remove-orphans` across files) removes **that project's** volumes —
 run the `deploy-down` target (no `-v`) so a redeploy keeps `forge_state` (live sessions) + `postgres_data`.
+
+---
+
+## 6 · App self-bootstrap on first deploy (P35) — belongs to `forge-starter`
+
+Productionize/release provision the **platform** (the data-plane sidecar + the `forge_platform` datastore
+schema, which the data-plane `ensureIdentitySchema`/`ensure*Schema` create on boot). They do **not** run the
+**consumer's own** first-run steps, so a freshly-cloned-and-deployed app can come up with an **empty app
+schema** and an **empty C23 MCP store** (no registered tools / instruction block). The platform can't own
+these — the app's migrations and its MCP tool set / dispatch are app code (zero-bleed). This is the
+consumer scaffold's job, so the fix lives in **`forge-starter`**, not forge core.
+
+**The contract forge relies on (spec for the forge-starter scaffold):** a deployed consumer must
+**self-bootstrap idempotently on boot**, before/asynchronously-with serving traffic. Two supported shapes,
+both of which a fresh clone inherits so its **first** `forge release` works with no manual step:
+
+1. **On-boot bootstrap (preferred).** The app's container entrypoint runs an idempotent bootstrap before
+   `next start`: (a) apply the app's own DB **migrations** (`CREATE TABLE IF NOT EXISTS …` / a migration
+   tool) against `DATABASE_URL`; (b) **register the app's MCP tools + instruction block** with the
+   data-plane over the internal network — `POST http://data-plane:3718/mcp/tools` (once per tool) and the
+   instruction-block upsert — keyed so a re-run is a no-op (the C23 store upserts by name/version). Both must
+   be safe to run on **every** boot (idempotent), since containers restart. Guard each with a short retry so
+   it tolerates the DB/data-plane still becoming healthy.
+2. **Deploy-time step.** Alternatively a `release`-time hook the scaffold defines runs the same
+   migrate + register once per deploy. On-boot is preferred because it also self-heals a manually-started
+   container and needs no orchestrator cooperation.
+
+Forge already does the analogous thing for **C2 jobs** (the data-plane auto-registers `forge.jobs.json` on
+boot) — P35 asks the scaffold to do the same for the app's **migrations** and **C23 tools/instructions**.
+A future forge capability could generalize this (e.g. a declared `forge.mcp.json` the data-plane
+auto-registers on boot, mirroring `forge.jobs.json`); until then it is scaffold-owned. **forge core change:
+none — this section is the spec forge-starter implements.**

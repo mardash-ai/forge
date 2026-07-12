@@ -281,6 +281,7 @@ program
   .option('--web-image <ref>', 'digest-pinned production web image, e.g. ghcr.io/owner/app@sha256:… (R1)')
   .option('--data-plane-image <ref>', 'digest-pinned Forge data-plane image (default: FORGE_DATA_PLANE_IMAGE)')
   .option('--cert-resolver <name>', 'Traefik TLS cert resolver name (default letsencrypt)')
+  .option('--blobs-backend <kind>', 'C20 blob backend: filesystem (default, durable volume) or s3 (object store) — P33')
   .action(async (opts) => {
     await runCapability('productionize', {
       app: opts.app,
@@ -291,6 +292,7 @@ program
       ...(opts.webImage ? { web_image: opts.webImage } : {}),
       ...(opts.dataPlaneImage ? { data_plane_image: opts.dataPlaneImage } : {}),
       ...(opts.certResolver ? { cert_resolver: opts.certResolver } : {}),
+      ...(opts.blobsBackend ? { blobs_backend: opts.blobsBackend } : {}),
     });
   });
 

@@ -15,7 +15,7 @@ import {
   generateEnvProdExample,
   generateProvisioningRunbook,
   generateStarterTheme,
-  generatePlatformDbInitSh,
+  generatePlatformDbInitSql,
   PROVISIONING_FILE,
   PLATFORM_DB_INIT_FILE,
   applyStandaloneOutput,
@@ -35,6 +35,9 @@ const inputSchema = z.object({
   data_plane_image: z.string().optional(),
   // Traefik TLS cert resolver name (deployment-specific; default "letsencrypt").
   cert_resolver: z.string().optional(),
+  // P33 — the C20 blob backend: 'filesystem' (default; bytes on the durable volume) or 's3' (object
+  // store; operator supplies FORGE_S3_* in .env.prod). Decoupled from platform-store. Remembered.
+  blobs_backend: z.enum(['filesystem', 's3']).optional(),
 });
 
 type Input = z.infer<typeof inputSchema>;
@@ -99,6 +102,7 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
       web_image: input.web_image,
       data_plane_image: input.data_plane_image,
       cert_resolver: input.cert_resolver,
+      blobs_backend: input.blobs_backend,
       data_plane_image_env: process.env.FORGE_DATA_PLANE_IMAGE,
     });
 
@@ -158,6 +162,7 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
         withJobs,
         withTheme,
         platformDb: withPlatformDb,
+        blobsBackend: cfg.blobs_backend,
       }),
     );
 
@@ -166,14 +171,14 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
     // into the postgres service by the compose above). A dedicated platform Postgres (no app DB) needs
     // no script — its entrypoint initializes the role/db directly.
     if (withPlatformDb && withPostgres) {
-      await writeFile(path.join(repo, PLATFORM_DB_INIT_FILE), generatePlatformDbInitSh());
+      await writeFile(path.join(repo, PLATFORM_DB_INIT_FILE), generatePlatformDbInitSql());
     }
 
     // 4. .env.prod.example — documents .env.prod (never a real value); each secret is
     //    now annotated (what it is + how to obtain it) from the C13 secret catalog.
     await writeFile(
       path.join(repo, '.env.prod.example'),
-      generateEnvProdExample({ appName: app.name, host: cfg.host, withPostgres, withRedis, secrets, withJobs, platformDb: withPlatformDb }),
+      generateEnvProdExample({ appName: app.name, host: cfg.host, withPostgres, withRedis, secrets, withJobs, platformDb: withPlatformDb, blobsBackend: cfg.blobs_backend }),
     );
 
     // 5. PROVISIONING.md — the per-app operator runbook (C13): exactly the secrets THIS

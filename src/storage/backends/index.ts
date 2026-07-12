@@ -200,7 +200,8 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     if (!cfg.s3) {
       throw new Error(
         'FORGE_S3_ENDPOINT + FORGE_S3_BUCKET are required when the S3 blob backend is selected ' +
-          '(FORGE_STORE_BACKEND=postgres or FORGE_BLOBS_BACKEND=s3). Also set FORGE_S3_ACCESS_KEY/FORGE_S3_SECRET_KEY.',
+          '(FORGE_BLOBS_BACKEND=s3). Also set FORGE_S3_ACCESS_KEY/FORGE_S3_SECRET_KEY. ' +
+          'Blobs default to the filesystem (durable volume) — omit FORGE_BLOBS_BACKEND to use it (P33).',
       );
     }
     const s3 = new S3Client(cfg.s3);

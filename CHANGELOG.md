@@ -9,6 +9,61 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.36.0] — 2026-07-12
+
+### Fixed
+- **P30 — control-plane host-port collision on a shared host.** The deployable-consumer scaffolding gave
+  the control-plane `api` service a fixed host `ports:` publish (`127.0.0.1:3717:3717`), so a **second**
+  Forge app on a shared host failed `make up` with *"port is already allocated."* The publish is vestigial —
+  the `./forge` wrapper reaches the control plane via `docker compose exec` **into** the container, nothing
+  on the host dials `:3717`. Dropped the `ports:` block from the scaffolding spec
+  (`docs/architecture/09-deployable-consumer.md` §2). *(The scaffold template file itself lives in
+  **forge-starter** — same change to apply there.)*
+- **P31 — platform-DB init failed to boot on Docker Desktop for Mac.** `productionize` bind-mounted the
+  generated `forge-platform-init.sh` into `/docker-entrypoint-initdb.d/`; on macOS the mount is effectively
+  `noexec`, so first boot died with `/bin/sh: bad interpreter: Permission denied` → the least-priv
+  `forge_platform` role/DB were never created → the data-plane crashed at `ensureIdentitySchema`. The init
+  file is now a **`.sql`** (`forge-platform-init.sql`) the Postgres entrypoint runs via `psql -f` — no
+  shebang, no exec bit — so it works identically on Linux and macOS. The role password is read from the
+  container env at init time (psql `\set` backtick) and quoted with `format(%L)`; nothing is committed.
+- **P32 — base64 DB passwords broke the connection URL.** The provisioning guidance generated
+  `POSTGRES_PASSWORD` / `FORGE_PLATFORM_DB_PASSWORD` with `openssl rand -base64`, whose `/ + =` alphabet
+  makes `postgres://user:pa/ss@host/db` throw `ERR_INVALID_URL`. Anything interpolated into a connection URL
+  is now generated **URL-safe** (`openssl rand -hex 32`) across the secret catalog, `.env.prod.example`,
+  `PROVISIONING.md`, and the deploy docs. HMAC/vault keys (`FORGE_SECRETS_KEY`, `AUTH_SESSION_SECRET`) stay
+  base64 — they are decoded as keys, not placed in a URL.
+- **P33 — `FORGE_STORE_BACKEND=postgres` forced the S3 blob backend.** A single-node Postgres deploy without
+  an object store hard-failed at boot (*"FORGE_S3_ENDPOINT + FORGE_S3_BUCKET are required…"*) even though
+  blobs weren't in the flip set. Blob storage is now **decoupled** from the structured-store switch: blobs
+  default to the **filesystem** (bytes on the durable `forge_state` volume) and only ride S3 when S3 is
+  **explicitly** configured (`FORGE_BLOBS_BACKEND=s3` or `FORGE_S3_ENDPOINT`+`FORGE_S3_BUCKET` present). A
+  deploy that already had S3 configured is unaffected.
+
+### Added
+- **P33 — `--blobs-backend` knob.** `forge productionize --blobs-backend s3` (persisted in `forge.app.json`
+  `production.blobs_backend`, default `filesystem`) opts the C20 blob store into an S3-compatible object
+  store: the data-plane gets `FORGE_BLOBS_BACKEND=s3` and `.env.prod.example` documents the `FORGE_S3_*`
+  values. Object storage is what unlocks horizontal scale for blobs.
+- **P34 — optional auth providers wired automatically.** When an app uses hosted auth (declares
+  `AUTH_SESSION_SECRET`), `productionize` now wires the OPTIONAL provider vars — `GOOGLE_CLIENT_ID`,
+  `GOOGLE_CLIENT_SECRET`, `SMTP_URL`, `EMAIL_FROM` — into the **data-plane** env as defined-but-empty even
+  when they aren't separately declared. `.env.prod` is the single source of truth: fill a value and redeploy
+  to enable Google/email — no `--secret` re-declare + re-productionize round trip. (Wired into the data-plane
+  only; the web tier proxies `/auth/*` to it.)
+- **P36 — cron fires are authenticated by default.** When an app declares scheduled jobs
+  (`forge.jobs.json` → `/api/cron/*`), `productionize` now makes `AUTH_SERVICE_TOKEN` **deploy-required**
+  (`${AUTH_SERVICE_TOKEN:?…}`) in **both** the web and data-plane containers — a missing token **fails the
+  deploy** instead of firing bare, unauthenticated POSTs at publicly-routed cron endpoints. The fire-auth
+  contract (Bearer + `x-forge-service-token`, constant-time compare, app-side guard) is documented in
+  `docs/architecture/09-deployable-consumer.md` §2. *(The app-side guard is scaffolded by **forge-starter**.)*
+
+### Changed
+- **Docs — P35 app self-bootstrap contract.** `docs/architecture/09-deployable-consumer.md` gains a §6
+  specifying that a deployed consumer must **self-bootstrap idempotently on boot** (apply its own DB
+  migrations + register its C23 MCP tools/instruction block), mirroring how the data-plane auto-registers
+  `forge.jobs.json`. This is scaffold-owned (**forge-starter**); no forge-core change — the section is the
+  spec forge-starter implements.
+
 ## [0.35.0] — 2026-07-11
 
 ### Added
@@ -1499,7 +1554,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.35.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.36.0...HEAD
+[0.36.0]: https://github.com/mardash-ai/forge/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/mardash-ai/forge/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/mardash-ai/forge/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/mardash-ai/forge/compare/v0.32.0...v0.33.0

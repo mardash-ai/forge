@@ -46,8 +46,11 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     requirement: 'conditional',
     what: 'Password for the app’s Postgres role (user `forge`); also builds DATABASE_URL.',
     requires_note: 'Required when the app is provisioned WITH a database (compose has a `postgres` service).',
-    obtain: 'Generate a strong random password; use the SAME value the DB was initialized with.',
-    generate: 'openssl rand -base64 24',
+    // P32 — this value is interpolated into the DATABASE_URL connection string, so it MUST be URL-safe.
+    // Use hex (0-9a-f), never `openssl rand -base64` — a `/`, `+`, or `=` in the password breaks the URL
+    // parser (ERR_INVALID_URL). Hex-32 = 128 bits of entropy.
+    obtain: 'Generate a URL-safe random password (hex — no `/ + =`); use the SAME value the DB was initialized with.',
+    generate: 'openssl rand -hex 32',
   },
   FORGE_SECRETS_KEY: {
     name: 'FORGE_SECRETS_KEY',
@@ -82,11 +85,17 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
   AUTH_SERVICE_TOKEN: {
     name: 'AUTH_SERVICE_TOKEN',
     capability: 'C10 · Identity/Auth (service/cron principal)',
-    requirement: 'optional',
-    what: 'Shared token a non-user principal (the C2 scheduler / cron) presents to reach service-authenticated endpoints.',
-    requires_note: 'Optional — needed only if the app has service-authenticated cron routes (`/api/cron/*`). Unset ⇒ those stay gated (401), detectably.',
+    requirement: 'conditional',
+    what: 'Shared token the C2 scheduler presents on each cron fire (as `Authorization: Bearer` AND `x-forge-service-token`) and the app verifies to gate `/api/cron/*`.',
+    // P36 — this is REQUIRED, not merely optional, once the app declares scheduled jobs: Traefik routes all
+    // `/api/*` publicly, so an UNSET token means cron endpoints are open and the scheduler fires bare,
+    // unauthenticated POSTs. productionize makes it deploy-required (`${VAR:?…}`) when jobs are declared.
+    requires_note: 'Required when the app declares scheduled cron jobs (`forge.jobs.json` → `/api/cron/*`). Unset with jobs declared ⇒ the deploy FAILS loudly (P36); with no jobs it is unneeded.',
     obtain: 'Generate a high-entropy random token.',
     generate: 'openssl rand -hex 32',
+    // NOTE (P36): deploy-required status is scoped to apps that declare cron jobs — productionize forces the
+    // `${VAR:?…}` interpolation only when `withJobs` (see productionize-nextjs-compose). It is intentionally
+    // NOT a catalog `deploy_required_reason`, so a service token declared for other uses stays optional.
   },
   GOOGLE_CLIENT_ID: {
     name: 'GOOGLE_CLIENT_ID',

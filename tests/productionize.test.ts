@@ -87,9 +87,18 @@ describe('convergeProduction — required inputs + digest pins (R1) + convergenc
       web_image: WEB,
       data_plane_image: DP,
       cert_resolver: 'myresolver',
+      blobs_backend: 'filesystem' as const,
     };
     const c = convergeProduction(prev, {}); // no flags at all
     expect(c).toEqual(prev);
+  });
+
+  // P33 — the blob backend converges like the rest: default filesystem, flag > persisted, remembered.
+  it('defaults blobs_backend to filesystem and carries it convergently (P33)', () => {
+    expect(convergeProduction({}, ok).blobs_backend).toBe('filesystem');
+    expect(convergeProduction({}, { ...ok, blobs_backend: 's3' }).blobs_backend).toBe('s3');
+    // persisted s3 survives a flag-less re-run
+    expect(convergeProduction({ host: 'app.example.com', web_image: WEB, data_plane_image: DP, blobs_backend: 's3' }, {}).blobs_backend).toBe('s3');
   });
 
   it('a flag overrides the persisted value', () => {
@@ -263,6 +272,69 @@ describe('generateProdCompose — Traefik + healthcheck + stop_grace + data-plan
     const dp = serviceBlock(generateProdCompose({ ...base, withJobs: false }), 'data-plane');
     expect(dp).toContain('FORGE_JOBS_FILE=${FORGE_JOBS_FILE:-}');
     expect(dp).not.toContain('forge.jobs.json:');
+  });
+
+  // P34 — when the app uses hosted auth (declares AUTH_SESSION_SECRET), the OPTIONAL Google/SMTP provider
+  // vars are wired into the DATA-PLANE (which hosts /auth/*) as defined-but-empty even if not separately
+  // declared, so .env.prod is the single source of truth. They must NOT appear on the web tier.
+  it('wires the optional auth-provider vars into the data-plane when the app uses auth (P34)', () => {
+    const yaml = generateProdCompose({ ...base, secrets: ['AUTH_SESSION_SECRET'] });
+    const dp = serviceBlock(yaml, 'data-plane');
+    const web = serviceBlock(yaml, 'web');
+    for (const n of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SMTP_URL', 'EMAIL_FROM']) {
+      expect(dp).toContain(`- ${n}=\${${n}:-}`);
+      expect(web).not.toContain(`- ${n}=`); // web proxies /auth/* to the sidecar; it doesn't read these
+    }
+  });
+
+  it('does NOT auto-wire provider vars when the app does not use hosted auth (P34)', () => {
+    const dp = serviceBlock(generateProdCompose({ ...base, secrets: ['ANTHROPIC_API_KEY'] }), 'data-plane');
+    expect(dp).not.toContain('GOOGLE_CLIENT_ID');
+    expect(dp).not.toContain('SMTP_URL');
+  });
+
+  it('does not double-emit a provider var the app also declared (P34 dedup)', () => {
+    const dp = serviceBlock(generateProdCompose({ ...base, secrets: ['AUTH_SESSION_SECRET', 'GOOGLE_CLIENT_ID'] }), 'data-plane');
+    const occurrences = dp.split('\n').filter((l) => l.includes('GOOGLE_CLIENT_ID=')).length;
+    expect(occurrences).toBe(1);
+  });
+
+  // P36 — cron fires must be authenticated. When the app declares scheduled jobs, AUTH_SERVICE_TOKEN is
+  // deploy-required (`${VAR:?…}`) in BOTH tiers so an unset token fails the deploy loudly instead of firing
+  // bare, unauthenticated POSTs at publicly-routed /api/cron/*.
+  it('makes AUTH_SERVICE_TOKEN deploy-required in BOTH tiers when jobs are declared (P36)', () => {
+    const yaml = generateProdCompose({ ...base, withJobs: true });
+    const web = serviceBlock(yaml, 'web');
+    const dp = serviceBlock(yaml, 'data-plane');
+    expect(web).toContain('- AUTH_SERVICE_TOKEN=${AUTH_SERVICE_TOKEN:?');
+    expect(dp).toContain('- AUTH_SERVICE_TOKEN=${AUTH_SERVICE_TOKEN:?');
+    expect(yaml).toContain('fire UNAUTHENTICATED');
+  });
+
+  it('does NOT force AUTH_SERVICE_TOKEN when the app declares no jobs (P36)', () => {
+    const yaml = generateProdCompose({ ...base, withJobs: false });
+    expect(yaml).not.toContain('AUTH_SERVICE_TOKEN');
+  });
+
+  it('forces AUTH_SERVICE_TOKEN deploy-required even when it was declared as an optional secret + jobs exist (P36)', () => {
+    const dp = serviceBlock(generateProdCompose({ ...base, withJobs: true, secrets: ['AUTH_SERVICE_TOKEN'] }), 'data-plane');
+    expect(dp).toContain('- AUTH_SERVICE_TOKEN=${AUTH_SERVICE_TOKEN:?');
+    // exactly one line (declared + forced must not double-emit)
+    expect(dp.split('\n').filter((l) => l.includes('AUTH_SERVICE_TOKEN=')).length).toBe(1);
+  });
+
+  // P33 — blobs ride the filesystem volume by default (decoupled from platform-store); only an explicit
+  // blobsBackend:'s3' flips the sidecar to the object store + surfaces the FORGE_S3_* seam.
+  it('keeps blobs on the filesystem by default — no FORGE_BLOBS_BACKEND (P33)', () => {
+    expect(generateProdCompose(base)).not.toContain('FORGE_BLOBS_BACKEND');
+    expect(generateProdCompose({ ...base, platformDb: true })).not.toContain('FORGE_BLOBS_BACKEND');
+  });
+
+  it('wires the S3 blob backend only when blobsBackend is s3 (P33)', () => {
+    const dp = serviceBlock(generateProdCompose({ ...base, blobsBackend: 's3' }), 'data-plane');
+    expect(dp).toContain('- FORGE_BLOBS_BACKEND=s3');
+    expect(dp).toContain('- FORGE_S3_ENDPOINT=${FORGE_S3_ENDPOINT:-}');
+    expect(dp).toContain('- FORGE_S3_BUCKET=${FORGE_S3_BUCKET:-}');
   });
 
   it('is deterministic — identical inputs produce identical bytes (idempotency)', () => {
@@ -450,23 +522,25 @@ describe('generateProvisioningRunbook — per-app operator runbook (C13)', () =>
     expect(md).toContain('./forge deploy --app acme');
   });
 
-  it('when auth is used but neither Google nor SMTP is declared, spells out the unblock', () => {
+  it('when auth is used but neither Google nor SMTP is declared, spells out the unblock (P34 — no re-declare)', () => {
     const md = generateProvisioningRunbook({ ...base, secrets: ['AUTH_SESSION_SECRET'] });
     expect(md).toContain('Enabling a working sign-in method');
     expect(md).toContain('no way to sign in');
     // The precise redirect URI (host-substituted) an operator needs for Google.
     expect(md).toContain('https://app.example.com/auth/google/callback');
-    // The declare→productionize→deploy snippet names the missing secrets.
-    expect(md).toContain('./forge provision --app acme --secret GOOGLE_CLIENT_ID --secret GOOGLE_CLIENT_SECRET --secret SMTP_URL --secret EMAIL_FROM');
-    expect(md).toContain('./forge productionize --app acme');
+    // P34 — the provider vars are already wired into the data-plane, so the runbook says "just fill
+    // .env.prod + redeploy" and NO LONGER tells the operator to `--secret`-declare + re-productionize.
+    expect(md).toContain('already wired into the data-plane (P34)');
+    expect(md).toContain('./forge deploy --app acme');
+    expect(md).not.toContain('--secret GOOGLE_CLIENT_ID');
+    expect(md).not.toContain('./forge productionize --app acme');
   });
 
-  it('marks a declared method as configured (no missing-secret snippet needed for it)', () => {
+  it('marks a declared method as configured (P34 wording)', () => {
     const md = generateProvisioningRunbook({ ...base, secrets: ['AUTH_SESSION_SECRET', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'] });
-    expect(md).toContain('_(declared for this app)_');
-    // Google is declared, so the missing-secret snippet only needs SMTP, not Google.
-    expect(md).toContain('--secret SMTP_URL --secret EMAIL_FROM');
-    expect(md).not.toContain('--secret GOOGLE_CLIENT_ID');
+    expect(md).toContain('_(declared as a secret)_');
+    // Google is declared; SMTP is not — but with P34 there is no `--secret` re-declare snippet at all.
+    expect(md).not.toContain('--secret');
   });
 
   it('omits the sign-in section for an app that does not use auth', () => {

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   generateProdCompose,
   generateEnvProdExample,
-  generatePlatformDbInitSh,
+  generatePlatformDbInitSql,
   platformDbUrl,
   PLATFORM_DB_INIT_FILE,
   PLATFORM_DB_NAME,
@@ -76,11 +76,17 @@ describe('P26 platform-db compose wiring', () => {
     expect(envOff).not.toContain('FORGE_PLATFORM_DB_PASSWORD');
   });
 
-  it('the first-init script creates the least-privilege role + its own database, idempotently', () => {
-    const sh = generatePlatformDbInitSh();
-    expect(sh).toContain(`CREATE ROLE ${PLATFORM_DB_ROLE} LOGIN PASSWORD`);
-    expect(sh).toContain(`CREATE DATABASE ${PLATFORM_DB_NAME} OWNER ${PLATFORM_DB_ROLE}`);
-    expect(sh).toContain('IF NOT EXISTS'); // idempotent role create
-    expect(sh).toContain('FORGE_PLATFORM_DB_PASSWORD'); // password comes from the container env, not the committed file
+  it('the first-init SQL creates the least-privilege role + its own database, idempotently (P31 — .sql, no exec bit)', () => {
+    const sql = generatePlatformDbInitSql();
+    // A pure `.sql` file the Postgres entrypoint runs via `psql -f` — no shebang, no exec bit (so it works
+    // on Docker Desktop for Mac, where the initdb.d mount is effectively noexec, P31).
+    expect(PLATFORM_DB_INIT_FILE.endsWith('.sql')).toBe(true);
+    expect(sql).not.toContain('#!/bin/sh');
+    expect(sql).toContain(`CREATE ROLE ${PLATFORM_DB_ROLE} LOGIN PASSWORD`);
+    expect(sql).toContain(`CREATE DATABASE ${PLATFORM_DB_NAME} OWNER ${PLATFORM_DB_ROLE}`);
+    expect(sql).toContain('NOT EXISTS'); // idempotent role + db create
+    // Password read from the container env at init time (never committed), safely quoted via format(%L).
+    expect(sql).toContain('FORGE_PLATFORM_DB_PASSWORD');
+    expect(sql).toContain('%L');
   });
 });

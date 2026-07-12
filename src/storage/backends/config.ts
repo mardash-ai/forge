@@ -51,12 +51,16 @@ function flag(value: string | undefined): boolean {
   return value === '1' || value === 'true';
 }
 
-// Blobs default to the object store when FORGE_STORE_BACKEND=postgres (bytes → S3, metadata → Postgres),
-// else filesystem; overridable with FORGE_BLOBS_BACKEND=filesystem|s3.
-function pickBlob(value: string | undefined, storeDefault: BackendKind): BlobBackendKind {
+// P33 — blobs default to FILESYSTEM (bytes on the durable forge_state volume) and only ride the S3
+// object store when S3 is EXPLICITLY chosen: either FORGE_BLOBS_BACKEND=s3, or S3 connection settings are
+// present (FORGE_S3_ENDPOINT + FORGE_S3_BUCKET). This is DECOUPLED from FORGE_STORE_BACKEND: flipping the
+// STRUCTURED stores (identity/events/…) onto Postgres must NOT drag blobs onto S3 — a single-node Postgres
+// deploy with no object store keeps blobs on the volume and comes up clean instead of hard-failing on the
+// missing S3 endpoint. `FORGE_BLOBS_BACKEND=filesystem` still forces the volume even when S3 is configured.
+function pickBlob(value: string | undefined, s3Configured: boolean): BlobBackendKind {
   if (value === 's3') return 's3';
   if (value === 'filesystem') return 'filesystem';
-  return storeDefault === 'postgres' ? 's3' : 'filesystem';
+  return s3Configured ? 's3' : 'filesystem';
 }
 
 function loadS3(env: NodeJS.ProcessEnv): S3Settings | undefined {
@@ -74,6 +78,7 @@ function loadS3(env: NodeJS.ProcessEnv): S3Settings | undefined {
 
 export function loadStoreConfig(env: NodeJS.ProcessEnv = process.env): StoreConfig {
   const def: BackendKind = env.FORGE_STORE_BACKEND === 'postgres' ? 'postgres' : 'filesystem';
+  const s3 = loadS3(env);
   return {
     identity: pick(env.FORGE_IDENTITY_BACKEND, def),
     search: pick(env.FORGE_SEARCH_BACKEND, def),
@@ -83,8 +88,10 @@ export function loadStoreConfig(env: NodeJS.ProcessEnv = process.env): StoreConf
     resources: pick(env.FORGE_RESOURCES_BACKEND, def),
     policy: pick(env.FORGE_POLICY_BACKEND, def),
     mcp: pick(env.FORGE_MCP_BACKEND, def),
-    blobs: pickBlob(env.FORGE_BLOBS_BACKEND, def),
-    s3: loadS3(env),
+    // P33 — blobs are decoupled from the structured-store switch: filesystem unless S3 is explicitly
+    // configured or requested. (S3 keeps its metadata in Postgres → needsDatabase() still opens the pool.)
+    blobs: pickBlob(env.FORGE_BLOBS_BACKEND, Boolean(s3)),
+    s3,
     identityDualWrite: flag(env.FORGE_IDENTITY_DUAL_WRITE),
     searchDualWrite: flag(env.FORGE_SEARCH_DUAL_WRITE),
     eventsDualWrite: flag(env.FORGE_EVENTS_DUAL_WRITE),

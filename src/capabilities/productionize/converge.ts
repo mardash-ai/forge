@@ -10,12 +10,17 @@ import { isDigestPinned, normalizeReadinessPath } from '../../plugins/production
 // The image pins are validated digest-pinned here (R1) so `latest`/bare tags never
 // reach the generated compose.
 
+export type BlobsBackend = 'filesystem' | 's3';
+
 export interface ProductionConfig {
   host: string;
   readiness_path: string;
   web_image: string;
   data_plane_image: string;
   cert_resolver: string;
+  // P33 — the C20 blob backend: 'filesystem' (default; durable volume) or 's3' (object store). Decoupled
+  // from platform-store=postgres so a single-node deploy keeps blobs on the volume.
+  blobs_backend: BlobsBackend;
 }
 
 // What's persisted under forge.app.json `production` (or absent on a first run).
@@ -25,6 +30,7 @@ export interface PrevProduction {
   web_image?: string;
   data_plane_image?: string;
   cert_resolver?: string;
+  blobs_backend?: BlobsBackend;
 }
 
 // The inputs on this productionize call (flags + the platform env default).
@@ -34,6 +40,7 @@ export interface ProductionFlags {
   web_image?: string;
   data_plane_image?: string;
   cert_resolver?: string;
+  blobs_backend?: BlobsBackend;
   // Platform default for the data-plane pin (e.g. FORGE_DATA_PLANE_IMAGE the control
   // plane injects). Lowest precedence — a flag or a persisted value wins.
   data_plane_image_env?: string;
@@ -41,6 +48,7 @@ export interface ProductionFlags {
 
 const DEFAULT_READINESS = '/api/health';
 const DEFAULT_CERT_RESOLVER = 'letsencrypt';
+const DEFAULT_BLOBS_BACKEND: BlobsBackend = 'filesystem';
 
 export function convergeProduction(prev: PrevProduction, flags: ProductionFlags): ProductionConfig {
   // --host: required on the FIRST run; recovered from the persisted block after.
@@ -86,5 +94,8 @@ export function convergeProduction(prev: PrevProduction, flags: ProductionFlags)
 
   const cert_resolver = (flags.cert_resolver ?? prev.cert_resolver ?? DEFAULT_CERT_RESOLVER).trim() || DEFAULT_CERT_RESOLVER;
 
-  return { host, readiness_path, web_image, data_plane_image, cert_resolver };
+  // P33 — blob backend: flag > persisted > filesystem default. Carried forward convergently.
+  const blobs_backend: BlobsBackend = flags.blobs_backend ?? prev.blobs_backend ?? DEFAULT_BLOBS_BACKEND;
+
+  return { host, readiness_path, web_image, data_plane_image, cert_resolver, blobs_backend };
 }

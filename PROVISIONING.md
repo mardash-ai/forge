@@ -94,8 +94,10 @@ Setting or changing a value requires the data-plane container to be **(re)starte
 
 #### `POSTGRES_PASSWORD` — Datastore (Postgres) · Conditional
 Required when the app was provisioned **with a database** (the compose has a `postgres` service).
-Use the same value the DB was initialized with.
-- **Generate:** `openssl rand -base64 24`
+Use the same value the DB was initialized with. **It must be URL-safe** — it is interpolated into the
+`DATABASE_URL` connection string, so a `/`, `+`, or `=` (as `openssl rand -base64` can emit) breaks the URL
+parser (`ERR_INVALID_URL`). Use **hex** (P32).
+- **Generate:** `openssl rand -hex 32`
 - **Set:** `./forge secrets set --app <app> --name POSTGRES_PASSWORD --from-env POSTGRES_PASSWORD`, or
   `POSTGRES_PASSWORD=…` in `app/.env.prod`.
 
