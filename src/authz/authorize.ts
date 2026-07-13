@@ -8,6 +8,7 @@ import {
   type AuthzDecision,
   type HighRiskSpec,
   type Decision,
+  type ResolvedMembership,
 } from './types';
 
 // C29 — the PURE, DETERMINISTIC enforcement point. No I/O, no model calls: given the same actor + action
@@ -25,6 +26,11 @@ export interface AuthorizeOptions {
   defaultDecision?: Decision;
   // Injectable clock (ISO). Defaults to action.at, then now — so decisions are reproducible in tests.
   now?: string;
+  // C31 — the RESOLVED membership context (role/permissions/is_member/group_id), computed server-side from
+  // the membership graph by the route. Its PRESENCE turns on the C31 rules (role override, not-a-member
+  // deny, permission gating) + echoes the resolved fields. ABSENT (every pre-C31 caller) ⇒ byte-identical
+  // to the legacy verdict — the request's `role` is honored and no new floor can fire.
+  membership?: ResolvedMembership;
 }
 
 // True iff the action falls into a configured high-risk class. This is the SAFETY FLOOR input — its
@@ -74,8 +80,23 @@ function inTimeWindow(win: NonNullable<PolicyMatch['time']>, nowIso: string): bo
   return true;
 }
 
+// C31 — a permission gate on a rule is satisfied when EVERY listed token is in the caller's resolved
+// permission set. Absent/empty = no constraint (so a pre-C31 policy, which has none, is unaffected).
+function permissionsSatisfied(required: string[] | undefined, held: string[]): boolean {
+  if (!required || required.length === 0) return true;
+  return required.every((p) => held.includes(p));
+}
+
 // Whether a rule's conditions all hold for this actor + action (conditions are ANDed; empty match = all).
-function matchApplies(match: PolicyMatch, actor: Actor, action: Action, nowIso: string): boolean {
+// C31: `effectiveRole` is the RESOLVED role (graph, not request) when membership was resolved, else the
+// request role (legacy); `held` is the resolved permission set (empty when no membership was resolved).
+function matchApplies(
+  match: PolicyMatch,
+  effectiveRole: string | undefined,
+  held: string[],
+  action: Action,
+  nowIso: string,
+): boolean {
   if (!inSet(match.tool, action.tool)) return false;
   if (!inSet(match.type, action.type)) return false;
   if (!inSet(match.contact, action.contact)) return false;
@@ -86,7 +107,8 @@ function matchApplies(match: PolicyMatch, actor: Actor, action: Action, nowIso: 
   if (!inSet(match.device, action.device)) return false;
   if (!inSet(match.data_sensitivity, action.data_sensitivity)) return false;
   if (!inSet(match.reversibility, action.reversibility)) return false;
-  if (!inSet(match.role, actor.role)) return false;
+  if (!inSet(match.role, effectiveRole)) return false;
+  if (!permissionsSatisfied(match.permission, held)) return false;
   if (match.max_amount !== undefined) {
     if (typeof action.amount !== 'number' || action.amount > match.max_amount) return false;
   }
@@ -97,30 +119,81 @@ function matchApplies(match: PolicyMatch, actor: Actor, action: Action, nowIso: 
 // The actor's applicable policies, HIGHEST-PRIORITY first (deterministic id tiebreak). A policy applies
 // when it is app-wide (no owner) OR belongs to the actor's owner, and its match holds. (A matching DENY
 // is deny-overrides — handled in `authorize` before priority, so a low-priority deny still beats a
-// high-priority allow.)
-export function applicablePolicies(actor: Actor, action: Action, policies: PolicyRule[], nowIso: string): PolicyRule[] {
+// high-priority allow.) `effectiveRole`/`held` carry the C31-resolved role + permission set.
+export function applicablePolicies(
+  actor: Actor,
+  action: Action,
+  policies: PolicyRule[],
+  nowIso: string,
+  effectiveRole?: string,
+  held: string[] = [],
+): PolicyRule[] {
   return policies
     .filter((p) => p.owner === undefined || p.owner === null || p.owner === actor.owner)
-    .filter((p) => matchApplies(p.match, actor, action, nowIso))
+    .filter((p) => matchApplies(p.match, effectiveRole, held, action, nowIso))
     .sort((a, b) => b.priority - a.priority || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
+// C31 — the PRIVATE-LEAK FLOOR (pure): is `caller` NOT entitled to see the targeted resource, given its
+// stored scope? Returns the deny rule id, or null when the caller is entitled / no scope was supplied.
+//   - private: only the resource owner may act (deny anyone else).
+//   - shared:  only the resource owner OR a listed `shared_with` identity may act.
+//   - group:   visible to the whole targeted group (membership is gated by the not-a-member floor), so no
+//              per-resource leak check here.
+function privateLeak(caller: string, action: Action): 'private-resource' | null {
+  const { visibility, resource_owner, shared_with } = action;
+  if (visibility === 'private') {
+    return resource_owner !== undefined && resource_owner !== caller ? 'private-resource' : null;
+  }
+  if (visibility === 'shared') {
+    const inShare = (shared_with ?? []).includes(caller);
+    return !inShare && resource_owner !== caller ? 'private-resource' : null;
+  }
+  return null;
+}
+
 // THE enforcement point. Deterministic. Order of precedence:
+//   0. C31 STRUCTURAL FLOORS (only when membership was resolved / a resource scope was supplied):
+//        a. NOT-A-MEMBER — a non-personal group you don't belong to → deny.
+//        b. PRIVATE-LEAK — the targeted resource's scope excludes you → deny (a private/shared row can't
+//           leak to another group member).
 //   1. A matching DENY policy wins (strictest) — even over the safety floor.
 //   2. SAFETY FLOOR: a high-risk action ALWAYS returns needs-approval — NON-OVERRIDABLE (an allow policy
 //      can never downgrade it).
 //   3. Otherwise the strongest matching policy's effect (allow | needs-approval) — priority-ordered.
 //   4. No policy matched → the default posture (conservative 'needs-approval'; configurable to 'allow').
+// Role matching + permission gating (step 3) use the RESOLVED role/permissions when membership is present,
+// NEVER the request's `role`. With NO membership + NO resource scope this is byte-identical to pre-C31.
 export function authorize(actor: Actor, action: Action, policies: PolicyRule[], opts: AuthorizeOptions = {}): AuthzDecision {
   const now = opts.now ?? action.at ?? new Date().toISOString();
   const spec = opts.highRiskClasses ?? DEFAULT_HIGH_RISK;
   const cls = actionClass(action);
   const highRisk = isHighRisk(action, spec);
-  const applicable = applicablePolicies(actor, action, policies, now);
+  const m = opts.membership;
+  // C31: the resolved role/permissions override the request when membership was resolved server-side.
+  const effectiveRole = m ? m.role : actor.role;
+  const held = m ? m.permissions : [];
+  const applicable = applicablePolicies(actor, action, policies, now, effectiveRole, held);
+
+  // The platform-resolved membership fields to echo — present ONLY when membership was resolved (so a
+  // pre-C31 decision object is unchanged).
+  const resolved: Pick<AuthzDecision, 'role' | 'permissions' | 'is_member' | 'group_id'> = m
+    ? { role: m.role, permissions: m.permissions, is_member: m.is_member, group_id: m.group_id }
+    : {};
+
+  // 0a. NOT-A-MEMBER floor — targeting a group you don't belong to (personal group-of-one is exempt).
+  if (m && !m.personal && !m.is_member) {
+    return { decision: 'deny', rule: 'not-a-member', reason: 'caller is not a member of the targeted group', high_risk: highRisk, action_class: cls, ...resolved };
+  }
+  // 0b. PRIVATE-LEAK floor — the caller is not entitled to the targeted resource.
+  const leak = privateLeak(actor.owner, action);
+  if (leak) {
+    return { decision: 'deny', rule: leak, reason: 'caller is not entitled to the targeted resource (private-leak floor)', high_risk: highRisk, action_class: cls, ...resolved };
+  }
 
   const deny = applicable.find((p) => p.effect === 'deny');
   if (deny) {
-    return { decision: 'deny', rule: deny.id, reason: deny.reason ?? 'denied by policy', high_risk: highRisk, action_class: cls };
+    return { decision: 'deny', rule: deny.id, reason: deny.reason ?? 'denied by policy', high_risk: highRisk, action_class: cls, ...resolved };
   }
   if (highRisk) {
     return {
@@ -129,6 +202,7 @@ export function authorize(actor: Actor, action: Action, policies: PolicyRule[], 
       reason: 'high-risk action class always requires approval (non-overridable safety floor)',
       high_risk: true,
       action_class: cls,
+      ...resolved,
     };
   }
   const governing = applicable[0];
@@ -139,6 +213,7 @@ export function authorize(actor: Actor, action: Action, policies: PolicyRule[], 
       reason: governing.reason ?? `governed by policy ${governing.id}`,
       high_risk: false,
       action_class: cls,
+      ...resolved,
     };
   }
   return {
@@ -147,5 +222,6 @@ export function authorize(actor: Actor, action: Action, policies: PolicyRule[], 
     reason: 'no policy matched; default posture',
     high_risk: false,
     action_class: cls,
+    ...resolved,
   };
 }

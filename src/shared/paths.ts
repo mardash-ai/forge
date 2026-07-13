@@ -182,6 +182,19 @@ export function blobBytesFile(appId: string, blobId: string): string {
   return path.join(blobsBytesDir(appId), safeSeg(blobId));
 }
 
+// Per-app membership store (C31) — one JSON doc per app holding the platform-owned membership graph:
+// the app-registered role registry + groups + members + invitations (invitations hold only a TOKEN HASH,
+// never a raw token). Mutable durable STATE (read-modify-write under a per-app lock). Kept OUT of the
+// generic Resource store (like policies/auth/connections), so the membership graph never surfaces through
+// the inspectable `/resources` API.
+export function membershipDir(): string {
+  return path.join(stateDir(), 'membership');
+}
+
+export function membershipFile(appId: string): string {
+  return path.join(membershipDir(), `${appId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
+}
+
 // Per-app third-party connector vault (C24) — one JSON doc per app holding the user's live provider
 // connections (SEALED access/refresh tokens — AES-256-GCM ciphertext, never plaintext) + short-lived
 // pending connect requests. Lives under the gitignored state dir like the C10 identity / C5 secrets vaults,

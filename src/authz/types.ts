@@ -13,6 +13,10 @@ export type PolicyEffect = 'allow' | 'needs-approval' | 'deny';
 export type Decision = PolicyEffect;
 export type Reversibility = 'reversible' | 'irreversible';
 export type Visibility = 'private' | 'shared';
+// C31 — the stored visibility of a TARGETED resource, supplied by the consumer from its own row. Wider
+// than the policy-scope `Visibility` above: adds `group` (visible to the whole targeted group). Drives the
+// private-leak floor in `authorize`.
+export type ResourceVisibility = 'private' | 'group' | 'shared';
 
 // WHO is acting. `owner` (C11) is the per-user id; `role` is an app-defined string (never a fixed enum).
 export interface Actor {
@@ -38,6 +42,12 @@ export interface Action {
   location?: string;
   device?: string;
   at?: string; // ISO-8601 time of the action; defaults to now
+  // C31 — the stored scope of the TARGETED single resource (supplied by the consumer from its own DB row).
+  // These drive the PRIVATE-LEAK FLOOR: `authorize` denies a caller who is not entitled to the row, so a
+  // private/shared row can never leak to another group member. All optional (absence = no scope check).
+  resource_owner?: string; // who owns the targeted row
+  visibility?: ResourceVisibility; // how the row is scoped
+  shared_with?: string[]; // for visibility='shared': the identities it is shared to
 }
 
 // Extra free-form context a policy or the caller may carry (rarely needed — dimensions live on Action).
@@ -56,7 +66,11 @@ export interface PolicyMatch {
   device?: string[];
   data_sensitivity?: string[];
   reversibility?: Reversibility[];
-  role?: string[]; // the actor's role
+  role?: string[]; // the actor's role (C31: matched against the RESOLVED role, never the request's)
+  // C31 — gate a rule on a PERMISSION the resolved role must hold. Matches when EVERY listed permission
+  // token is in the caller's resolved permission set (expanded server-side from the role registry). Absent =
+  // no permission constraint (so every pre-C31 policy is unaffected — additive).
+  permission?: string[];
   max_amount?: number; // matches when action.amount <= max_amount
   // Time window (all fields optional): days = weekday names/numbers, start/end = 'HH:MM' local wall time.
   time?: { days?: string[]; start?: string; end?: string };
@@ -79,10 +93,30 @@ export interface PolicyRule {
 // The decision the enforcement point returns.
 export interface AuthzDecision {
   decision: Decision;
-  rule?: string; // governing rule id, or a synthetic 'safety-floor:<class>' / 'default'
+  rule?: string; // governing rule id, or a synthetic 'safety-floor:<class>' / 'default' / 'not-a-member' / 'private-resource'
   reason: string; // human-readable "why" the consumer can render
   high_risk: boolean; // whether the action hit the non-overridable safety floor
   action_class: string; // canonical class key (for the audit trail + progressive-autonomy counts)
+  // C31 — the platform-RESOLVED membership context (present only when a group/role was resolved server-side;
+  // absent on a pre-C31 call so the legacy verdict is byte-identical). Authoritative — resolved from the
+  // membership graph, NEVER the request.
+  role?: string; // the caller's resolved role in the targeted group
+  permissions?: string[]; // the role's expanded (opaque) permission set
+  is_member?: boolean; // whether the caller is a member of the targeted group
+  group_id?: string; // the group the action was evaluated against (personal group-of-one if none targeted)
+}
+
+// C31 — the resolved membership context the ROUTE computes from the graph and hands the pure `authorize`.
+// Its presence turns on the C31 enforcement rules (role override, not-a-member deny, permission gating) and
+// the resolved-field echo. `role`/`permissions`/`is_member`/`group_id` are authoritative (graph, not request).
+export interface ResolvedMembership {
+  group_id: string;
+  role?: string;
+  permissions: string[];
+  is_member: boolean;
+  // Whether this is the caller's personal group-of-one (no explicit group_id targeted). A personal group
+  // never triggers the not-a-member deny (you are always a member of your own group-of-one).
+  personal: boolean;
 }
 
 // The high-risk classes that ALWAYS stage (`needs-approval`), non-overridable by any policy. The app

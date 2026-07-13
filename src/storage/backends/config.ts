@@ -26,6 +26,7 @@ export interface StoreConfig {
   policy: BackendKind;
   mcp: BackendKind;
   connections: BackendKind;
+  membership: BackendKind;
   blobs: BlobBackendKind;
   s3?: S3Settings;
   // Migration window: when a Postgres backend is selected, ALSO write-through to the filesystem
@@ -40,6 +41,7 @@ export interface StoreConfig {
   policyDualWrite: boolean;
   mcpDualWrite: boolean;
   connectionsDualWrite: boolean;
+  membershipDualWrite: boolean;
   blobsDualWrite: boolean;
   dbUrl?: string;
   poolMax: number;
@@ -91,6 +93,7 @@ export function loadStoreConfig(env: NodeJS.ProcessEnv = process.env): StoreConf
     policy: pick(env.FORGE_POLICY_BACKEND, def),
     mcp: pick(env.FORGE_MCP_BACKEND, def),
     connections: pick(env.FORGE_CONNECTIONS_BACKEND, def),
+    membership: pick(env.FORGE_MEMBERSHIP_BACKEND, def),
     // P33 — blobs are decoupled from the structured-store switch: filesystem unless S3 is explicitly
     // configured or requested. (S3 keeps its metadata in Postgres → needsDatabase() still opens the pool.)
     blobs: pickBlob(env.FORGE_BLOBS_BACKEND, Boolean(s3)),
@@ -104,6 +107,7 @@ export function loadStoreConfig(env: NodeJS.ProcessEnv = process.env): StoreConf
     policyDualWrite: flag(env.FORGE_POLICY_DUAL_WRITE),
     mcpDualWrite: flag(env.FORGE_MCP_DUAL_WRITE),
     connectionsDualWrite: flag(env.FORGE_CONNECTIONS_DUAL_WRITE),
+    membershipDualWrite: flag(env.FORGE_MEMBERSHIP_DUAL_WRITE),
     blobsDualWrite: flag(env.FORGE_BLOBS_DUAL_WRITE),
     dbUrl: env.FORGE_DB_URL,
     poolMax: Number(env.FORGE_DB_POOL_MAX ?? 8),
@@ -123,6 +127,7 @@ export function needsDatabase(cfg: StoreConfig): boolean {
     cfg.policy === 'postgres' ||
     cfg.mcp === 'postgres' ||
     cfg.connections === 'postgres' ||
+    cfg.membership === 'postgres' ||
     cfg.blobs === 's3'
   );
 }

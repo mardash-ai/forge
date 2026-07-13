@@ -4,7 +4,8 @@ import { getBackends } from '../storage/backends';
 import { newId } from '../shared/ids';
 import { nowIso } from '../shared/time';
 import { authorize } from '../authz/authorize';
-import type { Actor, Action, PolicyRule, PolicyEffect, PolicyMatch, HighRiskSpec, Decision } from '../authz/types';
+import type { Actor, Action, PolicyRule, PolicyEffect, PolicyMatch, HighRiskSpec, Decision, ResolvedMembership } from '../authz/types';
+import { resolveMembership, getPersonalGroup, provisionGroup } from '../membership/service';
 
 // C29 — the authorization/policy HTTP surface. Registered on BOTH planes (control: policy config; data:
 // runtime `POST /authorize`), like the other data-plane surfaces. The deterministic decision itself is
@@ -12,6 +13,11 @@ import type { Actor, Action, PolicyRule, PolicyEffect, PolicyMatch, HighRiskSpec
 // policies, evaluates, RECORDS the decision to the C3 audit trail, and returns it. Owner-scoped (C11).
 //
 //   POST   /authorize            { owner, role?, group_id?, action, default_decision?, high_risk? } -> AuthzDecision
+//     C31: `role?` is ACCEPT-AND-IGNORE once a role registry exists — the caller's role is RESOLVED from the
+//     membership graph. `group_id?` targets a group (omit = the caller's personal group-of-one). `action`
+//     may carry the targeted resource's scope — `resource_owner?`, `visibility? (private|group|shared)`,
+//     `shared_with?[]` — which drives the PRIVATE-LEAK floor. The response gains platform-RESOLVED
+//     `role`/`permissions[]`/`is_member`/`group_id` (present only when a registry is configured).
 //   GET    /policies             ?owner=                                                            -> { policies }
 //   POST   /policies             { id?, owner?, group_id?, visibility?, effect, priority?, match?, reason? } -> { policy }
 //   GET    /policies/:id         ?app=                                                              -> { policy }
@@ -48,12 +54,36 @@ export function registerAuthzRoutes(app: FastifyInstance, opts: { defaultApp?: (
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
 
-    const actor: Actor = { owner: b.owner, ...(b.group_id ? { group_id: b.group_id } : {}), ...(b.role ? { role: b.role } : {}) };
+    const backends = await getBackends();
+    // C31 — resolve the caller's membership/role from the graph SERVER-SIDE (never the request's `role`).
+    // Active only once the app has registered a role registry (PUT /roles); until then this is pure C29 and
+    // the request `role` is honored — byte-identical legacy behavior for every current caller.
+    const membershipState = await backends.membership.read(app_id);
+    let membership: ResolvedMembership | undefined;
+    if (membershipState.roles.length > 0) {
+      if (!b.group_id && !getPersonalGroup(membershipState, b.owner)) {
+        // Lazy auto-provision the group-of-one on first sight of an identity, so the resolved group_id is
+        // real + stable. Idempotent thereafter (the read-only branch below).
+        await backends.membership.mutate(app_id, (s) =>
+          provisionGroup(s, { owner: b.owner!, now: nowIso(), newGroupId: newId('grp'), dedupeOwnerSingleton: true }),
+        );
+        membership = resolveMembership(await backends.membership.read(app_id), b.owner, undefined);
+      } else {
+        membership = resolveMembership(membershipState, b.owner, b.group_id);
+      }
+    }
+    // The request `role` is ACCEPT-AND-IGNORE once membership resolves (kept only as the legacy fallback).
+    const actor: Actor = {
+      owner: b.owner,
+      ...(b.group_id ? { group_id: b.group_id } : {}),
+      ...(!membership && b.role ? { role: b.role } : {}),
+    };
     // The applicable policy set: the owner's + the app-wide rules. Evaluation is a pure function.
-    const policies = await (await getBackends()).policy.list(app_id, { owner: b.owner });
+    const policies = await backends.policy.list(app_id, { owner: b.owner });
     const decision = authorize(actor, b.action, policies, {
       ...(b.default_decision ? { defaultDecision: b.default_decision } : {}),
       ...(b.high_risk ? { highRiskClasses: b.high_risk } : {}),
+      ...(membership ? { membership } : {}),
     });
 
     // Record the decision to the C3 audit trail (owner-scoped), keyed by the action class.
@@ -62,7 +92,13 @@ export function registerAuthzRoutes(app: FastifyInstance, opts: { defaultApp?: (
       type: AUTHZ_DECISION,
       subject: decision.action_class,
       owner: b.owner,
-      data: { decision: decision.decision, rule: decision.rule, high_risk: decision.high_risk, action: b.action },
+      data: {
+        decision: decision.decision,
+        rule: decision.rule,
+        high_risk: decision.high_risk,
+        action: b.action,
+        ...(membership ? { group_id: decision.group_id, role: decision.role, is_member: decision.is_member } : {}),
+      },
     });
 
     return reply.status(200).send(decision);

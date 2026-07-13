@@ -41,6 +41,10 @@ import type { ConnectionBackend } from './connections/types';
 import { FsConnectionBackend } from './connections/fs';
 import { PgConnectionBackend, ensureConnectionsSchema } from './connections/pg';
 import { DualWriteConnectionBackend } from './connections/dual';
+import type { MembershipBackend } from './membership/types';
+import { FsMembershipBackend } from './membership/fs';
+import { PgMembershipBackend, ensureMembershipSchema } from './membership/pg';
+import { DualWriteMembershipBackend } from './membership/dual';
 
 export { loadStoreConfig, needsDatabase } from './config';
 export type { StoreConfig, BackendKind } from './config';
@@ -60,6 +64,7 @@ export interface Backends {
   policy: PolicyBackend;
   mcp: McpBackend;
   connections: ConnectionBackend;
+  membership: MembershipBackend;
   blobs: BlobBackend;
   // The Postgres pool, when one was opened (shared across domains as more migrate).
   pool?: Pool;
@@ -89,6 +94,7 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     if (cfg.policy === 'postgres') await ensurePolicySchema(pool);
     if (cfg.mcp === 'postgres') await ensureMcpSchema(pool);
     if (cfg.connections === 'postgres') await ensureConnectionsSchema(pool);
+    if (cfg.membership === 'postgres') await ensureMembershipSchema(pool);
     if (cfg.blobs === 's3') await ensureBlobSchema(pool);
   }
 
@@ -211,6 +217,21 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     connectionsLabel = 'filesystem';
   }
 
+  // membership (C31) — the platform-owned membership graph (roles + groups + members + invitations) as one
+  // per-app document, on the filesystem, OR one jsonb row per app in Postgres. Multi-record invariants are
+  // serialized by the FS per-app lock / a PG SELECT … FOR UPDATE inside mutate — identical on both.
+  const fsMembership = new FsMembershipBackend();
+  let membership: MembershipBackend;
+  let membershipLabel: string;
+  if (cfg.membership === 'postgres') {
+    const pg = new PgMembershipBackend(pool!);
+    membership = cfg.membershipDualWrite ? new DualWriteMembershipBackend(pg, fsMembership) : pg;
+    membershipLabel = cfg.membershipDualWrite ? 'postgres+dualwrite' : 'postgres';
+  } else {
+    membership = fsMembership;
+    membershipLabel = 'filesystem';
+  }
+
   // blobs (C20) — bytes+metadata on the filesystem, OR bytes in S3/MinIO + metadata in Postgres. The FS
   // backend is the shared `blobStore` singleton (so the store's own unit tests + the route observe the
   // same instance). The S3 backend needs both the pool (metadata) and S3 settings (bytes); the bucket is
@@ -245,10 +266,11 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     policy,
     mcp,
     connections,
+    membership,
     blobs,
     pool,
     describe: () =>
-      `identity=${identityLabel} search=${searchLabel} events=${eventsLabel} notifications=${notificationsLabel} secrets=${secretsLabel} resources=${resourcesLabel} policy=${policyLabel} mcp=${mcpLabel} connections=${connectionsLabel} blobs=${blobsLabel}`,
+      `identity=${identityLabel} search=${searchLabel} events=${eventsLabel} notifications=${notificationsLabel} secrets=${secretsLabel} resources=${resourcesLabel} policy=${policyLabel} mcp=${mcpLabel} connections=${connectionsLabel} membership=${membershipLabel} blobs=${blobsLabel}`,
     async close() {
       await identity.close?.();
       await search.close?.();
@@ -259,6 +281,7 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
       await policy.close?.();
       await mcp.close?.();
       await connections.close?.();
+      await membership.close?.();
       await blobs.close?.();
       if (pool) await pool.end();
     },

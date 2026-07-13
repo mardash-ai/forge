@@ -9,6 +9,62 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.39.0] — 2026-07-13
+
+### Added
+- **C31 — Household / multi-member identity + roles + shared-private scoping.** A generic, product-agnostic
+  extension of the shipped identity/ownership + **C29** authorization capabilities that makes **group
+  membership + an app-defined role** a **platform-owned, unspoofable** primitive: the caller's
+  `role`/`is_member`/`group_id` are **resolved server-side from the membership graph**, never trusted from a
+  request. Nothing here names a household/family/team — a "group" is only a tenancy + sharing boundary, and
+  roles + their permissions are entirely app-supplied.
+  - **Membership graph store** (new `membership` P26 store domain — `src/storage/backends/membership/`,
+    filesystem default + Postgres + dual-write + backfill) — the platform owns groups, members, invitations,
+    and the app **role registry** as one per-app document; multi-record invariants (**≥1-owner**, singleton
+    flip, one-shot invitations) are serialized by a per-app lock (FS) / `SELECT … FOR UPDATE` (PG), so they
+    hold identically on both backends. The invariant logic lives once as pure ops over a state snapshot
+    (`src/membership/service.ts`). Selectable via `FORGE_MEMBERSHIP_BACKEND` / `FORGE_MEMBERSHIP_DUAL_WRITE`.
+  - **Role registry** (`PUT /roles` idempotent replace · `GET /roles`) — app-registered `RoleDef`
+    `{ key, label?, permissions:[opaque tokens], rank, owner_role, assignable }`. Permissions are opaque app
+    tokens the platform stores + set-tests but never interprets, except three well-known membership tokens it
+    recognizes to gate the lifecycle: `members.invite` / `members.manage_roles` / `members.remove`. Exactly
+    one role must be `owner_role:true` (it tracks the ≥1-owner invariant without the platform naming it).
+  - **Group lifecycle** — `POST /groups/ensure` (idempotent on a caller-supplied `external_id`, else on the
+    owner's personal singleton) + `POST /groups` + `GET /groups/:id` (resolvable by internal id **or** the
+    consumer's `external_id`). A group is **lazily auto-provisioned as a group-of-one** on first sight of an
+    identity and holds ≥1 owner-role member; the singleton flips false when a 2nd member joins. `external_id`
+    is the migration linchpin: a consumer registers its **existing** group UUIDs with **zero row rewrites**.
+  - **Members** — `GET /groups/:id/members` · `GET /groups/:id/members/:owner` (role + expanded permissions +
+    membership) · `GET /identities/:owner/groups` · `POST /groups/:id/members/:owner/role`
+    (needs `members.manage_roles`) · `DELETE /groups/:id/members/:owner` (needs `members.remove`; **emits a
+    `membership.removed` fact via the C3 app-event log and never touches app rows**) ·
+    `POST /groups/:id/transfer-ownership` (atomic; preserves ≥1 owner) · `POST /groups/:id/leave` (the sole
+    owner is refused with `409 last_owner`).
+  - **Invitations** — `POST /groups/:id/invitations` mints an **opaque single-use token** (only its hash is
+    stored) the **consumer delivers** (the platform never sends email); the token is **bound to the invited
+    hint** (accept must match — not bearer). `GET /groups/:id/invitations` · `POST /invitations/:id/revoke` ·
+    `POST /invitations/accept { token, owner, invitee_hint? }` (adds the member + flips the singleton). Reuse
+    of a pending invite returns the existing one (`already_invited`).
+  - **C29 `authorize()` extension (additive, non-breaking)** — the request gains optional `group_id` (the
+    targeted group; omit = the caller's personal group-of-one) and the targeted resource's stored scope on
+    `action`: `resource_owner?`, `visibility? ∈ {private,group,shared}`, `shared_with?[]`. The response gains
+    platform-**resolved** `role` / `permissions[]` / `is_member` / `group_id`. Two new deterministic floors:
+    **NOT-A-MEMBER** (a non-personal group you don't belong to → deny) and the **PRIVATE-LEAK FLOOR** (a
+    private/shared row that excludes the caller → deny `private-resource`, so it can't leak to another group
+    member). Policy matching now uses the **resolved** role (the request `role` is **accept-and-ignore** once
+    a role registry exists), and `PolicyMatch` gains an additive `permission?: string[]` gate tested against
+    the resolved permission set.
+  - **Membership surface on both planes** — `src/api/membership-routes.ts` registered on the control plane
+    (`src/api/server.ts`) and the data-plane sidecar (`src/data-plane/server.ts`), like the C29 authz surface.
+    Trusted-internal model (owner/actor + app ride the request over the compose network), same as `/authorize`.
+
+### Changed
+- **`/authorize` resolves membership server-side** when the app has registered a role registry: it lazily
+  provisions the caller's group-of-one on first sight, resolves role/permissions/is_member/group_id from the
+  graph, and records them on the C3 authz-decision audit fact. Until a registry exists (`PUT /roles`), the
+  endpoint behaves **byte-identically to C29** — the request `role` is honored and no new floor can fire, so
+  every current caller is unaffected (no `group_id` + no resource scope ⇒ verdict identical to before).
+
 ## [0.38.0] — 2026-07-12
 
 ### Added
@@ -1627,7 +1683,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.38.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.39.0...HEAD
+[0.39.0]: https://github.com/mardash-ai/forge/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/mardash-ai/forge/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/mardash-ai/forge/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/mardash-ai/forge/compare/v0.35.0...v0.36.0

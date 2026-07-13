@@ -21,6 +21,7 @@ import { registerAuthzRoutes } from './authz-routes';
 import { registerOAuthRoutes } from './oauth-routes';
 import { registerMcpRoutes } from './mcp-routes';
 import { registerConnectRoutes } from './connect-routes';
+import { registerMembershipRoutes } from './membership-routes';
 import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
 
@@ -147,6 +148,11 @@ registerMcpRoutes(app);
 // tokens. Owner comes from the C10 session; the broker also accepts the C10 service token for background
 // sends. Served on both planes.
 registerConnectRoutes(app);
+
+// Household / multi-member identity + roles + shared-private scoping (C31) — the membership lifecycle
+// (groups + members + invitations + the app role registry). Makes group membership + role a PLATFORM-OWNED,
+// unspoofable primitive that the C29 `/authorize` above resolves server-side. Served on both planes.
+registerMembershipRoutes(app);
 
 // Event APIs.
 app.get('/events', async (req) => {
