@@ -206,3 +206,17 @@ export function connectionsDir(): string {
 export function connectionsFile(appId: string): string {
   return path.join(connectionsDir(), `${appId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
 }
+
+// Per-app billing store (C33) — one JSON doc per app holding the payment-source-agnostic billing state:
+// the plans catalog, the subscription-of-record per subscriber, and the processed-webhook-event dedupe
+// set. Mutable durable STATE (read-modify-write under a per-app lock, like C31 membership). Holds NO card
+// data or raw provider secret — only the subscription-of-record + provider handle ids. Kept OUT of the
+// generic Resource store (like membership/policies/auth), so billing records never surface through the
+// inspectable `/resources` API.
+export function billingDir(): string {
+  return path.join(stateDir(), 'billing');
+}
+
+export function billingFile(appId: string): string {
+  return path.join(billingDir(), `${appId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
+}

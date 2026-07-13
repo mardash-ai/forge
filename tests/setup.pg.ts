@@ -20,6 +20,7 @@ beforeEach(async () => {
   await b.mcp.__truncateAllForTests?.();
   await b.connections.__truncateAllForTests?.();
   await b.membership.__truncateAllForTests?.();
+  await b.billing.__truncateAllForTests?.();
   await b.blobs.__truncateAllForTests?.();
 });
 

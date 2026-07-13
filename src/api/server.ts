@@ -22,6 +22,7 @@ import { registerOAuthRoutes } from './oauth-routes';
 import { registerMcpRoutes } from './mcp-routes';
 import { registerConnectRoutes } from './connect-routes';
 import { registerMembershipRoutes } from './membership-routes';
+import { registerBillingRoutes } from './billing-routes';
 import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
 
@@ -153,6 +154,12 @@ registerConnectRoutes(app);
 // (groups + members + invitations + the app role registry). Makes group membership + role a PLATFORM-OWNED,
 // unspoofable primitive that the C29 `/authorize` above resolves server-side. Served on both planes.
 registerMembershipRoutes(app);
+
+// Billing / subscriptions / entitlements (C33) — the app proxies `/billing/*` same-origin (subscription /
+// entitlement reads, checkout, portal) + Stripe's webhook RAW to `/hooks/billing/stripe`. The platform
+// holds the Stripe key and verifies the signature from raw bytes; the app never imports a Stripe SDK, sees
+// the key, or parses an event. Payment-source-agnostic (stripe live; apple/google reserved). Both planes.
+registerBillingRoutes(app);
 
 // Event APIs.
 app.get('/events', async (req) => {

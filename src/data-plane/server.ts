@@ -25,6 +25,7 @@ import { registerOAuthRoutes } from '../api/oauth-routes';
 import { registerMcpRoutes } from '../api/mcp-routes';
 import { registerConnectRoutes } from '../api/connect-routes';
 import { registerMembershipRoutes } from '../api/membership-routes';
+import { registerBillingRoutes } from '../api/billing-routes';
 import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
 
@@ -167,6 +168,13 @@ registerConnectRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 // the internal network; the C29 `/authorize` above resolves the caller's role from this graph server-side.
 // Defaults the app to this sidecar's FORGE_APP_NAME.
 registerMembershipRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
+
+// Billing / subscriptions / entitlements (C33) — the app proxies the browser-facing `/billing/*` ops
+// SAME-ORIGIN here (subscription/entitlement reads, checkout, portal) and proxies Stripe's webhook RAW to
+// `/hooks/billing/stripe`. The platform holds the Stripe key + verifies the webhook signature from raw
+// bytes; the app never imports a Stripe SDK, sees the key, or parses an event. Payment-source-agnostic
+// (stripe live; apple/google reserved). Defaults the app to this sidecar's FORGE_APP_NAME.
+registerBillingRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 
 // In production there is no `./forge provision`, so seed a minimal Application
 // record for the app this sidecar serves — enough for schedule-job/inspect to

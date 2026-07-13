@@ -9,6 +9,69 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.40.0] — 2026-07-13
+
+### Added
+- **C33 — Billing / subscriptions / entitlements.** A generic, **payment-source-agnostic** billing
+  capability: the platform owns the plans catalog, the ONE canonical subscription-of-record per
+  `(app, subscriber)`, and the derived entitlement map. Consumers check an entitlement **key** — never a
+  price id or receipt. The **web / Stripe (direct + Stripe Tax, no Connect)** surface ships now; the model
+  carries the `stripe | apple | google` source enum + `provider_refs` slots + reserved routes from day one,
+  so a mobile IAP/Play adapter slots into the SAME internal upsert seam with no schema rewrite (the Apple/
+  Google decoders are **deferred**). Nothing platform-side names a Dorinda plan/price — plans + prices are
+  entirely app-supplied via the catalog API; a "household" is just an entitlement a plan unlocks (the
+  platform stays ignorant of any group model and only **echoes** a `scope_ref`).
+  - **Billing store** (new `billing` P26 store domain — `src/storage/backends/billing/`, filesystem default
+    + Postgres + dual-write + backfill) — one per-app document holding the catalog + subscriptions +
+    processed-webhook-event dedupe set; the **monotonic-version** subscription upsert and one-shot webhook
+    dedupe are serialized by a per-app lock (FS) / `SELECT … FOR UPDATE` (PG), so they hold identically on
+    both backends. Held OUT of the inspectable `/resources` API (like membership/secrets/auth). Selectable
+    via `FORGE_BILLING_BACKEND` / `FORGE_BILLING_DUAL_WRITE`.
+  - **Subscription-of-record** (`GET /billing/subscription?subscriber=`) — the canonical record
+    `{ subscriber, app, plan_key, status, source, current_period_end, cancel_at_period_end, trial_end,
+    currency, scope_ref, provider_refs{…}, … }`. Each source's native states map into a canonical 6-state
+    vocabulary (`active | trialing | past_due | canceled | incomplete | none`). The read **never 404s** — it
+    returns an explicit `status:"none"` free/default record when absent. Written ONLY by reconciliation
+    inputs (no consumer write path).
+  - **Entitlements** (`GET /billing/entitlements?subscriber=` · `GET /billing/entitlement?subscriber=&key=`)
+    — a flat, platform-derived `key→typed value` map: `active|trialing` → the active plan's map;
+    `past_due|incomplete` → **GRACE** (keep the paid entitlements through `current_period_end`, then free);
+    `canceled|none` → the free/default plan. Keys are app-defined and copied through verbatim.
+  - **Plans catalog** (`PUT /billing/catalog` idempotent replace, service-token gated · `GET /billing/catalog`
+    public) — app-supplied `PlanDef` `{ plan_key, display, interval(month|year), prices{stripe,apple,google},
+    entitlements, seat_limit?, is_default }`. Validated: exactly one `is_default`, unique `plan_key`; a plan
+    with no `prices.stripe.price_id` is catalog-valid but **not purchasable** (→ `price_unconfigured`). Month
+    vs. year are separate `plan_key`s sharing an entitlement map.
+  - **Stripe ops** (`POST /billing/checkout` · `POST /billing/portal`) — the platform holds the key and does
+    ALL Stripe I/O; the app never imports a Stripe SDK. Checkout is subscription-mode with
+    `automatic_tax` (Stripe Tax, default on via `STRIPE_TAX_ENABLED`), `tax_id_collection`, `customer_update`
+    address/name auto, `client_reference_id`+metadata `{subscriber,app,plan_key,scope_ref}`, and **reuses**
+    the subscriber's Stripe customer (else creates + remembers it). Returns a hosted `url` the app 302s to.
+  - **Webhook** (`POST /hooks/billing/stripe`, platform-owned; the app proxies Stripe's request **RAW** to
+    it) — the **Stripe-Signature is verified from the RAW bytes in the sidecar** (the app never sees the
+    signing secret or parses an event); deduped on `event.id`; each handled event **re-fetches the canonical
+    Stripe subscription** and upserts the record — **idempotent under duplicate / out-of-order delivery** via
+    the monotonic-version guard. A transient failure returns 5xx so Stripe retries. Best-effort `billing.*`
+    C3 facts (non-hard-dep).
+  - **Reconciliation seam + reserved routes** — a platform-internal **reconcile sweep**
+    (`POST /billing/reconcile`, service-token gated) re-pulls active subscribers to self-heal dropped
+    webhooks (not auto-scheduled; wire to C2 per deployment). `POST /hooks/billing/apple` +
+    `/hooks/billing/google` are **reserved → `501 not_configured`** until their adapters ship — they will
+    feed the same internal upsert.
+  - **New C5 secrets** (per app, in the vault; never hardcoded): `STRIPE_SECRET_KEY`,
+    `STRIPE_WEBHOOK_SECRET`, config `STRIPE_TAX_ENABLED` (default `true`). **Graceful degradation:** unset ⇒
+    `configured:false` — checkout/portal `503 billing_not_configured`, the subscription read still `200 none`,
+    the webhook no-ops. Adoptable BEFORE the Stripe account is live.
+  - **Stripe technology boundary** (`src/plugins/stripe-billing/`) — a **swappable** `StripeClient` (real
+    REST via built-in `fetch`; tests inject a deterministic in-memory Stripe, no network) + the raw-bytes
+    HMAC-SHA256 webhook verification + the Stripe→canonical status mapping. Dependency-clean (no SDK), keeping
+    the slim multi-arch data-plane image clean — the same posture as the C24 outbound-OAuth client.
+  - **Consume surface** — the billing routes register on BOTH planes (like `/auth`, `/connect`); the app
+    proxies the browser-facing `/billing/*` ops same-origin (subscriber derived from the C10 session; a C10
+    **service token** may act for a passed subscriber for background checks) and proxies the webhook raw.
+    Failure vocabulary: `billing_not_configured` (503) · `unknown_plan`/`price_unconfigured` (422) ·
+    `not_a_customer` (404) · `signature_invalid` (400) · `forbidden` (403) · a subscription read is `200 none`.
+
 ## [0.39.0] — 2026-07-13
 
 ### Added
@@ -1683,7 +1746,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.39.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.40.0...HEAD
+[0.40.0]: https://github.com/mardash-ai/forge/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/mardash-ai/forge/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/mardash-ai/forge/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/mardash-ai/forge/compare/v0.36.0...v0.37.0
