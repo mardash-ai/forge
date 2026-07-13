@@ -9,6 +9,18 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+### Fixed
+- **`/commit-and-publish` no longer gathers git context from — or can commit/tag/publish against — the
+  wrong repository (P37).** When the command was invoked by a subagent whose shell cwd was not the
+  forge repo root (e.g. an orchestrator's cwd), its bare `git status`/`git log`/commit/tag steps
+  resolved against that other directory, twice surfacing a sibling repo's commits and risking a
+  commit/tag/publish against the wrong repo. The command now **resolves the forge repo root once**
+  (`FORGE_ROOT` → `CLAUDE_PROJECT_DIR` → the current dir's git toplevel, accepted only if it is
+  actually forge), **hard-refuses** to run unless the resolved root's `package.json` name is `forge`
+  and the publish workflow is present, and **binds every git/version operation to that root**
+  (`git -C "$ROOT" …`, `npm --prefix "$ROOT" version …`, `gh … -R <forge remote>`) instead of bare
+  cwd-relative git. Developer-tooling only — no control-plane behavior or release mechanics changed.
+
 ## [0.41.0] — 2026-07-13
 
 ### Changed
