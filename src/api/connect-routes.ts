@@ -1,6 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { store } from '../storage/store';
+import { executeCapability } from '../core/runtime';
+import { SYSTEM_ACTOR } from '../shared/domain';
 import { ForgeError } from '../shared/errors';
+import type { EmailDelivery } from '../resources/types';
 import { APP_HEADER, SESSION_COOKIE, SERVICE_TOKEN_HEADER, verifySessionToken, parseCookies } from '../shared/session';
 import { resolveAuthConfig, resolveServiceToken, serviceTokenMatches } from '../plugins/auth-identity/index';
 import * as authStore from '../plugins/auth-identity/store';
@@ -27,6 +30,7 @@ import {
 //   GET    /connect                           -> { connections:[…] } for the session user (never a token)
 //   DELETE /connect/:provider                 -> { disconnected } for the session user (revoke + delete)
 //   POST   /connect/:provider/token           -> { access_token, … } FRESH (auto-refresh); session OR service
+//   POST   /connect/:provider/send            -> { message } send AS the user (C25 SendMessage); session OR service
 //
 // Registered on BOTH planes (like /auth). Records connect/disconnect/token-issue to the C3 app-event log.
 
@@ -241,6 +245,70 @@ export function registerConnectRoutes(app: FastifyInstance, opts: { defaultApp?:
       });
       await recordC3(app_.id, 'connector.token_issued', provider, owner, { via, scopes: fresh.scopes });
       return reply.status(200).send(fresh);
+    } catch (e) {
+      return errorReply(reply, e);
+    }
+  });
+
+  // === send a message AS the user (C25 SendMessage) ==============================================
+  // The authenticated outbound-send surface: the app's approved-draft/background flow POSTs a composed
+  // message here and forge sends it AS the user through their connected provider (MVP: Gmail). Owner is
+  // resolved EXACTLY like the broker — the C10 session (user-in-the-loop) OR a valid C10 SERVICE token +
+  // `owner` in the body (a background/approved send). A browser can't forge the service token, and `owner`
+  // is never trusted from an unauthenticated client. Delegates to the SendMessage Capability in-process.
+  //   200 { message } with message.status 'sent' | 'failed' (a provider rejection is a recorded 'failed',
+  //        never a silent drop); a broker precondition is a typed error the app relays as "reconnect":
+  //   404 not_found (not connected) · 403 insufficient_scope (send not granted) · 409 reconnect_required.
+  app.post('/connect/:provider/send', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.status(404).send(unknownApp);
+    const { provider } = req.params as { provider: string };
+    const b = (req.body ?? {}) as Record<string, unknown>;
+
+    // Owner resolution (identical trust model to the broker): session, else service-token + body.owner.
+    let owner: string | undefined;
+    let via: 'session' | 'service';
+    const user = await sessionUser(req, app_.id);
+    if (user) {
+      owner = user.userId;
+      via = 'session';
+    } else {
+      const presented = serviceTokenPresented(req);
+      const configured = await resolveServiceToken(app_.id);
+      if (!presented || !serviceTokenMatches(presented, configured)) return reply.status(401).send(needAuth);
+      owner = trimmed(b.owner);
+      via = 'service';
+      if (!owner) return reply.status(422).send({ error: { code: 'invalid_input', message: 'a service-authenticated send must pass `owner`.', retry: 'change-input' } });
+    }
+
+    // Build the Capability input from the body; `provider` comes from the URL (not the client body). The
+    // Capability's Zod schema validates recipients/subject/body and returns a clean 422 on bad input.
+    const capInput: Record<string, unknown> = {
+      app: app_.name,
+      owner,
+      provider,
+      ...(b.channel !== undefined ? { channel: b.channel } : {}),
+      to: b.to,
+      ...(b.cc !== undefined ? { cc: b.cc } : {}),
+      ...(b.bcc !== undefined ? { bcc: b.bcc } : {}),
+      subject: b.subject,
+      body: b.body,
+      ...(b.content_type !== undefined ? { content_type: b.content_type } : {}),
+      ...(b.in_reply_to !== undefined ? { in_reply_to: b.in_reply_to } : {}),
+      ...(b.references !== undefined ? { references: b.references } : {}),
+      ...(b.thread_ref !== undefined ? { thread_ref: b.thread_ref } : {}),
+    };
+
+    try {
+      const { resource } = await executeCapability('send-message', capInput, SYSTEM_ACTOR);
+      const message = resource as EmailDelivery;
+      await recordC3(app_.id, message.status === 'sent' ? 'message.sent' : 'message.failed', provider, owner, {
+        via,
+        channel: message.channel ?? null,
+        message_id: message.message_id ?? null,
+        ...(message.status === 'failed' && message.error ? { error: message.error } : {}),
+      });
+      return reply.status(200).send({ message });
     } catch (e) {
       return errorReply(reply, e);
     }

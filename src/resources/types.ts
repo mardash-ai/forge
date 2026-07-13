@@ -326,25 +326,38 @@ export interface AgentTask extends BaseResource {
   implementation: string;
 }
 
-// An EmailDelivery — the durable, inspectable record of ONE transactional-email send attempt (C12),
-// persisted for success AND failure once a send was attempted. State only; behavior lives in the
-// SendEmail Capability. Deliberately CARRIES NO PII/secrets: `to` is a REDACTED recipient (e.g.
-// "j***@example.com"), never the full address; there is NO message body and NO credential here — only
-// the subject + status + (on failure) a scrubbed provider error. Survives restart (a JSON doc under the
-// state dir), so past sends stay queryable via `forge inspect email`.
+// An EmailDelivery — the durable, inspectable record of ONE outbound message send attempt, persisted for
+// success AND failure once a send was attempted. Produced by TWO capabilities that share this unified
+// "sent mail" shape: SendEmail (C12 — transactional app→user email via a C5-configured SMTP transport)
+// and SendMessage (C25 — an outbound message sent AS a user through their C24-connected provider, MVP
+// Gmail). State only; behavior lives in those Capabilities. Deliberately CARRIES NO PII/secrets beyond
+// what is already low-risk: `to` is a REDACTED recipient (e.g. "j***@example.com"), never the full
+// address; there is NO message body and NO credential/token here — only the subject + status + (on
+// failure) a scrubbed provider error. Survives restart (a JSON doc under the state dir), so past sends
+// stay queryable via `forge inspect email` / `/resources?type=EmailDelivery` (owner-scoped for C25).
 export interface EmailDelivery extends BaseResource {
   type: 'EmailDelivery';
   status: 'sent' | 'failed';
-  // Redacted recipient — never the full address (no PII at rest).
+  // Redacted recipient — never the full address (no PII at rest). For a multi-recipient C25 send this is
+  // the redacted primary recipient (with a "(+N more)" suffix when there were additional to/cc/bcc).
   to: string;
   subject: string;
   // The built-in template used (verify-email | reset-password), if any; absent for an inline body.
   template?: string;
   implementation: string;
-  // The transport's message id (success only).
+  // The provider/transport message id (success only): the SMTP message id (C12) or the Gmail message id (C25).
   message_id?: string;
   // Populated on failure (provider/transport error), scrubbed of any recipient address.
   error?: string;
+  // --- SendMessage (C25) fields — outbound send AS a connected user. Absent for C12 transactional sends. ---
+  // The delivery channel: 'email' (future: 'sms' | 'push'). Absent = C12 (implicitly transactional email).
+  channel?: string;
+  // The C24 provider the message was sent through, e.g. 'google'. Absent = C12 (SMTP transport, no provider).
+  provider?: string;
+  // The provider conversation/thread id the message landed in (Gmail threadId), when threaded.
+  thread_id?: string;
+  // ISO — when the provider accepted the message (status 'sent' only). Mirrors created_at for the send moment.
+  sent_at?: string;
 }
 
 export type AnyResource =

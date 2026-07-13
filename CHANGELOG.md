@@ -9,6 +9,39 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.38.0] — 2026-07-12
+
+### Added
+- **C25 — SendMessage: outbound message delivery AS a connected user.** A generic, provider-agnostic
+  capability that sends a message **from the user's own connected account** — so a consuming app's approved
+  drafts actually go out **as the user**. MVP: **email via connected Google (Gmail)**; the architecture is
+  channel/provider-extensible so SMS/push and Microsoft/Outlook are additive.
+  - **Capability** (`src/capabilities/send-message/`, data plane, slug `send-message`) — given
+    `{ owner, provider="google", channel="email", to[], cc?, bcc?, subject, body, content_type?, in_reply_to?,
+    references?, thread_ref? }` it brokers a **fresh provider access token in-process via the C24 broker**
+    (`getFreshAccessToken`, which auto-refreshes and enforces the required scope), composes the message, and
+    hands it to the resolved channel/provider Implementation so the mail genuinely lands in the user's
+    account/Sent folder.
+  - **Gmail Implementation** (`src/plugins/message-gmail/`) — composes an RFC 5322 / MIME message
+    (multi-recipient To/Cc/Bcc, RFC 2047 subject encoding, In-Reply-To/References threading, text or HTML)
+    and POSTs it base64url-encoded to Gmail's `users.messages.send` **as the user**. Dependency-clean (Node
+    `fetch`/`crypto`, no Google SDK); **swappable** (`setGmailSender`) so the suite runs with no network.
+  - **Channel × provider dispatch** (`src/capabilities/send-message/senders.ts`) — the extensibility seam:
+    `email:google` is registered (requires the `gmail.send` scope); an unimplemented pair returns a precise
+    `unsupported_channel` change-input. SMS/push + Microsoft are stubbed (additive descriptors), not wired.
+  - **Unified sent-mail record** — reuses the **C12 `EmailDelivery`** resource (now carrying optional
+    `owner`, `channel`, `provider`, `thread_id`, `sent_at`), persisted for success **and** failure, **owner-
+    scoped**, with the recipient **REDACTED** and **no body/token** at rest. Emits **`MessageSent` /
+    `MessageFailed`** facts. Listable/readable by owner (`/resources?type=EmailDelivery&owner=…`).
+  - **Authenticated send surface** — `POST /connect/:provider/send` (registered on both planes) sends AS the
+    user with the **same trust model as the C24 broker**: the C10 **session** (user-in-the-loop) OR a valid
+    C10 **service token + `owner`** (a background/approved send). `owner` is never trusted from an
+    unauthenticated client. Records a `message.sent` / `message.failed` fact to the C3 app timeline.
+  - **Precise, never-silent failures** — a broker precondition is surfaced as a typed error the app relays as
+    a "reconnect Gmail" state: **404 `not_found`** (not connected) · **403 `insufficient_scope`** (send not
+    granted) · **409 `reconnect_required`** (dead refresh). A provider **rejection** is a recorded
+    `status:'failed'` (scrubbed of PII) with `error`, never a silent drop — the app can trust `status`.
+
 ## [0.37.0] — 2026-07-12
 
 ### Added
@@ -1594,7 +1627,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.37.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.38.0...HEAD
+[0.38.0]: https://github.com/mardash-ai/forge/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/mardash-ai/forge/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/mardash-ai/forge/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/mardash-ai/forge/compare/v0.34.0...v0.35.0
