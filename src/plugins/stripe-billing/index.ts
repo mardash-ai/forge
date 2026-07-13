@@ -1,19 +1,20 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import Stripe from 'stripe';
 import type { SubscriptionStatus } from '../../billing/types';
 
 // Plugin: stripe-billing — the genuine TECHNOLOGY BOUNDARY for the web billing surface (the live Stripe
-// REST API + Stripe's webhook-signature scheme). Like the C24 outbound-OAuth client and email-smtp, it is
+// API + Stripe's webhook-signature scheme). Like the C24 outbound-OAuth client and email-smtp, it is
 // SWAPPABLE: tests inject a deterministic in-memory Stripe (no network), and the routes/service only ever
-// talk to the installed client — never the network directly. Dependency-clean: Node's built-in fetch +
-// crypto only (no SDK), keeping the slim multi-arch data-plane image clean. The platform holds the Stripe
-// secret key; the app never imports a Stripe SDK and never sees the key or a raw event.
+// talk to the installed client — never the network directly. Implemented over the OFFICIAL `stripe` SDK
+// (chosen over the built-in fetch approach; the slim-image weight cost is accepted): checkout / portal /
+// customer / subscription I/O go through the SDK, and webhook signatures are verified with the SDK's
+// `constructEvent`. The platform holds the Stripe secret key; the app never imports a Stripe SDK and never
+// sees the key or a raw event.
 
-const STRIPE_API_BASE = 'https://api.stripe.com/v1';
 const STRIPE_TIMEOUT_MS = 20_000;
 
 // --- normalized shapes (source-agnostic canon lives in ../../billing) ---------------------------------
 // The client returns NORMALIZED objects (the fields the service maps into a SubscriptionRecord), so a stub
-// provider and the real API are interchangeable and the mapping is tested without a network.
+// provider and the real SDK are interchangeable and the mapping is tested without a network.
 export interface StripeSubscription {
   id: string;
   status: string; // Stripe's native status vocabulary (mapped by mapStripeStatus below)
@@ -93,11 +94,34 @@ export function unixToIso(unix: number | null | undefined): string | null {
   return new Date(unix * 1000).toISOString();
 }
 
+// --- SDK instances ------------------------------------------------------------------------------------
+// One Stripe instance per secret key (a Builder app typically has exactly one). Construction is pure — no
+// network — so it is cheap and safe to memoize. The SDK's pinned api version matches its bundled types.
+const clientsByKey = new Map<string, Stripe>();
+function stripeApi(secretKey: string): Stripe {
+  let s = clientsByKey.get(secretKey);
+  if (!s) {
+    s = new Stripe(secretKey, { maxNetworkRetries: 2, timeout: STRIPE_TIMEOUT_MS });
+    clientsByKey.set(secretKey, s);
+  }
+  return s;
+}
+
+// A single instance used ONLY for its webhook helpers (constructEvent / generateTestHeaderString). Both are
+// pure-crypto and make NO network call, so the api key here is irrelevant — the WEBHOOK SIGNING SECRET is
+// what verification uses. Kept separate from the per-secret-key API clients above.
+let webhookOnly: Stripe | null = null;
+function stripeWebhooks(): Stripe['webhooks'] {
+  if (!webhookOnly) webhookOnly = new Stripe('sk_webhook_verify_only_no_network');
+  return webhookOnly.webhooks;
+}
+
 // --- webhook signature verification (raw bytes) -------------------------------------------------------
-// Stripe's scheme: header `t=<unix>,v1=<hexHmac>[,v1=<hexHmac>]`. signed_payload = `${t}.${rawBody}`;
-// expected = HMAC-SHA256(webhookSecret, signed_payload). Verify from the RAW request bytes (the app never
-// re-serializes) and constant-time compare. A timestamp outside the tolerance window is rejected (replay
-// defense). Returns the parsed event on success, or null on ANY failure (bad signature / stale / malformed).
+// Verification is delegated to the SDK's `stripe.webhooks.constructEvent(rawBody, header, secret)`, which
+// enforces Stripe's `t=<unix>,v1=<hexHmac>` scheme AND the timestamp tolerance window (replay defense) and
+// throws on ANY failure (bad signature / stale / malformed). We verify from the RAW request bytes (the app
+// never re-serializes) and return the parsed event on success, or null on any failure. The returned event
+// is projected onto the minimal shape the service consumes.
 export interface StripeEvent {
   id: string;
   type: string;
@@ -106,181 +130,118 @@ export interface StripeEvent {
 
 const DEFAULT_TOLERANCE_SECONDS = 5 * 60;
 
-function parseSignatureHeader(header: string): { t: number | null; v1: string[] } {
-  let t: number | null = null;
-  const v1: string[] = [];
-  for (const part of header.split(',')) {
-    const eq = part.indexOf('=');
-    if (eq < 0) continue;
-    const k = part.slice(0, eq).trim();
-    const v = part.slice(eq + 1).trim();
-    if (k === 't') {
-      const n = Number(v);
-      if (Number.isFinite(n)) t = n;
-    } else if (k === 'v1') {
-      v1.push(v);
-    }
-  }
-  return { t, v1 };
-}
-
-function hexEqualsAny(expectedHex: string, candidates: string[]): boolean {
-  const expected = Buffer.from(expectedHex, 'hex');
-  for (const c of candidates) {
-    let cand: Buffer;
-    try {
-      cand = Buffer.from(c, 'hex');
-    } catch {
-      continue;
-    }
-    if (cand.length === expected.length && timingSafeEqual(cand, expected)) return true;
-  }
-  return false;
-}
-
 export function verifyStripeSignature(
   rawBody: Buffer | string,
   signatureHeader: string | undefined,
   webhookSecret: string,
-  opts: { toleranceSeconds?: number; nowMs?: number } = {},
+  opts: { toleranceSeconds?: number } = {},
 ): StripeEvent | null {
   if (!signatureHeader) return null;
-  const { t, v1 } = parseSignatureHeader(signatureHeader);
-  if (t === null || v1.length === 0) return null;
-
   const tolerance = opts.toleranceSeconds ?? DEFAULT_TOLERANCE_SECONDS;
-  const nowSec = Math.floor((opts.nowMs ?? Date.now()) / 1000);
-  if (tolerance > 0 && Math.abs(nowSec - t) > tolerance) return null;
-
-  const raw = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody, 'utf8');
-  const signedPayload = Buffer.concat([Buffer.from(`${t}.`, 'utf8'), raw]);
-  const expected = createHmac('sha256', webhookSecret).update(signedPayload).digest('hex');
-  if (!hexEqualsAny(expected, v1)) return null;
-
+  const payload = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody, 'utf8');
   try {
-    const parsed = JSON.parse(raw.toString('utf8')) as StripeEvent;
-    if (!parsed || typeof parsed.id !== 'string' || typeof parsed.type !== 'string') return null;
-    return parsed;
+    const event = stripeWebhooks().constructEvent(payload, signatureHeader, webhookSecret, tolerance);
+    if (!event || typeof event.id !== 'string' || typeof event.type !== 'string') return null;
+    const object = (event.data?.object ?? {}) as unknown as Record<string, unknown>;
+    return { id: event.id, type: event.type, data: { object } };
   } catch {
+    // StripeSignatureVerificationError (bad sig / stale / malformed) → treat as not-verified.
     return null;
   }
 }
 
-// The header value a sender computes for a raw payload — used by the real proxy is NOT needed, but the
-// tests (and any first-party signing) use it to prove the raw-bytes → verify → upsert path end to end.
+// The header value a sender computes for a raw payload — the real Stripe proxy does NOT need this, but the
+// tests (and any first-party signing) use it to prove the raw-bytes → verify → upsert path end to end. Uses
+// the SDK's own test-header generator, the exact inverse of `constructEvent`.
 export function computeStripeSignatureHeader(
   rawBody: Buffer | string,
   webhookSecret: string,
   atSeconds: number = Math.floor(Date.now() / 1000),
 ): string {
-  const raw = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody, 'utf8');
-  const signedPayload = Buffer.concat([Buffer.from(`${atSeconds}.`, 'utf8'), raw]);
-  const sig = createHmac('sha256', webhookSecret).update(signedPayload).digest('hex');
-  return `t=${atSeconds},v1=${sig}`;
+  const payload = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody;
+  return stripeWebhooks().generateTestHeaderString({ payload, secret: webhookSecret, timestamp: atSeconds });
 }
 
-// --- the real HTTP client -----------------------------------------------------------------------------
-async function stripePost(
-  secretKey: string,
-  path: string,
-  form: Record<string, string>,
-): Promise<Record<string, unknown>> {
-  const res = await fetch(`${STRIPE_API_BASE}${path}`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${secretKey}`,
-      'content-type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams(form),
-    signal: AbortSignal.timeout(STRIPE_TIMEOUT_MS),
-  });
-  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) {
-    const err = (json.error as { message?: string; code?: string } | undefined) ?? undefined;
-    throw new Error(`stripe ${path} failed: ${res.status}${err?.message ? ` ${err.message}` : ''}`);
-  }
-  return json;
-}
-
-function normalizeSubscription(obj: Record<string, unknown>): StripeSubscription {
-  const items = (obj.items as { data?: Array<{ price?: { id?: string; currency?: string } }> } | undefined)?.data ?? [];
-  const price = items[0]?.price;
-  const customer = obj.customer;
+// --- normalize an SDK Subscription into the source-agnostic shape -------------------------------------
+function normalizeSubscription(sub: Stripe.Subscription): StripeSubscription {
+  const item = sub.items?.data?.[0];
+  const price = item?.price ?? null;
+  const customer = sub.customer;
+  // `current_period_end` lives on the subscription ITEM in current api versions (and historically on the
+  // subscription itself) — read the item first, then fall back to the subscription for older shapes.
+  const periodEnd =
+    (typeof item?.current_period_end === 'number' ? item.current_period_end : undefined) ??
+    (sub as unknown as { current_period_end?: number }).current_period_end ??
+    null;
   return {
-    id: String(obj.id),
-    status: String(obj.status ?? ''),
-    current_period_end: typeof obj.current_period_end === 'number' ? obj.current_period_end : null,
-    cancel_at_period_end: Boolean(obj.cancel_at_period_end),
-    trial_end: typeof obj.trial_end === 'number' ? obj.trial_end : null,
-    customer_id: typeof customer === 'string' ? customer : (customer as { id?: string } | null)?.id ?? null,
+    id: sub.id,
+    status: String(sub.status ?? ''),
+    current_period_end: typeof periodEnd === 'number' ? periodEnd : null,
+    cancel_at_period_end: Boolean(sub.cancel_at_period_end),
+    trial_end: typeof sub.trial_end === 'number' ? sub.trial_end : null,
+    customer_id: typeof customer === 'string' ? customer : customer?.id ?? null,
     price_id: price?.id ?? null,
-    currency: price?.currency ?? (typeof obj.currency === 'string' ? obj.currency : null),
-    metadata: (obj.metadata as Record<string, string> | undefined) ?? {},
+    currency: price?.currency ?? ((sub as unknown as { currency?: string }).currency ?? null),
+    metadata: (sub.metadata as Record<string, string> | null) ?? {},
   };
 }
 
-export const httpStripeClient: StripeClient = {
+// --- the real SDK-backed client -----------------------------------------------------------------------
+export const sdkStripeClient: StripeClient = {
   async createCustomer({ secretKey, email, metadata }) {
-    const form: Record<string, string> = {};
-    if (email) form.email = email;
-    for (const [k, v] of Object.entries(metadata)) form[`metadata[${k}]`] = v;
-    const obj = await stripePost(secretKey, '/customers', form);
-    return { id: String(obj.id) };
+    const customer = await stripeApi(secretKey).customers.create({
+      ...(email ? { email } : {}),
+      metadata,
+    });
+    return { id: customer.id };
   },
 
   async createCheckoutSession(input) {
-    const form: Record<string, string> = {
+    const params: Stripe.Checkout.SessionCreateParams = {
       mode: 'subscription',
-      'line_items[0][price]': input.priceId,
-      'line_items[0][quantity]': '1',
+      line_items: [{ price: input.priceId, quantity: 1 }],
       success_url: input.successUrl,
       cancel_url: input.cancelUrl,
       client_reference_id: input.clientReferenceId,
-      'automatic_tax[enabled]': input.taxEnabled ? 'true' : 'false',
-      'tax_id_collection[enabled]': 'true',
+      automatic_tax: { enabled: input.taxEnabled },
+      tax_id_collection: { enabled: true },
+      metadata: input.metadata,
+      // Stamp the subscription so a webhook re-fetch carries our metadata.
+      subscription_data: { metadata: input.metadata },
     };
     if (input.customerId) {
-      form.customer = input.customerId;
+      params.customer = input.customerId;
       // customer_update is only valid when a customer is attached.
-      form['customer_update[address]'] = 'auto';
-      form['customer_update[name]'] = 'auto';
+      params.customer_update = { address: 'auto', name: 'auto' };
     } else if (input.customerEmail) {
-      form.customer_email = input.customerEmail;
+      params.customer_email = input.customerEmail;
     }
-    for (const [k, v] of Object.entries(input.metadata)) {
-      form[`metadata[${k}]`] = v;
-      form[`subscription_data[metadata][${k}]`] = v; // stamp the subscription so re-fetch carries it
-    }
-    const obj = await stripePost(input.secretKey, '/checkout/sessions', form);
-    return { id: String(obj.id), url: String(obj.url) };
+    const session = await stripeApi(input.secretKey).checkout.sessions.create(params);
+    return { id: session.id, url: session.url ?? '' };
   },
 
   async createPortalSession({ secretKey, customerId, returnUrl }) {
-    const obj = await stripePost(secretKey, '/billing_portal/sessions', {
+    const session = await stripeApi(secretKey).billingPortal.sessions.create({
       customer: customerId,
       return_url: returnUrl,
     });
-    return { url: String(obj.url) };
+    return { url: session.url };
   },
 
   async retrieveSubscription(secretKey, subscriptionId) {
-    const res = await fetch(`${STRIPE_API_BASE}/subscriptions/${encodeURIComponent(subscriptionId)}`, {
-      method: 'GET',
-      headers: { authorization: `Bearer ${secretKey}` },
-      signal: AbortSignal.timeout(STRIPE_TIMEOUT_MS),
-    });
-    if (res.status === 404) return null;
-    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!res.ok) {
-      const err = (json.error as { message?: string } | undefined) ?? undefined;
-      throw new Error(`stripe retrieve subscription failed: ${res.status}${err?.message ? ` ${err.message}` : ''}`);
+    try {
+      const sub = await stripeApi(secretKey).subscriptions.retrieve(subscriptionId);
+      return normalizeSubscription(sub);
+    } catch (err) {
+      // A subscription that no longer exists → null (reconcile treats it as absent), not an error.
+      if (err instanceof Stripe.errors.StripeInvalidRequestError && err.statusCode === 404) return null;
+      throw err;
     }
-    return normalizeSubscription(json);
   },
 };
 
 // --- installable client (swappable for tests) ---------------------------------------------------------
-let client: StripeClient = httpStripeClient;
+let client: StripeClient = sdkStripeClient;
 export function getStripeClient(): StripeClient {
   return client;
 }
@@ -288,7 +249,7 @@ export function setStripeClient(c: StripeClient): void {
   client = c;
 }
 export function resetStripeClient(): void {
-  client = httpStripeClient;
+  client = sdkStripeClient;
 }
 
 export { normalizeSubscription };

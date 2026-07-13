@@ -9,6 +9,30 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.41.0] — 2026-07-13
+
+### Changed
+- **C33 billing — the Stripe technology boundary now runs on the official `stripe` SDK** (added
+  `stripe@^22.3.1`), replacing the hand-rolled client that spoke to Stripe over Node's built-in `fetch` +
+  `node:crypto`. This is a **purely internal implementation swap behind the existing swappable seam** — the
+  `StripeClient` interface, the normalized shapes it returns, and **every external `/billing/*` + webhook +
+  catalog + entitlement HTTP signature are unchanged**. The deliberate trade (chosen over the
+  dependency-clean built-in approach): the slim data-plane image now bundles `stripe` (a zero-dependency,
+  pure-JS package — no native modules, so multi-arch `linux/amd64`+`linux/arm64` builds are unaffected).
+  - All Stripe I/O goes through the SDK: `checkout.sessions.create` (subscription mode, `automatic_tax`,
+    `tax_id_collection`, customer create/reuse, `client_reference_id` + metadata, subscription-data metadata
+    stamp), `billingPortal.sessions.create`, `customers.create`, and the canonical webhook re-fetch via
+    `subscriptions.retrieve` (a missing subscription → `null`).
+  - **Webhook signature verification now uses `stripe.webhooks.constructEvent(rawBody, sig, secret)`** over
+    the **untouched raw request bytes** (the sidecar still passes the raw body through un-parsed). A bad /
+    stale / tampered signature still yields `400 signature_invalid` and writes nothing; the tolerance-window
+    replay defense is preserved. The test-only header generator now delegates to the SDK's
+    `generateTestHeaderString` — the exact inverse of `constructEvent`.
+  - Config is still read from the C5 vault exactly as before (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
+    `STRIPE_TAX_ENABLED`); unset ⇒ `configured:false` graceful degradation unchanged. Keys are never
+    hardcoded. The seam stays swappable, so the 30 `billing` tests run against a deterministic in-memory
+    Stripe double with **no network** — unchanged.
+
 ## [0.40.0] — 2026-07-13
 
 ### Added
@@ -1746,7 +1770,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.41.0...HEAD
+[0.41.0]: https://github.com/mardash-ai/forge/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/mardash-ai/forge/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/mardash-ai/forge/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/mardash-ai/forge/compare/v0.37.0...v0.38.0
