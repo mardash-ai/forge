@@ -297,6 +297,23 @@ describe('C33 — catalog validation', () => {
     const res = await server.inject({ method: 'PUT', url: '/billing/catalog', payload: { plans: CATALOG_PLANS } });
     expect(res.statusCode).toBe(401);
   });
+
+  it('catalog read exposes the TRUE data-plane `configured` state (false with no Stripe key)', async () => {
+    await seedCatalog();
+    const res = await server.inject({ method: 'GET', url: '/billing/catalog' });
+    expect(res.statusCode).toBe(200);
+    // Plans are visible, but `configured` reflects that STRIPE_SECRET_KEY is absent on this sidecar.
+    expect(res.json().plans).toHaveLength(4);
+    expect(res.json().configured).toBe(false);
+  });
+
+  it('catalog read reports `configured: true` once the data-plane Stripe key is provisioned', async () => {
+    await seedCatalog();
+    await configureStripe();
+    const res = await server.inject({ method: 'GET', url: '/billing/catalog' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().configured).toBe(true);
+  });
 });
 
 describe('C33 — graceful degradation when unconfigured', () => {

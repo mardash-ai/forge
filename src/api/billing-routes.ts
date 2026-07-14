@@ -16,6 +16,7 @@ import {
   reconcileApp,
   deleteCustomer,
 } from '../billing/service';
+import { resolveBillingConfig } from '../billing/config';
 
 // C33 — the billing HTTP surface. The app proxies the browser-facing ops SAME-ORIGIN to this sidecar (like
 // `/auth/*`, `/connect/*`), so the C10 session cookie rides along and the SUBSCRIBER is ALWAYS derived from
@@ -148,10 +149,15 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
   });
 
   // === catalog =====================================================================================
+  // Public product info. `configured` is the TRUE data-plane billing state (whether STRIPE_SECRET_KEY
+  // is provisioned on THIS sidecar) — the app reads it to decide whether plans are actually purchasable,
+  // rather than inferring from its own env. When false, checkout/portal degrade to 503, so the app can
+  // hide/disable purchase CTAs instead of surfacing plans whose checkout would fail.
   app.get('/billing/catalog', async (req, reply) => {
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
-    return reply.status(200).send(await getCatalog(app_.id));
+    const [catalog, cfg] = await Promise.all([getCatalog(app_.id), resolveBillingConfig(app_.id)]);
+    return reply.status(200).send({ ...catalog, configured: cfg.configured });
   });
 
   // Catalog WRITE is an admin op (the app populates it server-side) — gated behind the C10 service token so

@@ -9,6 +9,20 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.43.0] — 2026-07-14
+
+### Added
+- **`GET /billing/catalog` now returns the TRUE data-plane `configured` state** (C33 hardening). The
+  catalog response gains a top-level `configured: boolean` alongside `plans`, resolved from
+  `resolveBillingConfig()` on the sidecar that actually serves the request — i.e. whether
+  `STRIPE_SECRET_KEY` is provisioned on THIS data plane. A consumer app previously had to infer
+  purchasability from its own env (e.g. `STRIPE_PRICE_*`), which could disagree with the data plane: if
+  price ids were set but the data-plane key was missing, the app would show purchasable plans whose
+  checkout then 503s (`billing_not_configured`). The app can now read the real state and hide/disable
+  purchase CTAs when `configured` is `false`. **Additive and non-breaking** — existing clients that read
+  only `plans` are unaffected; the write path (`PUT /billing/catalog`) and every other billing response
+  are unchanged. Mirrors the existing `configured` block already exposed by `GET /auth/config`.
+
 ## [0.42.0] — 2026-07-14
 
 ### Added
@@ -1816,7 +1830,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/mardash-ai/forge/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/mardash-ai/forge/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/mardash-ai/forge/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/mardash-ai/forge/compare/v0.39.0...v0.40.0
