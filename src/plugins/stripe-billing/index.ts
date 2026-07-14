@@ -65,6 +65,12 @@ export interface StripeClient {
   createPortalSession(input: CreatePortalInput): Promise<{ url: string }>;
   // Re-fetch the CANONICAL subscription (idempotent reconciliation input). null when it no longer exists.
   retrieveSubscription(secretKey: string, subscriptionId: string): Promise<StripeSubscription | null>;
+  // Cancel a subscription NOW (administrative teardown). Idempotent — a subscription that is already gone
+  // (404) or already canceled resolves to `{ canceled: false }` rather than throwing.
+  cancelSubscription(secretKey: string, subscriptionId: string): Promise<{ canceled: boolean }>;
+  // Delete a customer at the payment provider (removes its saved payment methods + cancels its
+  // subscriptions provider-side). Idempotent — an already-deleted / unknown (404) customer ⇒ `{ deleted: false }`.
+  deleteCustomer(secretKey: string, customerId: string): Promise<{ deleted: boolean }>;
 }
 
 // --- Stripe → canonical status mapping ----------------------------------------------------------------
@@ -235,6 +241,28 @@ export const sdkStripeClient: StripeClient = {
     } catch (err) {
       // A subscription that no longer exists → null (reconcile treats it as absent), not an error.
       if (err instanceof Stripe.errors.StripeInvalidRequestError && err.statusCode === 404) return null;
+      throw err;
+    }
+  },
+
+  async cancelSubscription(secretKey, subscriptionId) {
+    try {
+      await stripeApi(secretKey).subscriptions.cancel(subscriptionId);
+      return { canceled: true };
+    } catch (err) {
+      // Already canceled / never existed (404) → nothing to do (idempotent teardown), not an error.
+      if (err instanceof Stripe.errors.StripeInvalidRequestError && err.statusCode === 404) return { canceled: false };
+      throw err;
+    }
+  },
+
+  async deleteCustomer(secretKey, customerId) {
+    try {
+      const res = await stripeApi(secretKey).customers.del(customerId);
+      return { deleted: Boolean((res as { deleted?: boolean }).deleted) };
+    } catch (err) {
+      // Already deleted / unknown customer (404) → treat as done (idempotent teardown), not an error.
+      if (err instanceof Stripe.errors.StripeInvalidRequestError && err.statusCode === 404) return { deleted: false };
       throw err;
     }
   },

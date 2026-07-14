@@ -51,6 +51,11 @@ export class DualWriteIdentityBackend implements IdentityBackend {
     await this.mirror(appId);
     return u;
   }
+  async deleteUser(appId: string, userId: string): Promise<{ deleted: boolean; email: string | null }> {
+    const r = await this.primary.deleteUser(appId, userId);
+    await this.mirror(appId);
+    return r;
+  }
   async createSession(appId: string, userId: string, ttl: number): Promise<StoredSession> {
     const s = await this.primary.createSession(appId, userId, ttl);
     await this.mirror(appId);

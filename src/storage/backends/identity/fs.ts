@@ -159,6 +159,26 @@ export class FsIdentityBackend implements IdentityBackend, MigratableIdentityBac
     });
   }
 
+  async deleteUser(appId: string, userId: string): Promise<{ deleted: boolean; email: string | null }> {
+    return this.mutate(appId, (doc) => {
+      const user = doc.users[userId];
+      if (!user) return { deleted: false, email: null };
+      const email = user.email;
+      // Remove the user row + its lookup indexes (frees the email/handle for re-registration).
+      delete doc.users[userId];
+      if (doc.email_index[email] === userId) delete doc.email_index[email];
+      for (const [key, id] of Object.entries(doc.provider_index)) {
+        if (id === userId) delete doc.provider_index[key];
+      }
+      // Remove every credential/session artifact so nothing can authenticate as this identity again.
+      for (const [id, s] of Object.entries(doc.sessions)) if (s.user_id === userId) delete doc.sessions[id];
+      for (const [id, r] of Object.entries(doc.refresh_tokens)) if (r.user_id === userId) delete doc.refresh_tokens[id];
+      for (const [h, t] of Object.entries(doc.verify_tokens)) if (t.user_id === userId) delete doc.verify_tokens[h];
+      for (const [h, t] of Object.entries(doc.reset_tokens)) if (t.user_id === userId) delete doc.reset_tokens[h];
+      return { deleted: true, email };
+    });
+  }
+
   async countUsers(appId: string): Promise<number> {
     return Object.keys((await this.read(appId)).users).length;
   }

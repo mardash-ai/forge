@@ -281,6 +281,74 @@ export function removeMember(
   return { state, result: { member: removed, group } };
 }
 
+// --- administrative membership teardown (account closure / right-to-be-forgotten) --------------------
+// Remove an identity from the ENTIRE membership graph in one atomic op. For each group the identity
+// belongs to: a group it SOLELY occupies (a group-of-one, or a shared group that empties to just it) is
+// DELETED outright (with its member rows + invitations); in a group with OTHER active members it is just
+// removed (the route emits `membership.removed`). Unlike the end-user `removeMember`, this is a forceful
+// admin op that can never be refused for the ≥1-owner invariant (the account MUST go) — so when the
+// departing identity was the group's sole owner, the earliest-joined remaining active member is promoted
+// to the owner-role, keeping the shared group valid. Idempotent: an identity with no memberships is a
+// clean no-op. Pure (no I/O) — the store commits the mutated snapshot atomically.
+export interface TeardownResult {
+  groups_deleted: string[]; // groups the identity solely occupied, deleted outright
+  removed_members: Array<{ group_id: string; role: string }>; // shared-group removals (each emits membership.removed)
+  promotions: Array<{ group_id: string; promoted_owner: string }>; // heirs promoted to preserve ≥1 owner
+  removed_rows: number; // total member rows deleted (active + leftover removed-status)
+}
+
+export function teardownMember(
+  state: MembershipState,
+  input: { owner: string; now: string },
+): { state: MembershipState; result: TeardownResult } {
+  const ownerRole = findOwnerRole(state.roles);
+  const result: TeardownResult = { groups_deleted: [], removed_members: [], promotions: [], removed_rows: 0 };
+
+  // One member row per (group, owner) — collect the groups this identity is in (its own row per group).
+  const myMembers = Object.values(state.members).filter((m) => m.owner === input.owner);
+
+  for (const myMember of myMembers) {
+    const groupId = myMember.group_id;
+    const wasActive = myMember.status === 'active';
+    // Remove my row first, then look at who is left.
+    delete state.members[memberKey(groupId, input.owner)];
+    result.removed_rows++;
+
+    const remaining = activeMembers(state, groupId); // my row already gone
+    const group = state.groups[groupId];
+
+    if (remaining.length === 0) {
+      // Sole occupant → delete the group + any lingering member rows + its invitations.
+      if (group) {
+        for (const k of Object.keys(state.members)) {
+          if (state.members[k]!.group_id === groupId) delete state.members[k];
+        }
+        for (const invId of Object.keys(state.invitations)) {
+          if (state.invitations[invId]!.group_id === groupId) delete state.invitations[invId];
+        }
+        delete state.groups[groupId];
+        result.groups_deleted.push(groupId);
+      }
+    } else if (wasActive) {
+      // Shared group → record the removal (the route emits membership.removed).
+      result.removed_members.push({ group_id: groupId, role: myMember.role });
+      // Preserve ≥1 owner: if I held the owner-role and none remains, promote the earliest-joined member.
+      if (ownerRole && myMember.role === ownerRole.key && !remaining.some((m) => m.role === ownerRole.key)) {
+        const heir = [...remaining].sort((a, b) =>
+          a.added_at < b.added_at ? -1 : a.added_at > b.added_at ? 1 : a.owner < b.owner ? -1 : 1,
+        )[0]!;
+        heir.role = ownerRole.key;
+        heir.updated_at = input.now;
+        result.promotions.push({ group_id: groupId, promoted_owner: heir.owner });
+      }
+      if (group) group.updated_at = input.now;
+    }
+    // else: a leftover 'removed'-status row in a still-populated group — just cleaned up (no event).
+  }
+
+  return { state, result };
+}
+
 export function leaveGroup(
   state: MembershipState,
   input: { groupId: string; actor: string },

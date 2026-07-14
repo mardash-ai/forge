@@ -81,6 +81,14 @@ export interface UserScope {
   memberships: GroupMembership[];
 }
 
+// The outcome of an administrative identity delete (account closure / right-to-be-forgotten). `deleted`
+// is false when the identity was already absent (the op is idempotent — a no-op, not an error); `email`
+// is the (canonical) address that was freed for re-registration, or null when there was nothing to delete.
+export interface DeleteUserResult {
+  deleted: boolean;
+  email: string | null;
+}
+
 export interface NewUser {
   email: string;
   password_hash?: string;
@@ -167,6 +175,10 @@ export interface IdentityBackend {
   findByEmail(appId: string, email: string): Promise<StoredUser | null>;
   findByProvider(appId: string, provider: Provider, providerUserId: string): Promise<StoredUser | null>;
   updateUser(appId: string, userId: string, patch: UpdateUserPatch): Promise<StoredUser | null>;
+  // Administrative teardown: remove a login identity + ALL its credentials/sessions/tokens (and its O4
+  // personal group-of-one) so it can no longer authenticate and its email/handle is freed. Idempotent —
+  // absent identity ⇒ { deleted: false }. Does NOT touch the consumer's own domain rows.
+  deleteUser(appId: string, userId: string): Promise<DeleteUserResult>;
   countUsers(appId: string): Promise<number>;
   listUsers(appId: string): Promise<StoredUser[]>;
   // O4 scope

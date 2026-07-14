@@ -14,6 +14,7 @@ import {
   createPortal,
   handleStripeWebhook,
   reconcileApp,
+  deleteCustomer,
 } from '../billing/service';
 
 // C33 — the billing HTTP surface. The app proxies the browser-facing ops SAME-ORIGIN to this sidecar (like
@@ -31,6 +32,7 @@ import {
 //   POST /billing/checkout         { subscriber, plan_key, success_url, cancel_url, scope_ref?, customer_email? } -> { url, session_id }
 //   POST /billing/portal           { subscriber, return_url } -> { url }               (404 not_a_customer)
 //   POST /billing/reconcile        { app? }           -> { reconciled, skipped }       (SERVICE token; self-heal)
+//   DELETE /billing/customer       { app?, subscriber } -> { deleted, subscription_canceled, stripe_customer_deleted, record_dropped } (SERVICE token; idempotent teardown)
 //   POST /hooks/billing/stripe     (raw; platform-owned, NOT app-called) -> verify + reconcile
 //   POST /hooks/billing/apple      -> 501 not_configured  (RESERVED — adapter deferred)
 //   POST /hooks/billing/google     -> 501 not_configured  (RESERVED — adapter deferred)
@@ -210,6 +212,35 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
       return reply.status(200).send(await createPortal(app_.id, resolved.subscriber, returnUrl));
     } catch (e) {
       return errorReply(reply, e);
+    }
+  });
+
+  // Administrative billing-customer teardown (account closure / right-to-be-forgotten) — SERVICE-token
+  // gated (NOT end-user reachable). Cancels any active/trialing subscription, deletes the Stripe customer,
+  // and drops the platform subscription-of-record row for `subscriber`. Idempotent + safe when the
+  // subscriber was never a customer or Stripe is unconfigured. The consumer calls this inside its own
+  // account-purge cascade; the platform never touches the consumer's own domain rows.
+  app.delete('/billing/customer', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_.id))) return reply.status(401).send(needAuth);
+    const b = (req.body ?? {}) as { subscriber?: string };
+    const subscriber = trimmed(b.subscriber) ?? trimmed((req.query as { subscriber?: string }).subscriber);
+    if (!subscriber) {
+      return reply.status(422).send({ error: { code: 'invalid_input', message: 'a `subscriber` is required.', retry: 'change-input' } });
+    }
+    try {
+      const out = await deleteCustomer(app_.id, subscriber);
+      await recordC3(app_.id, 'billing.customer_deleted', subscriber, {
+        subscription_canceled: out.subscription_canceled,
+        stripe_customer_deleted: out.stripe_customer_deleted,
+        record_dropped: out.record_dropped,
+      });
+      return reply.status(200).send(out);
+    } catch (e) {
+      // A transient Stripe/store failure → 503 so the caller retries; the local row is untouched (the
+      // Stripe teardown runs before the drop), so a retry re-attempts cleanly.
+      return reply.status(503).send({ error: { code: 'billing_teardown_failed', message: String((e as Error)?.message ?? e), retry: 'retry' } });
     }
   });
 

@@ -54,6 +54,9 @@ export const EVENT_TYPES = [
   'PasswordResetRequested',
   'PasswordChanged',
   'OwnerSeeded',
+  // Administrative principal teardown — a login identity + its credentials were deleted so it no
+  // longer authenticates and its email/handle is freed for re-registration (account closure / RTBF).
+  'UserDeleted',
   // Status incidents (C15 Phase 3) — operator-declared facts shown on the public
   // status page. Carry only the incident id/title/status/impact, never PII.
   'IncidentOpened',

@@ -21,6 +21,7 @@ import type {
   UpdateUserPatch,
   PutRefreshTokenInput,
   RedeemOpts,
+  DeleteUserResult,
 } from '../../storage/backends/identity/types';
 
 // Re-export the domain types + shared helpers at their original path (importers are unchanged).
@@ -29,6 +30,7 @@ export type StoredUser = BackendStoredUser;
 export type StoredSession = BackendStoredSession;
 export type StoredRefreshToken = BackendStoredRefreshToken;
 export type RefreshRedeem = BackendRefreshRedeem;
+export type { DeleteUserResult } from '../../storage/backends/identity/types';
 export { EmailTakenError, canonicalEmail } from '../../storage/backends/identity/types';
 
 const backend = () => getBackends().then((b) => b.identity);
@@ -53,6 +55,12 @@ export async function findByProvider(appId: string, provider: Provider, provider
 
 export async function updateUser(appId: string, userId: string, patch: UpdateUserPatch): Promise<StoredUser | null> {
   return (await backend()).updateUser(appId, userId, patch);
+}
+
+// Administrative teardown — delete a login identity + all its credentials/sessions/tokens so it can no
+// longer authenticate and its email is freed. Idempotent (absent ⇒ { deleted: false }).
+export async function deleteUser(appId: string, userId: string): Promise<DeleteUserResult> {
+  return (await backend()).deleteUser(appId, userId);
 }
 
 export async function countUsers(appId: string): Promise<number> {

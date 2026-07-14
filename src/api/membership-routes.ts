@@ -15,12 +15,14 @@ import {
   removeMember,
   leaveGroup,
   transferOwnership,
+  teardownMember,
   mintToken,
   memberView,
   groupsForOwner,
   resolveGroup,
 } from '../membership/service';
 import { toInvitationView } from '../membership/types';
+import { hasValidServiceToken } from '../shared/service-auth';
 
 // C31 — the MEMBERSHIP lifecycle surface (groups + members + invitations + the app role registry). Makes
 // household/team membership a PLATFORM-OWNED, unspoofable primitive: role is resolved from THIS graph, never
@@ -257,5 +259,42 @@ export function registerMembershipRoutes(app: FastifyInstance, opts: { defaultAp
     const { member, group } = await (await getBackends()).membership.mutate(app_id, (s) => leaveGroup(s, { groupId: id, actor: b.actor! }));
     await store.appendAppEvent({ app_id, type: 'membership.removed', subject: group.id, owner: b.actor, data: { group_id: group.id, removed_owner: b.actor, actor: b.actor, role: member.role, via: 'leave' } });
     return reply.status(200).send({ left: true, member });
+  }));
+
+  // === administrative membership teardown (account closure / right-to-be-forgotten) ================
+  // Remove an identity from the ENTIRE graph: groups it solely occupies are DELETED; in shared groups it
+  // is removed (emitting membership.removed) with an heir promoted if it was the sole owner. SERVICE-token
+  // gated (NOT end-user reachable) — a consumer calls it inside its own account-purge cascade. Idempotent:
+  // an identity with no memberships is a clean 200 no-op. The platform never touches the consumer's rows.
+  //
+  //   DELETE /identities/:owner/memberships          { app? }  (SERVICE token)
+  //     -> { owner, groups_deleted:[id], memberships_removed:[{group_id,role}], promotions:[{group_id,promoted_owner}], removed_rows }
+  app.delete('/identities/:owner/memberships', guard(async (req, reply) => {
+    const { owner } = req.params as { owner: string };
+    const b = (req.body ?? {}) as { app?: string };
+    const app_id = await resolveAppId(b.app);
+    if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) {
+      return reply.status(401).send({ error: { code: 'unauthorized', message: 'a valid service token is required for this administrative operation.', retry: 'needs-human' } });
+    }
+    const result = await (await getBackends()).membership.mutate(app_id, (s) => teardownMember(s, { owner, now: nowIso() }));
+    // Emit membership.removed for each shared-group removal (same fact the DELETE-member route emits), so a
+    // consumer's timeline/derivations react identically whether one member left or an account was torn down.
+    for (const removed of result.removed_members) {
+      await store.appendAppEvent({
+        app_id,
+        type: 'membership.removed',
+        subject: removed.group_id,
+        owner,
+        data: { group_id: removed.group_id, removed_owner: owner, actor: owner, role: removed.role, via: 'teardown' },
+      });
+    }
+    return reply.status(200).send({
+      owner,
+      groups_deleted: result.groups_deleted,
+      memberships_removed: result.removed_members,
+      promotions: result.promotions,
+      removed_rows: result.removed_rows,
+    });
   }));
 }

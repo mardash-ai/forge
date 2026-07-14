@@ -33,6 +33,7 @@ import {
   type AuthConfig,
 } from '../plugins/auth-identity/index';
 import { resolveEmailConfig } from '../plugins/email-smtp/index';
+import { hasValidServiceToken } from '../shared/service-auth';
 import * as authStore from '../plugins/auth-identity/store';
 import { resolveThemeForApp } from './theme-context';
 import {
@@ -62,6 +63,7 @@ import {
 //   GET  /auth/session                                             -> { userId, email } | 401 (accessor)
 //   GET  /auth/config                                             -> which methods are enabled
 //   POST /auth/admin/seed-owner  { app?, email, password? }        -> owner migration hook (§8)
+//   DELETE /auth/admin/identity/:userId                            -> delete identity + creds (SERVICE token; idempotent)
 
 const OAUTH_STATE_COOKIE = 'forge_oauth_state';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -655,7 +657,29 @@ export function registerAuthRoutes(
       note: password ? 'Owner can sign in with the given password.' : 'Owner has no password yet — use /auth/forgot to set one, or sign in with Google.',
     };
   });
+
+  // ---- administrative identity teardown (account closure / right-to-be-forgotten) ----------------
+  // Delete a login identity + ALL its credentials (password hash), sessions, refresh tokens, and
+  // verify/reset tokens, so it can no longer authenticate and its email is FREED for re-registration.
+  // SERVICE-token gated (NOT end-user reachable); a consumer calls this inside its own account-purge
+  // cascade. Idempotent: an already-absent identity is a 200 no-op ({ deleted: false }), never a 404.
+  // The platform NEVER touches the consumer's own domain rows.
+  app.delete('/auth/admin/identity/:userId', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.code(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_.id))) return reply.code(401).send(needServiceToken);
+    const { userId } = req.params as { userId: string };
+    const result = await authStore.deleteUser(app_.id, userId);
+    if (result.deleted) await emit(app_.id, 'UserDeleted', userId, result.email ?? undefined);
+    return reply.code(200).send({
+      deleted: result.deleted,
+      user_id: userId,
+      ...(result.email ? { email: redactEmail(result.email) } : {}),
+    });
+  });
 }
+
+const needServiceToken = { error: { code: 'unauthorized', message: 'a valid service token is required for this administrative operation.', retry: 'needs-human' } };
 
 const unknownApp = { error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } };
 

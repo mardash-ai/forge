@@ -9,6 +9,40 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.42.0] — 2026-07-14
+
+### Added
+- **Administrative principal teardown — the generic machinery behind account deletion / "right to be
+  forgotten" / account closure.** Three **idempotent, service-gated (`AUTH_SERVICE_TOKEN`) admin
+  operations**, each keyed by the principal/owner id, extend the identity, billing, and
+  membership/household surfaces so a consumer app can fully delete a principal's platform footprint from
+  inside its own account-purge cascade. Every op is **NOT end-user reachable** (service token via the
+  `x-forge-service-token` header or `Authorization: Bearer …`), **idempotent** (a second run is a clean
+  no-op, never a 404/500), and the platform **never touches the consumer's own domain rows** — the app
+  handles its domain data itself. All three are **additive and non-breaking**.
+  - **`DELETE /auth/admin/identity/:userId` (identity).** Deletes the login identity + ALL its
+    credentials (password hash), sessions, refresh tokens, and verify/reset tokens (and its O4 personal
+    group-of-one on the Postgres backend) so it can no longer authenticate and its **email/handle is freed
+    for re-registration**. Emits a `UserDeleted` fact (redacted email, no secrets). Absent identity ⇒
+    `200 { deleted: false }`. Returns `{ deleted, user_id, email? }` (email redacted). New
+    `IdentityBackend.deleteUser` on the filesystem + Postgres + dual-write backends.
+  - **`DELETE /billing/customer` `{ subscriber }` (billing).** Cancels any **active/`trialing`**
+    subscription, deletes the payment-provider (Stripe) customer (the platform holds the Stripe secret —
+    the app never does), and drops the platform's subscription-of-record row for the subscriber. The
+    provider-side teardown runs **before** the local row is dropped, so a transient Stripe failure (→ `503
+    billing_teardown_failed`) leaves the record intact for a clean retry. Safe when the subscriber was
+    never a customer **or** Stripe is unconfigured (those steps are skipped; the record is still dropped).
+    Returns `{ deleted, subscriber, subscription_canceled, stripe_customer_deleted, record_dropped,
+    stripe_configured }`. Adds `cancelSubscription` + `deleteCustomer` to the swappable `StripeClient`
+    boundary (both idempotent — a 404 at Stripe resolves to "already gone", not an error).
+  - **`DELETE /identities/:owner/memberships` (membership/household).** Removes the identity from the
+    entire membership graph: a group it **solely occupies (a group-of-one)** is deleted outright (with its
+    member rows + invitations); in a **shared** group it is removed (emitting the existing
+    `membership.removed` event, `via: "teardown"`). Because this is a forceful admin op that can never be
+    refused for the ≥1-owner invariant, when the departing identity was a shared group's **sole owner** the
+    earliest-joined remaining active member is promoted to the owner-role (the group stays valid). Returns
+    `{ owner, groups_deleted, memberships_removed, promotions, removed_rows }`.
+
 ### Fixed
 - **`/commit-and-publish` no longer gathers git context from — or can commit/tag/publish against — the
   wrong repository (P37).** When the command was invoked by a subagent whose shell cwd was not the
@@ -1782,7 +1816,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/mardash-ai/forge/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/mardash-ai/forge/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/mardash-ai/forge/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/mardash-ai/forge/compare/v0.38.0...v0.39.0

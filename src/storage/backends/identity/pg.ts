@@ -258,6 +258,29 @@ export class PgIdentityBackend implements IdentityBackend, MigratableIdentityBac
     });
   }
 
+  async deleteUser(appId: string, userId: string): Promise<{ deleted: boolean; email: string | null }> {
+    return this.withTx(async (c) => {
+      // Lock + read the row so we return the freed email and the personal group to also delete.
+      const cur = await c.query<{ email: string; personal_group_id: string | null }>(
+        'SELECT email, personal_group_id FROM forge_identity_users WHERE app_id=$1 AND id=$2 FOR UPDATE',
+        [appId, userId],
+      );
+      if (cur.rowCount === 0) return { deleted: false, email: null };
+      const { email, personal_group_id } = cur.rows[0]!;
+      // Credentials/sessions/tokens first, then the O4 personal group-of-one + memberships, then the user.
+      await c.query('DELETE FROM forge_identity_refresh_tokens WHERE app_id=$1 AND user_id=$2', [appId, userId]);
+      await c.query('DELETE FROM forge_identity_sessions WHERE app_id=$1 AND user_id=$2', [appId, userId]);
+      await c.query('DELETE FROM forge_identity_verify_tokens WHERE app_id=$1 AND user_id=$2', [appId, userId]);
+      await c.query('DELETE FROM forge_identity_reset_tokens WHERE app_id=$1 AND user_id=$2', [appId, userId]);
+      await c.query('DELETE FROM forge_identity_group_members WHERE app_id=$1 AND user_id=$2', [appId, userId]);
+      if (personal_group_id) {
+        await c.query('DELETE FROM forge_identity_groups WHERE app_id=$1 AND id=$2', [appId, personal_group_id]);
+      }
+      await c.query('DELETE FROM forge_identity_users WHERE app_id=$1 AND id=$2', [appId, userId]);
+      return { deleted: true, email };
+    });
+  }
+
   async countUsers(appId: string): Promise<number> {
     const r = await this.pool.query<{ n: string }>('SELECT COUNT(*)::text AS n FROM forge_identity_users WHERE app_id=$1', [appId]);
     return Number(r.rows[0]!.n);

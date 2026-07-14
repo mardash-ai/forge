@@ -412,4 +412,64 @@ export async function reconcileApp(appId: string): Promise<{ reconciled: number;
   return { reconciled, skipped };
 }
 
+// --- administrative billing-customer teardown (account closure / right-to-be-forgotten) -----------
+// Cancel any active/trialing subscription, delete the Stripe customer (the platform holds the key — the
+// app never does), and DROP the platform's subscription-of-record row for the subscriber. Idempotent and
+// safe when the principal was never a customer or Stripe isn't configured (those steps are skipped). The
+// Stripe I/O runs BEFORE the local row is dropped, so a transient provider failure leaves the record in
+// place for a retry rather than orphaning a live Stripe customer. NEVER touches the consumer's own rows.
+export interface DeleteCustomerResult {
+  deleted: boolean; // something was torn down (a record dropped and/or a Stripe artifact removed)
+  subscriber: string;
+  subscription_canceled: boolean; // an active/trialing subscription was canceled at Stripe
+  stripe_customer_deleted: boolean; // the Stripe customer was deleted
+  record_dropped: boolean; // the platform subscription-of-record row was removed
+  stripe_configured: boolean; // whether Stripe is configured for this app (else Stripe steps were skipped)
+}
+
+export async function deleteCustomer(appId: string, subscriber: string): Promise<DeleteCustomerResult> {
+  const store = await backend();
+  const state = await store.read(appId);
+  const record = state.subscriptions[subscriber];
+  const cfg = await resolveBillingConfig(appId);
+  const stripeConfigured = Boolean(cfg.configured && cfg.secretKey);
+
+  const base: DeleteCustomerResult = {
+    deleted: false,
+    subscriber,
+    subscription_canceled: false,
+    stripe_customer_deleted: false,
+    record_dropped: false,
+    stripe_configured: stripeConfigured,
+  };
+  // Never a customer / no record → nothing to tear down (idempotent no-op).
+  if (!record) return base;
+
+  const customerId = record.provider_refs.stripe_customer_id;
+  const subscriptionId = record.provider_refs.stripe_subscription_id;
+
+  // Provider-side teardown FIRST (only when configured) so a failure aborts before we drop the local row.
+  if (stripeConfigured) {
+    const stripe = getStripeClient();
+    if (subscriptionId && (record.status === 'active' || record.status === 'trialing')) {
+      const { canceled } = await stripe.cancelSubscription(cfg.secretKey!, subscriptionId);
+      base.subscription_canceled = canceled;
+    }
+    if (customerId) {
+      const { deleted } = await stripe.deleteCustomer(cfg.secretKey!, customerId);
+      base.stripe_customer_deleted = deleted;
+    }
+  }
+
+  // Drop the subscription-of-record row (idempotent: only if still present).
+  base.record_dropped = await store.mutate(appId, (s) => {
+    if (!s.subscriptions[subscriber]) return { state: s, result: false };
+    const { [subscriber]: _drop, ...rest } = s.subscriptions;
+    return { state: { ...s, subscriptions: rest }, result: true };
+  });
+
+  base.deleted = base.record_dropped || base.subscription_canceled || base.stripe_customer_deleted;
+  return base;
+}
+
 export type { EntitlementValue };

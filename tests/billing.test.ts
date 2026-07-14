@@ -64,6 +64,8 @@ const stubStripe: StripeClient = {
     if (subs.has(subscriptionId)) return subs.get(subscriptionId)!;
     return defaultSub;
   },
+  cancelSubscription: async () => ({ canceled: true }),
+  deleteCustomer: async () => ({ deleted: true }),
 };
 
 function stripeSub(overrides: Partial<StripeSubscription> = {}): StripeSubscription {
