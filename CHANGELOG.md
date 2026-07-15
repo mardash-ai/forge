@@ -9,6 +9,30 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.44.0] — 2026-07-14
+
+### Added
+- **`POST /billing/checkout` now honors free-trial + payment-collection controls** (C33). The checkout
+  request accepts three optional top-level fields — **`trial_period_days`** (integer 1–730),
+  **`payment_method_collection`** (`"always"` | `"if_required"`), and **`mode`** (must be `"subscription"`,
+  the only supported mode) — and threads the first two onto the Stripe Checkout Session as
+  `subscription_data.trial_period_days` and the top-level `payment_method_collection`. A checkout carrying
+  `trial_period_days: 30` + `payment_method_collection: "always"` now produces a **card-required 30-day
+  trial**: the resulting subscription starts Stripe status `trialing` (`trial_end ≈ now + 30d`) instead of
+  immediately `active`. The webhook path already maps Stripe `trialing` → the subscription-of-record
+  `status: "trialing"` with `trial_end` populated (now covered by a test). Invalid values (`trial_period_days`
+  ≤ 0 / non-integer / > 730, a non-`subscription` `mode`, an unknown `payment_method_collection`) return
+  **`422 invalid_input`**.
+
+### Fixed
+- **Trialed checkouts were silently downgraded to immediately-active subscriptions.** The C33 checkout
+  handler read only `plan_key` / `success_url` / `cancel_url` / `scope_ref` / `customer_email` and **dropped**
+  the `mode` / `trial_period_days` / `payment_method_collection` fields a consumer sent, so Stripe created an
+  active (non-trial) subscription (`trial_end: null`, period ≈ one interval out). The fields are now read at
+  the route, carried through `CheckoutInput` + the `StripeClient.createCheckoutSession` boundary, and set on
+  the Session. **No consumer change required** — the accepted request shape is exactly what callers already
+  send; checkouts that omit the fields are unchanged (no trial).
+
 ## [0.43.0] — 2026-07-14
 
 ### Added
@@ -1830,7 +1854,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/mardash-ai/forge/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/mardash-ai/forge/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/mardash-ai/forge/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/mardash-ai/forge/compare/v0.40.0...v0.41.0

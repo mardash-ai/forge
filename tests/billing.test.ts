@@ -363,6 +363,44 @@ describe('C33 — checkout + portal (Stripe web ops)', () => {
     expect(checkoutInputs[1]).toMatchObject({ customerId: 'cus_test_1', priceId: 'price_pro_year' });
   });
 
+  it('checkout threads trial_period_days + payment_method_collection + mode:"subscription" to Stripe', async () => {
+    await configureStripe();
+    await seedCatalog();
+    const { cookie } = await signIn();
+    const res = await server.inject({
+      method: 'POST', url: '/billing/checkout', headers: { cookie },
+      // The EXACT shape dorinda-api sends on a card-required-trial checkout.
+      payload: { plan_key: 'pro_month', success_url: 'https://app/s', cancel_url: 'https://app/c', mode: 'subscription', trial_period_days: 30, payment_method_collection: 'always' },
+    });
+    expect(res.statusCode).toBe(200);
+    // The trial length + card-required policy reach the Stripe boundary → subscription_data.trial_period_days
+    // + payment_method_collection, so Stripe yields a `trialing` (not immediately `active`) subscription.
+    expect(checkoutInputs[0]).toMatchObject({ priceId: 'price_pro_month', trialPeriodDays: 30, paymentMethodCollection: 'always' });
+  });
+
+  it('checkout without trial fields stays backward-compatible (no trial, fields omitted)', async () => {
+    await configureStripe();
+    await seedCatalog();
+    const { cookie } = await signIn();
+    await server.inject({ method: 'POST', url: '/billing/checkout', headers: { cookie }, payload: { plan_key: 'pro_month', success_url: 'https://app/s', cancel_url: 'https://app/c' } });
+    expect(checkoutInputs[0]!.trialPeriodDays).toBeUndefined();
+    expect(checkoutInputs[0]!.paymentMethodCollection).toBeUndefined();
+  });
+
+  it('checkout rejects invalid trial_period_days / mode / payment_method_collection with 422', async () => {
+    await configureStripe();
+    await seedCatalog();
+    const { cookie } = await signIn();
+    const base = { plan_key: 'pro_month', success_url: 'https://app/s', cancel_url: 'https://app/c' };
+    for (const bad of [{ trial_period_days: 0 }, { trial_period_days: 3.5 }, { trial_period_days: 9999 }, { mode: 'payment' }, { payment_method_collection: 'sometimes' }]) {
+      const res = await server.inject({ method: 'POST', url: '/billing/checkout', headers: { cookie }, payload: { ...base, ...bad } });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().error.code).toBe('invalid_input');
+    }
+    // Nothing reached Stripe on the rejected requests.
+    expect(checkoutInputs).toHaveLength(0);
+  });
+
   it('checkout on an unknown plan → 422 unknown_plan', async () => {
     await configureStripe();
     await seedCatalog();
@@ -447,6 +485,26 @@ describe('C33 — webhook: signature verify + idempotent + out-of-order converge
     expect(sub.json().provider_refs).toMatchObject({ stripe_subscription_id: 'sub_123', stripe_price_id: 'price_pro_month', stripe_customer_id: 'cus_test_1' });
     const ent = await server.inject({ method: 'GET', url: '/billing/entitlements', headers: { cookie } });
     expect(ent.json()).toMatchObject({ status: 'active', plan_key: 'pro_month' });
+    expect(ent.json().entitlements['feature.household']).toBe(true);
+  });
+
+  it('a TRIALING subscription webhook → record status:"trialing" + trial_end populated', async () => {
+    await configureStripe();
+    await seedCatalog();
+    const { userId, cookie } = await signIn();
+    const trialEnd = Math.floor(Date.now() / 1000) + 30 * 24 * 3600;
+    // Stripe now reports the subscription as trialing (the outcome of a trial_period_days checkout).
+    defaultSub = stripeSub({ status: 'trialing', trial_end: trialEnd, metadata: { subscriber: userId, app: APP_ID, plan_key: 'pro_month' } });
+
+    const res = await deliverEvent({ id: 'evt_trial', type: 'customer.subscription.created', data: { object: { id: 'sub_123' } } });
+    expect(res.json().outcome).toBe('processed');
+
+    const sub = await server.inject({ method: 'GET', url: '/billing/subscription', headers: { cookie } });
+    expect(sub.json()).toMatchObject({ subscriber: userId, status: 'trialing', source: 'stripe', plan_key: 'pro_month' });
+    expect(sub.json().trial_end).toBe(new Date(trialEnd * 1000).toISOString());
+    // A trial grants the ACTIVE plan's entitlements (trialing → active map).
+    const ent = await server.inject({ method: 'GET', url: '/billing/entitlements', headers: { cookie } });
+    expect(ent.json()).toMatchObject({ status: 'trialing', plan_key: 'pro_month' });
     expect(ent.json().entitlements['feature.household']).toBe(true);
   });
 

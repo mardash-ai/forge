@@ -180,6 +180,7 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
     if (!app_) return reply.status(404).send(unknownApp);
     const b = (req.body ?? {}) as {
       subscriber?: string; plan_key?: string; success_url?: string; cancel_url?: string; scope_ref?: string; customer_email?: string;
+      mode?: unknown; trial_period_days?: unknown; payment_method_collection?: unknown;
     };
     const resolved = await resolveSubscriber(req, app_.id, trimmed(b.subscriber));
     if ('error' in resolved) return reply.status(resolved.error === 'forbidden' ? 403 : 401).send(resolved.error === 'forbidden' ? forbidden : needAuth);
@@ -188,6 +189,29 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
     const cancelUrl = trimmed(b.cancel_url);
     if (!planKey || !successUrl || !cancelUrl) {
       return reply.status(422).send({ error: { code: 'invalid_input', message: '`plan_key`, `success_url` and `cancel_url` are required.', retry: 'change-input' } });
+    }
+    // Subscription is the only billing mode this platform supports. Accept the app's explicit `mode`
+    // (it sends "subscription") but reject anything else clearly rather than silently ignoring it.
+    if (b.mode !== undefined && String(b.mode) !== 'subscription') {
+      return reply.status(422).send({ error: { code: 'invalid_input', message: '`mode` must be "subscription" (the only supported billing mode).', retry: 'change-input' } });
+    }
+    // Optional free trial: a positive integer day count (Stripe accepts 1–730). Absent ⇒ no trial.
+    let trialPeriodDays: number | undefined;
+    if (b.trial_period_days !== undefined && b.trial_period_days !== null && String(b.trial_period_days) !== '') {
+      const n = Number(b.trial_period_days);
+      if (!Number.isInteger(n) || n < 1 || n > 730) {
+        return reply.status(422).send({ error: { code: 'invalid_input', message: '`trial_period_days` must be an integer between 1 and 730.', retry: 'change-input' } });
+      }
+      trialPeriodDays = n;
+    }
+    // Optional payment-method collection policy. Absent ⇒ Stripe default.
+    let paymentMethodCollection: 'always' | 'if_required' | undefined;
+    if (b.payment_method_collection !== undefined && b.payment_method_collection !== null && String(b.payment_method_collection) !== '') {
+      const v = String(b.payment_method_collection);
+      if (v !== 'always' && v !== 'if_required') {
+        return reply.status(422).send({ error: { code: 'invalid_input', message: '`payment_method_collection` must be "always" or "if_required".', retry: 'change-input' } });
+      }
+      paymentMethodCollection = v;
     }
     try {
       const out = await createCheckout({
@@ -198,6 +222,8 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
         cancelUrl,
         ...(trimmed(b.scope_ref) ? { scopeRef: trimmed(b.scope_ref)! } : {}),
         ...(trimmed(b.customer_email) ? { customerEmail: trimmed(b.customer_email)! } : {}),
+        ...(trialPeriodDays !== undefined ? { trialPeriodDays } : {}),
+        ...(paymentMethodCollection !== undefined ? { paymentMethodCollection } : {}),
       });
       await recordC3(app_.id, 'billing.checkout_started', resolved.subscriber, { plan_key: planKey });
       return reply.status(200).send(out);

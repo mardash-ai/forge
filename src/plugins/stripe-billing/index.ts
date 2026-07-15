@@ -45,6 +45,14 @@ export interface CreateCheckoutInput {
   customerEmail?: string; // else prefill the email (only when no customerId)
   metadata: Record<string, string>; // { subscriber, app, plan_key, scope_ref }
   taxEnabled: boolean; // Stripe Tax (automatic_tax)
+  // Optional free trial: set `subscription_data.trial_period_days` so the resulting subscription starts
+  // in Stripe status `trialing` (trial_end ≈ now + N days) rather than immediately `active`. A positive
+  // integer number of days; omitted ⇒ no trial (immediate active subscription, the prior behavior).
+  trialPeriodDays?: number;
+  // Whether Checkout collects a payment method up-front. `'always'` = require a card even for a trial (a
+  // "card-required trial" that auto-converts to paid); `'if_required'` = Stripe's default (may skip the
+  // card for a trial). Omitted ⇒ Stripe's default.
+  paymentMethodCollection?: 'always' | 'if_required';
 }
 
 export interface CreatePortalInput {
@@ -212,9 +220,18 @@ export const sdkStripeClient: StripeClient = {
       automatic_tax: { enabled: input.taxEnabled },
       tax_id_collection: { enabled: true },
       metadata: input.metadata,
-      // Stamp the subscription so a webhook re-fetch carries our metadata.
-      subscription_data: { metadata: input.metadata },
+      // Stamp the subscription so a webhook re-fetch carries our metadata. A trial (when requested) makes
+      // the resulting subscription start `trialing`, so the webhook records status:"trialing" + trial_end.
+      subscription_data: {
+        metadata: input.metadata,
+        ...(input.trialPeriodDays ? { trial_period_days: input.trialPeriodDays } : {}),
+      },
     };
+    // Require a card up-front for a card-required trial (or whenever the caller asks). Top-level Checkout
+    // param, independent of the trial: `'always'` collects a payment method even when a trial is present.
+    if (input.paymentMethodCollection) {
+      params.payment_method_collection = input.paymentMethodCollection;
+    }
     if (input.customerId) {
       params.customer = input.customerId;
       // customer_update is only valid when a customer is attached.

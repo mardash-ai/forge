@@ -163,6 +163,11 @@ export interface CheckoutInput {
   cancelUrl: string;
   scopeRef?: string;
   customerEmail?: string;
+  // Optional free-trial length (days). When set, the Stripe subscription starts `trialing` (trial_end ≈
+  // now + N days) instead of immediately `active`. Omitted ⇒ no trial (prior behavior).
+  trialPeriodDays?: number;
+  // Whether Checkout collects a card up-front — `'always'` = card-required trial; omitted ⇒ Stripe default.
+  paymentMethodCollection?: 'always' | 'if_required';
 }
 
 export async function createCheckout(input: CheckoutInput): Promise<{ url: string; session_id: string }> {
@@ -203,6 +208,8 @@ export async function createCheckout(input: CheckoutInput): Promise<{ url: strin
     ...(input.customerEmail ? { customerEmail: input.customerEmail } : {}),
     metadata,
     taxEnabled: cfg.taxEnabled,
+    ...(input.trialPeriodDays ? { trialPeriodDays: input.trialPeriodDays } : {}),
+    ...(input.paymentMethodCollection ? { paymentMethodCollection: input.paymentMethodCollection } : {}),
   });
   return { url: session.url, session_id: session.id };
 }
