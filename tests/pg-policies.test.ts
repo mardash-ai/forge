@@ -53,6 +53,25 @@ describe.skipIf(!HAS_PG)('P26 Postgres policy backend — jsonb + O4, owner/app-
     expect((await b.list(APP, {})).length).toBe(3); // admin view — all
   });
 
+  it('delete is owner-scoped: cannot remove another owner’s or an app-wide rule via an owner scope', async () => {
+    const b = (await getBackends()).policy;
+    await b.put(APP, rule('del_appwide')); // no owner
+    await b.put(APP, rule('del_a', { owner: 'A' }));
+
+    // Wrong owner + app-wide-via-owner are idempotent no-ops (nothing removed).
+    expect(await b.delete(APP, 'del_a', { owner: 'B' })).toBe(false);
+    expect(await b.delete(APP, 'del_appwide', { owner: 'A' })).toBe(false);
+    expect(await b.get(APP, 'del_a')).not.toBeNull();
+    expect(await b.get(APP, 'del_appwide')).not.toBeNull();
+
+    // Owner match removes; management scope (no owner) removes the app-wide rule; re-delete is a no-op.
+    expect(await b.delete(APP, 'del_a', { owner: 'A' })).toBe(true);
+    expect(await b.get(APP, 'del_a')).toBeNull();
+    expect(await b.delete(APP, 'del_a', { owner: 'A' })).toBe(false);
+    expect(await b.delete(APP, 'del_appwide')).toBe(true);
+    expect(await b.get(APP, 'del_appwide')).toBeNull();
+  });
+
   it('put is a single upsert — one row after re-put', async () => {
     const b = (await getBackends()).policy;
     await b.put(APP, rule('up', { priority: 1 }));

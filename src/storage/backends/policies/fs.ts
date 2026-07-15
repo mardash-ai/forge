@@ -52,10 +52,14 @@ export class FsPolicyBackend implements PolicyBackend, MigratablePolicyBackend {
     return (await this.readMap(appId))[id] ?? null;
   }
 
-  async delete(appId: string, id: string): Promise<boolean> {
+  async delete(appId: string, id: string, opts: { owner?: string } = {}): Promise<boolean> {
     return this.withLock(appId, async () => {
       const map = await this.readMap(appId);
-      if (!(id in map)) return false;
+      const existing = map[id];
+      if (!existing) return false;
+      // Owner-scoped delete: refuse to remove a rule outside the caller's owner scope (another user's rule,
+      // or an app-wide/owner-less rule). Treated as an idempotent no-op — never a leak, never a throw.
+      if (opts.owner !== undefined && existing.owner !== opts.owner) return false;
       delete map[id];
       await this.writeMap(appId, map);
       return true;

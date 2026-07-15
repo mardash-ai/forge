@@ -43,6 +43,7 @@ afterEach(async () => {
 
 const post = (url: string, payload: unknown) => server.inject({ method: 'POST', url, payload: payload as object });
 const get = (url: string) => server.inject({ method: 'GET', url });
+const del = (url: string) => server.inject({ method: 'DELETE', url });
 
 describe('C29 — policy CRUD', () => {
   it('create → list → get → delete a policy', async () => {
@@ -67,6 +68,68 @@ describe('C29 — policy CRUD', () => {
     await bare.ready();
     expect((await bare.inject({ method: 'POST', url: '/policies', payload: { effect: 'allow', app: 'nope' } })).statusCode).toBe(404);
     await bare.close();
+  });
+});
+
+describe('C29 — policy REMOVAL (owner-scoped, idempotent, event-emitting)', () => {
+  it('remove → authorize no longer applies the rule', async () => {
+    // A grant that flips A's default (needs-approval) to allow.
+    const id = (await post('/policies', { owner: 'A', effect: 'allow', match: { type: ['read'] } })).json().policy.id;
+    const act = { owner: 'A', action: { type: 'read', reversibility: 'reversible' } };
+    expect((await post('/authorize', act)).json().decision).toBe('allow');
+
+    const d = await del(`/policies/${id}?owner=A`);
+    expect(d.statusCode).toBe(200);
+    expect(d.json()).toMatchObject({ deleted: true, id });
+
+    // The rule is gone from the store, so authorize stops honoring it → back to the conservative default.
+    expect((await get(`/policies/${id}`)).statusCode).toBe(404);
+    expect((await post('/authorize', act)).json().decision).toBe('needs-approval');
+  });
+
+  it('idempotent: removing an absent / already-removed rule is a safe 200 no-op (never 500)', async () => {
+    const absent = await del('/policies/policy_does_not_exist');
+    expect(absent.statusCode).toBe(200);
+    expect(absent.json()).toMatchObject({ deleted: false });
+
+    const id = (await post('/policies', { owner: 'A', effect: 'allow', match: { type: ['read'] } })).json().policy.id;
+    expect((await del(`/policies/${id}`)).json().deleted).toBe(true);
+    const again = await del(`/policies/${id}`); // second delete of the same id
+    expect(again.statusCode).toBe(200);
+    expect(again.json().deleted).toBe(false);
+  });
+
+  it('scope isolation: a caller cannot remove another owner’s rule, nor an app-wide rule, via its owner scope', async () => {
+    const aRule = (await post('/policies', { owner: 'A', effect: 'allow', match: { type: ['read'] } })).json().policy.id;
+    const appWide = (await post('/policies', { effect: 'allow', match: { type: ['read'] } })).json().policy.id; // no owner
+
+    // B cannot delete A's rule…
+    expect((await del(`/policies/${aRule}?owner=B`)).json().deleted).toBe(false);
+    expect((await get(`/policies/${aRule}`)).statusCode).toBe(200); // still present
+    expect((await post('/authorize', { owner: 'A', action: { type: 'read', reversibility: 'reversible' } })).json().decision).toBe('allow'); // still enforcing
+
+    // …and an owner-scoped call cannot delete an app-wide (owner-less) rule.
+    expect((await del(`/policies/${appWide}?owner=A`)).json().deleted).toBe(false);
+    expect((await get(`/policies/${appWide}`)).statusCode).toBe(200);
+
+    // A can delete its OWN rule; the management scope (no owner) can delete the app-wide rule.
+    expect((await del(`/policies/${aRule}?owner=A`)).json().deleted).toBe(true);
+    expect((await del(`/policies/${appWide}`)).json().deleted).toBe(true);
+  });
+
+  it('emits policy.set on create and policy.removed on a real removal (owner-scoped, C3 audit)', async () => {
+    const id = (await post('/policies', { owner: 'A', effect: 'allow', match: { type: ['read'] } })).json().policy.id;
+    let events = await store.listAppEvents({ app_id: APP_ID, owner: 'A', subject: id });
+    expect(events.some((e) => e.type === 'policy.set' && (e.data as { id?: string }).id === id)).toBe(true);
+
+    await del(`/policies/${id}?owner=A`);
+    events = await store.listAppEvents({ app_id: APP_ID, owner: 'A', subject: id });
+    expect(events.some((e) => e.type === 'policy.removed' && (e.data as { id?: string }).id === id)).toBe(true);
+
+    // A no-op removal announces nothing (no second policy.removed).
+    await del(`/policies/${id}?owner=A`);
+    events = await store.listAppEvents({ app_id: APP_ID, owner: 'A', subject: id });
+    expect(events.filter((e) => e.type === 'policy.removed').length).toBe(1);
   });
 });
 

@@ -8,7 +8,11 @@ import type { PolicyRule } from '../../../authz/types';
 export interface PolicyBackend {
   put(appId: string, policy: PolicyRule): Promise<PolicyRule>; // upsert by id
   get(appId: string, id: string): Promise<PolicyRule | null>;
-  delete(appId: string, id: string): Promise<boolean>;
+  // Remove a rule by id. Idempotent — returns `false` (never throws) when no matching rule is removed.
+  // `opts.owner` set → OWNER-SCOPED delete: remove the rule only when `rule.owner === opts.owner`, so a
+  // caller acting for one user can never remove another owner's rule (nor an app-wide/owner-less rule).
+  // `opts.owner` unset → management scope: remove any rule in the app by id (mirrors `list` with no owner).
+  delete(appId: string, id: string, opts?: { owner?: string }): Promise<boolean>;
   // `owner` set → that owner's policies PLUS app-wide (owner-less) policies (the set `authorize` needs).
   // `owner` unset → all of the app's policies (the admin/management view).
   list(appId: string, opts: { owner?: string }): Promise<PolicyRule[]>;

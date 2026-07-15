@@ -858,12 +858,14 @@ policy
   });
 policy
   .command('delete')
-  .description('Delete a policy by id')
+  .description('Delete a policy by id (idempotent; --owner scopes the removal to that user’s own rules)')
   .argument('<id>')
   .option('--app <name>', 'app name')
+  .option('--owner <owner>', 'owner id — remove only if the rule belongs to this owner (omit for management scope)')
   .action(async (id, opts) => {
     const qs = new URLSearchParams();
     if (opts.app) qs.set('app', opts.app);
+    if (opts.owner) qs.set('owner', opts.owner);
     const r = await api('DELETE', `/policies/${encodeURIComponent(id)}?${qs.toString()}`);
     process.stdout.write(JSON.stringify(r, null, 2) + '\n');
   });

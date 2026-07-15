@@ -21,9 +21,9 @@ export class DualWritePolicyBackend implements PolicyBackend {
     return p;
   }
 
-  async delete(appId: string, id: string): Promise<boolean> {
-    const deleted = await this.primary.delete(appId, id);
-    await this.secondary.delete(appId, id);
+  async delete(appId: string, id: string, opts: { owner?: string } = {}): Promise<boolean> {
+    const deleted = await this.primary.delete(appId, id, opts);
+    await this.secondary.delete(appId, id, opts);
     return deleted;
   }
 }

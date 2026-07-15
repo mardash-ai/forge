@@ -19,9 +19,15 @@ import { resolveMembership, getPersonalGroup, provisionGroup } from '../membersh
 //     `shared_with?[]` — which drives the PRIVATE-LEAK floor. The response gains platform-RESOLVED
 //     `role`/`permissions[]`/`is_member`/`group_id` (present only when a registry is configured).
 //   GET    /policies             ?owner=                                                            -> { policies }
-//   POST   /policies             { id?, owner?, group_id?, visibility?, effect, priority?, match?, reason? } -> { policy }
+//   POST   /policies             { id?, owner?, group_id?, visibility?, effect, priority?, match?, reason? } -> { policy }   (emits policy.set)
 //   GET    /policies/:id         ?app=                                                              -> { policy }
-//   DELETE /policies/:id         ?app=                                                              -> { deleted }
+//   DELETE /policies/:id         ?app=&owner=                                                        -> { deleted, id }      (emits policy.removed)
+//     Removes a rule by id. IDEMPOTENT — removing an absent/already-removed/out-of-scope rule is a safe
+//     200 no-op (`{ deleted: false }`), never a 500. `owner?` OWNER-SCOPES the removal to that user's own
+//     rules (mirrors `POST /policies`): an owner-scoped caller can delete only rules it owns — never another
+//     owner's, never an app-wide/owner-less rule; omit `owner` for the management scope (any rule in the
+//     app, mirrors `GET /policies` with no owner). After a successful removal `authorize` no longer loads
+//     the rule (the store stops returning it), so it stops applying immediately.
 //   POST   /authz/approvals      { owner, action_class }                                            -> { recorded }
 //   GET    /authz/approvals      ?owner=&action_class=&threshold=                                    -> { action_class, approvals, suggest_policy }
 //
@@ -32,6 +38,10 @@ import { resolveMembership, getPersonalGroup, provisionGroup } from '../membersh
 const EFFECTS: PolicyEffect[] = ['allow', 'needs-approval', 'deny'];
 const AUTHZ_DECISION = 'authz.decision';
 const AUTHZ_APPROVAL = 'authz.approval';
+// C29 policy-lifecycle events (C3 audit trail) — a matched pair so a create/update and a removal are
+// equally observable. Subject = the policy id; owner carried when the rule is owner-scoped.
+const POLICY_SET = 'policy.set';
+const POLICY_REMOVED = 'policy.removed';
 
 export function registerAuthzRoutes(app: FastifyInstance, opts: { defaultApp?: () => string | undefined } = {}): void {
   const resolveAppId = async (name?: string): Promise<string | null> => {
@@ -137,6 +147,15 @@ export function registerAuthzRoutes(app: FastifyInstance, opts: { defaultApp?: (
       updated_at: now,
     };
     await backend.put(app_id, policy);
+    // Record the create/update to the C3 audit trail (owner-scoped when the rule is), so the policy
+    // lifecycle is observable end-to-end and symmetric with policy.removed below.
+    await store.appendAppEvent({
+      app_id,
+      type: POLICY_SET,
+      subject: policy.id,
+      ...(policy.owner ? { owner: policy.owner } : {}),
+      data: { id: policy.id, effect: policy.effect, ...(policy.owner ? { owner: policy.owner } : {}) },
+    });
     return reply.status(200).send({ policy });
   });
 
@@ -152,10 +171,23 @@ export function registerAuthzRoutes(app: FastifyInstance, opts: { defaultApp?: (
 
   app.delete('/policies/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const q = req.query as { app?: string };
+    const q = req.query as { app?: string; owner?: string };
     const app_id = await resolveAppId(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
-    return { deleted: await (await getBackends()).policy.delete(app_id, id) };
+    // Owner-scoped when `owner` is present (a caller may remove only its own rules); management scope when
+    // absent. Idempotent — an absent/out-of-scope rule yields `{ deleted: false }` (200), never a 500.
+    const deleted = await (await getBackends()).policy.delete(app_id, id, q.owner ? { owner: q.owner } : {});
+    // Emit policy.removed ONLY on a real removal (a no-op has nothing to announce), symmetric with policy.set.
+    if (deleted) {
+      await store.appendAppEvent({
+        app_id,
+        type: POLICY_REMOVED,
+        subject: id,
+        ...(q.owner ? { owner: q.owner } : {}),
+        data: { id, ...(q.owner ? { owner: q.owner } : {}) },
+      });
+    }
+    return reply.status(200).send({ deleted, id });
   });
 
   // === Progressive autonomy — record + count approvals of a staged action class ===================

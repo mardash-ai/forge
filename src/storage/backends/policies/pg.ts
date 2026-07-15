@@ -52,8 +52,13 @@ export class PgPolicyBackend implements PolicyBackend, MigratablePolicyBackend {
     return r.rows[0] ? r.rows[0].data : null;
   }
 
-  async delete(appId: string, id: string): Promise<boolean> {
-    const r = await this.pool.query('DELETE FROM forge_policies WHERE app_id=$1 AND id=$2', [appId, id]);
+  async delete(appId: string, id: string, opts: { owner?: string } = {}): Promise<boolean> {
+    // Owner-scoped delete (opts.owner set) adds `AND owner=$3`, so a caller can remove only its own rules
+    // (an app-wide/owner-less or another owner's rule never matches). No owner = management delete (any id).
+    const r =
+      opts.owner === undefined
+        ? await this.pool.query('DELETE FROM forge_policies WHERE app_id=$1 AND id=$2', [appId, id])
+        : await this.pool.query('DELETE FROM forge_policies WHERE app_id=$1 AND id=$2 AND owner=$3', [appId, id, opts.owner]);
     return (r.rowCount ?? 0) > 0;
   }
 

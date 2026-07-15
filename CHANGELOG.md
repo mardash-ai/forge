@@ -9,6 +9,31 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.48.0] — 2026-07-15
+
+### Added
+- **C29 — policy-rule REMOVAL (closes the delete gap).** The C29 policy engine could author a rule
+  (`POST /policies`) and decide (`POST /authorize`) but had no first-class, safe way to **remove** one:
+  a consumer that let a user delete a governance policy could not retire the underlying engine rule, so
+  a local-only delete left an **orphaned rule still enforcing**. `DELETE /policies/:id` is now a proper
+  **owner-scoped, idempotent, event-emitting** removal on both planes (control + data).
+  - **`DELETE /policies/:id?app=&owner=` → `{ deleted, id }`.** Removes a rule by its engine id (the id
+    `POST /policies` returns / the rule is keyed by). **Idempotent** — removing an absent, already-removed,
+    or out-of-scope rule is a safe `200` no-op (`{ deleted: false }`), **never a 500**. After a successful
+    removal `authorize` no longer loads the rule from the store, so it **stops applying immediately**.
+  - **Owner-scoping mirrors the write path.** `owner?` scopes the removal to that user's own rules exactly
+    like `POST /policies` scopes creation: an owner-scoped caller can delete **only** rules it owns —
+    never another owner's rule, never an app-wide/owner-less rule (both are idempotent no-ops, no leak).
+    Omit `owner` for the management scope (any rule in the app, mirroring `GET /policies` with no owner).
+    The `PolicyBackend.delete` seam gained an optional `{ owner? }` on the filesystem, Postgres, and
+    dual-write backends (the Postgres path adds `AND owner=$3`); the CLI `forge policy delete` gained a
+    matching `--owner`.
+  - **Policy-lifecycle events (C3 audit).** A create/update now emits **`policy.set`** and a real removal
+    emits **`policy.removed`** (subject = the policy id; `owner` carried when the rule is owner-scoped) —
+    a matched pair so the policy lifecycle is observable end-to-end. A no-op removal announces nothing.
+  - **No migration.** The delete path + the `owner` column already existed (P26); this is an additive
+    route/param + event change — no schema change, no destructive change to unrelated data.
+
 ## [0.47.0] — 2026-07-15
 
 ### Added
@@ -1983,7 +2008,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.47.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.48.0...HEAD
+[0.48.0]: https://github.com/mardash-ai/forge/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/mardash-ai/forge/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/mardash-ai/forge/compare/v0.45.1...v0.46.0
 [0.45.1]: https://github.com/mardash-ai/forge/compare/v0.45.0...v0.45.1
