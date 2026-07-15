@@ -21,6 +21,7 @@ beforeEach(async () => {
   await b.connections.__truncateAllForTests?.();
   await b.membership.__truncateAllForTests?.();
   await b.billing.__truncateAllForTests?.();
+  await b.push.__truncateAllForTests?.();
   await b.blobs.__truncateAllForTests?.();
 });
 

@@ -174,6 +174,45 @@ export class Store {
     return notifications.assignOwner(app_id, owner);
   }
 
+  // --- Notification delivery / push subscriptions (C21) — pluggable PushBackend ------------------
+  // Browser Web Push subscriptions (register/unregister/list/prune, deduped by endpoint) + the atomic
+  // cross-channel delivery-idempotency claim. Forward to the configured PushBackend (filesystem default,
+  // or Postgres via FORGE_PUSH_BACKEND=postgres); the C21 push routes + the notify() fan-out never know
+  // which backend runs. Holds NO secret material — the VAPID private key lives in the C5 vault.
+
+  async registerPushSubscription(
+    app_id: string,
+    input: { owner: string; endpoint: string; keys: { p256dh: string; auth: string } },
+  ): Promise<import('./backends/push/types').PushSubscriptionRecord> {
+    const { push } = await getBackends();
+    return push.registerSubscription(app_id, input);
+  }
+
+  async unregisterPushSubscription(app_id: string, endpoint: string, owner?: string): Promise<boolean> {
+    const { push } = await getBackends();
+    return push.unregisterSubscription(app_id, endpoint, owner);
+  }
+
+  async listPushSubscriptions(
+    app_id: string,
+    owner: string,
+  ): Promise<import('./backends/push/types').PushSubscriptionRecord[]> {
+    const { push } = await getBackends();
+    return push.listSubscriptions(app_id, owner);
+  }
+
+  async prunePushSubscription(app_id: string, endpoint: string): Promise<boolean> {
+    const { push } = await getBackends();
+    return push.pruneSubscription(app_id, endpoint);
+  }
+
+  // Atomic first-writer claim for a delivery idempotency key — true when THIS caller may send (first
+  // time), false when it was already claimed (a retry — skip the external channels).
+  async claimDelivery(app_id: string, owner: string, idemKey: string): Promise<boolean> {
+    const { push } = await getBackends();
+    return push.claimDelivery(app_id, owner, idemKey, nowIso());
+  }
+
   stateDir(): string {
     return stateDir();
   }

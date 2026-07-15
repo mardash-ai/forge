@@ -23,6 +23,7 @@ export default defineConfig({
       FORGE_CONNECTIONS_BACKEND: 'postgres',
       FORGE_MEMBERSHIP_BACKEND: 'postgres',
       FORGE_BILLING_BACKEND: 'postgres',
+      FORGE_PUSH_BACKEND: 'postgres',
       FORGE_BLOBS_BACKEND: 's3',
       // S3 defaults for the local MinIO the test:pg run + CI use; overridable from the environment.
       FORGE_S3_ENDPOINT: process.env.FORGE_S3_ENDPOINT ?? 'http://127.0.0.1:59000',

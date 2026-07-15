@@ -207,6 +207,21 @@ export function connectionsFile(appId: string): string {
   return path.join(connectionsDir(), `${appId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
 }
 
+// Per-app notification-delivery store (C21) — one JSON doc per app holding the browser push
+// subscriptions (a per-owner set of Web Push endpoints + their p256dh/auth keys) AND a short-lived
+// cross-channel delivery-idempotency ledger (so a retried notify() with the same idempotency key does not
+// double-send push/email). Mutable durable STATE (read-modify-write under a per-app lock, like C24
+// connections). Holds NO secret material — the VAPID private key lives in the C5 secret vault, never here.
+// Kept OUT of the generic Resource store (like connections/auth), so push endpoints never surface through
+// the inspectable `/resources` API.
+export function pushDir(): string {
+  return path.join(stateDir(), 'push');
+}
+
+export function pushFile(appId: string): string {
+  return path.join(pushDir(), `${appId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
+}
+
 // Per-app billing store (C33) — one JSON doc per app holding the payment-source-agnostic billing state:
 // the plans catalog, the subscription-of-record per subscriber, and the processed-webhook-event dedupe
 // set. Mutable durable STATE (read-modify-write under a per-app lock, like C31 membership). Holds NO card

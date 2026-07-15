@@ -49,6 +49,10 @@ import type { BillingBackend } from './billing/types';
 import { FsBillingBackend } from './billing/fs';
 import { PgBillingBackend, ensureBillingSchema } from './billing/pg';
 import { DualWriteBillingBackend } from './billing/dual';
+import type { PushBackend } from './push/types';
+import { FsPushBackend } from './push/fs';
+import { PgPushBackend, ensurePushSchema } from './push/pg';
+import { DualWritePushBackend } from './push/dual';
 
 export { loadStoreConfig, needsDatabase } from './config';
 export type { StoreConfig, BackendKind } from './config';
@@ -70,6 +74,7 @@ export interface Backends {
   connections: ConnectionBackend;
   membership: MembershipBackend;
   billing: BillingBackend;
+  push: PushBackend;
   blobs: BlobBackend;
   // The Postgres pool, when one was opened (shared across domains as more migrate).
   pool?: Pool;
@@ -101,6 +106,7 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     if (cfg.connections === 'postgres') await ensureConnectionsSchema(pool);
     if (cfg.membership === 'postgres') await ensureMembershipSchema(pool);
     if (cfg.billing === 'postgres') await ensureBillingSchema(pool);
+    if (cfg.push === 'postgres') await ensurePushSchema(pool);
     if (cfg.blobs === 's3') await ensureBlobSchema(pool);
   }
 
@@ -254,6 +260,22 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     billingLabel = 'filesystem';
   }
 
+  // push (C21) — the notification-delivery store (browser Web Push subscriptions + the cross-channel
+  // delivery-idempotency ledger) as one per-app document on the filesystem, OR two tables in Postgres. The
+  // dedupe-by-endpoint subscription upsert + the atomic first-writer delivery claim are serialized by the
+  // FS per-app lock / a PG ON CONFLICT — identical semantics on both. Holds NO secret material.
+  const fsPush = new FsPushBackend();
+  let push: PushBackend;
+  let pushLabel: string;
+  if (cfg.push === 'postgres') {
+    const pg = new PgPushBackend(pool!);
+    push = cfg.pushDualWrite ? new DualWritePushBackend(pg, fsPush) : pg;
+    pushLabel = cfg.pushDualWrite ? 'postgres+dualwrite' : 'postgres';
+  } else {
+    push = fsPush;
+    pushLabel = 'filesystem';
+  }
+
   // blobs (C20) — bytes+metadata on the filesystem, OR bytes in S3/MinIO + metadata in Postgres. The FS
   // backend is the shared `blobStore` singleton (so the store's own unit tests + the route observe the
   // same instance). The S3 backend needs both the pool (metadata) and S3 settings (bytes); the bucket is
@@ -290,10 +312,11 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     connections,
     membership,
     billing,
+    push,
     blobs,
     pool,
     describe: () =>
-      `identity=${identityLabel} search=${searchLabel} events=${eventsLabel} notifications=${notificationsLabel} secrets=${secretsLabel} resources=${resourcesLabel} policy=${policyLabel} mcp=${mcpLabel} connections=${connectionsLabel} membership=${membershipLabel} billing=${billingLabel} blobs=${blobsLabel}`,
+      `identity=${identityLabel} search=${searchLabel} events=${eventsLabel} notifications=${notificationsLabel} secrets=${secretsLabel} resources=${resourcesLabel} policy=${policyLabel} mcp=${mcpLabel} connections=${connectionsLabel} membership=${membershipLabel} billing=${billingLabel} push=${pushLabel} blobs=${blobsLabel}`,
     async close() {
       await identity.close?.();
       await search.close?.();
@@ -306,6 +329,7 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
       await connections.close?.();
       await membership.close?.();
       await billing.close?.();
+      await push.close?.();
       await blobs.close?.();
       if (pool) await pool.end();
     },

@@ -9,6 +9,47 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.47.0] — 2026-07-15
+
+### Added
+- **C21 — notification DELIVERY / multi-channel fan-out (grows C4).** The C4 notification store was an
+  in-app store only (upsert-by-key / list / dismiss / clear, no delivery). It now fans a notification out
+  over **browser push (Web Push / VAPID)** and **email**, while every existing caller is unchanged. Mobile
+  push + SMS are deliberately left as future channels (the channel model is open to them). Delivery lives in
+  the **data-plane** image.
+  - **`channels` on `POST /notifications` (default `["in_app"]`).** The upsert body gains an optional
+    `channels` (a subset of `in_app | push | email`) and an optional `idempotency_key`. Absent/`["in_app"]`
+    → the response is **byte-identical** to before (`{ notification }`); when an external channel is
+    requested the response adds a `delivery` summary (`{ push?: { attempted, sent, pruned, failed },
+    email?: { status }, deduped? }`). The **caller decides channels** — the platform executes delivery; it
+    owns no per-category preference system. Best-effort **per channel**: a failing push/email never blocks
+    in_app (which still records) or the other channel, and no delivery error propagates. `idempotency_key`
+    is claimed **once across both external channels** (atomic first-writer) so a retried notify() sends
+    push/email **at most once**; in_app stays idempotent by `key`. Push/email are per-owner — without an
+    `owner` the external channels are skipped (in_app still records).
+  - **VAPID — zero operator config.** The platform **auto-generates and persists a per-app VAPID keypair**
+    on first need in the C5 secret vault (sealed at rest, survives redeploys); the **private key never
+    leaves the platform**. `GET /notifications/vapid-public-key` (public; `{ public_key,
+    applicationServerKey }`) exposes the raw public key a browser passes to `pushManager.subscribe`. The
+    VAPID contact `sub` defaults from `EMAIL_FROM`, overridable via `FORGE_VAPID_SUBJECT` — still no
+    required config.
+  - **Push-subscription management.** `POST /notifications/push/subscribe` (`{ owner, subscription:
+    { endpoint, keys: { p256dh, auth } } }` → `{ subscribed, endpoint }`, deduped by endpoint, a person may
+    hold many devices) and `POST /notifications/push/unsubscribe` (`{ owner?, endpoint }`). `owner` is the
+    C10 session userId the app passes (never trusted from the browser). A subscription the push service
+    reports GONE (404/410) is **pruned automatically** during fan-out.
+  - **`webpush-vapid` plugin** — the Web Push technology boundary, hand-rolled on Node's built-in `crypto`
+    + `fetch` (no web-push SDK; the slim data-plane image stays dependency-clean): the ES256 VAPID JWT
+    (RFC 8292) + RFC 8291 `aes128gcm` payload encryption (ECDH + HKDF + AES-128-GCM, end-to-end to the
+    browser). The network call is swappable for tests.
+  - **`push` store domain (C21 / P26).** A new pluggable backend (filesystem default; Postgres via
+    `FORGE_PUSH_BACKEND=postgres` + optional `FORGE_PUSH_DUAL_WRITE=1`) holding the push subscriptions
+    (dedupe-by-endpoint upsert) + a short-lived cross-channel delivery-idempotency ledger (atomic
+    first-writer claim). Additive, idempotent migration (`CREATE TABLE IF NOT EXISTS`); kept out of the
+    inspectable `/resources` API (like connections/auth), holds no secret material.
+  - **Email channel** reuses **C12 SendEmail** to the owner's **account email** (C10), subject = title,
+    body = a simple branded template (with a deep-link button when `data.url` is present).
+
 ## [0.46.0] — 2026-07-15
 
 ### Added
@@ -1942,7 +1983,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.46.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.47.0...HEAD
+[0.47.0]: https://github.com/mardash-ai/forge/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/mardash-ai/forge/compare/v0.45.1...v0.46.0
 [0.45.1]: https://github.com/mardash-ai/forge/compare/v0.45.0...v0.45.1
 [0.45.0]: https://github.com/mardash-ai/forge/compare/v0.44.0...v0.45.0
