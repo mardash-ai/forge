@@ -275,6 +275,35 @@ describe('Google OAuth (stubbed provider)', () => {
     expect(String(cb.headers.location)).toContain('/auth/login?error=');
     expect(setCookie(cb, 'forge_session')).toBeUndefined();
   });
+
+  it('P37: the SIGNED state survives WITHOUT the cookie (nested MCP-connect: /auth/google on api.<host>, callback on app.<host>)', async () => {
+    // Carry a `next` (the /oauth/authorize URL) as the real connect flow does.
+    const authorize = await server.inject({ method: 'GET', url: '/auth/google?next=%2Foauth%2Fauthorize%3Fclient_id%3Dx', headers: HDR });
+    const state = new URL(String(authorize.headers.location)).searchParams.get('state')!;
+    // The callback arrives on the OTHER host — NO forge_oauth_state cookie is present.
+    const cb = await server.inject({
+      method: 'GET',
+      url: `/auth/google/callback?code=auth-code&state=${encodeURIComponent(state)}`,
+      headers: HDR, // deliberately no cookie
+    });
+    expect(cb.statusCode).toBe(303);
+    // Signed-state verified by signature alone → session established, and `next` round-tripped inside it.
+    expect(cookieValue(cb, 'forge_session')).toBeTruthy();
+    expect(String(cb.headers.location)).toBe('/oauth/authorize?client_id=x');
+  });
+
+  it('P37: a validly-shaped state signed with the WRONG secret is rejected (forged signature)', async () => {
+    // A well-formed token whose signature does not verify against the app secret → state mismatch.
+    const forged = `${Buffer.from(JSON.stringify({ n: 'x', next: '/', app: APP, iat: 0, exp: 9999999999 })).toString('base64url')}.Zm9yZ2Vk`;
+    const cb = await server.inject({
+      method: 'GET',
+      url: `/auth/google/callback?code=auth-code&state=${encodeURIComponent(forged)}`,
+      headers: HDR,
+    });
+    expect(cb.statusCode).toBe(303);
+    expect(String(cb.headers.location)).toContain('/auth/login?error=');
+    expect(setCookie(cb, 'forge_session')).toBeUndefined();
+  });
 });
 
 describe('graceful degradation (§7) — unconfigured pieces are detectable, never a crash', () => {

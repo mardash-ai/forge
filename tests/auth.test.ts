@@ -12,6 +12,9 @@ import {
   isPublicPath,
   isServicePath,
   DEFAULT_PUBLIC_PATHS,
+  signOAuthState,
+  verifyOAuthState,
+  readOAuthStateApp,
 } from '../src/shared/session';
 import {
   hashPassword,
@@ -87,6 +90,41 @@ describe('session token (shared/session — the app mirrors this)', () => {
     expect(verifySessionToken('', SECRET)).toBeNull();
     expect(verifySessionToken(undefined, SECRET)).toBeNull();
     expect(verifySessionToken(signSessionToken({ userId: 'u', email: 'a@b', sessionId: 's' }, SECRET), '')).toBeNull();
+  });
+});
+
+describe('OAuth CSRF state token (P37 — host-independent, no cookie required)', () => {
+  const SECRET = 'oauth-state-signing-secret';
+
+  it('signs + verifies a round-trip, exposing next + app (survives with NO cookie)', () => {
+    const token = signOAuthState({ next: '/oauth/authorize?client_id=x', app: 'demo', nonce: 'n1' }, SECRET);
+    const claims = verifyOAuthState(token, SECRET);
+    expect(claims).toMatchObject({ next: '/oauth/authorize?client_id=x', app: 'demo' });
+    // The app hint is readable WITHOUT the secret (used only to route to the right app before verifying).
+    expect(readOAuthStateApp(token)).toBe('demo');
+  });
+
+  it('rejects a wrong secret, a tampered payload, and an expired token', () => {
+    const token = signOAuthState({ next: '/', app: 'demo', nonce: 'n1' }, SECRET);
+    expect(verifyOAuthState(token, 'other-secret')).toBeNull();
+    // Tamper the payload but keep the old signature.
+    const [body, sig] = token.split('.');
+    const forgedBody = Buffer.from(JSON.stringify({ n: 'n1', next: '/evil', app: 'demo', iat: 0, exp: 9999999999 })).toString('base64url');
+    expect(verifyOAuthState(`${forgedBody}.${sig}`, SECRET)).toBeNull();
+    // Expired: signed 100s ago with a 5s TTL.
+    const past = Math.floor(Date.now() / 1000) - 100;
+    const stale = signOAuthState({ next: '/', app: 'demo', nonce: 'n1' }, SECRET, 5, past);
+    expect(verifyOAuthState(stale, SECRET)).toBeNull();
+    void body;
+  });
+
+  it('rejects garbage / empty / missing-secret', () => {
+    expect(verifyOAuthState('not-a-token', SECRET)).toBeNull();
+    expect(verifyOAuthState('a.b.c', SECRET)).toBeNull();
+    expect(verifyOAuthState('', SECRET)).toBeNull();
+    expect(verifyOAuthState(undefined, SECRET)).toBeNull();
+    expect(readOAuthStateApp(undefined)).toBeUndefined();
+    expect(readOAuthStateApp('garbage')).toBeUndefined();
   });
 });
 

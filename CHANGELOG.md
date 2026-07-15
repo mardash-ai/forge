@@ -9,6 +9,28 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.45.1] — 2026-07-15
+
+### Fixed
+- **Google sign-in "state mismatch" in the nested MCP-connect flow (C10/C23).** Connecting an MCP host
+  (e.g. Claude) to a consumer app failed at the Google callback with *"Google sign-in failed (state
+  mismatch)"*. Root cause: the Google-OAuth CSRF `state` was a random nonce stashed in a **host-only cookie**
+  (`forge_oauth_state`, `Path=/auth`). When an MCP host drives OAuth against `api.<host>/mcp`, the
+  `/oauth/authorize` bounce runs `/auth/google` on **`api.<host>`** (setting the cookie there), but Google's
+  registered redirect URI returns the callback to **`app.<host>`** (`FORGE_AUTH_PUBLIC_URL`) — a cookie set
+  on `api.<host>` is never sent to `app.<host>`, so the state was absent and every connect-time Google
+  sign-in was rejected. (Normal same-host app login was unaffected, which is why it only showed up on
+  Connect.) **Fix:** the `state` is now a **signed, self-contained token** (HMAC-SHA256 with the app's
+  session secret) carrying its own `nonce` + `next` + `app` + expiry. It round-trips through Google in the
+  URL and is verified on the callback **by signature — not by a cookie** — so it survives the cross-host
+  return. This mirrors the C24 connector flow (server-authoritative, unguessable state; no host-bound
+  cookie). A same-host `forge_oauth_state` cookie is still set as **defense-in-depth** (when present it must
+  match the state; its absence on the cross-host path is expected and tolerated). `next` is still passed
+  through the same-site `safeNext` open-redirect guard. `/auth/google` now also requires the session secret
+  to be configured (it must sign the state), matching the callback's existing guard. **No consumer change**
+  — the app only proxies `/auth/*`; `forge_oauth_state` is HttpOnly and platform-internal. New pure helpers
+  `signOAuthState` / `verifyOAuthState` / `readOAuthStateApp` in `shared/session.ts`.
+
 ## [0.45.0] — 2026-07-14
 
 ### Added
@@ -1871,7 +1893,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.45.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.45.1...HEAD
+[0.45.1]: https://github.com/mardash-ai/forge/compare/v0.45.0...v0.45.1
 [0.45.0]: https://github.com/mardash-ai/forge/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/mardash-ai/forge/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/mardash-ai/forge/compare/v0.42.0...v0.43.0

@@ -18,6 +18,10 @@ import {
   accessTtlSeconds,
   refreshTtlSeconds,
   refreshReuseGraceSeconds,
+  signOAuthState,
+  verifyOAuthState,
+  readOAuthStateApp,
+  DEFAULT_OAUTH_STATE_TTL_SECONDS,
 } from '../shared/session';
 import {
   IMPLEMENTATION,
@@ -466,32 +470,51 @@ export function registerAuthRoutes(
     const app_ = await resolveAppId(req);
     if (!app_) return htmlReply(reply, 404, page({ title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const cfg = await resolveAuthConfig(app_.id);
-    if (!cfg.google) {
+    // Google sign-in needs BOTH the OAuth client AND the session secret — the callback signs a session, and
+    // (P37) the CSRF `state` is now an HMAC-signed token keyed by this secret (so it survives a cross-host
+    // return with NO host-bound cookie). Without the secret we can't sign state → treat as unavailable.
+    if (!cfg.google || !cfg.sessionSecret) {
       return reply.code(303).header('location', `/auth/login?error=${encodeURIComponent('Google sign-in is not available.')}`).send();
     }
     const next = safeNext((req.query as { next?: string }).next);
-    // CSRF: a random state echoed back on callback, bound to a short-lived cookie.
-    const state = newToken().token;
+    // CSRF: a SIGNED, self-contained state (nonce + next + app + exp), HMAC'd with the app session secret.
+    // It is verified on the callback by SIGNATURE — not by a cookie — so it survives the nested MCP-connect
+    // flow where `/auth/google` runs on `api.<host>` but Google returns the callback to `app.<host>` (a
+    // host-only cookie set on `api.<host>` would never be sent to `app.<host>`). See the callback below.
+    const state = signOAuthState({ next, app: app_.name, nonce: newToken().token }, cfg.sessionSecret);
     const redirectUri = `${publicBase(req)}/auth/google/callback`;
     const url = getOAuthProvider().authorizeUrl({ clientId: cfg.google.clientId, redirectUri, state });
-    const stateCookie = `${OAUTH_STATE_COOKIE}=${encodeURIComponent(`${state}|${next}|${app_.name}`)}; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=600${requestIsSecure(req) ? '; Secure' : ''}`;
+    // ALSO set a same-host binding cookie (defense in depth): when the whole flow stays on one host it adds
+    // browser binding; its ABSENCE on the cross-host return is tolerated (the signature is authoritative),
+    // its PRESENCE-but-mismatch is rejected on the callback.
+    const stateCookie = `${OAUTH_STATE_COOKIE}=${encodeURIComponent(state)}; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=${DEFAULT_OAUTH_STATE_TTL_SECONDS}${requestIsSecure(req) ? '; Secure' : ''}`;
     reply.header('set-cookie', stateCookie).code(303).header('location', url).send();
   });
 
   app.get('/auth/google/callback', async (req, reply) => {
     const q = req.query as { code?: string; state?: string; error?: string };
-    const raw = cookieVal(req, OAUTH_STATE_COOKIE);
-    const [savedState, savedNext, savedApp] = decodeURIComponent(raw ?? '').split('|');
+    // Optional same-host binding cookie — may be ABSENT on the cross-host MCP-connect return (that's fine).
+    const cookieState = cookieVal(req, OAUTH_STATE_COOKIE);
     const clearState = `${OAUTH_STATE_COOKIE}=; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=0${requestIsSecure(req) ? '; Secure' : ''}`;
     const bail = (msg: string) =>
       reply.header('set-cookie', clearState).code(303).header('location', `/auth/login?error=${encodeURIComponent(msg)}`).send();
 
     if (q.error) return bail('Google sign-in was cancelled.');
-    if (!q.code || !q.state || !savedState || q.state !== savedState) return bail('Google sign-in failed (state mismatch). Please try again.');
-    const app_ = await resolveAppId(req, savedApp);
+    if (!q.code || !q.state) return bail('Google sign-in failed (state mismatch). Please try again.');
+    // Resolve the app to get its session secret. Prod (single-app data-plane) uses FORGE_APP_NAME; the
+    // signed state also carries an app hint for the multi-app dev control plane — a routing key only, since
+    // the SIGNATURE (verified next against that app's real secret) is the actual trust check.
+    const app_ = await resolveAppId(req, readOAuthStateApp(q.state));
     if (!app_) return bail('Unknown app.');
     const cfg = await resolveAuthConfig(app_.id);
     if (!cfg.google || !cfg.sessionSecret) return bail('Google sign-in is not available.');
+    // CSRF: the state must carry a VALID, UNEXPIRED signature from THIS app's secret (host-independent —
+    // this is what fixes the cross-host MCP-connect return). If the same-host binding cookie is present it
+    // must ALSO equal the state (tamper check); its absence on the cross-host path is expected + tolerated.
+    const verifiedState = verifyOAuthState(q.state, cfg.sessionSecret);
+    if (!verifiedState || verifiedState.app !== app_.name) return bail('Google sign-in failed (state mismatch). Please try again.');
+    if (cookieState !== undefined && cookieState !== q.state) return bail('Google sign-in failed (state mismatch). Please try again.');
+    const savedNext = verifiedState.next;
 
     let info;
     try {

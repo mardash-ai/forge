@@ -159,6 +159,87 @@ export function verifySessionToken(
   return claims;
 }
 
+// --- OAuth CSRF `state` token (P37) ---------------------------------------------
+// The Google-sign-in `state` used to be a random nonce stashed in a HOST-ONLY cookie
+// (`forge_oauth_state`, Path=/auth) and compared on the callback. That breaks the
+// NESTED MCP-connect flow: when Claude drives OAuth against `api.<host>/mcp`, the
+// `/oauth/authorize` bounce runs `/auth/google` on `api.<host>` (setting the cookie
+// there), but Google's registered redirect_uri returns the callback to `app.<host>`
+// (FORGE_AUTH_PUBLIC_URL) — a cookie set on `api.<host>` is NOT sent to `app.<host>`,
+// so the state was absent → "state mismatch". The fix makes `state` a SIGNED,
+// self-contained token (HMAC-SHA256 with the app's session secret) that carries its
+// own `next` + `app` + expiry: it round-trips through Google in the URL and is verified
+// by SIGNATURE on the callback, with NO host-bound cookie required. This mirrors the
+// C24 connector flow (server-authoritative, unguessable state; no host-only cookie).
+// A same-host cookie is still set as optional defense-in-depth (see auth-routes).
+export const DEFAULT_OAUTH_STATE_TTL_SECONDS = 600;
+
+export interface OAuthStateClaims {
+  n: string; // nonce — makes each state unique even for parallel sign-ins
+  next: string; // the post-login destination (same-site path; re-validated by safeNext at use)
+  app: string; // the app the sign-in targets (a routing hint; the signature is the trust anchor)
+  iat: number;
+  exp: number;
+}
+
+// Sign a compact `state` token: base64url(payload).base64url(HMAC-SHA256(payload,secret)).
+export function signOAuthState(
+  input: { next: string; app: string; nonce: string },
+  secret: string,
+  ttlSeconds: number = DEFAULT_OAUTH_STATE_TTL_SECONDS,
+  now: number = Math.floor(Date.now() / 1000),
+): string {
+  const payload: OAuthStateClaims = { n: input.nonce, next: input.next, app: input.app, iat: now, exp: now + ttlSeconds };
+  const body = b64urlJson(payload);
+  const sig = b64url(createHmac('sha256', secret).update(body).digest());
+  return `${body}.${sig}`;
+}
+
+// Verify a `state` token: valid signature (constant-time) AND unexpired. Returns the claims or null.
+// Never throws — the callback treats null as "state mismatch".
+export function verifyOAuthState(
+  token: string | undefined | null,
+  secret: string,
+  now: number = Math.floor(Date.now() / 1000),
+): OAuthStateClaims | null {
+  if (!token || !secret) return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [body, sig] = parts as [string, string];
+  const expected = createHmac('sha256', secret).update(body).digest();
+  let provided: Buffer;
+  try {
+    provided = fromB64url(sig);
+  } catch {
+    return null;
+  }
+  if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) return null;
+  let claims: OAuthStateClaims;
+  try {
+    claims = JSON.parse(fromB64url(body).toString('utf8')) as OAuthStateClaims;
+  } catch {
+    return null;
+  }
+  if (typeof claims.exp !== 'number' || claims.exp <= now) return null;
+  if (typeof claims.next !== 'string' || typeof claims.app !== 'string') return null;
+  return claims;
+}
+
+// Read the (UNVERIFIED) `app` hint from a state token, WITHOUT checking the signature — used only to route
+// the callback to the right app so its secret can then VERIFY the signature. The signature (not this hint)
+// is the trust check, so a forged app here cannot pass verifyOAuthState against that app's real secret.
+export function readOAuthStateApp(token: string | undefined | null): string | undefined {
+  if (!token) return undefined;
+  const body = token.split('.')[0];
+  if (!body) return undefined;
+  try {
+    const p = JSON.parse(fromB64url(body).toString('utf8')) as { app?: unknown };
+    return typeof p.app === 'string' ? p.app : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // --- cookie ---------------------------------------------------------------------
 
 // The Set-Cookie value for a session. Always httpOnly + SameSite=Lax; `secure` is
