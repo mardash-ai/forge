@@ -33,6 +33,38 @@ export interface SearchDocument {
   // date_from/date_to filter ranges over; `updated_at` is the primary ranking tie-break (desc).
   created_at?: string;
   updated_at?: string;
+
+  // --- C19 access-aware ACL metadata (ADDITIVE; a doc indexed WITHOUT these behaves exactly as before
+  // — owner-only) --------------------------------------------------------------------------------------
+  // The household/group this document belongs to. Group- and shared-visibility are ONLY ever evaluated
+  // within the SAME groupId — a cross-group caller never matches. Absent ⇒ the doc is owner-only,
+  // whatever `visibility` says (there is no group to widen into).
+  groupId?: string;
+  // Access scope. Default `'private'` (also the meaning of an absent value) ⇒ ONLY the owner can see it.
+  // `'group'` ⇒ any same-group caller whose query scope carries the read-all capability. `'shared'` ⇒
+  // ONLY the callers listed in sharedWith / sharedWriters (plus, always, the owner).
+  visibility?: DocVisibility;
+  // Explicit per-caller share grants (opaque caller ids, e.g. C10 session userIds). A caller present in
+  // EITHER list may read a `'shared'` document. `sharedWriters` are those additionally granted write
+  // access by the consumer; for READ scoping (all C19 does) the two lists are unioned. Ignored unless
+  // `visibility === 'shared'`.
+  sharedWith?: string[];
+  sharedWriters?: string[];
+}
+
+// The three access scopes a document can carry. Absent ⇒ treated as 'private'.
+export type DocVisibility = 'private' | 'group' | 'shared';
+
+// The caller's access scope, passed on a `/search` to widen the result set beyond the caller's own
+// documents. OMITTING scope entirely ⇒ exactly today's owner-only search (backward compatible).
+//   - groupId    — the caller's own group/household id. Group/shared docs are only ever matched when
+//                  they carry the SAME groupId. Absent ⇒ no group widening (owner-only).
+//   - canReadAll — the caller's role capability flag ("may read ALL of the group's docs"). Gates
+//                  `visibility === 'group'` documents. `shared`-visibility docs do NOT need it —
+//                  they are matched by explicit grant (caller ∈ sharedWith ∪ sharedWriters).
+export interface SearchScope {
+  groupId?: string;
+  canReadAll?: boolean;
 }
 
 // A single ranked search hit. `attrs` + `created_at` are round-tripped from the stored document so the
@@ -63,6 +95,11 @@ export interface SearchQuery {
   date_from?: string;
   date_to?: string;
   mode?: 'lexical';
+  // C19 access-aware scope (optional). Present ⇒ the query returns the caller's own docs PLUS the
+  // group/shared docs the scope authorizes (see SearchScope + `docVisibleTo`). Absent ⇒ owner-only,
+  // exactly as before. The ACL predicate is applied IN the index, BEFORE limit/offset, so `total` and
+  // pagination stay correct.
+  scope?: SearchScope;
 }
 
 // The /search response. `total` is the count of documents that matched BEFORE limit/offset paging;

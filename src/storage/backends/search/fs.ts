@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { searchDir, searchFile } from '../../../shared/paths';
 import { nowIso } from '../../../shared/time';
 import { rankDocuments } from '../../../search/rank';
+import { docVisibleTo } from '../../../search/acl';
 import { clampLimit, clampOffset, type SearchDocument, type SearchQuery, type SearchResponse } from '../../../search/types';
 import type { SearchBackend, MigratableSearchBackend } from './types';
 
@@ -57,6 +58,11 @@ export class FsSearchBackend implements SearchBackend, MigratableSearchBackend {
       ...(input.body !== undefined ? { body: input.body } : {}),
       ...(Array.isArray(input.tags) ? { tags: input.tags } : {}),
       ...(input.attrs !== undefined ? { attrs: input.attrs } : {}),
+      // C19 ACL metadata — persisted verbatim; absent ⇒ owner-only (private).
+      ...(input.groupId !== undefined ? { groupId: input.groupId } : {}),
+      ...(input.visibility !== undefined ? { visibility: input.visibility } : {}),
+      ...(Array.isArray(input.sharedWith) ? { sharedWith: input.sharedWith } : {}),
+      ...(Array.isArray(input.sharedWriters) ? { sharedWriters: input.sharedWriters } : {}),
       created_at: input.created_at ?? prev?.created_at ?? now,
       updated_at: input.updated_at ?? now,
     };
@@ -102,8 +108,10 @@ export class FsSearchBackend implements SearchBackend, MigratableSearchBackend {
   async search(appId: string, query: SearchQuery): Promise<SearchResponse> {
     const started = Date.now();
     const map = await this.readMap(appId);
-    const owned = Object.values(map).filter((d) => d.owner === query.owner);
-    const result = rankDocuments(owned, {
+    // ACL-scope the candidate set BEFORE ranking/paging: the caller's own docs PLUS the group/shared docs
+    // their scope authorizes. No scope ⇒ owner-only (docVisibleTo reduces to `d.owner === query.owner`).
+    const visible = Object.values(map).filter((d) => docVisibleTo(d, query.owner, query.scope));
+    const result = rankDocuments(visible, {
       q: query.q,
       ...(query.types ? { types: query.types } : {}),
       ...(query.date_from ? { date_from: query.date_from } : {}),

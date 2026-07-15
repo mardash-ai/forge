@@ -42,22 +42,51 @@ describe.skipIf(!HAS_PG)('P26 Postgres search backend — GIN index, O4 scope, e
     expect(res.hits[0]!.id).toBe('n1');
   });
 
-  it('bakes in the O4 (owner, group_id, visibility) scope; search is WHERE owner AND private', async () => {
+  it('a doc indexed WITHOUT ACL fields defaults to owner-only (visibility=private, group_id NULL, empty grants)', async () => {
     const search = (await getBackends()).search;
     await search.index(APP, { owner: 'A', type: 'note', id: 'p', title: 'alpha private' });
-    // The stored row defaults to visibility='private' (group_id NULL) — the columns exist for C31.
-    const row = await pool.query<{ visibility: string; group_id: string | null }>(
-      'SELECT visibility, group_id FROM forge_search_docs WHERE app_id=$1 AND owner=$2 AND id=$3',
+    const row = await pool.query<{ visibility: string; group_id: string | null; shared_with: string[]; shared_writers: string[] }>(
+      'SELECT visibility, group_id, shared_with, shared_writers FROM forge_search_docs WHERE app_id=$1 AND owner=$2 AND id=$3',
       [APP, 'A', 'p'],
     );
-    expect(row.rows[0]).toMatchObject({ visibility: 'private', group_id: null });
+    expect(row.rows[0]).toMatchObject({ visibility: 'private', group_id: null, shared_with: [], shared_writers: [] });
+    // No scope ⇒ owner-only. A sees own; a non-owner group member never sees a bare/private doc.
+    expect((await search.search(APP, { owner: 'A', q: 'alpha' })).hits.map((h) => h.id)).toEqual(['p']);
+    expect((await search.search(APP, { owner: 'B', q: 'alpha', scope: { groupId: 'house', canReadAll: true } })).total).toBe(0);
+  });
 
-    // Flip a row to a group-shared visibility directly (simulating the future C31 write). The
-    // owner-private search query must NOT return it — proving the scope is a real WHERE on the columns.
-    await search.index(APP, { owner: 'A', type: 'note', id: 'shared', title: 'alpha shared' });
-    await pool.query("UPDATE forge_search_docs SET visibility='shared', group_id='grp_house' WHERE app_id=$1 AND id='shared'", [APP]);
-    const res = await search.search(APP, { owner: 'A', q: 'alpha' });
-    expect(res.hits.map((h) => h.id)).toEqual(['p']); // only the private one; the shared row is out of scope
+  it('access-aware predicate in SQL: group⇒read-all same-group, shared⇒grantees only, private stays private, owner always sees own', async () => {
+    const search = (await getBackends()).search;
+    // A's household 'house': a private doc, a group doc, a doc shared to B. C lives in another group.
+    await search.index(APP, { owner: 'A', type: 'note', id: 'priv', title: 'alpha private plan', visibility: 'private', groupId: 'house' });
+    await search.index(APP, { owner: 'A', type: 'note', id: 'grp', title: 'alpha group roster', visibility: 'group', groupId: 'house' });
+    await search.index(APP, { owner: 'A', type: 'note', id: 'shr', title: 'alpha shared list', visibility: 'shared', groupId: 'house', sharedWith: ['B'], sharedWriters: ['W'] });
+
+    // Owner sees ALL of their own docs, any visibility (no scope needed).
+    expect((await search.search(APP, { owner: 'A', q: 'alpha' })).total).toBe(3);
+    // Read-all same-group member M: the group doc only (private stays private; shared needs a grant).
+    expect((await search.search(APP, { owner: 'M', q: 'alpha', scope: { groupId: 'house', canReadAll: true } })).hits.map((h) => h.id).sort()).toEqual(['grp']);
+    // B (granted the shared doc, NO read-all): only the shared doc.
+    expect((await search.search(APP, { owner: 'B', q: 'alpha', scope: { groupId: 'house', canReadAll: false } })).hits.map((h) => h.id)).toEqual(['shr']);
+    // W matches via sharedWriters (union).
+    expect((await search.search(APP, { owner: 'W', q: 'alpha', scope: { groupId: 'house', canReadAll: false } })).hits.map((h) => h.id)).toEqual(['shr']);
+    // Cross-group read-all member sees NOTHING (the group predicate is same-group only).
+    expect((await search.search(APP, { owner: 'C', q: 'alpha', scope: { groupId: 'other', canReadAll: true } })).total).toBe(0);
+    // A non-granted, non-read-all same-group member sees nothing of A's.
+    expect((await search.search(APP, { owner: 'Z', q: 'alpha', scope: { groupId: 'house', canReadAll: false } })).total).toBe(0);
+  });
+
+  it('ACL narrows BEFORE limit/paging in SQL — total is the ACL-scoped count, private docs never page in', async () => {
+    const search = (await getBackends()).search;
+    for (let i = 0; i < 5; i++) await search.index(APP, { owner: 'A', type: 'note', id: `g${i}`, title: `alpha group ${i}`, visibility: 'group', groupId: 'house' });
+    for (let i = 0; i < 3; i++) await search.index(APP, { owner: 'A', type: 'note', id: `p${i}`, title: `alpha private ${i}`, visibility: 'private', groupId: 'house' });
+    const scope = { groupId: 'house', canReadAll: true };
+    const page1 = await search.search(APP, { owner: 'M', q: 'alpha', limit: 2, offset: 0, scope });
+    expect(page1.total).toBe(5); // the ACL-narrowed count, NOT all 8
+    expect(page1.hits).toHaveLength(2);
+    const seen = new Set<string>();
+    for (let off = 0; off < 5; off += 2) for (const h of (await search.search(APP, { owner: 'M', q: 'alpha', limit: 2, offset: off, scope })).hits) seen.add(h.id);
+    expect([...seen].sort()).toEqual(['g0', 'g1', 'g2', 'g3', 'g4']); // exactly the 5 group docs, no private id
   });
 
   it('never leaks raw HTML from document content into the snippet; highlights matches with <mark>', async () => {
@@ -85,17 +114,21 @@ describe.skipIf(!HAS_PG)('P26 Postgres search backend — GIN index, O4 scope, e
       const APP2 = 'app_search_backfill';
       await fs.index(APP2, { owner: 'A', type: 'goal', id: 'g1', title: 'alpha goal' });
       await fs.index(APP2, { owner: 'B', type: 'goal', id: 'g1', title: 'beta goal' }); // same (type,id), different owner
+      // A group-shared doc: its ACL metadata must survive the move (not silently reset to owner-only).
+      await fs.index(APP2, { owner: 'A', type: 'note', id: 'shared', title: 'alpha shared roster', visibility: 'group', groupId: 'house' });
 
       await ensureSearchSchema(pool);
       await pool.query('DELETE FROM forge_search_docs WHERE app_id=$1', [APP2]);
       const pg = new PgSearchBackend(pool);
       const results = await backfillSearch(fs, pg, [APP2]);
-      expect(results).toEqual([{ app: APP2, documents: 2 }]);
+      expect(results).toEqual([{ app: APP2, documents: 3 }]);
 
       // Owner-scoping survives the move: A sees only A's doc, B only B's — same (type,id) stays distinct.
-      expect((await pg.search(APP2, { owner: 'A', q: 'alpha' })).hits.map((h) => h.id)).toEqual(['g1']);
+      expect((await pg.search(APP2, { owner: 'A', q: 'goal' })).hits.map((h) => h.id)).toEqual(['g1']);
       expect((await pg.search(APP2, { owner: 'A', q: 'beta' })).total).toBe(0);
       expect((await pg.search(APP2, { owner: 'B', q: 'beta' })).hits.map((h) => h.id)).toEqual(['g1']);
+      // ACL metadata survived: a read-all same-group member can still see the group doc after backfill.
+      expect((await pg.search(APP2, { owner: 'M', q: 'roster', scope: { groupId: 'house', canReadAll: true } })).hits.map((h) => h.id)).toEqual(['shared']);
     } finally {
       if (prev === undefined) delete process.env.FORGE_STATE_DIR;
       else process.env.FORGE_STATE_DIR = prev;

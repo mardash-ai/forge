@@ -9,6 +9,43 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.49.0] — 2026-07-15
+
+### Added
+- **C19 — access-aware search (ACL-scoped queries).** C19 indexed documents **owner-keyed** and a
+  `/search` returned **only the caller's own** docs — safe, but blind to items **shared to** the caller by
+  other members of their household/group. Search is now **access-aware**: a document may carry ACL
+  metadata, and a query may carry the caller's **scope**, so `/search` returns the caller's own docs **plus**
+  the group/shared docs they are allowed to see — with the access predicate enforced **inside the index,
+  BEFORE limit/paging** (a post-query filter would under-fetch under `limit` and corrupt `total`/pagination).
+  **Fully additive + backward compatible:** omit the scope, or index a doc without ACL metadata, and behavior
+  is **exactly as before** (owner-only). Search lives in the **data-plane**.
+  - **Per-doc ACL metadata on `POST /index` / `POST /reindex`.** A document gains four optional fields:
+    `groupId` (the household/group it belongs to — group/shared visibility is only ever matched **within the
+    same group**), `visibility` (`'private'` (default) | `'group'` | `'shared'`), and explicit grant lists
+    `sharedWith` / `sharedWriters` (opaque caller ids; unioned for read scoping). For continuity with
+    consumers that already stamp the group into `attrs`, `groupId` falls back to **`attrs.groupId`** when the
+    dedicated field is absent. A doc indexed **without** these behaves exactly as today — owner-only. An
+    invalid `visibility` value is a `422`.
+  - **Scope-aware `POST /search`.** The request gains an optional `scope: { groupId?, canReadAll? }` (the
+    caller's own group + the role capability flag "may read all of the group's docs"). The predicate applied
+    in the index is: **`owner == caller` OR (`doc.groupId == scope.groupId` AND ((`visibility=='group'` AND
+    `scope.canReadAll`) OR (`visibility=='shared'` AND `caller ∈ sharedWith ∪ sharedWriters`)))**. "Shared-to-me"
+    is matched by the caller's own `owner` id against the doc's grant lists. **Omit `scope` ⇒ owner-only.** A
+    malformed scope safely degrades to owner-only (never a 500). Results stay BM25-ranked with `<mark>`
+    snippets; the response shape is unchanged (`{ hits, total, took_ms }`).
+  - **Both store backends enforce the identical predicate.** The filesystem backend filters the candidate
+    set through the pure `docVisibleTo` predicate (the single source of truth, in `src/search/acl.ts`) before
+    ranking; the Postgres backend encodes the same predicate in SQL over the `(owner, group_id, visibility,
+    shared_with, shared_writers)` columns and applies it before `LIMIT/OFFSET`, so `total` and pagination are
+    correct on both. The owner always sees their own docs (any visibility); cross-group callers never match.
+  - **Additive, idempotent migration (Postgres).** The `group_id`/`visibility` scope columns were already
+    baked in; the new `shared_with` / `shared_writers` grant columns are added via `ADD COLUMN IF NOT EXISTS`
+    with empty-array defaults — **no data migration**. Existing indexed docs default to owner-only (private)
+    until the consumer re-indexes them **including** the ACL fields (`groupId`, `visibility`, `sharedWith`,
+    `sharedWriters`); the consumer's normal reconcile/reindex now carries those fields. FS→PG backfill
+    preserves ACL metadata verbatim.
+
 ## [0.48.0] — 2026-07-15
 
 ### Added
@@ -2008,7 +2045,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.48.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.49.0...HEAD
+[0.49.0]: https://github.com/mardash-ai/forge/compare/v0.48.0...v0.49.0
 [0.48.0]: https://github.com/mardash-ai/forge/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/mardash-ai/forge/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/mardash-ai/forge/compare/v0.45.1...v0.46.0

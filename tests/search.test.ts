@@ -7,6 +7,7 @@ import { store } from '../src/storage/store';
 import { searchStore } from '../src/storage/search-store';
 import { registerSearchRoutes } from '../src/api/search-routes';
 import { rankDocuments, tokenize, stem } from '../src/search/rank';
+import { docVisibleTo } from '../src/search/acl';
 import type { SearchDocument } from '../src/search/types';
 import { nowIso } from '../src/shared/time';
 import type { Application } from '../src/resources/types';
@@ -329,5 +330,205 @@ describe('C19 — search routes', () => {
     expect((await s2.inject({ method: 'POST', url: '/index', payload: { owner: 'A', type: 'goal', id: 'g', title: 't' } })).statusCode).toBe(404);
     expect((await s2.inject({ method: 'POST', url: '/search', payload: { owner: 'A', q: 'alpha' } })).statusCode).toBe(404);
     await s2.close();
+  });
+});
+
+// ============================================================================
+// C19 ACCESS-AWARE — the ACL predicate (pure), the file-backed store, the routes
+// ============================================================================
+
+describe('C19 access-aware — docVisibleTo (pure predicate)', () => {
+  const base = { type: 'note', id: 'n', title: 't' };
+  const HOUSE = { groupId: 'house' };
+  const SCOPE = (over: Partial<{ groupId: string; canReadAll: boolean }> = {}) => ({ groupId: 'house', ...over });
+
+  it('you ALWAYS see your own doc — any visibility, with or without a scope', () => {
+    for (const visibility of ['private', 'group', 'shared'] as const) {
+      const own = { ...base, owner: 'A', visibility, ...HOUSE };
+      expect(docVisibleTo(own, 'A')).toBe(true); // no scope
+      expect(docVisibleTo(own, 'A', SCOPE({ canReadAll: false }))).toBe(true); // with scope
+    }
+  });
+
+  it('NO scope ⇒ owner-only (backward compatible): a non-owner never matches', () => {
+    const groupDoc = { ...base, owner: 'A', visibility: 'group' as const, ...HOUSE };
+    const sharedDoc = { ...base, owner: 'A', visibility: 'shared' as const, ...HOUSE, sharedWith: ['B'] };
+    expect(docVisibleTo(groupDoc, 'B')).toBe(false);
+    expect(docVisibleTo(sharedDoc, 'B')).toBe(false);
+  });
+
+  it("a doc with NO ACL metadata is owner-only even under a scope (defaults to 'private')", () => {
+    const bare = { ...base, owner: 'A' }; // no groupId, no visibility
+    expect(docVisibleTo(bare, 'B', SCOPE({ canReadAll: true }))).toBe(false);
+  });
+
+  it("visibility 'group' is gated on scope.canReadAll AND the same group", () => {
+    const groupDoc = { ...base, owner: 'A', visibility: 'group' as const, ...HOUSE };
+    expect(docVisibleTo(groupDoc, 'B', SCOPE({ canReadAll: true }))).toBe(true); // same group + read-all
+    expect(docVisibleTo(groupDoc, 'B', SCOPE({ canReadAll: false }))).toBe(false); // no read-all
+    expect(docVisibleTo(groupDoc, 'B', SCOPE({ groupId: 'other', canReadAll: true }))).toBe(false); // other group
+    expect(docVisibleTo(groupDoc, 'B', { canReadAll: true })).toBe(false); // scope without a groupId
+  });
+
+  it("visibility 'shared' matches ONLY the caller in sharedWith ∪ sharedWriters (read-all irrelevant), same group", () => {
+    const shared = { ...base, owner: 'A', visibility: 'shared' as const, ...HOUSE, sharedWith: ['B'], sharedWriters: ['C'] };
+    expect(docVisibleTo(shared, 'B', SCOPE())).toBe(true); // in sharedWith
+    expect(docVisibleTo(shared, 'C', SCOPE())).toBe(true); // in sharedWriters
+    expect(docVisibleTo(shared, 'D', SCOPE({ canReadAll: true }))).toBe(false); // not granted — read-all doesn't help
+    expect(docVisibleTo(shared, 'B', SCOPE({ groupId: 'other' }))).toBe(false); // right grant, wrong group
+  });
+});
+
+describe('C19 access-aware — search store (file-backed ACL)', () => {
+  let dir: string;
+  let prev: string | undefined;
+  const APP = 'app_acl';
+
+  beforeEach(async () => {
+    prev = process.env.FORGE_STATE_DIR;
+    dir = await mkdtemp(path.join(tmpdir(), 'forge-search-acl-'));
+    process.env.FORGE_STATE_DIR = dir;
+    await store.init();
+  });
+  afterEach(async () => {
+    if (prev === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prev;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  // A owns a private doc, a group doc, and a doc shared to B — all in group 'house'. C is in another group.
+  const seedHousehold = async (): Promise<void> => {
+    await searchStore.index(APP, doc({ owner: 'A', type: 'note', id: 'priv', title: 'alpha private plan', visibility: 'private', groupId: 'house' }));
+    await searchStore.index(APP, doc({ owner: 'A', type: 'note', id: 'grp', title: 'alpha group roster', visibility: 'group', groupId: 'house' }));
+    await searchStore.index(APP, doc({ owner: 'A', type: 'note', id: 'shr', title: 'alpha shared list', visibility: 'shared', groupId: 'house', sharedWith: ['B'] }));
+  };
+
+  it('no scope ⇒ owner-only (unchanged): A sees all 3 of A’s docs; B sees none of them', async () => {
+    await seedHousehold();
+    expect((await searchStore.search(APP, { owner: 'A', q: 'alpha' })).total).toBe(3); // owner sees own, any visibility
+    expect((await searchStore.search(APP, { owner: 'B', q: 'alpha' })).total).toBe(0); // no scope ⇒ owner-only
+  });
+
+  it('a read-all member of the same group sees the GROUP doc (not private, not the shared-to-someone-else doc)', async () => {
+    await seedHousehold();
+    const res = await searchStore.search(APP, { owner: 'M', q: 'alpha', scope: { groupId: 'house', canReadAll: true } });
+    expect(res.hits.map((h) => h.id).sort()).toEqual(['grp']); // only the group-visible doc; private stays private, shared needs a grant
+  });
+
+  it('a NON-read-all same-group member sees only what is explicitly shared TO them', async () => {
+    await seedHousehold();
+    // B is granted the shared doc (sharedWith:['B']) but has no read-all ⇒ no group doc, no private doc.
+    const bRes = await searchStore.search(APP, { owner: 'B', q: 'alpha', scope: { groupId: 'house', canReadAll: false } });
+    expect(bRes.hits.map((h) => h.id)).toEqual(['shr']);
+    // A different member with no grant + no read-all sees nothing of A's.
+    const zRes = await searchStore.search(APP, { owner: 'Z', q: 'alpha', scope: { groupId: 'house', canReadAll: false } });
+    expect(zRes.total).toBe(0);
+  });
+
+  it('CROSS-GROUP never leaks: a read-all member of ANOTHER group sees nothing', async () => {
+    await seedHousehold();
+    const res = await searchStore.search(APP, { owner: 'C', q: 'alpha', scope: { groupId: 'other-house', canReadAll: true } });
+    expect(res.total).toBe(0);
+  });
+
+  it('the OWNER always sees own docs even while scoped as another group', async () => {
+    await seedHousehold();
+    const res = await searchStore.search(APP, { owner: 'A', q: 'alpha', scope: { groupId: 'other', canReadAll: false } });
+    expect(res.total).toBe(3); // you always see what you own
+  });
+
+  it('shared docs are matched by sharedWriters too (union), and re-index can REVOKE a grant', async () => {
+    await searchStore.index(APP, doc({ owner: 'A', type: 'note', id: 's', title: 'alpha shared', visibility: 'shared', groupId: 'house', sharedWriters: ['W'] }));
+    expect((await searchStore.search(APP, { owner: 'W', q: 'alpha', scope: { groupId: 'house' } })).total).toBe(1);
+    // re-index without W in the grant lists ⇒ W no longer sees it (ACL updated in place).
+    await searchStore.index(APP, doc({ owner: 'A', type: 'note', id: 's', title: 'alpha shared', visibility: 'shared', groupId: 'house', sharedWith: ['X'] }));
+    expect((await searchStore.search(APP, { owner: 'W', q: 'alpha', scope: { groupId: 'house' } })).total).toBe(0);
+    expect((await searchStore.search(APP, { owner: 'X', q: 'alpha', scope: { groupId: 'house' } })).total).toBe(1);
+  });
+
+  it('ACL narrows the candidate set BEFORE limit/paging — total + pagination stay correct', async () => {
+    // A owns 5 group-visible docs + 3 private docs, all matching 'alpha'. A read-all group member should
+    // see exactly the 5 group docs, paginated correctly (total=5, not 8, and never a private doc).
+    for (let i = 0; i < 5; i++) await searchStore.index(APP, doc({ owner: 'A', type: 'note', id: `g${i}`, title: `alpha group ${i}`, visibility: 'group', groupId: 'house' }));
+    for (let i = 0; i < 3; i++) await searchStore.index(APP, doc({ owner: 'A', type: 'note', id: `p${i}`, title: `alpha private ${i}`, visibility: 'private', groupId: 'house' }));
+    const scope = { groupId: 'house', canReadAll: true };
+    const page1 = await searchStore.search(APP, { owner: 'M', q: 'alpha', limit: 2, offset: 0, scope });
+    expect(page1.total).toBe(5); // pre-paging count is the ACL-narrowed set, NOT all 8
+    expect(page1.hits).toHaveLength(2);
+    const page3 = await searchStore.search(APP, { owner: 'M', q: 'alpha', limit: 2, offset: 4, scope });
+    expect(page3.hits).toHaveLength(1); // 5 total over pages of 2 ⇒ last page has 1
+    expect(page3.hits.every((h) => h.id.startsWith('g'))).toBe(true); // never a private doc
+    // Walk every page: exactly the 5 group ids, no private id ever appears.
+    const seen = new Set<string>();
+    for (let off = 0; off < 5; off += 2) for (const h of (await searchStore.search(APP, { owner: 'M', q: 'alpha', limit: 2, offset: off, scope })).hits) seen.add(h.id);
+    expect([...seen].sort()).toEqual(['g0', 'g1', 'g2', 'g3', 'g4']);
+  });
+});
+
+describe('C19 access-aware — routes (scope + ACL fields)', () => {
+  const APP = 'demo';
+  const APP_ID = 'app_demo';
+  let dir: string;
+  let prev: string | undefined;
+  let server: FastifyInstance;
+
+  const seedApp = async (): Promise<void> => {
+    const now = nowIso();
+    const application: Application = {
+      id: APP_ID, type: 'Application', app_id: APP_ID, created_at: now, updated_at: now,
+      name: APP, repo_path: '/app', platform: 'web', framework: 'nextjs', template: 'nextjs-web',
+      language: 'typescript', package_manager: 'npm',
+    };
+    await store.saveResource(application);
+  };
+
+  beforeEach(async () => {
+    prev = process.env.FORGE_STATE_DIR;
+    dir = await mkdtemp(path.join(tmpdir(), 'forge-search-acl-routes-'));
+    process.env.FORGE_STATE_DIR = dir;
+    await store.init();
+    await seedApp();
+    server = Fastify({ logger: false });
+    registerSearchRoutes(server, { defaultApp: () => APP });
+    await server.ready();
+  });
+  afterEach(async () => {
+    await server.close();
+    vi.restoreAllMocks();
+    if (prev === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prev;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const post = (url: string, payload: unknown) => server.inject({ method: 'POST', url, payload: payload as object });
+
+  it('a scoped /search returns the caller’s own docs PLUS group/shared docs the scope authorizes', async () => {
+    await post('/index', { owner: 'A', type: 'note', id: 'grp', title: 'alpha roster', visibility: 'group', groupId: 'house' });
+    await post('/index', { owner: 'A', type: 'note', id: 'shr', title: 'alpha list', visibility: 'shared', groupId: 'house', sharedWith: ['B'] });
+    await post('/index', { owner: 'B', type: 'note', id: 'own', title: 'alpha of B', visibility: 'private', groupId: 'house' });
+
+    // B: read-all member ⇒ own private doc + A's group doc + A's shared-to-B doc.
+    const b = (await post('/search', { owner: 'B', q: 'alpha', scope: { groupId: 'house', canReadAll: true } })).json();
+    expect(b.hits.map((h: { id: string }) => h.id).sort()).toEqual(['grp', 'own', 'shr']);
+
+    // Same request WITHOUT scope ⇒ owner-only (just B's own doc) — backward compatible.
+    const bNoScope = (await post('/search', { owner: 'B', q: 'alpha' })).json();
+    expect(bNoScope.hits.map((h: { id: string }) => h.id)).toEqual(['own']);
+  });
+
+  it('reads groupId from attrs when no dedicated field is sent (consumer continuity)', async () => {
+    await post('/index', { owner: 'A', type: 'note', id: 'g', title: 'alpha in attrs group', visibility: 'group', attrs: { groupId: 'house' } });
+    const res = (await post('/search', { owner: 'M', q: 'alpha', scope: { groupId: 'house', canReadAll: true } })).json();
+    expect(res.hits.map((h: { id: string }) => h.id)).toEqual(['g']); // groupId taken from attrs.groupId
+  });
+
+  it('rejects an invalid visibility value with 422', async () => {
+    const r = await post('/index', { owner: 'A', type: 'note', id: 'x', title: 't', visibility: 'public' });
+    expect(r.statusCode).toBe(422);
+  });
+
+  it('a malformed scope falls back to owner-only (never a 500)', async () => {
+    await post('/index', { owner: 'A', type: 'note', id: 'grp', title: 'alpha', visibility: 'group', groupId: 'house' });
+    const r = await post('/search', { owner: 'B', q: 'alpha', scope: 'not-an-object' });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().total).toBe(0); // owner-only fallback: B sees nothing
   });
 });

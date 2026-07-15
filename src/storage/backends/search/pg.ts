@@ -32,6 +32,12 @@ export async function ensureSearchSchema(pool: Pool): Promise<void> {
   // The weighted tsvector is maintained by a BEFORE INSERT/UPDATE trigger rather than a GENERATED
   // column: `array_to_string` (folding tags) is not IMMUTABLE, which a generated column forbids, but a
   // trigger may use any function. Same result — a title(A)/tags(B)/body(C)-weighted inverted index.
+  //
+  // The O4 (owner, group_id, visibility) scope columns were baked in at increment 2; C19 access-aware
+  // search now WIRES them and adds the explicit per-caller share grants (shared_with / shared_writers)
+  // via ADD COLUMN IF NOT EXISTS — an ADDITIVE, idempotent migration with safe defaults (empty arrays),
+  // so an existing index keeps working and needs no data migration (docs default to owner-only/private
+  // until the consumer re-indexes them WITH their ACL fields).
   await pool.query(`
     CREATE TABLE IF NOT EXISTS forge_search_docs (
       app_id     text NOT NULL,
@@ -47,9 +53,16 @@ export async function ensureSearchSchema(pool: Pool): Promise<void> {
       -- O4 ownership scope (baked in; households/C31 light up with no migration).
       group_id   text,
       visibility text NOT NULL DEFAULT 'private',
+      -- C19 access-aware explicit share grants (opaque caller ids). Empty ⇒ owner-only.
+      shared_with    text[] NOT NULL DEFAULT '{}',
+      shared_writers text[] NOT NULL DEFAULT '{}',
       tsv        tsvector,
       PRIMARY KEY (app_id, owner, type, id)
     );
+
+    -- Idempotent, additive: light up the share-grant columns on a pre-C19-ACL index without a data migration.
+    ALTER TABLE forge_search_docs ADD COLUMN IF NOT EXISTS shared_with    text[] NOT NULL DEFAULT '{}';
+    ALTER TABLE forge_search_docs ADD COLUMN IF NOT EXISTS shared_writers text[] NOT NULL DEFAULT '{}';
 
     CREATE OR REPLACE FUNCTION forge_search_tsv_update() RETURNS trigger AS $fn$
     BEGIN
@@ -67,12 +80,16 @@ export async function ensureSearchSchema(pool: Pool): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS forge_search_docs_tsv ON forge_search_docs USING GIN (tsv);
     CREATE INDEX IF NOT EXISTS forge_search_docs_scope ON forge_search_docs (app_id, owner, visibility);
+    -- Supports the group/shared branch of the access-aware predicate (a same-group widening).
+    CREATE INDEX IF NOT EXISTS forge_search_docs_group ON forge_search_docs (app_id, group_id, visibility);
   `);
 }
 
 interface DocRow {
   owner: string; type: string; id: string; title: string; body: string | null;
   tags: string[] | null; attrs: unknown; created_at: string | null; updated_at: string | null;
+  group_id?: string | null; visibility?: string | null;
+  shared_with?: string[] | null; shared_writers?: string[] | null;
 }
 function rowToDoc(r: DocRow): SearchDocument {
   return {
@@ -82,22 +99,38 @@ function rowToDoc(r: DocRow): SearchDocument {
     ...(r.attrs != null ? { attrs: r.attrs as Record<string, unknown> } : {}),
     ...(r.created_at != null ? { created_at: r.created_at } : {}),
     ...(r.updated_at != null ? { updated_at: r.updated_at } : {}),
+    // C19 ACL metadata — round-tripped so the returned/exported document mirrors what was stored (parity
+    // with the FS backend). `private` + empty grant arrays are the owner-only default and are elided.
+    ...(r.group_id != null ? { groupId: r.group_id } : {}),
+    ...(r.visibility != null && r.visibility !== 'private' ? { visibility: r.visibility as SearchDocument['visibility'] } : {}),
+    ...(Array.isArray(r.shared_with) && r.shared_with.length > 0 ? { sharedWith: r.shared_with } : {}),
+    ...(Array.isArray(r.shared_writers) && r.shared_writers.length > 0 ? { sharedWriters: r.shared_writers } : {}),
   };
 }
 
+// The columns round-tripped by index()/reindex() RETURNING and by exportApp — base fields + the C19 ACL
+// scope, so a stored doc reconstructs faithfully (parity with the FS backend, and backfill preserves ACL).
+const DOC_COLS = 'owner, type, id, title, body, tags, attrs, created_at, updated_at, group_id, visibility, shared_with, shared_writers';
+
 // One idempotent upsert (preserves created_at across re-index, exactly like the FS normalize:
-// created_at = input ?? existing ?? now; updated_at = input ?? now).
+// created_at = input ?? existing ?? now; updated_at = input ?? now). The ACL scope ($12..$15) is written
+// on every upsert with owner-only defaults (group_id NULL, visibility 'private', empty grant arrays), so
+// a doc indexed WITHOUT ACL fields is exactly owner-only, and a re-index UPDATES the scope in place.
 const UPSERT_SQL = `
-  INSERT INTO forge_search_docs (app_id, owner, type, id, title, body, tags, attrs, created_at, updated_at, group_id, visibility)
-  VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb, COALESCE($9,$11), COALESCE($10,$11), NULL, 'private')
+  INSERT INTO forge_search_docs (app_id, owner, type, id, title, body, tags, attrs, created_at, updated_at, group_id, visibility, shared_with, shared_writers)
+  VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb, COALESCE($9,$11), COALESCE($10,$11), $12, $13, $14, $15)
   ON CONFLICT (app_id, owner, type, id) DO UPDATE SET
     title      = EXCLUDED.title,
     body       = EXCLUDED.body,
     tags       = EXCLUDED.tags,
     attrs      = EXCLUDED.attrs,
     created_at = COALESCE($9, forge_search_docs.created_at),
-    updated_at = COALESCE($10, $11)
-  RETURNING owner, type, id, title, body, tags, attrs, created_at, updated_at`;
+    updated_at = COALESCE($10, $11),
+    group_id       = EXCLUDED.group_id,
+    visibility     = EXCLUDED.visibility,
+    shared_with    = EXCLUDED.shared_with,
+    shared_writers = EXCLUDED.shared_writers
+  RETURNING ${DOC_COLS}`;
 
 function upsertParams(appId: string, d: SearchDocument, now: string): unknown[] {
   return [
@@ -108,6 +141,11 @@ function upsertParams(appId: string, d: SearchDocument, now: string): unknown[] 
     d.created_at ?? null,
     d.updated_at ?? null,
     now,
+    // C19 ACL scope — owner-only defaults when the fields are absent.
+    d.groupId ?? null,
+    d.visibility ?? 'private',
+    Array.isArray(d.sharedWith) ? d.sharedWith : [],
+    Array.isArray(d.sharedWriters) ? d.sharedWriters : [],
   ];
 }
 
@@ -151,21 +189,36 @@ export class PgSearchBackend implements SearchBackend, MigratableSearchBackend {
     return (r.rowCount ?? 0) > 0;
   }
 
-  // GIN-indexed, owner-scoped, ranked. `total` is the pre-paging match count; `hits` is the page.
+  // GIN-indexed, access-aware, ranked. `total` is the pre-paging match count; `hits` is the page. The
+  // ACL predicate is applied in SQL, BEFORE limit/offset, so counts + pagination stay correct.
   async search(appId: string, query: SearchQuery): Promise<SearchResponse> {
     const started = Date.now();
     const types = query.types && query.types.length > 0 ? query.types : null;
-    // Shared filter (owner + O4 scope + type/date + the fts match). $1..$6 are the same for both queries.
+    // C19 access-aware scope. Absent (or absent groupId) ⇒ $7 is NULL ⇒ the group/shared OR-branch is
+    // dead and the predicate reduces to `owner = $3` — exactly today's owner-only search. `$3 = ANY(...)`
+    // matches "shared-to-me" (the caller ∈ the doc's shared_with ∪ shared_writers).
+    const scopeGroupId = query.scope?.groupId ?? null;
+    const canReadAll = query.scope?.canReadAll ?? false;
+    // Shared filter (owner + access predicate + type/date + the fts match). $1..$8 are the same for both.
     const filter = `
       FROM forge_search_docs, websearch_to_tsquery('english', $2) q
       WHERE app_id = $1
-        AND owner = $3
-        AND visibility = 'private'
         AND tsv @@ q
+        AND (
+          owner = $3
+          OR (
+            $7::text IS NOT NULL
+            AND group_id = $7
+            AND (
+              (visibility = 'group'  AND $8::boolean)
+              OR (visibility = 'shared' AND ($3 = ANY(shared_with) OR $3 = ANY(shared_writers)))
+            )
+          )
+        )
         AND ($4::text[] IS NULL OR type = ANY($4))
         AND ($5::text IS NULL OR (created_at IS NOT NULL AND created_at >= $5))
         AND ($6::text IS NULL OR (created_at IS NOT NULL AND created_at <= $6))`;
-    const filterParams = [appId, query.q, query.owner, types, query.date_from ?? null, query.date_to ?? null];
+    const filterParams = [appId, query.q, query.owner, types, query.date_from ?? null, query.date_to ?? null, scopeGroupId, canReadAll];
 
     const countRes = await this.pool.query<{ n: string }>(`SELECT count(*)::text AS n ${filter}`, filterParams);
     const total = Number(countRes.rows[0]!.n);
@@ -180,7 +233,7 @@ export class PgSearchBackend implements SearchBackend, MigratableSearchBackend {
               ts_headline('english', title || ' ' || coalesce(body, ''), q, '${HEADLINE_OPTS}') AS snippet
        ${filter}
        ORDER BY score DESC, updated_at DESC NULLS LAST, id ASC
-       LIMIT $7 OFFSET $8`,
+       LIMIT $9 OFFSET $10`,
       [...filterParams, limit, offset],
     );
 
@@ -198,7 +251,7 @@ export class PgSearchBackend implements SearchBackend, MigratableSearchBackend {
 
   // --- migration surface ---------------------------------------------------
   async exportApp(appId: string): Promise<SearchDocument[]> {
-    const r = await this.pool.query<DocRow>('SELECT owner, type, id, title, body, tags, attrs, created_at, updated_at FROM forge_search_docs WHERE app_id=$1', [appId]);
+    const r = await this.pool.query<DocRow>(`SELECT ${DOC_COLS} FROM forge_search_docs WHERE app_id=$1`, [appId]);
     return r.rows.map(rowToDoc);
   }
 
