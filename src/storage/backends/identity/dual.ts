@@ -5,11 +5,15 @@ import type {
   StoredUser,
   StoredSession,
   StoredRefreshToken,
+  StoredTwofaCode,
   NewUser,
   UpdateUserPatch,
   PutRefreshTokenInput,
+  PutTwofaCodeInput,
   RedeemOpts,
+  RedeemTwofaOpts,
   RefreshRedeem,
+  TwofaRedeem,
   UserScope,
   Provider,
 } from './types';
@@ -114,4 +118,13 @@ export class DualWriteIdentityBackend implements IdentityBackend {
     await this.mirror(appId);
     return r;
   }
+
+  // 2FA codes are transient + excluded from the mirror snapshot; in dual mode the read path is always
+  // Postgres (the primary), so these delegate straight through with no filesystem mirror.
+  putTwofaCode(appId: string, input: PutTwofaCodeInput): Promise<void> { return this.primary.putTwofaCode(appId, input); }
+  getTwofaCode(appId: string, id: string): Promise<StoredTwofaCode | null> { return this.primary.getTwofaCode(appId, id); }
+  redeemTwofaCode(appId: string, id: string, presentedCodeHash: string, opts: RedeemTwofaOpts): Promise<TwofaRedeem> {
+    return this.primary.redeemTwofaCode(appId, id, presentedCodeHash, opts);
+  }
+  deleteTwofaCode(appId: string, id: string): Promise<void> { return this.primary.deleteTwofaCode(appId, id); }
 }

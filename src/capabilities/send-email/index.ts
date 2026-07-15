@@ -26,8 +26,8 @@ const inputSchema = z
     subject: z.string().min(1).optional().describe('Subject line (required for an inline body)'),
     html: z.string().min(1).optional().describe('HTML body'),
     text: z.string().min(1).optional().describe('Plain-text body'),
-    template: z.enum(TEMPLATES).optional().describe('Built-in template: verify-email | reset-password'),
-    data: z.record(z.unknown()).optional().describe('Template data, e.g. { url, product?, name? }'),
+    template: z.enum(TEMPLATES).optional().describe('Built-in template: verify-email | reset-password | twofa-code'),
+    data: z.record(z.unknown()).optional().describe('Template data, e.g. { url, code?, product?, name? }'),
   })
   .superRefine((val, ctx) => {
     const hasTemplate = Boolean(val.template);
@@ -38,8 +38,8 @@ const inputSchema = z
         message: 'Provide either `template` (+ `data`) or `subject` with `html`/`text`.',
       });
     }
-    // Both built-in templates render a link C10 generated — require it here so a missing link is a
-    // clean 422 (change-input) before any send, never a delivery failure.
+    // The link templates render a URL C10 generated — require it here so a missing link is a clean 422
+    // (change-input) before any send, never a delivery failure.
     if (val.template === 'verify-email' || val.template === 'reset-password') {
       const url = (val.data as Record<string, unknown> | undefined)?.url;
       if (typeof url !== 'string' || url.length === 0) {
@@ -47,6 +47,17 @@ const inputSchema = z
           code: z.ZodIssueCode.custom,
           path: ['data', 'url'],
           message: `Template "${val.template}" requires data.url (the verification/reset link).`,
+        });
+      }
+    }
+    // The 2FA template renders a one-time code C10 generated — require it the same way.
+    if (val.template === 'twofa-code') {
+      const code = (val.data as Record<string, unknown> | undefined)?.code;
+      if (typeof code !== 'string' || code.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['data', 'code'],
+          message: 'Template "twofa-code" requires data.code (the one-time verification code).',
         });
       }
     }

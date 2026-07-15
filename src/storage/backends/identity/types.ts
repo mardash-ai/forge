@@ -23,6 +23,11 @@ export interface StoredUser {
   name?: string;
   // The designated owner/first user (migration hook, spec §8).
   is_owner: boolean;
+  // Email-based two-factor auth (C10). STRICTLY OPT-IN: absent/false ⇒ the account logs in exactly as
+  // it always has (no second-factor challenge). Only flips true after the user proves control of the
+  // account email via an enrollment code. Optional on the type so the legacy filesystem doc (which
+  // simply omits it) stays valid; every read coerces `?? false`.
+  twofa_enabled?: boolean;
   // O4 ownership model (baked in now so household/C31 needs NO second migration): every user is a
   // member of a personal GROUP-OF-ONE, auto-created at signup. Downstream per-user data is scoped
   // by (owner, group_id, visibility); the personal group is the default group_id for a solo account.
@@ -100,8 +105,56 @@ export interface NewUser {
 }
 
 export type UpdateUserPatch = Partial<
-  Pick<StoredUser, 'email_verified' | 'password_hash' | 'provider' | 'provider_user_id' | 'name' | 'is_owner'>
+  Pick<StoredUser, 'email_verified' | 'password_hash' | 'provider' | 'provider_user_id' | 'name' | 'is_owner' | 'twofa_enabled'>
 >;
+
+// An email-based two-factor one-time code, at rest (C10). Like verify/reset tokens the RAW 6-digit code
+// is NEVER stored — only its SHA-256 hash — and it is single-use + short-lived + attempt-capped. The
+// record is keyed by `id`:
+//   • login challenge  → `2fa:login:<sha256(challengeToken)>` (the client holds the opaque challenge token)
+//   • enable enrollment → `2fa:enable:<userId>`   (the endpoint is session-authenticated, so keyed by user)
+//   • disable re-verify → `2fa:disable:<userId>`
+// These are transient (minutes) and deliberately EXCLUDED from the FS↔PG migration snapshot — a backend
+// cutover just means an in-flight code must be re-requested, never a data-loss concern.
+export type TwofaPurpose = 'login' | 'enable' | 'disable';
+
+export interface StoredTwofaCode {
+  id: string;
+  user_id: string;
+  purpose: TwofaPurpose;
+  code_hash: string;
+  attempts: number;
+  expires_at: string;
+  // Login challenge only: the post-login destination to carry through to session establishment.
+  next?: string;
+  created_at: string;
+}
+
+export interface PutTwofaCodeInput {
+  id: string;
+  userId: string;
+  purpose: TwofaPurpose;
+  codeHash: string;
+  ttlSeconds: number;
+  next?: string;
+}
+
+export interface RedeemTwofaOpts {
+  maxAttempts: number;
+  now?: number;
+}
+
+// The outcome of redeeming a 2FA code, decided atomically (per-backend: FS under its per-app mutex, PG in
+// one row-locked transaction) so a concurrent double-submit can't both win or double-count an attempt.
+//   • invalid   — no such code, or it expired (record left/cleared; treat as "request a new code")
+//   • exhausted — the attempt cap was already reached; the record is consumed (start over)
+//   • mismatch  — wrong code; the attempt counter was incremented, `attemptsRemaining` says how many left
+//   • ok        — correct; the record is consumed (single-use); carries the user + purpose (+ login `next`)
+export type TwofaRedeem =
+  | { outcome: 'invalid' }
+  | { outcome: 'exhausted' }
+  | { outcome: 'mismatch'; attemptsRemaining: number }
+  | { outcome: 'ok'; userId: string; purpose: TwofaPurpose; next?: string };
 
 export interface PutRefreshTokenInput {
   tokenHash: string;
@@ -202,6 +255,12 @@ export interface IdentityBackend {
   putResetToken(appId: string, tokenHash: string, userId: string, ttlSeconds: number): Promise<void>;
   consumeVerifyToken(appId: string, tokenHash: string): Promise<string | null>;
   consumeResetToken(appId: string, tokenHash: string): Promise<string | null>;
+  // 2FA one-time codes (single-use, hashed at rest, attempt-capped). `put` UPSERTS (a fresh code for the
+  // same id replaces any prior one and RESETS attempts). `redeem` is the atomic check-and-consume above.
+  putTwofaCode(appId: string, input: PutTwofaCodeInput): Promise<void>;
+  getTwofaCode(appId: string, id: string): Promise<StoredTwofaCode | null>;
+  redeemTwofaCode(appId: string, id: string, presentedCodeHash: string, opts: RedeemTwofaOpts): Promise<TwofaRedeem>;
+  deleteTwofaCode(appId: string, id: string): Promise<void>;
   // lifecycle (test isolation + shutdown). Optional: only backends with external resources implement.
   close?(): Promise<void>;
   __truncateAllForTests?(): Promise<void>;

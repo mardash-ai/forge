@@ -1,4 +1,4 @@
-import { randomBytes, scrypt as scryptCb, timingSafeEqual, createHash, type ScryptOptions } from 'node:crypto';
+import { randomBytes, randomInt, scrypt as scryptCb, timingSafeEqual, createHash, type ScryptOptions } from 'node:crypto';
 import { readSecrets } from '../secrets-local/index';
 import { redactRecipient } from '../email-smtp/index';
 
@@ -28,6 +28,29 @@ export const SERVICE_TOKEN = 'AUTH_SERVICE_TOKEN'; // service/cron principal (§
 // Token lifetimes.
 export const VERIFY_TOKEN_TTL_SECONDS = 60 * 60 * 24; // 24h to confirm an email
 export const RESET_TOKEN_TTL_SECONDS = 60 * 60; // 1h to reset a password
+
+// Email-2FA one-time code parameters. A short-lived, single-use, attempt-capped 6-digit code emailed as
+// the second factor. Low code entropy (10^6) is deliberately compensated by the SHORT expiry + the hard
+// per-code attempt cap + single-use consumption (an offline guess of the stored SHA-256 hash is moot for
+// a code that dies in minutes). Env-overridable for ops/tests.
+export const DEFAULT_TWOFA_CODE_TTL_SECONDS = 60 * 10; // 10 minutes
+export const DEFAULT_TWOFA_MAX_ATTEMPTS = 5;
+export function twofaCodeTtlSeconds(): number {
+  const raw = Number(process.env.FORGE_AUTH_TWOFA_CODE_TTL_SECONDS);
+  return Number.isFinite(raw) && raw >= 30 && raw <= 3600 ? Math.floor(raw) : DEFAULT_TWOFA_CODE_TTL_SECONDS;
+}
+export function twofaMaxAttempts(): number {
+  const raw = Number(process.env.FORGE_AUTH_TWOFA_MAX_ATTEMPTS);
+  return Number.isFinite(raw) && raw >= 1 && raw <= 20 ? Math.floor(raw) : DEFAULT_TWOFA_MAX_ATTEMPTS;
+}
+
+// Mint a fresh email-2FA one-time code: a uniformly-random 6-digit numeric string (crypto.randomInt, no
+// modulo bias). Only its SHA-256 HASH is persisted — the raw code is emailed and never stored, exactly
+// like the verify/reset tokens above.
+export function newTwofaCode(): { code: string; hash: string } {
+  const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+  return { code, hash: hashToken(code) };
+}
 
 export const redactEmail = redactRecipient;
 

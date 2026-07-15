@@ -1,4 +1,5 @@
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
+import { timingSafeEqual } from 'node:crypto';
 import { authDir, authFile } from '../../../shared/paths';
 import { newId } from '../../../shared/ids';
 import { nowIso } from '../../../shared/time';
@@ -11,13 +12,23 @@ import {
   type StoredUser,
   type StoredSession,
   type StoredRefreshToken,
+  type StoredTwofaCode,
   type NewUser,
   type UpdateUserPatch,
   type PutRefreshTokenInput,
+  type PutTwofaCodeInput,
   type RedeemOpts,
+  type RedeemTwofaOpts,
   type RefreshRedeem,
+  type TwofaRedeem,
   type UserScope,
 } from './types';
+
+// Constant-time equality of two hex-encoded SHA-256 hashes (equal length by construction).
+function hashEquals(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
 
 // P26 — the FILESYSTEM identity backend: the legacy behavior, unchanged, moved behind the
 // IdentityBackend interface. One JSON doc per app under the (gitignored) state dir; every mutation is
@@ -39,10 +50,13 @@ interface AuthDoc {
   verify_tokens: Record<string, StoredToken>;
   reset_tokens: Record<string, StoredToken>;
   refresh_tokens: Record<string, StoredRefreshToken>;
+  // Transient email-2FA one-time codes (single-use, hashed, attempt-capped). Not part of the migration
+  // snapshot — they expire in minutes.
+  twofa_codes: Record<string, StoredTwofaCode>;
 }
 
 function emptyDoc(): AuthDoc {
-  return { users: {}, email_index: {}, provider_index: {}, sessions: {}, verify_tokens: {}, reset_tokens: {}, refresh_tokens: {} };
+  return { users: {}, email_index: {}, provider_index: {}, sessions: {}, verify_tokens: {}, reset_tokens: {}, refresh_tokens: {}, twofa_codes: {} };
 }
 
 // A solo account is a GROUP-OF-ONE. The filesystem backend has no groups table, so it synthesizes a
@@ -175,6 +189,7 @@ export class FsIdentityBackend implements IdentityBackend, MigratableIdentityBac
       for (const [id, r] of Object.entries(doc.refresh_tokens)) if (r.user_id === userId) delete doc.refresh_tokens[id];
       for (const [h, t] of Object.entries(doc.verify_tokens)) if (t.user_id === userId) delete doc.verify_tokens[h];
       for (const [h, t] of Object.entries(doc.reset_tokens)) if (t.user_id === userId) delete doc.reset_tokens[h];
+      for (const [id, c] of Object.entries(doc.twofa_codes)) if (c.user_id === userId) delete doc.twofa_codes[id];
       return { deleted: true, email };
     });
   }
@@ -383,6 +398,63 @@ export class FsIdentityBackend implements IdentityBackend, MigratableIdentityBac
     return this.mutate(appId, (doc) => consume(doc.reset_tokens, tokenHash));
   }
 
+  // --- 2FA one-time codes ---------------------------------------------------
+  async putTwofaCode(appId: string, input: PutTwofaCodeInput): Promise<void> {
+    await this.mutate(appId, (doc) => {
+      const now = nowIso();
+      doc.twofa_codes[input.id] = {
+        id: input.id,
+        user_id: input.userId,
+        purpose: input.purpose,
+        code_hash: input.codeHash,
+        attempts: 0,
+        expires_at: new Date(Date.now() + input.ttlSeconds * 1000).toISOString(),
+        ...(input.next ? { next: input.next } : {}),
+        created_at: now,
+      };
+    });
+  }
+
+  async getTwofaCode(appId: string, id: string): Promise<StoredTwofaCode | null> {
+    const rec = (await this.read(appId)).twofa_codes[id];
+    if (!rec) return null;
+    if (new Date(rec.expires_at).getTime() <= Date.now()) return null;
+    return rec;
+  }
+
+  async deleteTwofaCode(appId: string, id: string): Promise<void> {
+    await this.mutate(appId, (doc) => {
+      delete doc.twofa_codes[id];
+    });
+  }
+
+  // Atomic check-and-consume under the per-app write lock (no torn read-modify-write): a wrong code
+  // increments the attempt counter; a correct code consumes the record; the attempt cap and expiry are
+  // enforced in the same critical section so a concurrent double-submit can neither both win nor skip a
+  // count.
+  async redeemTwofaCode(appId: string, id: string, presentedCodeHash: string, opts: RedeemTwofaOpts): Promise<TwofaRedeem> {
+    return this.mutate(appId, (doc) => {
+      const nowMs = opts.now ?? Date.now();
+      const rec = doc.twofa_codes[id];
+      if (!rec || new Date(rec.expires_at).getTime() <= nowMs) {
+        if (rec) delete doc.twofa_codes[id];
+        return { outcome: 'invalid' } as TwofaRedeem;
+      }
+      if (rec.attempts >= opts.maxAttempts) {
+        delete doc.twofa_codes[id];
+        return { outcome: 'exhausted' } as TwofaRedeem;
+      }
+      if (!hashEquals(rec.code_hash, presentedCodeHash)) {
+        rec.attempts += 1;
+        const attemptsRemaining = Math.max(0, opts.maxAttempts - rec.attempts);
+        if (attemptsRemaining === 0) delete doc.twofa_codes[id];
+        return { outcome: 'mismatch', attemptsRemaining } as TwofaRedeem;
+      }
+      delete doc.twofa_codes[id];
+      return { outcome: 'ok', userId: rec.user_id, purpose: rec.purpose, ...(rec.next ? { next: rec.next } : {}) } as TwofaRedeem;
+    });
+  }
+
   // --- migration surface (backfill target / dual-write mirror) -------------
   async exportApp(appId: string): Promise<IdentitySnapshot> {
     const doc = await this.read(appId);
@@ -402,7 +474,7 @@ export class FsIdentityBackend implements IdentityBackend, MigratableIdentityBac
   async importApp(appId: string, snap: IdentitySnapshot): Promise<void> {
     await this.mutate(appId, (doc) => {
       doc.users = {}; doc.email_index = {}; doc.provider_index = {};
-      doc.sessions = {}; doc.verify_tokens = {}; doc.reset_tokens = {}; doc.refresh_tokens = {};
+      doc.sessions = {}; doc.verify_tokens = {}; doc.reset_tokens = {}; doc.refresh_tokens = {}; doc.twofa_codes = {};
       for (const u of snap.users) {
         doc.users[u.id] = u;
         doc.email_index[u.email] = u.id;

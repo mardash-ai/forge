@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
+import { timingSafeEqual } from 'node:crypto';
 import { newId } from '../../../shared/ids';
 import { nowIso } from '../../../shared/time';
 import {
@@ -8,11 +9,15 @@ import {
   type StoredUser,
   type StoredSession,
   type StoredRefreshToken,
+  type StoredTwofaCode,
   type NewUser,
   type UpdateUserPatch,
   type PutRefreshTokenInput,
+  type PutTwofaCodeInput,
   type RedeemOpts,
+  type RedeemTwofaOpts,
   type RefreshRedeem,
+  type TwofaRedeem,
   type UserScope,
   type GroupMembership,
   type GroupRole,
@@ -20,6 +25,12 @@ import {
   type IdentitySnapshot,
   type StoredGroup,
 } from './types';
+
+// Constant-time equality of two hex-encoded SHA-256 hashes (equal length by construction).
+function hashEquals(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
 
 // P26 — the POSTGRES identity backend: the migration target for C10. Same IdentityBackend contract
 // the filesystem backend satisfies, so the auth routes never change. Every MUTATION runs in ONE
@@ -115,7 +126,26 @@ export async function ensureIdentitySchema(pool: Pool): Promise<void> {
       expires_at timestamptz NOT NULL, used_at timestamptz,
       PRIMARY KEY (app_id, id)
     );
+
+    -- Email-based 2FA one-time codes (transient, single-use, attempt-capped; hashed at rest).
+    CREATE TABLE IF NOT EXISTS forge_identity_twofa_codes (
+      app_id     text        NOT NULL,
+      id         text        NOT NULL,
+      user_id    text        NOT NULL,
+      purpose    text        NOT NULL,
+      code_hash  text        NOT NULL,
+      attempts   integer     NOT NULL DEFAULT 0,
+      expires_at timestamptz NOT NULL,
+      next       text,
+      created_at timestamptz NOT NULL,
+      PRIMARY KEY (app_id, id)
+    );
+    CREATE INDEX IF NOT EXISTS forge_identity_twofa_codes_user
+      ON forge_identity_twofa_codes (app_id, user_id);
   `);
+  // Additive column for an already-created users table (opt-in 2FA flag; default false ⇒ every existing
+  // account keeps logging in exactly as before). Separate statement so it also lands on pre-existing DBs.
+  await pool.query(`ALTER TABLE forge_identity_users ADD COLUMN IF NOT EXISTS twofa_enabled boolean NOT NULL DEFAULT false`);
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +157,7 @@ const isoOrNull = (v: unknown): string | null => (v == null ? null : iso(v));
 interface UserRow {
   id: string; email: string; email_verified: boolean; password_hash: string | null;
   provider: string | null; provider_user_id: string | null; name: string | null;
-  is_owner: boolean; personal_group_id: string | null; created_at: Date; updated_at: Date;
+  is_owner: boolean; twofa_enabled: boolean; personal_group_id: string | null; created_at: Date; updated_at: Date;
 }
 
 function rowToUser(r: UserRow): StoredUser {
@@ -140,6 +170,7 @@ function rowToUser(r: UserRow): StoredUser {
     ...(r.provider_user_id != null ? { provider_user_id: r.provider_user_id } : {}),
     ...(r.name != null ? { name: r.name } : {}),
     is_owner: r.is_owner,
+    ...(r.twofa_enabled ? { twofa_enabled: true } : {}),
     ...(r.personal_group_id != null ? { personal_group_id: r.personal_group_id } : {}),
     created_at: iso(r.created_at),
     updated_at: iso(r.updated_at),
@@ -152,6 +183,16 @@ function rowToSession(r: SessionRow): StoredSession {
     id: r.id, user_id: r.user_id,
     created_at: iso(r.created_at), expires_at: iso(r.expires_at), last_seen_at: iso(r.last_seen_at),
     revoked: r.revoked,
+  };
+}
+
+interface TwofaRow { id: string; user_id: string; purpose: string; code_hash: string; attempts: number; expires_at: Date; next: string | null; created_at: Date; }
+function rowToTwofa(r: TwofaRow): StoredTwofaCode {
+  return {
+    id: r.id, user_id: r.user_id, purpose: r.purpose as StoredTwofaCode['purpose'],
+    code_hash: r.code_hash, attempts: r.attempts, expires_at: iso(r.expires_at),
+    ...(r.next != null ? { next: r.next } : {}),
+    created_at: iso(r.created_at),
   };
 }
 
@@ -247,12 +288,13 @@ export class PgIdentityBackend implements IdentityBackend, MigratableIdentityBac
         provider_user_id: patch.provider_user_id ?? u.provider_user_id,
         name: patch.name ?? u.name,
         is_owner: patch.is_owner ?? u.is_owner,
+        twofa_enabled: patch.twofa_enabled ?? u.twofa_enabled,
       };
       const upd = await c.query<UserRow>(
         `UPDATE forge_identity_users
-           SET email_verified=$3, password_hash=$4, provider=$5, provider_user_id=$6, name=$7, is_owner=$8, updated_at=$9
+           SET email_verified=$3, password_hash=$4, provider=$5, provider_user_id=$6, name=$7, is_owner=$8, twofa_enabled=$9, updated_at=$10
          WHERE app_id=$1 AND id=$2 RETURNING *`,
-        [appId, userId, next.email_verified, next.password_hash, next.provider, next.provider_user_id, next.name, next.is_owner, nowIso()],
+        [appId, userId, next.email_verified, next.password_hash, next.provider, next.provider_user_id, next.name, next.is_owner, next.twofa_enabled, nowIso()],
       );
       return rowToUser(upd.rows[0]!);
     });
@@ -272,6 +314,7 @@ export class PgIdentityBackend implements IdentityBackend, MigratableIdentityBac
       await c.query('DELETE FROM forge_identity_sessions WHERE app_id=$1 AND user_id=$2', [appId, userId]);
       await c.query('DELETE FROM forge_identity_verify_tokens WHERE app_id=$1 AND user_id=$2', [appId, userId]);
       await c.query('DELETE FROM forge_identity_reset_tokens WHERE app_id=$1 AND user_id=$2', [appId, userId]);
+      await c.query('DELETE FROM forge_identity_twofa_codes WHERE app_id=$1 AND user_id=$2', [appId, userId]);
       await c.query('DELETE FROM forge_identity_group_members WHERE app_id=$1 AND user_id=$2', [appId, userId]);
       if (personal_group_id) {
         await c.query('DELETE FROM forge_identity_groups WHERE app_id=$1 AND id=$2', [appId, personal_group_id]);
@@ -493,6 +536,62 @@ export class PgIdentityBackend implements IdentityBackend, MigratableIdentityBac
     return r.rows[0] ? r.rows[0].user_id : null;
   }
 
+  // --- 2FA one-time codes (single-use, hashed at rest, attempt-capped) -----
+  async putTwofaCode(appId: string, input: PutTwofaCodeInput): Promise<void> {
+    const now = Date.now();
+    await this.pool.query(
+      `INSERT INTO forge_identity_twofa_codes (app_id,id,user_id,purpose,code_hash,attempts,expires_at,next,created_at)
+       VALUES ($1,$2,$3,$4,$5,0,$6,$7,$8)
+       ON CONFLICT (app_id,id) DO UPDATE SET
+         user_id=EXCLUDED.user_id, purpose=EXCLUDED.purpose, code_hash=EXCLUDED.code_hash,
+         attempts=0, expires_at=EXCLUDED.expires_at, next=EXCLUDED.next, created_at=EXCLUDED.created_at`,
+      [appId, input.id, input.userId, input.purpose, input.codeHash, new Date(now + input.ttlSeconds * 1000).toISOString(), input.next ?? null, new Date(now).toISOString()],
+    );
+  }
+
+  async getTwofaCode(appId: string, id: string): Promise<StoredTwofaCode | null> {
+    const r = await this.pool.query<TwofaRow>(
+      'SELECT * FROM forge_identity_twofa_codes WHERE app_id=$1 AND id=$2 AND expires_at > now()',
+      [appId, id],
+    );
+    return r.rows[0] ? rowToTwofa(r.rows[0]) : null;
+  }
+
+  async deleteTwofaCode(appId: string, id: string): Promise<void> {
+    await this.pool.query('DELETE FROM forge_identity_twofa_codes WHERE app_id=$1 AND id=$2', [appId, id]);
+  }
+
+  // The check-and-consume decision in ONE row-locked transaction (FOR UPDATE), so a concurrent
+  // double-submit of the same code serializes: a wrong code increments the attempt counter, a correct
+  // code deletes the row (single-use), the cap + expiry are enforced atomically — P27-style race safety.
+  async redeemTwofaCode(appId: string, id: string, presentedCodeHash: string, opts: RedeemTwofaOpts): Promise<TwofaRedeem> {
+    const nowMs = opts.now ?? Date.now();
+    return this.withTx(async (c) => {
+      const cur = await c.query<TwofaRow>('SELECT * FROM forge_identity_twofa_codes WHERE app_id=$1 AND id=$2 FOR UPDATE', [appId, id]);
+      const rec = cur.rows[0];
+      if (!rec || new Date(rec.expires_at).getTime() <= nowMs) {
+        if (rec) await c.query('DELETE FROM forge_identity_twofa_codes WHERE app_id=$1 AND id=$2', [appId, id]);
+        return { outcome: 'invalid' };
+      }
+      if (rec.attempts >= opts.maxAttempts) {
+        await c.query('DELETE FROM forge_identity_twofa_codes WHERE app_id=$1 AND id=$2', [appId, id]);
+        return { outcome: 'exhausted' };
+      }
+      if (!hashEquals(rec.code_hash, presentedCodeHash)) {
+        const attempts = rec.attempts + 1;
+        const attemptsRemaining = Math.max(0, opts.maxAttempts - attempts);
+        if (attemptsRemaining === 0) {
+          await c.query('DELETE FROM forge_identity_twofa_codes WHERE app_id=$1 AND id=$2', [appId, id]);
+        } else {
+          await c.query('UPDATE forge_identity_twofa_codes SET attempts=$3 WHERE app_id=$1 AND id=$2', [appId, id, attempts]);
+        }
+        return { outcome: 'mismatch', attemptsRemaining };
+      }
+      await c.query('DELETE FROM forge_identity_twofa_codes WHERE app_id=$1 AND id=$2', [appId, id]);
+      return { outcome: 'ok', userId: rec.user_id, purpose: rec.purpose as StoredTwofaCode['purpose'], ...(rec.next != null ? { next: rec.next } : {}) };
+    });
+  }
+
   // --- migration surface (backfill source / dual-write target) -------------
   async exportApp(appId: string): Promise<IdentitySnapshot> {
     const [users, groups, members, sessions, refresh, verify, reset] = await Promise.all([
@@ -518,14 +617,14 @@ export class PgIdentityBackend implements IdentityBackend, MigratableIdentityBac
 
   async importApp(appId: string, snap: IdentitySnapshot): Promise<void> {
     await this.withTx(async (c) => {
-      for (const t of ['forge_identity_users', 'forge_identity_groups', 'forge_identity_group_members', 'forge_identity_sessions', 'forge_identity_refresh_tokens', 'forge_identity_verify_tokens', 'forge_identity_reset_tokens']) {
+      for (const t of ['forge_identity_users', 'forge_identity_groups', 'forge_identity_group_members', 'forge_identity_sessions', 'forge_identity_refresh_tokens', 'forge_identity_verify_tokens', 'forge_identity_reset_tokens', 'forge_identity_twofa_codes']) {
         await c.query(`DELETE FROM ${t} WHERE app_id=$1`, [appId]);
       }
       for (const u of snap.users) {
         await c.query(
-          `INSERT INTO forge_identity_users (app_id,id,email,email_verified,password_hash,provider,provider_user_id,name,is_owner,personal_group_id,created_at,updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-          [appId, u.id, u.email, u.email_verified, u.password_hash ?? null, u.provider ?? null, u.provider_user_id ?? null, u.name ?? null, u.is_owner, u.personal_group_id ?? null, u.created_at, u.updated_at],
+          `INSERT INTO forge_identity_users (app_id,id,email,email_verified,password_hash,provider,provider_user_id,name,is_owner,twofa_enabled,personal_group_id,created_at,updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          [appId, u.id, u.email, u.email_verified, u.password_hash ?? null, u.provider ?? null, u.provider_user_id ?? null, u.name ?? null, u.is_owner, u.twofa_enabled ?? false, u.personal_group_id ?? null, u.created_at, u.updated_at],
         );
       }
       for (const g of snap.groups) {
@@ -554,6 +653,6 @@ export class PgIdentityBackend implements IdentityBackend, MigratableIdentityBac
     await this.pool.query(`TRUNCATE
       forge_identity_users, forge_identity_groups, forge_identity_group_members,
       forge_identity_sessions, forge_identity_refresh_tokens,
-      forge_identity_verify_tokens, forge_identity_reset_tokens`);
+      forge_identity_verify_tokens, forge_identity_reset_tokens, forge_identity_twofa_codes`);
   }
 }

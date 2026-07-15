@@ -9,6 +9,55 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.46.0] — 2026-07-15
+
+### Added
+- **Account-security extensions on the C10 identity edge — password CHANGE + strictly-opt-in email
+  two-factor auth.** Both are **additive**; existing auth behavior is unchanged. All new endpoints live on
+  the same proxied `/auth/*` surface consumers already use.
+  - **`has_password` + `twofa_enabled` on the session/"me" payload.** `GET /auth/session` (and
+    `POST /auth/refresh`) now also return `has_password` (false for a Google-only account) and
+    `twofa_enabled`, so a client knows whether to offer a change-password form / a 2FA toggle. Response is
+    now `{ userId, email, exp, has_password, twofa_enabled }`.
+  - **`POST /auth/password` — change password (authenticated).** JSON body
+    `{ current_password, new_password }`. Verifies the live session **and** the current password, enforces
+    the existing ≥8-char policy on the new one, then updates it and **signs out every other device**
+    (revokes all sessions + refresh tokens) while keeping the calling device signed in on a freshly-minted
+    session (new `Set-Cookie`s). Errors (`{ error: { code, message, retry } }`): `unauthenticated` (401),
+    `no_password` (409 — a Google-only account; use reset), `weak_password` (422),
+    `current_password_incorrect` (403), `auth_not_configured` (503).
+  - **Email second factor (opt-in).** The second factor is a **one-time 6-digit code emailed** to the
+    account address (reuses C12 SendEmail — new built-in `twofa-code` template; no authenticator app /
+    recovery codes for launch, since email access is already the recovery path). Codes are single-use,
+    short-lived (10 min, `FORGE_AUTH_TWOFA_CODE_TTL_SECONDS`), attempt-capped (5,
+    `FORGE_AUTH_TWOFA_MAX_ATTEMPTS`), and stored **hashed** — the raw code is never persisted or logged.
+  - **`POST /auth/2fa/enable` (authenticated, two-phase).** No body → emails a code and returns
+    `{ pending: true, delivery: "email", sent_to, expires_in }`; `{ code }` → verifies it and turns 2FA on
+    (`{ twofa_enabled: true }`). `already_enabled` (409), `email_unavailable` (503), `code_incorrect` (401,
+    with `attempts_remaining`), `code_expired` (400), `too_many_attempts` (429).
+  - **`POST /auth/2fa/disable` (authenticated).** Requires re-verification: `{ password }` (current
+    password) **or** `{ code }` (emailed) → `{ twofa_enabled: false }`; with neither, starts re-verification
+    by emailing a code (`{ pending: true, … }`). `not_enabled` (409), `current_password_incorrect` (403).
+  - **Login challenge — a 2FA-enabled login never issues a session immediately.** When a `twofa_enabled`
+    user authenticates by **password OR Google**, the platform withholds the session and instead emails a
+    code and returns a **`2fa_required` challenge** carrying a short-lived pending token. A JSON caller gets
+    `200 { status: "2fa_required", challenge, delivery: "email", sent_to, expires_in, methods: ["email"] }`
+    (no cookies); a browser gets the hosted **"enter your code"** page. The real session is issued **only**
+    by **`POST /auth/2fa/verify`** `{ challenge, code, next? }` (content-negotiated: JSON →
+    `{ userId, email, has_password, twofa_enabled }` + cookies; hosted form → 303 to `next`). **`POST
+    /auth/2fa/resend`** `{ challenge }` re-emails a fresh code. `challenge_invalid` (400),
+    `code_incorrect` (401 + `attempts_remaining`), `too_many_attempts` (429).
+  - **The non-negotiable safety property:** a user who has **not** enabled 2FA logs in **exactly as
+    before** — an immediate session, zero emailed codes, no challenge, existing sessions untouched. Covered
+    by dedicated tests (form **and** JSON login), alongside the change-password + full challenge/verify/
+    resend/disable flows and a no-code-leak assertion.
+  - New identity events (redacted email + ids only, never the code/hash): `TwofaEnabled`,
+    `TwofaDisabled`, `TwofaChallengeIssued`, `TwofaChallengeVerified`. New identity-store surface
+    (`twofa_enabled` user flag + a single-use, attempt-capped `twofa_codes` store) implemented across the
+    filesystem, Postgres (additive `ALTER TABLE … ADD COLUMN IF NOT EXISTS twofa_enabled` + a new
+    `forge_identity_twofa_codes` table), and dual-write backends; the 2FA codes are transient and
+    deliberately excluded from the FS↔PG migration snapshot. Identity ships in the **data-plane** image.
+
 ## [0.45.1] — 2026-07-15
 
 ### Fixed
@@ -1893,7 +1942,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.45.1...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.46.0...HEAD
+[0.46.0]: https://github.com/mardash-ai/forge/compare/v0.45.1...v0.46.0
 [0.45.1]: https://github.com/mardash-ai/forge/compare/v0.45.0...v0.45.1
 [0.45.0]: https://github.com/mardash-ai/forge/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/mardash-ai/forge/compare/v0.43.0...v0.44.0

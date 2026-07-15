@@ -54,6 +54,12 @@ export const EVENT_TYPES = [
   'PasswordResetRequested',
   'PasswordChanged',
   'OwnerSeeded',
+  // Email-based two-factor auth (C10) — strictly opt-in. Facts carry a REDACTED email + ids only;
+  // never the one-time code, its hash, or a pending/session token.
+  'TwofaEnabled',
+  'TwofaDisabled',
+  'TwofaChallengeIssued',
+  'TwofaChallengeVerified',
   // Administrative principal teardown — a login identity + its credentials were deleted so it no
   // longer authenticates and its email/handle is freed for re-registration (account closure / RTBF).
   'UserDeleted',

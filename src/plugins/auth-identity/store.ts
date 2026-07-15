@@ -16,11 +16,15 @@ import type {
   StoredUser as BackendStoredUser,
   StoredSession as BackendStoredSession,
   StoredRefreshToken as BackendStoredRefreshToken,
+  StoredTwofaCode as BackendStoredTwofaCode,
   RefreshRedeem as BackendRefreshRedeem,
+  TwofaRedeem as BackendTwofaRedeem,
   NewUser,
   UpdateUserPatch,
   PutRefreshTokenInput,
+  PutTwofaCodeInput,
   RedeemOpts,
+  RedeemTwofaOpts,
   DeleteUserResult,
 } from '../../storage/backends/identity/types';
 
@@ -29,8 +33,10 @@ export type Provider = BackendProvider;
 export type StoredUser = BackendStoredUser;
 export type StoredSession = BackendStoredSession;
 export type StoredRefreshToken = BackendStoredRefreshToken;
+export type StoredTwofaCode = BackendStoredTwofaCode;
 export type RefreshRedeem = BackendRefreshRedeem;
-export type { DeleteUserResult } from '../../storage/backends/identity/types';
+export type TwofaRedeem = BackendTwofaRedeem;
+export type { DeleteUserResult, TwofaPurpose } from '../../storage/backends/identity/types';
 export { EmailTakenError, canonicalEmail } from '../../storage/backends/identity/types';
 
 const backend = () => getBackends().then((b) => b.identity);
@@ -144,4 +150,22 @@ export async function consumeVerifyToken(appId: string, tokenHash: string): Prom
 
 export async function consumeResetToken(appId: string, tokenHash: string): Promise<string | null> {
   return (await backend()).consumeResetToken(appId, tokenHash);
+}
+
+// --- 2FA one-time codes (email second factor, C10) ------------------------------
+
+export async function putTwofaCode(appId: string, input: PutTwofaCodeInput): Promise<void> {
+  return (await backend()).putTwofaCode(appId, input);
+}
+
+export async function getTwofaCode(appId: string, id: string): Promise<StoredTwofaCode | null> {
+  return (await backend()).getTwofaCode(appId, id);
+}
+
+export async function redeemTwofaCode(appId: string, id: string, presentedCodeHash: string, opts: RedeemTwofaOpts): Promise<TwofaRedeem> {
+  return (await backend()).redeemTwofaCode(appId, id, presentedCodeHash, opts);
+}
+
+export async function deleteTwofaCode(appId: string, id: string): Promise<void> {
+  return (await backend()).deleteTwofaCode(appId, id);
 }

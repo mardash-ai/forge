@@ -24,8 +24,9 @@ export const SMTP_URL_SECRET = 'SMTP_URL';
 export const FROM_SECRET = 'EMAIL_FROM';
 
 // Built-in templates C10 (identity/auth) composes with. C12 only RENDERS + DELIVERS them; C10 owns the
-// token/link generation and passes the finished link in `data.url` — the link is NOT C12's concern.
-export const TEMPLATES = ['verify-email', 'reset-password'] as const;
+// token/link/code generation and passes the finished value (a link in `data.url`, or a one-time code in
+// `data.code`) — that generation is NOT C12's concern.
+export const TEMPLATES = ['verify-email', 'reset-password', 'twofa-code'] as const;
 export type TemplateName = (typeof TEMPLATES)[number];
 
 const CRLF = '\r\n';
@@ -146,6 +147,27 @@ export function renderTemplate(
   const greetHtml = who ? `<p>Hi ${escapeHtml(who)},</p>` : '';
   const paste = `<p style="color:#6b7280;font-size:13px;">Or paste this link into your browser:<br>` +
     `<a href="${eurl}" style="color:#2563eb;word-break:break-all;">${eurl}</a></p>`;
+
+  if (name === 'twofa-code') {
+    // Second-factor one-time code (email 2FA). No link — the value is the code itself; `data.code` is
+    // required + validated upstream in the Capability schema.
+    const code = String(data.code ?? '');
+    const ecode = escapeHtml(code);
+    return {
+      subject: 'Your verification code',
+      text:
+        `${greetText}Your verification code for ${product} is:\n\n${code}\n\n` +
+        `Enter it to finish signing in. It expires shortly and can be used once.\n\n` +
+        `If you didn't try to sign in, someone may have your password — change it as a precaution.`,
+      html: htmlLayout(
+        `${greetHtml}<p>Your verification code for ${eproduct} is:</p>` +
+          `<p style="margin:24px 0;font-size:30px;font-weight:700;letter-spacing:6px;` +
+          `font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#111827;">${ecode}</p>` +
+          `<p style="color:#6b7280;font-size:13px;">Enter it to finish signing in. It expires shortly and can be used once.</p>` +
+          `<p style="color:#6b7280;font-size:13px;">If you didn't try to sign in, someone may have your password — change it as a precaution.</p>`,
+      ),
+    };
+  }
 
   if (name === 'verify-email') {
     return {

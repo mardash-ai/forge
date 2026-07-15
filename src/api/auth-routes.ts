@@ -29,6 +29,9 @@ import {
   verifyPassword,
   newToken,
   hashToken,
+  newTwofaCode,
+  twofaCodeTtlSeconds,
+  twofaMaxAttempts,
   resolveAuthConfig,
   getOAuthProvider,
   redactEmail,
@@ -64,10 +67,22 @@ import {
 //   GET  /auth/verify?token=                                       -> confirm email
 //   GET  /auth/google | /auth/google/callback                     -> OAuth
 //   GET|POST /auth/logout                                          -> clear session
-//   GET  /auth/session                                             -> { userId, email } | 401 (accessor)
+//   GET  /auth/session                                             -> { userId, email, has_password, twofa_enabled } | 401
 //   GET  /auth/config                                             -> which methods are enabled
+//   POST /auth/password        { current_password, new_password }  -> change password (authenticated; JSON)
+//   POST /auth/2fa/enable      { code? }                           -> enable email-2FA (send code, then confirm; JSON)
+//   POST /auth/2fa/disable     { password? | code? }               -> disable email-2FA (re-verify; JSON)
+//   POST /auth/2fa/verify      { challenge, code, next? }          -> complete a 2FA-gated login (challenge)
+//   POST /auth/2fa/resend      { challenge }                       -> re-email a login-challenge code
 //   POST /auth/admin/seed-owner  { app?, email, password? }        -> owner migration hook (§8)
 //   DELETE /auth/admin/identity/:userId                            -> delete identity + creds (SERVICE token; idempotent)
+//
+// The two account-security features (2026-07-15, additive): (A) password CHANGE for password accounts,
+// gated on the current session + current password; (B) STRICTLY OPT-IN email 2FA — a user who never
+// enables it logs in exactly as before (zero behavior change). A 2FA-enabled login (password OR Google)
+// does NOT issue a session immediately: it returns a "2fa_required" challenge (short-lived pending token
+// + an emailed one-time code) that the client completes at POST /auth/2fa/verify. `has_password` +
+// `twofa_enabled` on GET /auth/session tell a consumer which forms to offer.
 
 const OAUTH_STATE_COOKIE = 'forge_oauth_state';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -177,17 +192,17 @@ export function registerAuthRoutes(
     return { claims, session: s };
   }
 
-  // Issue a session (server record + signed cookie) and 303-redirect. Shared by
-  // every successful sign-in path (password login, OAuth callback).
-  async function establishSession(
+  // Mint a real session for `user`: a server-side session record + a signed short access cookie + an
+  // opaque revocable refresh cookie, emitting UserAuthenticated. Returns the two Set-Cookie lines WITHOUT
+  // sending — so both the redirecting sign-in paths and the JSON completions (2FA verify, password change)
+  // share the exact same session issuance. This is the seam a 2FA challenge sits in front of: nothing here
+  // runs until the second factor is proven.
+  async function mintSessionCookies(
     req: FastifyRequest,
-    reply: FastifyReply,
     appId: string,
     cfg: AuthConfig,
     user: authStore.StoredUser,
-    location: string,
-    extraCookies: string[] = [],
-  ) {
+  ): Promise<string[]> {
     const secure = requestIsSecure(req);
     const session = await authStore.createSession(appId, user.id, DEFAULT_SESSION_TTL_SECONDS);
     const now = Math.floor(Date.now() / 1000);
@@ -202,7 +217,137 @@ export function registerAuthRoutes(
     await authStore.putRefreshToken(appId, { tokenHash: hashToken(refreshRaw), userId: user.id, sessionId: session.id, ttlSeconds: refreshTtlSeconds() });
     const refreshC = refreshCookie(refreshRaw, { secure, maxAgeSeconds: refreshTtlSeconds() });
     await emit(appId, 'UserAuthenticated', user.id, user.email, { method: user.provider ?? 'password' });
-    reply.header('set-cookie', [accessC, refreshC, ...extraCookies]).code(303).header('location', location).send();
+    return [accessC, refreshC];
+  }
+
+  // Issue a session and 303-redirect. Shared by every successful sign-in path (password login, OAuth
+  // callback) whose user does NOT have 2FA enabled — a 2FA user is diverted to a challenge first.
+  async function establishSession(
+    req: FastifyRequest,
+    reply: FastifyReply,
+    appId: string,
+    cfg: AuthConfig,
+    user: authStore.StoredUser,
+    location: string,
+    extraCookies: string[] = [],
+  ) {
+    const cookies = await mintSessionCookies(req, appId, cfg, user);
+    reply.header('set-cookie', [...cookies, ...extraCookies]).code(303).header('location', location).send();
+  }
+
+  // Whether the client wants a JSON response (a programmatic caller) vs. the hosted HTML flow (a browser
+  // form). Used by the login + 2FA-verify paths to content-negotiate: an HTML form gets a rendered page /
+  // 303 redirect (unchanged hosted UX), a JSON client gets a structured challenge / identity.
+  function wantsJson(req: FastifyRequest): boolean {
+    const ctype = String(req.headers['content-type'] ?? '');
+    if (ctype.includes('application/json')) return true;
+    const accept = String(req.headers['accept'] ?? '');
+    return accept.includes('application/json') && !accept.includes('text/html');
+  }
+
+  // The identity flags a consumer needs to decide which account-security forms to offer:
+  //   has_password  — the account can change its password (false for a Google-only account)
+  //   twofa_enabled — email 2FA is on for this account
+  async function identityFields(appId: string, userId: string): Promise<{ has_password: boolean; twofa_enabled: boolean }> {
+    const u = await authStore.getUser(appId, userId);
+    return { has_password: Boolean(u?.password_hash), twofa_enabled: Boolean(u?.twofa_enabled) };
+  }
+
+  // The authenticated user behind a live session, or null (used by the session-gated account-security
+  // endpoints: password change, 2FA enable/disable).
+  async function authedUser(req: FastifyRequest, appId: string, cfg: AuthConfig): Promise<authStore.StoredUser | null> {
+    const live = await liveSession(req, appId, cfg);
+    if (!live) return null;
+    return authStore.getUser(appId, live.claims.userId);
+  }
+
+  // Deterministic 2FA-code keys. Login is keyed by the opaque challenge token (the only thing the
+  // unauthenticated verify endpoint holds); enroll/disable are session-authenticated, so keyed by user.
+  const twofaLoginId = (challengeRaw: string) => `2fa:login:${hashToken(challengeRaw)}`;
+  const twofaEnableId = (userId: string) => `2fa:enable:${userId}`;
+  const twofaDisableId = (userId: string) => `2fa:disable:${userId}`;
+
+  // Mint + email a one-time 2FA code, storing only its hash. Returns true when the app has email
+  // configured (the code was handed to C12 for delivery), false when email is unconfigured (the caller
+  // surfaces a clean "can't deliver" rather than a crash). A transient transport failure still returns
+  // true — the code is live and the client can resend.
+  async function issueTwofaCode(
+    appName: string,
+    appId: string,
+    user: authStore.StoredUser,
+    id: string,
+    purpose: 'login' | 'enable' | 'disable',
+    next?: string,
+  ): Promise<boolean> {
+    const emailCfg = await resolveEmailConfig(appId);
+    if (!emailCfg.ok) return false;
+    const otp = newTwofaCode();
+    await authStore.putTwofaCode(appId, {
+      id,
+      userId: user.id,
+      purpose,
+      codeHash: otp.hash,
+      ttlSeconds: twofaCodeTtlSeconds(),
+      ...(next ? { next } : {}),
+    });
+    // Fact only — never the code or its hash (emit redacts the email).
+    await emit(appId, 'TwofaChallengeIssued', user.id, user.email, { purpose });
+    try {
+      await executeCapability('send-email', { app: appName, to: user.email, template: 'twofa-code', data: { code: otp.code } }, SYSTEM_ACTOR);
+    } catch {
+      // C12 unconfigured mid-flight (shouldn't happen — we checked ok above) — the stored code simply
+      // expires. The client can resend. Never crash the auth flow.
+    }
+    return true;
+  }
+
+  // A structured JSON error, in the same `{ error: { code, message, retry } }` envelope the rest of the
+  // auth surface uses (retry ∈ change-input | no | needs-human).
+  function jerr(
+    reply: FastifyReply,
+    status: number,
+    code: string,
+    message: string,
+    retry: 'change-input' | 'no' | 'needs-human',
+    extra: Record<string, unknown> = {},
+  ) {
+    return reply.code(status).send({ error: { code, message, retry, ...extra } });
+  }
+
+  // Divert a would-be login (password OR Google) whose user has 2FA enabled: mint a short-lived pending
+  // challenge, email a one-time code, and return a "2fa_required" response (JSON challenge, or the hosted
+  // enter-code page). The real session is issued ONLY after POST /auth/2fa/verify succeeds. No session,
+  // access token, or refresh token exists until then — the second factor strictly gates issuance.
+  async function startLoginChallenge(
+    req: FastifyRequest,
+    reply: FastifyReply,
+    app_: { id: string; name: string },
+    cfg: AuthConfig,
+    user: authStore.StoredUser,
+    next: string,
+  ) {
+    const json = wantsJson(req);
+    const challengeRaw = newToken().token;
+    const delivered = await issueTwofaCode(app_.name, app_.id, user, twofaLoginId(challengeRaw), 'login', next);
+    if (!delivered) {
+      // 2FA is on but the code can't be delivered (email unconfigured). Fail CLOSED — never fall back to a
+      // password-only session, which would silently bypass the second factor.
+      if (json) return jerr(reply, 503, 'twofa_undeliverable', 'Two-factor codes cannot be delivered right now. Contact support.', 'needs-human');
+      const theme = await themeFor(app_.id);
+      return htmlReply(reply, 503, loginPage({ next, google: Boolean(cfg.google), error: 'We could not send your verification code. Please try again later.', email: user.email, theme }));
+    }
+    if (json) {
+      return reply.code(200).send({
+        status: '2fa_required',
+        challenge: challengeRaw,
+        delivery: 'email',
+        sent_to: redactEmail(user.email),
+        expires_in: twofaCodeTtlSeconds(),
+        methods: ['email'],
+      });
+    }
+    const theme = await themeFor(app_.id);
+    return htmlReply(reply, 200, twofaChallengePage({ challenge: challengeRaw, next, app: app_.name, sent_to: redactEmail(user.email), theme }));
   }
 
   // Rotate the opaque refresh cookie into a fresh access+refresh pair, setting both
@@ -305,6 +450,11 @@ export function registerAuthRoutes(
     if (!user || !ok) return fail('Incorrect email or password.');
     if (!user.email_verified) {
       return htmlReply(reply, 403, loginPage({ next, google: Boolean(cfg.google), error: 'Please verify your email before signing in. Check your inbox for the verification link.', email: user.email, theme }));
+    }
+    // OPT-IN 2FA gate: only a user who explicitly enabled it is diverted to a second-factor challenge —
+    // a non-2FA account falls straight through to establishSession, byte-for-byte as before.
+    if (user.twofa_enabled) {
+      return startLoginChallenge(req, reply, app_, cfg, user, next);
     }
     await establishSession(req, reply, app_.id, cfg, user, next);
   });
@@ -552,6 +702,13 @@ export function registerAuthRoutes(
       }
     }
     if (!user) return bail('Google sign-in failed. Please try again.');
+    // OPT-IN 2FA also gates the OAuth path: a 2FA-enabled account gets the emailed second-factor challenge
+    // instead of an immediate session. (The state cookie is cleared regardless; the challenge carries the
+    // post-login `next`.) A non-2FA account signs in exactly as before.
+    if (user.twofa_enabled) {
+      reply.header('set-cookie', clearState);
+      return startLoginChallenge(req, reply, app_, cfg, user, safeNext(savedNext));
+    }
     await establishSession(req, reply, app_.id, cfg, user, safeNext(savedNext), [clearState]);
   });
 
@@ -622,7 +779,7 @@ export function registerAuthRoutes(
     const cfg = await resolveAuthConfig(app_.id);
     const r = await performRefresh(req, reply, app_.id, cfg);
     if (r === null || r === 'reuse') return clear401();
-    return reply.code(200).send(r);
+    return reply.code(200).send({ ...r, ...(await identityFields(app_.id, r.userId)) });
   });
 
   // ---- session accessor (the verify-endpoint option) ---------------------------
@@ -640,15 +797,189 @@ export function registerAuthRoutes(
       const ttl = accessTtlSeconds();
       const token = signSessionToken({ userId: live.claims.userId, email: live.claims.email, sessionId: live.session.id }, cfg.sessionSecret!, ttl, now);
       reply.header('set-cookie', sessionCookie(token, { secure, maxAgeSeconds: refreshTtlSeconds() }));
-      return { userId: live.claims.userId, email: live.claims.email, exp: now + ttl };
+      return { userId: live.claims.userId, email: live.claims.email, exp: now + ttl, ...(await identityFields(app_.id, live.claims.userId)) };
     }
     // Access expired/absent — for apps using this accessor (a round-trip pattern) rather
     // than the local-verify gate, transparently rotate the refresh so their effective
     // session length stays ~30d (as before P8), not capped at the 15-min access window.
     const r = await performRefresh(req, reply, app_.id, cfg);
-    if (r && r !== 'reuse') return { userId: r.userId, email: r.email, exp: r.exp };
+    if (r && r !== 'reuse') return { userId: r.userId, email: r.email, exp: r.exp, ...(await identityFields(app_.id, r.userId)) };
     if (r === 'reuse') reply.header('set-cookie', [clearSessionCookie({ secure }), clearRefreshCookie({ secure })]);
     return reply.code(401).send({ error: { code: 'unauthenticated', message: 'no active session', retry: 'no' } });
+  });
+
+  // ---- change password (authenticated; password accounts) ---------------------
+  // Verifies the live session AND the supplied current password, enforces the password policy on the
+  // new one, then updates it and signs the user out EVERYWHERE ELSE (revokes all sessions + refresh
+  // tokens) while keeping THIS device signed in via a freshly-minted session. A Google-only account
+  // (no password) is a clean 409 `no_password` (use password reset to set one).
+  app.post('/auth/password', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.code(404).send(unknownApp);
+    const cfg = await resolveAuthConfig(app_.id);
+    if (!cfg.sessionSecret) return jerr(reply, 503, 'auth_not_configured', 'Authentication is not configured for this app.', 'needs-human');
+    const user = await authedUser(req, app_.id, cfg);
+    if (!user) return jerr(reply, 401, 'unauthenticated', 'A valid session is required.', 'no');
+    if (!user.password_hash) return jerr(reply, 409, 'no_password', 'This account has no password (it signs in with Google). Use password reset to set one.', 'no');
+    const b = body(req);
+    const current = String(b.current_password ?? '');
+    const next = String(b.new_password ?? '');
+    if (next.length < MIN_PASSWORD) return jerr(reply, 422, 'weak_password', `New password must be at least ${MIN_PASSWORD} characters.`, 'change-input');
+    if (!(await verifyPassword(current, user.password_hash))) {
+      return jerr(reply, 403, 'current_password_incorrect', 'Your current password is incorrect.', 'change-input');
+    }
+    const password_hash = await hashPassword(next);
+    await authStore.updateUser(app_.id, user.id, { password_hash });
+    // Sign out everywhere, then re-establish THIS device so the caller isn't logged out of the session
+    // they just used. (Mirrors the reset flow's "sign out everywhere" while keeping the current device.)
+    await authStore.revokeAllUserSessions(app_.id, user.id);
+    await authStore.revokeAllUserRefreshTokens(app_.id, user.id);
+    const cookies = await mintSessionCookies(req, app_.id, cfg, user);
+    await emit(app_.id, 'PasswordChanged', user.id, user.email, { via: 'change' });
+    return reply.header('set-cookie', cookies).code(200).send({ ok: true, has_password: true });
+  });
+
+  // ---- 2FA enable (authenticated; two-phase, opt-in) ---------------------------
+  // Phase 1 (no `code`): email a one-time code to the account email (proves the user controls it),
+  // returns `{ pending: true, ... }`. Phase 2 (`code`): verify it, then flip `twofa_enabled` on. Email
+  // delivery is required (it's the second factor's channel) — a clean 503 `email_unavailable` if not.
+  app.post('/auth/2fa/enable', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.code(404).send(unknownApp);
+    const cfg = await resolveAuthConfig(app_.id);
+    if (!cfg.sessionSecret) return jerr(reply, 503, 'auth_not_configured', 'Authentication is not configured for this app.', 'needs-human');
+    const user = await authedUser(req, app_.id, cfg);
+    if (!user) return jerr(reply, 401, 'unauthenticated', 'A valid session is required.', 'no');
+    if (user.twofa_enabled) return jerr(reply, 409, 'already_enabled', 'Two-factor authentication is already enabled.', 'no');
+    const b = body(req);
+    const code = typeof b.code === 'string' ? b.code.trim() : '';
+    const id = twofaEnableId(user.id);
+    if (!code) {
+      const delivered = await issueTwofaCode(app_.name, app_.id, user, id, 'enable');
+      if (!delivered) return jerr(reply, 503, 'email_unavailable', 'Email delivery is not configured, so a 2FA code cannot be sent.', 'needs-human');
+      return reply.code(200).send({ pending: true, delivery: 'email', sent_to: redactEmail(user.email), expires_in: twofaCodeTtlSeconds() });
+    }
+    const res = await authStore.redeemTwofaCode(app_.id, id, hashToken(code), { maxAttempts: twofaMaxAttempts() });
+    if (res.outcome === 'invalid') return jerr(reply, 400, 'code_expired', 'No active code — request a new one.', 'change-input');
+    if (res.outcome === 'exhausted') return jerr(reply, 429, 'too_many_attempts', 'Too many incorrect attempts. Request a new code.', 'needs-human');
+    if (res.outcome === 'mismatch') return jerr(reply, 401, 'code_incorrect', 'That code is incorrect.', 'change-input', { attempts_remaining: res.attemptsRemaining });
+    await authStore.updateUser(app_.id, user.id, { twofa_enabled: true });
+    await emit(app_.id, 'TwofaEnabled', user.id, user.email);
+    return reply.code(200).send({ twofa_enabled: true });
+  });
+
+  // ---- 2FA disable (authenticated; re-verify) ----------------------------------
+  // Requires re-verification: `password` (current password) OR `code` (an emailed code). With neither,
+  // it starts re-verification by emailing a code (or asks for the password when email delivery is down).
+  app.post('/auth/2fa/disable', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.code(404).send(unknownApp);
+    const cfg = await resolveAuthConfig(app_.id);
+    if (!cfg.sessionSecret) return jerr(reply, 503, 'auth_not_configured', 'Authentication is not configured for this app.', 'needs-human');
+    const user = await authedUser(req, app_.id, cfg);
+    if (!user) return jerr(reply, 401, 'unauthenticated', 'A valid session is required.', 'no');
+    if (!user.twofa_enabled) return jerr(reply, 409, 'not_enabled', 'Two-factor authentication is not enabled.', 'no');
+    const b = body(req);
+    const password = typeof b.password === 'string' ? b.password : '';
+    const code = typeof b.code === 'string' ? b.code.trim() : '';
+    const id = twofaDisableId(user.id);
+    const doDisable = async () => {
+      await authStore.updateUser(app_.id, user.id, { twofa_enabled: false });
+      await authStore.deleteTwofaCode(app_.id, id);
+      await emit(app_.id, 'TwofaDisabled', user.id, user.email);
+      return reply.code(200).send({ twofa_enabled: false });
+    };
+    if (password) {
+      if (!user.password_hash) return jerr(reply, 400, 'no_password', 'This account has no password; verify with an emailed code instead.', 'change-input');
+      if (!(await verifyPassword(password, user.password_hash))) return jerr(reply, 403, 'current_password_incorrect', 'Your current password is incorrect.', 'change-input');
+      return doDisable();
+    }
+    if (code) {
+      const res = await authStore.redeemTwofaCode(app_.id, id, hashToken(code), { maxAttempts: twofaMaxAttempts() });
+      if (res.outcome === 'invalid') return jerr(reply, 400, 'code_expired', 'No active code — request a new one.', 'change-input');
+      if (res.outcome === 'exhausted') return jerr(reply, 429, 'too_many_attempts', 'Too many incorrect attempts. Request a new code.', 'needs-human');
+      if (res.outcome === 'mismatch') return jerr(reply, 401, 'code_incorrect', 'That code is incorrect.', 'change-input', { attempts_remaining: res.attemptsRemaining });
+      return doDisable();
+    }
+    const delivered = await issueTwofaCode(app_.name, app_.id, user, id, 'disable');
+    if (!delivered) {
+      if (user.password_hash) return jerr(reply, 400, 'password_required', 'Provide current_password to disable 2FA (email delivery is unavailable).', 'change-input');
+      return jerr(reply, 503, 'email_unavailable', 'Email delivery is not configured, so a 2FA code cannot be sent.', 'needs-human');
+    }
+    return reply.code(200).send({ pending: true, delivery: 'email', sent_to: redactEmail(user.email), expires_in: twofaCodeTtlSeconds() });
+  });
+
+  // ---- 2FA login-challenge verify (unauthenticated; completes a gated login) ---
+  // The client submits the pending `challenge` (from the login/challenge response) + the emailed `code`.
+  // On success the REAL session is issued here (this is the only place a 2FA user gets cookies).
+  // Content-negotiated: a JSON caller gets `{ userId, email, has_password, twofa_enabled }`; a hosted
+  // form gets a 303 redirect to `next`. Errors re-render the enter-code page (HTML) or a JSON error.
+  app.post('/auth/2fa/verify', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    const json = wantsJson(req);
+    const theme = await themeFor(app_?.id);
+    if (!app_) return json ? reply.code(404).send(unknownApp) : htmlReply(reply, 404, page({ theme, title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
+    const cfg = await resolveAuthConfig(app_.id);
+    if (!cfg.sessionSecret) return json ? jerr(reply, 503, 'auth_not_configured', 'Authentication is not configured for this app.', 'needs-human') : htmlReply(reply, 503, notConfiguredPage(theme));
+    const b = body(req);
+    const challenge = String(b.challenge ?? '');
+    const code = String(b.code ?? '').trim();
+    const next = safeNext(b.next);
+    const id = twofaLoginId(challenge);
+    const res = await authStore.redeemTwofaCode(app_.id, id, hashToken(code), { maxAttempts: twofaMaxAttempts() });
+    if (res.outcome === 'invalid') {
+      if (json) return jerr(reply, 400, 'challenge_invalid', 'This login challenge is invalid or has expired. Sign in again.', 'no');
+      return htmlReply(reply, 400, page({ theme, title: 'Sign in', bodyHtml: `<h1>Challenge expired</h1><p>Your verification code expired. <a href="/auth/login">Sign in again</a>.</p>` }));
+    }
+    if (res.outcome === 'exhausted') {
+      if (json) return jerr(reply, 429, 'too_many_attempts', 'Too many incorrect attempts. Sign in again.', 'no');
+      return htmlReply(reply, 429, page({ theme, title: 'Sign in', bodyHtml: `<h1>Too many attempts</h1><p>Too many incorrect codes. <a href="/auth/login">Sign in again</a>.</p>` }));
+    }
+    if (res.outcome === 'mismatch') {
+      const left = res.attemptsRemaining;
+      if (json) return jerr(reply, 401, 'code_incorrect', 'That code is incorrect.', 'change-input', { attempts_remaining: left });
+      return htmlReply(reply, 401, twofaChallengePage({ challenge, next, app: app_.name, error: `Incorrect code — ${left} attempt${left === 1 ? '' : 's'} left.`, theme }));
+    }
+    // outcome === 'ok' — second factor proven; issue the real session.
+    const user = await authStore.getUser(app_.id, res.userId);
+    if (!user) {
+      if (json) return jerr(reply, 400, 'challenge_invalid', 'Account no longer exists.', 'no');
+      return htmlReply(reply, 400, page({ theme, title: 'Sign in', bodyHtml: `<h1>Sign in failed</h1><p><a href="/auth/login">Try again</a>.</p>` }));
+    }
+    await emit(app_.id, 'TwofaChallengeVerified', user.id, user.email, { purpose: 'login' });
+    const dest = safeNext(res.next ?? next);
+    const cookies = await mintSessionCookies(req, app_.id, cfg, user);
+    if (json) return reply.header('set-cookie', cookies).code(200).send({ userId: user.id, email: user.email, ...(await identityFields(app_.id, user.id)) });
+    return reply.header('set-cookie', cookies).code(303).header('location', dest).send();
+  });
+
+  // ---- 2FA login-challenge resend (unauthenticated) ----------------------------
+  // Re-email a fresh code for an in-flight login challenge (resets its attempt counter, preserves the
+  // post-login destination). Never reveals more than the (already-known) redacted recipient.
+  app.post('/auth/2fa/resend', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    const json = wantsJson(req);
+    const theme = await themeFor(app_?.id);
+    if (!app_) return json ? reply.code(404).send(unknownApp) : htmlReply(reply, 404, page({ theme, title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
+    const b = body(req);
+    const challenge = String(b.challenge ?? '');
+    const next = safeNext(b.next);
+    const id = twofaLoginId(challenge);
+    const rec = challenge ? await authStore.getTwofaCode(app_.id, id) : null;
+    const invalid = () =>
+      json
+        ? jerr(reply, 400, 'challenge_invalid', 'This login challenge is invalid or has expired. Sign in again.', 'no')
+        : htmlReply(reply, 400, page({ theme, title: 'Sign in', bodyHtml: `<h1>Challenge expired</h1><p><a href="/auth/login">Sign in again</a>.</p>` }));
+    if (!rec || rec.purpose !== 'login') return invalid();
+    const user = await authStore.getUser(app_.id, rec.user_id);
+    if (!user) return invalid();
+    const delivered = await issueTwofaCode(app_.name, app_.id, user, id, 'login', rec.next);
+    if (!delivered) {
+      if (json) return jerr(reply, 503, 'email_unavailable', 'Email delivery is not configured, so a code cannot be sent.', 'needs-human');
+      return htmlReply(reply, 503, twofaChallengePage({ challenge, next: rec.next ?? next, app: app_.name, error: 'We could not send a new code. Try again later.', theme }));
+    }
+    if (json) return reply.code(200).send({ resent: true, delivery: 'email', sent_to: redactEmail(user.email), expires_in: twofaCodeTtlSeconds() });
+    return htmlReply(reply, 200, twofaChallengePage({ challenge, next: rec.next ?? next, app: app_.name, sent_to: redactEmail(user.email), notice: 'We sent a new code.', theme }));
   });
 
   // ---- owner migration hook (§8) ----------------------------------------------
@@ -748,7 +1079,7 @@ body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:c
 .brand-logo{display:block;height:34px;width:auto;max-width:200px;margin:0 0 18px}
 h1{font-size:20px;margin:0 0 16px}
 label{display:block;font-size:13px;font-weight:600;margin:14px 0 6px;color:var(--forge-color-text)}
-input[type=email],input[type=password]{width:100%;padding:10px 12px;border:1px solid var(--forge-color-border);border-radius:var(--forge-radius);font-size:15px;background:var(--forge-color-surface);color:var(--forge-color-text)}
+input[type=email],input[type=password],input[type=text]{width:100%;padding:10px 12px;border:1px solid var(--forge-color-border);border-radius:var(--forge-radius);font-size:15px;background:var(--forge-color-surface);color:var(--forge-color-text)}
 input:focus{outline:2px solid color-mix(in srgb, var(--forge-color-primary) 55%, transparent);outline-offset:1px;border-color:var(--forge-color-primary)}
 button{width:100%;margin-top:20px;padding:11px;border:0;border-radius:var(--forge-radius);background:var(--forge-color-primary);color:var(--forge-color-primary-contrast);font-size:15px;font-weight:600;cursor:pointer}
 .oauth{display:block;text-align:center;margin-top:12px;padding:11px;border:1px solid var(--forge-color-border);border-radius:var(--forge-radius);background:var(--forge-color-surface);color:var(--forge-color-text);text-decoration:none;font-weight:600}
@@ -853,5 +1184,30 @@ function notConfiguredPage(theme?: Theme): string {
     theme,
     title: 'Sign in unavailable',
     bodyHtml: `<h1>Sign in is unavailable</h1><p class="muted">Authentication isn't fully configured for this app yet (no session key). Please try again later.</p>`,
+  });
+}
+
+// Hosted "enter your 2FA code" page — shown after a 2FA-enabled user's password/Google sign-in. Posts
+// the emailed code + the pending challenge to /auth/2fa/verify (completing login), with a resend form.
+function twofaChallengePage(o: { challenge: string; next: string; app?: string; error?: string; notice?: string; sent_to?: string; theme?: Theme }): string {
+  const hidden =
+    `<input type="hidden" name="challenge" value="${escapeHtml(o.challenge)}">` +
+    `<input type="hidden" name="next" value="${escapeHtml(o.next)}">` +
+    (o.app ? `<input type="hidden" name="app" value="${escapeHtml(o.app)}">` : '');
+  const sent = o.sent_to
+    ? `<p class="muted">We sent a 6-digit code to <b>${escapeHtml(o.sent_to)}</b>. Enter it below to finish signing in.</p>`
+    : `<p class="muted">Enter the 6-digit code we emailed you to finish signing in.</p>`;
+  return page({
+    theme: o.theme,
+    title: 'Two-factor verification',
+    bodyHtml:
+      `<h1>Enter your code</h1>${alerts(o.error, o.notice)}${sent}` +
+      `<form method="post" action="/auth/2fa/verify">${hidden}` +
+      `<label>Verification code</label>` +
+      `<input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="6" required autofocus>` +
+      `<button type="submit">Verify</button></form>` +
+      `<form method="post" action="/auth/2fa/resend">${hidden}` +
+      `<button type="submit" class="oauth" style="margin-top:12px;">Resend code</button></form>` +
+      `<div class="row muted"><a href="/auth/login">Back to sign in</a></div>`,
   });
 }
