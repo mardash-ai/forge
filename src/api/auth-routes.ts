@@ -658,6 +658,29 @@ export function registerAuthRoutes(
     };
   });
 
+  // ---- administrative identity enumeration ("list all accounts") ----------------------------------
+  // List EVERY login identity for the app so an operator's admin tool can SEE + pick any account —
+  // including "zombies" missing from the consumer's own app-domain index. SERVICE-token gated (NOT
+  // end-user reachable), the SAME gate as the delete-by-id teardown below; read-only. The stored email
+  // is returned IN FULL (an admin picking which account to purge must recognize it — this is a trusted
+  // service-token caller, not a browser). `provider` is 'google' for an OAuth account, 'password' for a
+  // password account, else null; `created_at` is the signup timestamp. Scoped to the resolved app
+  // (`?app` / `X-Forge-App` / `FORGE_APP_NAME`) — the same app the delete-by-id route operates on.
+  app.get('/auth/admin/identities', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.code(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_.id))) return reply.code(401).send(needServiceToken);
+    const users = await authStore.listUsers(app_.id);
+    return reply.code(200).send({
+      identities: users.map((u) => ({
+        user_id: u.id,
+        email: u.email ?? null,
+        provider: u.provider ?? (u.password_hash ? 'password' : null),
+        created_at: u.created_at ?? null,
+      })),
+    });
+  });
+
   // ---- administrative identity teardown (account closure / right-to-be-forgotten) ----------------
   // Delete a login identity + ALL its credentials (password hash), sessions, refresh tokens, and
   // verify/reset tokens, so it can no longer authenticate and its email is FREED for re-registration.

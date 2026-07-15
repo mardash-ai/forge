@@ -9,6 +9,23 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.45.0] — 2026-07-14
+
+### Added
+- **`GET /auth/admin/identities` — administrative "list all accounts" enumeration** (C10/C34). Lists
+  EVERY login identity for the calling app so an operator's admin tool can see and pick any account —
+  including "zombies" that are missing from the consumer's own app-domain index. **SERVICE-token gated**
+  (`AUTH_SERVICE_TOKEN` via the `x-forge-service-token` header **or** `Authorization: Bearer …`), the exact
+  same gate as the existing `DELETE /auth/admin/identity/:userId` teardown, and scoped to the same resolved
+  app (`?app` / `X-Forge-App` / `FORGE_APP_NAME`). Read-only. Response:
+  `{ identities: [ { user_id, email, provider, created_at } ] }` where `email` is the **full** canonical
+  stored email (not redacted — a trusted service caller must recognize the account it is about to purge),
+  `provider` is `"google"` for an OAuth account / `"password"` for a password account / `null` otherwise,
+  and `created_at` is the signup timestamp. Empty app ⇒ `{ identities: [] }` (never a 404). Ordered by
+  `created_at`. **Additive** — pairs with the existing delete-by-id (find what to purge → purge it); no
+  existing behavior changes. Uses the identity store's existing `listUsers` across the filesystem +
+  Postgres + dual-write backends.
+
 ## [0.44.0] — 2026-07-14
 
 ### Added
@@ -1854,7 +1871,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.44.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.45.0...HEAD
+[0.45.0]: https://github.com/mardash-ai/forge/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/mardash-ai/forge/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/mardash-ai/forge/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/mardash-ai/forge/compare/v0.41.0...v0.42.0

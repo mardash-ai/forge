@@ -326,3 +326,40 @@ describe('principal teardown — service-gating (NOT end-user reachable)', () =>
     expect(res.statusCode).toBe(422);
   });
 });
+
+describe('admin identity enumeration — GET /auth/admin/identities (the "list all accounts" seam)', () => {
+  it('lists EVERY identity for the app (full email, derived provider, created_at) with a service token', async () => {
+    const google = await authStore.createUser(APP_ID, { email: 'ExecG@Demo.test', email_verified: true, provider: 'google', provider_user_id: 'g-1' });
+    const pw = await authStore.createUser(APP_ID, { email: 'pw@demo.test', email_verified: true, password_hash: await hashPassword('password123') });
+    // A "zombie" with neither provider nor password (created out-of-band) → provider null.
+    const zombie = await authStore.createUser(APP_ID, { email: 'zombie@demo.test', email_verified: false });
+
+    const res = await server.inject({ method: 'GET', url: '/auth/admin/identities', headers: SVC });
+    expect(res.statusCode).toBe(200);
+    const byId = new Map<string, { user_id: string; email: string | null; provider: string | null; created_at: string | null }>(
+      res.json().identities.map((i: { user_id: string; email: string | null; provider: string | null; created_at: string | null }) => [i.user_id, i]),
+    );
+    expect(byId.size).toBe(3);
+    // Full (canonical, lowercased) email is returned — NOT redacted — so an operator can recognize the account.
+    expect(byId.get(google.id)).toMatchObject({ user_id: google.id, email: 'execg@demo.test', provider: 'google' });
+    expect(byId.get(pw.id)).toMatchObject({ email: 'pw@demo.test', provider: 'password' });
+    expect(byId.get(zombie.id)).toMatchObject({ email: 'zombie@demo.test', provider: null });
+    // created_at present on every row.
+    for (const row of byId.values()) expect(typeof row.created_at).toBe('string');
+  });
+
+  it('returns { identities: [] } when the app has no accounts (never 404)', async () => {
+    const res = await server.inject({ method: 'GET', url: '/auth/admin/identities', headers: SVC });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ identities: [] });
+  });
+
+  it('is SERVICE-gated: refused (401) with no token and with a wrong token; a Bearer token is accepted', async () => {
+    await authStore.createUser(APP_ID, { email: 'seen@demo.test', email_verified: true });
+    expect((await server.inject({ method: 'GET', url: '/auth/admin/identities' })).statusCode).toBe(401);
+    expect((await server.inject({ method: 'GET', url: '/auth/admin/identities', headers: { 'x-forge-service-token': 'nope' } })).statusCode).toBe(401);
+    const bearer = await server.inject({ method: 'GET', url: '/auth/admin/identities', headers: { authorization: `Bearer ${SERVICE_TOKEN}` } });
+    expect(bearer.statusCode).toBe(200);
+    expect(bearer.json().identities).toHaveLength(1);
+  });
+});
