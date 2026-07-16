@@ -9,6 +9,40 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.50.0] — 2026-07-15
+
+### Added
+- **C33 + C21 — billing state-change notifications.** A subscription's status transition (→ `past_due`,
+  → `canceled`, and the recovery `past_due` → `active`) is only observable **inside** the platform's C33
+  Stripe webhook reconciliation — the consumer proxies `/hooks/*` **RAW** and never parses the event — so
+  the alert now **originates in the platform** and fans out over the C21 `notify()` delivery layer. The
+  affected subscriber/owner is resolved straight from the C33 subscription-of-record (`record.subscriber`
+  **is** the C10 owner), and the notification deep-links to the app's **`/billing`** page.
+  - **Fires only on a real STATE CHANGE.** `applyCanonicalSubscription` now reports the `previous_status`
+    that was atomically in place before the upsert; `reconcileSubscription` compares it to the new status
+    and notifies only on a genuine transition — an unchanged-status webhook (or a routine `active` update)
+    notifies **nothing**. `none`/`trialing`/`incomplete` → `active` is a fresh activation and is **not**
+    alerted (only `past_due` → `active` recovery is).
+  - **Idempotent — no double-notify.** in_app is idempotent by notification `key`; push/email are deduped
+    by an `idempotency_key` of `billing:<subscription>:<new_status>:<period>`, so a webhook retry or the
+    same transition detected by **both** the webhook and the C33 self-heal reconcile sweep notifies **at
+    most once**. A re-failure in a **later** billing period is a new transition and alerts again.
+  - **MUST-DELIVER channels.** A failed-payment / cancellation is a critical transactional alert (same
+    spirit as a security email), so the default channels are **`in_app` + `email` + `push`** rather than a
+    suppressible per-category preference — email is the reliable channel, in_app always records, and push
+    is a clean no-op when the owner has no browser subscription. Fine-grained per-user channel control for
+    this is a future refinement.
+  - **App-neutral copy + platform-held deep-link.** Wording carries no consumer brand (the platform serves
+    any app); the deep-link base is the app public URL the platform already holds (`FORGE_AUTH_PUBLIC_URL`,
+    the same origin C10 verify/reset emails link off), falling back to a bare `/billing` path when unset.
+  - **Best-effort — never fails billing.** The whole notification is wrapped so a delivery hiccup can never
+    fail (and pointlessly retry) the Stripe webhook; the subscription-of-record write is unaffected. The
+    admin `deleteCustomer` teardown (account-purge) intentionally bypasses this seam, so closing an account
+    does not email the user a "canceled" notice.
+  - **No consumer adoption required.** The in_app notification surfaces via the existing `GET /notifications`
+    feed the app already renders, and the email sends via C12 to the C10 account email — so this is live for
+    users on deploy with **zero app/web change**. Billing + the webhook live in the **data-plane**.
+
 ## [0.49.0] — 2026-07-15
 
 ### Added
@@ -2045,7 +2079,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.49.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.50.0...HEAD
+[0.50.0]: https://github.com/mardash-ai/forge/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/mardash-ai/forge/compare/v0.48.0...v0.49.0
 [0.48.0]: https://github.com/mardash-ai/forge/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/mardash-ai/forge/compare/v0.46.0...v0.47.0

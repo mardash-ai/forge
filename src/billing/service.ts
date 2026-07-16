@@ -24,8 +24,10 @@ import {
   type EntitlementsView,
   type PlanDef,
   type SubscriptionRecord,
+  type SubscriptionStatus,
 } from './types';
 import { pruneWebhookEvents, type BillingState } from './state';
+import { notifyBillingTransition } from './notify';
 
 // C33 — the billing SERVICE: the payment-source-agnostic core behavior the routes call. It owns the plans
 // catalog (validate + replace), the entitlement derivation (delegated to ./entitlements), the Stripe web
@@ -281,17 +283,20 @@ function canonicalFromStripe(
 
 // Apply a canonical subscription snapshot under the monotonic-version guard: a write with an OLDER version
 // than what is stored is dropped (so a stale re-fetch never clobbers a newer one — out-of-order / duplicate
-// delivery converges). Exposed for tests to prove the guard directly.
+// delivery converges). Exposed for tests to prove the guard directly. Also reports `previous_status` — the
+// status atomically in place BEFORE this apply — so the caller can detect a genuine state transition (→
+// past_due / → canceled / recovery) and notify exactly once. `none` when there was no prior record.
 export async function applyCanonicalSubscription(
   appId: string,
   fields: Omit<SubscriptionRecord, 'version' | 'created_at' | 'updated_at'>,
   version: number,
-): Promise<{ applied: boolean; record: SubscriptionRecord }> {
-  return (await backend()).mutate<{ applied: boolean; record: SubscriptionRecord }>(appId, (state) => {
+): Promise<{ applied: boolean; record: SubscriptionRecord; previous_status: SubscriptionStatus }> {
+  return (await backend()).mutate<{ applied: boolean; record: SubscriptionRecord; previous_status: SubscriptionStatus }>(appId, (state) => {
     const now = nowIso();
     const existing = state.subscriptions[fields.subscriber];
+    const previous_status: SubscriptionStatus = existing?.status ?? 'none';
     if (existing && version < existing.version) {
-      return { state, result: { applied: false, record: existing } };
+      return { state, result: { applied: false, record: existing, previous_status } };
     }
     const record: SubscriptionRecord = {
       ...fields,
@@ -301,18 +306,22 @@ export async function applyCanonicalSubscription(
     };
     return {
       state: { ...state, subscriptions: { ...state.subscriptions, [fields.subscriber]: record } },
-      result: { applied: true, record },
+      result: { applied: true, record, previous_status },
     };
   });
 }
 
 // Re-fetch the canonical Stripe subscription and upsert the record. Version = fetch recency (the later
 // fetch reflects the later truth and wins the guard). Throws on a transient Stripe/store failure so the
-// webhook returns 5xx and Stripe retries.
+// webhook returns 5xx and Stripe retries. On an APPLIED state transition (→ past_due / → canceled /
+// recovery), fires a billing notification best-effort (C21) — this is the SINGLE seam both the webhook and
+// the self-heal sweep flow through, so a dropped webhook the sweep later catches still notifies (once).
+// `appName` lets the notification's email channel resolve the app for C12 (falls back to FORGE_APP_NAME).
 async function reconcileSubscription(
   appId: string,
   secretKey: string,
   subscriptionId: string,
+  appName?: string,
 ): Promise<SubscriptionRecord | null> {
   const stripe = getStripeClient();
   const sub = await stripe.retrieveSubscription(secretKey, subscriptionId);
@@ -323,7 +332,10 @@ async function reconcileSubscription(
     ?? (sub.metadata.subscriber ? state.subscriptions[sub.metadata.subscriber] : undefined);
   const canonical = canonicalFromStripe(appId, sub, state.catalog, existing);
   if (!canonical) return null;
-  const { record } = await applyCanonicalSubscription(appId, canonical.fields, version);
+  const { applied, record, previous_status } = await applyCanonicalSubscription(appId, canonical.fields, version);
+  // Only an APPLIED write can be a real transition; the guard inside billingTransitionNotification also
+  // requires previous_status !== record.status, so a same-status re-fetch never notifies.
+  if (applied) await notifyBillingTransition(appId, appName, previous_status, record);
   return record;
 }
 
@@ -361,6 +373,7 @@ export async function handleStripeWebhook(
   appId: string,
   rawBody: Buffer,
   signatureHeader: string | undefined,
+  appName?: string,
 ): Promise<WebhookResult> {
   const cfg = await resolveBillingConfig(appId);
   // No signing secret ⇒ we cannot (and must not) trust the payload — no-op, never crash.
@@ -388,7 +401,7 @@ export async function handleStripeWebhook(
 
   // Re-fetch canonical + upsert. A throw here propagates → route 5xx → Stripe retries (and the mark above
   // does not block reprocessing correctness because the upsert is idempotent).
-  const record = await reconcileSubscription(appId, cfg.secretKey!, subscriptionId);
+  const record = await reconcileSubscription(appId, cfg.secretKey!, subscriptionId, appName);
   return { status: 200, outcome: 'processed', event_type: event.type, record };
 }
 
@@ -397,7 +410,7 @@ export async function handleStripeWebhook(
 // live inside the platform (an operator / a C2 job triggers it via POST /billing/reconcile) rather than
 // asking the app to poll — the app stays ignorant of Stripe. Not auto-scheduled by default (so it never
 // hits Stripe when unconfigured); wire it to C2 per deployment. No-op when unconfigured.
-export async function reconcileApp(appId: string): Promise<{ reconciled: number; skipped: number }> {
+export async function reconcileApp(appId: string, appName?: string): Promise<{ reconciled: number; skipped: number }> {
   const cfg = await resolveBillingConfig(appId);
   if (!cfg.configured || !cfg.secretKey) return { reconciled: 0, skipped: 0 };
   const state = await (await backend()).read(appId);
@@ -410,7 +423,7 @@ export async function reconcileApp(appId: string): Promise<{ reconciled: number;
       continue;
     }
     try {
-      await reconcileSubscription(appId, cfg.secretKey, subId);
+      await reconcileSubscription(appId, cfg.secretKey, subId, appName);
       reconciled++;
     } catch {
       skipped++;

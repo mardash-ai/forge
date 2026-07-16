@@ -282,7 +282,7 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
     if (!app_) return reply.status(404).send(unknownApp);
     if (!(await hasValidServiceToken(req, app_.id))) return reply.status(401).send(needAuth);
     try {
-      return reply.status(200).send(await reconcileApp(app_.id));
+      return reply.status(200).send(await reconcileApp(app_.id, app_.name));
     } catch (e) {
       return errorReply(reply, e);
     }
@@ -314,7 +314,7 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
       const sig = req.headers['stripe-signature'];
       const signature = Array.isArray(sig) ? sig[0] : sig;
       try {
-        const result = await handleStripeWebhook(app_.id, raw, signature);
+        const result = await handleStripeWebhook(app_.id, raw, signature, app_.name);
         if (result.outcome === 'signature_invalid') {
           return reply.status(400).send({ error: { code: 'signature_invalid', message: 'Stripe signature verification failed.', retry: 'no' } });
         }
