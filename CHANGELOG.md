@@ -9,6 +9,25 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.53.1] — 2026-07-17
+
+### Fixed / Added
+- **C30 — the eval harness now runs fully green against a live app** (validated end-to-end on
+  dorinda-api with **both Claude and GPT** passing). Fixes + additions surfaced by the first real run:
+  - **Eval-tenant platform-membership provisioning** (`seed.ts` `provisionTenantGroup`, opt-in via
+    `EVAL_APP_DB_URL`). Apps that gate write tools on the platform membership graph (dorinda-api's C29)
+    deny a fresh tenant with *"not a member of the targeted group"* — its group-of-one is never synced.
+    The runner now warms up the local group (a read call), reads its id from the app DB, and ensures the
+    platform group under that `external_id` (via `provisionGroup`) — exactly what the app's boot backfill
+    does — so write tools pass governance. Skipped entirely for apps that don't set `EVAL_APP_DB_URL`.
+  - **Tool-schema sanitization for BOTH providers** (`models.ts`) — strips `oneOf`/`allOf`/`anyOf`
+    (Anthropic) plus `enum`/`const`/`not` (OpenAI is stricter) at the top level and guarantees an
+    `object` shape; an MCP tool carrying one was HTTP-400'ing the model call.
+  - Unique eval-tenant email per execution; unwrap the forge transport's double-wrapped
+    `structuredContent`; raw tool results captured in the eval trace.
+- With a fresh tenant + no policy, dorinda stages a `track` for approval (safety-first default posture),
+  so the reference suite asserts the faithful `status: "pending"` outcome. 759 tests green.
+
 ## [0.53.0] — 2026-07-17
 
 ### Added

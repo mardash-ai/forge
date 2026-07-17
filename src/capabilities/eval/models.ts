@@ -59,14 +59,13 @@ export interface RunAgentOpts {
 const DEFAULT_MAX_STEPS = 8;
 const DEFAULT_MAX_TOKENS = 1024;
 
-// Anthropic rejects `oneOf`/`allOf`/`anyOf` at the top level of a tool input_schema (OpenAI is
-// laxer). MCP tool schemas can carry those, so strip them at the top and guarantee an object shape —
-// the app still validates the real call, so a looser model-facing schema is safe.
-function anthropicToolSchema(schema: Record<string, unknown>): Record<string, unknown> {
+// Both providers reject certain JSON-Schema keywords at the TOP level of a tool schema: Anthropic
+// rejects oneOf/allOf/anyOf; OpenAI (strict) also rejects enum/const/not and requires type:'object'.
+// MCP tool schemas can carry any of these, so strip them at the top and guarantee an object shape —
+// the app still validates the real call, so a looser model-facing schema is safe for both.
+function sanitizeToolSchema(schema: Record<string, unknown>): Record<string, unknown> {
   const s: Record<string, unknown> = { ...schema };
-  delete s.oneOf;
-  delete s.allOf;
-  delete s.anyOf;
+  for (const k of ['oneOf', 'allOf', 'anyOf', 'enum', 'const', 'not']) delete s[k];
   if (s.type !== 'object') return { type: 'object', properties: (s.properties as Record<string, unknown>) ?? {} };
   if (s.properties === undefined) s.properties = {};
   return s;
@@ -89,7 +88,7 @@ async function runAnthropic(opts: RunAgentOpts): Promise<Trajectory> {
   const toolCalls: ToolInvocation[] = [];
   const finalTextParts: string[] = [];
   const messages: Array<Record<string, unknown>> = [{ role: 'user', content: opts.prompt }];
-  const tools = opts.tools.map((t) => ({ name: t.name, description: t.description, input_schema: anthropicToolSchema(t.inputSchema) }));
+  const tools = opts.tools.map((t) => ({ name: t.name, description: t.description, input_schema: sanitizeToolSchema(t.inputSchema) }));
 
   for (let step = 0; step < maxSteps; step++) {
     const res = await doFetch(ANTHROPIC_API_URL, {
@@ -136,7 +135,7 @@ async function runOpenai(opts: RunAgentOpts): Promise<Trajectory> {
     { role: 'system', content: opts.system },
     { role: 'user', content: opts.prompt },
   ];
-  const tools = opts.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.inputSchema } }));
+  const tools = opts.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: sanitizeToolSchema(t.inputSchema) } }));
 
   for (let step = 0; step < maxSteps; step++) {
     const res = await doFetch(OPENAI_API_URL, {

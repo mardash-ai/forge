@@ -7,7 +7,7 @@ import { resolveModelKey } from '../../plugins/model-anthropic/index';
 import { readSecrets } from '../../plugins/secrets-local/index';
 import { suiteSchema } from './suite';
 import { runAgent } from './models';
-import { seedEvalTenant } from './seed';
+import { seedEvalTenant, provisionTenantGroup } from './seed';
 import { mintAccessToken, mcpClient } from './mcp-client';
 import { gradeDeterministic, gradeJudge, dimensionAverage } from './graders';
 import { resolveLangfuse, makeReporter } from './report';
@@ -48,6 +48,12 @@ type Input = z.infer<typeof inputSchema>;
 
 const AGENT_SYSTEM =
   "You are the user's personal assistant, operating their own tools on their behalf. Use the available tools to fulfil the user's request directly and completely; do not ask for confirmation when the request is clear.";
+
+// Opt-in eval-tenant membership provisioning (app-specific). When the app gates write tools on the
+// platform membership graph (like dorinda-api's C29), set EVAL_APP_DB_URL so the harness warms up the
+// tenant's local group-of-one then ensures it with the platform. Unset ⇒ skipped (generic apps).
+const APP_DB_URL = process.env.EVAL_APP_DB_URL;
+const WARMUP_TOOL = process.env.EVAL_WARMUP_TOOL || 'whats_next';
 
 async function resolveOpenaiKey(appId: string): Promise<string | null> {
   try {
@@ -107,6 +113,12 @@ export const evalCapability: Capability<Input, EvalRun> = {
         const tenant = await seedEvalTenant(appId, { suite: suite.name, caseId: c.id, runId: runName });
         const token = await mintAccessToken(appId, tenant.ownerId);
         const client = mcpClient({ mcpUrl: input.mcp_url, appName: app.name, token });
+        // Provision the tenant's platform membership (opt-in) so write tools aren't denied
+        // 'not-a-member': warm up the local group-of-one with a read, then ensure it with the platform.
+        if (APP_DB_URL) {
+          await client.callTool(WARMUP_TOOL, {}).catch(() => undefined);
+          await provisionTenantGroup(appId, tenant.ownerId, APP_DB_URL).catch(() => null);
+        }
         const tools = await client.listTools();
         const trajectory = await runAgent({
           provider: m.provider, apiKey: key, model: m.model, system: AGENT_SYSTEM, prompt: c.prompt,
