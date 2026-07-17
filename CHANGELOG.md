@@ -9,6 +9,44 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.50.1] — 2026-07-17
+
+### Added
+- **C36 — MCP observability / tracing (OTel → self-hosted Langfuse).** The forge platform now ships a
+  self-hosted Langfuse v3 observability stack and a thin, fire-and-forget OTel export helper that
+  any consumer can import to trace its MCP surface.
+  - **Platform compose (6 Langfuse services, `profiles: ["observability"]`).** `langfuse-web`
+    (UI + OTLP ingest at `/api/public/otel`), `langfuse-worker` (async ingestion),
+    `langfuse-clickhouse` (trace/analytics store), `langfuse-postgres` (Langfuse-own metadata DB,
+    separate from any domain Postgres), `langfuse-redis`/Valkey (queue/cache), and `langfuse-minio`
+    (blob store for large event payloads) — all isolated on a Docker-internal `observability` network
+    with named volumes. Bootstrap seeds a project API key pair from env. `.env.langfuse.example`
+    documents all required secrets with generation instructions. Start with:
+    `docker compose --env-file .env.langfuse --profile observability up -d`.
+  - **`src/plugins/otel-langfuse/`** — zero-external-dep OTel export helper (uses Node 22 built-in
+    `fetch` + `node:crypto`). Exports `initOtelLangfuse()`, `startSpan()`, `withSpan()`, and the
+    `ATTR` constants map with all required GenAI semantic convention attribute names
+    (`gen_ai.operation.name`, `gen_ai.tool.name`, `gen_ai.tool.input/output`,
+    `gen_ai.usage.input/output_tokens`, plus `mcp.client.user/host`, `authz.decision`, `outcome`).
+    Export is strictly fire-and-forget (no `await`, 5 s `AbortSignal.timeout`) — a down or slow
+    Langfuse collector never delays or fails a tool call. `probeEndpoint()` does a HEAD probe used
+    by the capability. `isEnabled()` lets callers guard instrumentation blocks.
+  - **`SetupObservability` Capability** (`plane: 'both'`). Validates keys, optionally probes the
+    OTLP endpoint for reachability, and persists an `ObservabilityStack` resource (upsert — at most
+    one per platform). The secret key is accepted for the probe but **never stored** in the resource
+    or emitted in events — only `endpoint` + `public_key` land in durable state. Emits
+    `ObservabilityConfigured`. Status is `configured` when the probe passes, `unreachable` when it
+    fails, so operators can detect a misconfiguration immediately.
+  - **`ObservabilityStack` resource type** + **`ObservabilityConfigured` event** added to the
+    canonical catalog. `obs_` id prefix registered in the shared id map.
+  - **17 new tests** covering the full capability contract (upsert, event correctness, secret-key
+    never-stored invariant, unreachable status when probe fails, input validation) and the plugin
+    API (init from cfg + env vars, span ID format, parent trace inheritance, `withSpan` error
+    propagation, `ATTR` constant correctness).
+  - **Consume signature**: import the helper and call `initOtelLangfuse()` once; instrument any
+    surface with `startSpan` / `withSpan` using `ATTR.*` constants. Env:
+    `OTEL_EXPORTER_OTLP_ENDPOINT`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`.
+
 ## [0.50.0] — 2026-07-15
 
 ### Added

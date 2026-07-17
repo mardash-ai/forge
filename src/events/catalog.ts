@@ -68,6 +68,9 @@ export const EVENT_TYPES = [
   'IncidentOpened',
   'IncidentUpdated',
   'IncidentResolved',
+  // Observability stack (C36) — the platform's self-hosted Langfuse stack was configured
+  // and its OTLP endpoint recorded. Carries only the endpoint + public key, never the secret.
+  'ObservabilityConfigured',
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];

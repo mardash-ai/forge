@@ -26,6 +26,7 @@ export const RESOURCE_ID_PREFIX: Record<string, string> = {
   Artifact: 'art',
   EmailDelivery: 'email',
   Incident: 'inc',
+  ObservabilityStack: 'obs',
 };
 
 export function newResourceId(type: string): string {

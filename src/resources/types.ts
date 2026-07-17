@@ -22,6 +22,7 @@ export const RESOURCE_TYPES = [
   'AgentTask',
   'Artifact',
   'EmailDelivery',
+  'ObservabilityStack',
 ] as const;
 
 export type ResourceType = (typeof RESOURCE_TYPES)[number];
@@ -360,6 +361,21 @@ export interface EmailDelivery extends BaseResource {
   sent_at?: string;
 }
 
+// An ObservabilityStack — the durable record of the platform's self-hosted OTel/Langfuse
+// observability stack (C36). Platform-level (not per-app): records the OTLP endpoint,
+// the public key used for export, and the connectivity status. Never holds the secret key.
+export interface ObservabilityStack extends BaseResource {
+  type: 'ObservabilityStack';
+  // OTLP endpoint the data-plane exports spans to.
+  endpoint: string;
+  // Langfuse project public key (used for OTLP Basic-auth header). Never the secret key.
+  public_key: string;
+  // Whether the endpoint was reachable at last check.
+  status: 'configured' | 'unreachable';
+  // ISO timestamp of the last connectivity check.
+  checked_at: string;
+}
+
 export type AnyResource =
   | Application
   | Environment
@@ -379,4 +395,5 @@ export type AnyResource =
   | Release
   | AgentTask
   | Artifact
-  | EmailDelivery;
+  | EmailDelivery
+  | ObservabilityStack;

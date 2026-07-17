@@ -33,3 +33,192 @@ services:
       - ./tsconfig.json:/forge/tsconfig.json
     working_dir: /forge
     restart: unless-stopped
+
+  # ── C36 Observability stack (Langfuse v3 self-host) ────────────────────────
+  # Start with: docker compose --profile observability up -d
+  # Secrets: copy .env.langfuse.example → .env.langfuse and fill in values
+  # (or use C5 / forge set-secret to generate them), then:
+  #   docker compose --env-file .env.langfuse --profile observability up -d
+  # UI: http://localhost:3100  (operator-only; put behind Traefik in production)
+  # OTLP endpoint: http://langfuse-web:3000/api/public/otel  (internal network)
+
+  langfuse-postgres:
+    image: postgres:16-alpine
+    profiles: ["observability"]
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: ${LANGFUSE_PG_PASSWORD:-changeme_pg}
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - observability
+    restart: unless-stopped
+
+  langfuse-redis:
+    image: valkey/valkey:8-alpine
+    profiles: ["observability"]
+    command: >
+      valkey-server
+      --requirepass ${LANGFUSE_REDIS_PASSWORD:-changeme_redis}
+      --loglevel warning
+    volumes:
+      - langfuse-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a ${LANGFUSE_REDIS_PASSWORD:-changeme_redis} ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - observability
+    restart: unless-stopped
+
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:24.12-alpine
+    profiles: ["observability"]
+    environment:
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-changeme_ch}
+      CLICKHOUSE_DB: default
+    volumes:
+      - langfuse-clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user clickhouse --password ${LANGFUSE_CLICKHOUSE_PASSWORD:-changeme_ch} --query 'SELECT 1'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - observability
+    restart: unless-stopped
+
+  langfuse-minio:
+    image: minio/minio:latest
+    profiles: ["observability"]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${LANGFUSE_MINIO_ACCESS_KEY:-changeme_minio_access}
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_SECRET_KEY:-changeme_minio_secret}
+    volumes:
+      - langfuse-minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - observability
+    restart: unless-stopped
+
+  langfuse-web:
+    image: langfuse/langfuse:3
+    profiles: ["observability"]
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+    ports:
+      - "${LANGFUSE_UI_PORT:-3100}:3000"
+    environment:
+      # --- Database ---
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_PG_PASSWORD:-changeme_pg}@langfuse-postgres:5432/langfuse
+      # --- Auth ---
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3100}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-changeme_nextauth}
+      SALT: ${LANGFUSE_SALT:-changeme_salt}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-changeme_encryption_key_must_be_32ch}
+      # --- ClickHouse ---
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-changeme_ch}
+      # --- Redis / queue ---
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: ${LANGFUSE_REDIS_PASSWORD:-changeme_redis}
+      # --- MinIO / S3 ---
+      MINIO_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ACCESS_KEY:-changeme_minio_access}
+      MINIO_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_SECRET_KEY:-changeme_minio_secret}
+      MINIO_ENDPOINT: langfuse-minio
+      MINIO_PORT: "9000"
+      MINIO_SSL: "false"
+      MINIO_BUCKET_NAME: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      # --- Bootstrap: seed org + project + API key pair for OTLP ---
+      LANGFUSE_INIT_ORG_ID: forge
+      LANGFUSE_INIT_ORG_NAME: Forge
+      LANGFUSE_INIT_PROJECT_ID: forge-default
+      LANGFUSE_INIT_PROJECT_NAME: Forge Default
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-changeme_public_key}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-changeme_secret_key}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_ADMIN_EMAIL:-admin@forge.local}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_ADMIN_PASSWORD:-changeme_admin}
+      LANGFUSE_INIT_USER_NAME: Forge Admin
+      # --- Telemetry: opt-out (no external pings) ---
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_TELEMETRY_ENABLED: "false"
+    networks:
+      - observability
+    restart: unless-stopped
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    profiles: ["observability"]
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_PG_PASSWORD:-changeme_pg}@langfuse-postgres:5432/langfuse
+      SALT: ${LANGFUSE_SALT:-changeme_salt}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-changeme_encryption_key_must_be_32ch}
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-changeme_ch}
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: ${LANGFUSE_REDIS_PASSWORD:-changeme_redis}
+      MINIO_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ACCESS_KEY:-changeme_minio_access}
+      MINIO_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_SECRET_KEY:-changeme_minio_secret}
+      MINIO_ENDPOINT: langfuse-minio
+      MINIO_PORT: "9000"
+      MINIO_SSL: "false"
+      MINIO_BUCKET_NAME: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_TELEMETRY_ENABLED: "false"
+    networks:
+      - observability
+    restart: unless-stopped
+
+networks:
+  observability:
+    driver: bridge
+    internal: true   # no direct public egress from observability services
+
+volumes:
+  langfuse-postgres-data:
+  langfuse-redis-data:
+  langfuse-clickhouse-data:
+  langfuse-minio-data:
