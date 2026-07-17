@@ -23,6 +23,7 @@ export const RESOURCE_TYPES = [
   'Artifact',
   'EmailDelivery',
   'ObservabilityStack',
+  'EvalRun',
 ] as const;
 
 export type ResourceType = (typeof RESOURCE_TYPES)[number];
@@ -376,6 +377,38 @@ export interface ObservabilityStack extends BaseResource {
   checked_at: string;
 }
 
+// An EvalRun — the durable summary of one `forge eval <suite>` execution (C30): which suite/app,
+// which models were driven as agents-under-test, and the per-(model,case) pass/fail + scores. The
+// full trajectories + per-dimension scores live in Langfuse (the linked dataset run); this resource
+// is the compact, CI-gateable record. Holds NO tenant data (eval tenants are throwaway).
+export interface EvalRun extends BaseResource {
+  type: 'EvalRun';
+  suite: string;
+  app_name: string;
+  models: string[];
+  // The Langfuse dataset name + run name the detailed results were written under.
+  dataset: string;
+  run_name: string;
+  // Overall gate: every case passed (deterministic asserts + dimension-avg ≥ threshold) for every model.
+  passed: boolean;
+  total: number; // (model × case) executions
+  passed_count: number;
+  // Compact per-execution rollup.
+  results: EvalCaseResult[];
+  finished_at: string;
+}
+
+export interface EvalCaseResult {
+  model: string;
+  case_id: string;
+  passed: boolean;
+  deterministic_passed: boolean;
+  dimension_avg: number;
+  trace_id: string;
+  // Human-readable one-liner (e.g. the first failing check), for CI logs.
+  note: string;
+}
+
 export type AnyResource =
   | Application
   | Environment
@@ -396,4 +429,5 @@ export type AnyResource =
   | AgentTask
   | Artifact
   | EmailDelivery
-  | ObservabilityStack;
+  | ObservabilityStack
+  | EvalRun;

@@ -9,6 +9,31 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.53.0] — 2026-07-17
+
+### Added
+- **C30 — `forge eval <suite>`, the AI eval harness.** A generic, product-agnostic control-plane
+  runner that drives a REAL model as an MCP client through an app's live tool surface, grades the
+  trajectory, and reports to the self-hosted Langfuse. The agent-under-test is the model API as a
+  faithful MCP client (real ChatGPT/Claude connector UIs can't be scripted in CI).
+  - **Drives Claude AND GPT** (`models.ts`) — a provider-agnostic tool-loop (Anthropic Messages API +
+    OpenAI Chat Completions), native `fetch`, no SDKs. Returns the full trajectory; never throws.
+  - **Real transport** (`mcp-client.ts`) — mints a browserless `owner`-scoped access grant in-process,
+    then speaks JSON-RPC `tools/list` / `tools/call` over the forge MCP transport, so every eval traces
+    through C36 into Langfuse.
+  - **Isolated eval tenants** (`seed.ts`) — a throwaway user + an `active` subscription seeded directly
+    (no Stripe) so write tools don't 402; the owner auto-provisions as a group-of-one tenant.
+  - **Grading** (`graders.ts`) — deterministic asserts (tool called? structured status? args?) + an
+    LLM-judge (Claude, structured) scoring five dimensions (grounding, tool selection, permission
+    compliance, follow-through, tone). A case passes only when asserts hold AND the dimension average
+    clears the suite threshold.
+  - **Reporting** (`report.ts`) — best-effort Langfuse dataset run: per-case traces + per-dimension /
+    pass / deterministic scores. A reporting outage never fails the eval.
+  - The **`Eval` capability** (control-plane, long-running) → an `EvalRun` resource + `EvalRunCompleted`
+    event; the platform-defined suite format (`suite.ts`); CLI `forge eval <suite-file> --app --mcp-url
+    [--model provider:model]`. 14 eval unit tests (both providers via injected fetch, grader, schema,
+    MCP client, Langfuse config).
+
 ## [0.52.0] — 2026-07-17
 
 ### Added

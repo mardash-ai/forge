@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { readFileSync } from 'node:fs';
 import { compact, summarize } from './render';
 import { resolveApiBaseUrl, longRunningDispatcher } from './api-base';
 
@@ -961,6 +962,38 @@ mcp
     if (opts.remove) body.remove = true;
     const r = await api('POST', '/mcp/proactive', body);
     process.stdout.write(JSON.stringify(r.proactive ?? r, null, 2) + '\n');
+  });
+
+// --- eval (C30) --------------------------------------------------------------
+program
+  .command('eval')
+  .description("Run an eval suite against an app's MCP surface: drive Claude/GPT as MCP clients, grade, report to Langfuse (Eval, C30)")
+  .argument('<suite-file>', 'path to the suite JSON file the app authors')
+  .requiredOption('--app <app>', 'the forge app whose MCP surface to drive')
+  .requiredOption('--mcp-url <url>', 'the app MCP endpoint, e.g. https://api.dorinda.ai/mcp')
+  .option('--run-name <name>', 'name for this run (default: suite + timestamp)')
+  .option(
+    '--model <spec>',
+    'agent-under-test as provider:model (repeatable); default: anthropic:claude-opus-4-8 and openai:gpt-4o',
+    (val: string, prev: string[]) => [...prev, val],
+    [] as string[],
+  )
+  .action(async (suiteFile: string, opts: { app: string; mcpUrl: string; runName?: string; model: string[] }) => {
+    let suite: unknown;
+    try {
+      suite = JSON.parse(readFileSync(suiteFile, 'utf8'));
+    } catch (e) {
+      fail(`could not read/parse suite file "${suiteFile}": ${(e as Error)?.message ?? e}`);
+    }
+    const body: Record<string, unknown> = { app: opts.app, mcp_url: opts.mcpUrl, suite };
+    if (opts.runName) body.run_name = opts.runName;
+    if (opts.model.length) {
+      body.models = opts.model.map((s) => {
+        const i = s.indexOf(':');
+        return { provider: s.slice(0, i), model: s.slice(i + 1) };
+      });
+    }
+    await runCapability('eval', body);
   });
 
 program.parseAsync(process.argv).catch((err) => fail(String(err?.message ?? err)));

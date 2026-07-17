@@ -71,6 +71,9 @@ export const EVENT_TYPES = [
   // Observability stack (C36) — the platform's self-hosted Langfuse stack was configured
   // and its OTLP endpoint recorded. Carries only the endpoint + public key, never the secret.
   'ObservabilityConfigured',
+  // C30 — an eval suite finished running against an app's MCP surface; carries the per-model
+  // pass/fail summary + the Langfuse dataset-run name (never any tenant data).
+  'EvalRunCompleted',
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];
