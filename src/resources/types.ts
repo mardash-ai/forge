@@ -375,6 +375,10 @@ export interface ObservabilityStack extends BaseResource {
   status: 'configured' | 'unreachable';
   // ISO timestamp of the last connectivity check.
   checked_at: string;
+  // Public hostname the stack is fronted at, when ProvisionObservability (C37) deployed it behind a proxy.
+  public_host?: string;
+  // Directory the generated stack files (compose + env) live in, when forge-provisioned.
+  stack_dir?: string;
 }
 
 // An EvalRun — the durable summary of one `forge eval <suite>` execution (C30): which suite/app,

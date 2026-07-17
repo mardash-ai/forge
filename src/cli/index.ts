@@ -996,4 +996,53 @@ program
     await runCapability('eval', body);
   });
 
+// --- provision-observability (C37) -------------------------------------------
+program
+  .command('provision-observability')
+  .description('Generate + deploy the canonical self-hosted Langfuse stack, then register it (ProvisionObservability, C37)')
+  .option('--dir <dir>', 'target directory for the stack files (default <workspace>/observability)')
+  .option('--project-name <name>', 'compose project name', 'dorinda-monitor')
+  .option('--public-host <host>', 'front langfuse-web via Traefik at this host, e.g. monitor.dorinda.ai')
+  .option('--ui-port <port>', 'host port langfuse-web is published on', '3100')
+  .option('--network <name>', 'shared external network consumers attach to', 'observability')
+  .option('--proxy-network <name>', 'external Traefik network (used with --public-host)', 'proxy')
+  .option('--admin-email <email>', 'bootstrap admin email (first boot only)', 'admin@forge.local')
+  .option('--env-file <name>', 'env filename inside the stack dir', '.env')
+  .option('--preserve-volumes-from <prefix>', 'adopt existing named volumes under this prefix (data preservation)')
+  .option('--context <ctx>', 'docker --context for a remote daemon')
+  .option('--skip-deploy', 'generate files only; do not pull/up', false)
+  .option('--regenerate-secrets', 'force NEW secrets even if an env file exists (DESTRUCTIVE)', false)
+  .action(
+    async (opts: {
+      dir?: string;
+      projectName: string;
+      publicHost?: string;
+      uiPort: string;
+      network: string;
+      proxyNetwork: string;
+      adminEmail: string;
+      envFile: string;
+      preserveVolumesFrom?: string;
+      context?: string;
+      skipDeploy: boolean;
+      regenerateSecrets: boolean;
+    }) => {
+      const body: Record<string, unknown> = {
+        project_name: opts.projectName,
+        ui_port: Number(opts.uiPort),
+        network: opts.network,
+        proxy_network: opts.proxyNetwork,
+        admin_email: opts.adminEmail,
+        env_file: opts.envFile,
+        skip_deploy: opts.skipDeploy,
+        regenerate_secrets: opts.regenerateSecrets,
+      };
+      if (opts.dir) body.dir = opts.dir;
+      if (opts.publicHost) body.public_host = opts.publicHost;
+      if (opts.preserveVolumesFrom) body.preserve_volumes_from = opts.preserveVolumesFrom;
+      if (opts.context) body.context = opts.context;
+      await runCapability('provision-observability', body);
+    },
+  );
+
 program.parseAsync(process.argv).catch((err) => fail(String(err?.message ?? err)));

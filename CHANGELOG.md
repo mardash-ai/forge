@@ -9,6 +9,36 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.54.0] — 2026-07-17
+
+### Added
+- **C37 — Forge now owns AND provisions the self-hosted Langfuse stack** (`forge
+  provision-observability`). Previously the observability stack lived only in forge's dev-profile
+  compose + as a hand-managed stack on the box; `setup-observability` (C36) could only *register* an
+  already-running stack. The new capability closes the gap: it **generates** the canonical stack and
+  **deploys** it end-to-end, then registers the `ObservabilityStack` resource.
+  - **`observability-stack` plugin** — the canonical stack generator. Emits the standalone compose +
+    `.env`/`.env.example`, with every fix discovered standing the box stack up by hand baked in so a
+    fresh provision comes up green: single-node ClickHouse (`CLICKHOUSE_CLUSTER_ENABLED=false`) on
+    web+worker (else they crashloop), the S3/MinIO **region + force-path-style** on web+worker (else
+    OTLP event uploads 500 *"Region is missing"*), `HOSTNAME=0.0.0.0` on web when fronted (else Next.js
+    binds only the first network's IP and the proxy 502s), and optional Traefik fronting (proxy network
+    + labels + HTTPS) for a `--public-host` like `monitor.dorinda.ai`.
+  - **`provision-observability` capability** (control-plane, long-running, requires Docker) — generates
+    the files, ensures the shared external `observability` network (+ the Traefik `proxy` net when
+    fronted), `docker compose up -d` (whole-stack, not the app start-first roll), waits for
+    langfuse-web `/api/public/health`, and upserts the `ObservabilityStack` resource. Consumers still
+    export to the **internal** OTLP endpoint (`http://langfuse-web:3000/api/public/otel`), not the
+    public host.
+  - **Secrets are preserved by default** — the first forge path that generates *real* secret values
+    and writes them to a file (`generateObservabilitySecrets`: `ENCRYPTION_KEY` is exactly 64 hex
+    chars; the project key pair is shaped `pk-lf-…`/`sk-lf-…`). If an env file already exists its
+    values are reused untouched, so re-provisioning an already-running stack is a safe, diff-clean
+    **adopt-in-place** (with `--preserve-volumes-from` to keep existing data on a project rename) —
+    never a data-losing reset. `--regenerate-secrets` forces fresh secrets (explicitly destructive).
+  - `ObservabilityStack` resource gains optional `public_host` + `stack_dir`. New generator tests
+    (`tests/observability-stack.test.ts`, 15 cases) assert every baked-in fix is present.
+
 ## [0.53.1] — 2026-07-17
 
 ### Fixed / Added
