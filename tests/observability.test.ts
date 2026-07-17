@@ -12,6 +12,8 @@ import {
   withSpan,
   SpanContext,
   ATTR,
+  traceparent,
+  parentFromTraceparent,
 } from '../src/plugins/otel-langfuse/index';
 import type { ObservabilityStack } from '../src/resources/types';
 
@@ -191,6 +193,45 @@ describe('otel-langfuse plugin: SpanContext + startSpan', () => {
 
     // clean up
     initOtelLangfuse({ publicKey: '', secretKey: '' });
+  });
+});
+
+describe('otel-langfuse plugin: W3C trace-context propagation (cross-tier)', () => {
+  it('traceparent() renders a valid W3C header from a span', () => {
+    const span = startSpan('root.op');
+    const tp = traceparent(span);
+    expect(tp).toBe(`00-${span.traceId}-${span.spanId}-01`);
+    expect(tp).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+  });
+
+  it('round-trips: a span → traceparent → parentFromTraceparent → child joins the same trace', () => {
+    const root = startSpan('transport.mcp.tool_call');
+    const parent = parentFromTraceparent(traceparent(root));
+    expect(parent).toEqual({ traceId: root.traceId, spanId: root.spanId });
+    // A downstream tier starts its span with the extracted parent → SAME trace, linked to the root span.
+    const child = startSpan('app.dispatch', { parent });
+    expect(child.traceId).toBe(root.traceId);
+    expect(child.spanId).not.toBe(root.spanId);
+  });
+
+  it('parentFromTraceparent() returns undefined for missing/malformed/all-zero headers', () => {
+    expect(parentFromTraceparent(undefined)).toBeUndefined();
+    expect(parentFromTraceparent('')).toBeUndefined();
+    expect(parentFromTraceparent('garbage')).toBeUndefined();
+    expect(parentFromTraceparent('00-xyz-abc-01')).toBeUndefined();
+    // all-zero trace id is invalid per the spec
+    expect(parentFromTraceparent(`00-${'0'.repeat(32)}-${'1'.repeat(16)}-01`)).toBeUndefined();
+  });
+
+  it('parentFromTraceparent() accepts a header array (Node lowercases + may array-wrap)', () => {
+    const root = startSpan('root.op');
+    const parent = parentFromTraceparent([traceparent(root)]);
+    expect(parent?.traceId).toBe(root.traceId);
+  });
+
+  it('span kind is carried (CLIENT=3 for an outbound hop) without affecting behavior', () => {
+    const span: SpanContext = startSpan('outbound', { kind: 3 });
+    expect(() => span.end('ok')).not.toThrow();
   });
 });
 

@@ -23,6 +23,7 @@ import { registerIncidentRoutes } from '../api/incident-routes';
 import { registerAuthzRoutes } from '../api/authz-routes';
 import { registerOAuthRoutes } from '../api/oauth-routes';
 import { registerMcpRoutes } from '../api/mcp-routes';
+import { initOtelLangfuse } from '../plugins/otel-langfuse/index';
 import { registerConnectRoutes } from '../api/connect-routes';
 import { registerMembershipRoutes } from '../api/membership-routes';
 import { registerBillingRoutes } from '../api/billing-routes';
@@ -222,6 +223,9 @@ const port = Number(process.env.PORT ?? 3718);
 
 async function main() {
   await store.init();
+  // C36 — wire the OTel→Langfuse exporter once at boot. Returns false (tracing silently disabled) when
+  // LANGFUSE_PUBLIC_KEY/SECRET_KEY are absent, so an un-instrumented deploy behaves exactly as before.
+  const otelOn = initOtelLangfuse({ serviceName: process.env.OTEL_SERVICE_NAME ?? 'forge-data-plane' });
   // P26 — initialize the pluggable store backends EAGERLY so a bad datastore config fails the boot,
   // not the first request. When a Postgres backend is selected (FORGE_IDENTITY_BACKEND=postgres) this
   // opens the pool + ensures the schema, and throws (→ process exit below) if FORGE_DB_URL is missing
@@ -238,7 +242,7 @@ async function main() {
   // per-app uptime history the status page renders. No-op when disabled.
   startHealthSampler(store, { planeLabel: 'Forge data plane' });
   // eslint-disable-next-line no-console
-  console.log(`forge data-plane listening on http://0.0.0.0:${port} (app=${appName}, jobs=${loaded}, store ${backends.describe()})`);
+  console.log(`forge data-plane listening on http://0.0.0.0:${port} (app=${appName}, jobs=${loaded}, store ${backends.describe()}, otel=${otelOn ? 'on' : 'off'})`);
 }
 
 main().catch((err) => {

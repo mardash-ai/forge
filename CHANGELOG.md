@@ -9,6 +9,30 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.51.0] — 2026-07-17
+
+### Added
+- **C36 — the transport tier now auto-traces every MCP tool call, and traces span tiers.** The
+  self-hosted Langfuse stack + export helper (0.50.1) delivered a helper a consumer *could* import, but
+  nothing was instrumented and a trace couldn't cross the sidecar→app boundary. This closes both gaps so
+  an app gets platform-level MCP observability **for free** from the sidecar, with no app code required
+  for the transport span.
+  - **`src/api/mcp-routes.ts` (the C23 remote MCP server) is instrumented.** Every `tools/call` opens a
+    root `mcp.tool_call` span carrying GenAI attributes (`gen_ai.operation.name`, `gen_ai.tool.name`,
+    `mcp.client.user/host`, `mcp.app`, `mcp.tool.family/high_risk`), records the outcome (ok / error /
+    `insufficient_scope` / `app_unreachable`) and the handler HTTP status, and is **fire-and-forget** —
+    a down or slow collector never delays or fails a tool call.
+  - **W3C trace-context propagation (`traceparent()` / `parentFromTraceparent()`).** The transport
+    **injects** a `traceparent` header into the sidecar→app handler callback; a consumer **extracts** it
+    to continue the SAME trace, so the full path (transport → app proxy edge → C29 gate → domain →
+    Postgres → app-event) is one coherent trace. The exporter already minted spec-width trace/span IDs,
+    so propagation is a thin, zero-dep header codec. `SpanOptions.kind` (INTERNAL/SERVER/CLIENT) added.
+  - **`initOtelLangfuse()` is wired at data-plane boot** (`src/data-plane/server.ts`) — enabled when
+    `LANGFUSE_PUBLIC_KEY`/`SECRET_KEY` are present (boot logs `otel=on|off`); a silent no-op otherwise,
+    so an un-instrumented deploy behaves exactly as before.
+  - The export helper is the shared observability **contract** consumers adopt (imported by the sidecar
+    here; vendored into the app tier for the proxy-edge + dispatch child spans). 5 new propagation tests.
+
 ## [0.50.1] — 2026-07-17
 
 ### Added

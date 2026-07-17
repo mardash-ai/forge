@@ -154,11 +154,22 @@ function exportSpan(span: OtlpSpan): void {
 
 // ── Public span API ────────────────────────────────────────────────────────
 
+/** A remote parent extracted from a W3C `traceparent` header (cross-tier propagation). */
+export interface RemoteParent {
+  traceId: string;
+  spanId: string;
+}
+
+/** OTel span kind: INTERNAL=1, SERVER=2 (default), CLIENT=3. */
+export type SpanKind = 1 | 2 | 3;
+
 export interface SpanOptions {
   /** Attributes to set at span creation. */
   attributes?: Record<string, unknown>;
-  /** Parent span context. */
-  parent?: SpanContext;
+  /** Parent span — a live local span or a remote parent from `parentFromTraceparent()`. */
+  parent?: SpanContext | RemoteParent;
+  /** OTel span kind (INTERNAL=1, SERVER=2 default, CLIENT=3). */
+  kind?: SpanKind;
 }
 
 /** A live span. Call `end()` to finalise and export. */
@@ -166,6 +177,7 @@ export class SpanContext {
   readonly traceId: string;
   readonly spanId: string;
   private readonly parentSpanId: string | undefined;
+  private readonly _kind: SpanKind;
   private readonly _name: string;
   private readonly _startNano: string;
   private readonly _attrs: Record<string, unknown>;
@@ -175,6 +187,7 @@ export class SpanContext {
     this.traceId = opts.parent?.traceId ?? hex(16);
     this.spanId = hex(8);
     this.parentSpanId = opts.parent?.spanId;
+    this._kind = opts.kind ?? 2;
     this._name = name;
     this._startNano = nowNano();
     this._attrs = { ...(opts.attributes ?? {}) };
@@ -200,7 +213,7 @@ export class SpanContext {
       spanId: this.spanId,
       ...(this.parentSpanId ? { parentSpanId: this.parentSpanId } : {}),
       name: this._name,
-      kind: 2, // SERVER
+      kind: this._kind,
       startTimeUnixNano: this._startNano,
       endTimeUnixNano: nowNano(),
       attributes: attrs,
@@ -248,6 +261,42 @@ export async function withSpan<T>(
     span.end('error', err instanceof Error ? err.message : String(err));
     throw err;
   }
+}
+
+// ── W3C trace-context propagation (cross-tier) ──────────────────────────────
+// The single trace that spans forge (transport) + the app (proxy edge + tool
+// business logic) is stitched by carrying a W3C `traceparent` header across each
+// HTTP hop. The exporter already mints trace/span IDs in the exact hex widths the
+// spec wants (16-byte trace, 8-byte span), so propagation is a thin header codec.
+
+const _TRACEPARENT_RE = /^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$/i;
+
+/**
+ * Produce a W3C `traceparent` header for THIS span, to inject into a downstream
+ * call so the next tier's spans join this trace. Format `00-<trace>-<span>-01`.
+ *
+ * ```ts
+ * const res = await fetch(url, { headers: { traceparent: traceparent(span) } });
+ * ```
+ */
+export function traceparent(span: { traceId: string; spanId: string }): string {
+  return `00-${span.traceId}-${span.spanId}-01`;
+}
+
+/**
+ * Parse an incoming `traceparent` header into a parent you can pass as
+ * `startSpan(name, { parent })`. Returns undefined when the header is missing or
+ * malformed — the tier then roots a fresh trace. Never throws.
+ */
+export function parentFromTraceparent(header: string | string[] | undefined | null): RemoteParent | undefined {
+  const raw = Array.isArray(header) ? header[0] : header;
+  if (!raw) return undefined;
+  const m = _TRACEPARENT_RE.exec(raw.trim());
+  if (!m) return undefined;
+  const traceId = m[1]!.toLowerCase();
+  const spanId = m[2]!.toLowerCase();
+  if (/^0+$/.test(traceId) || /^0+$/.test(spanId)) return undefined; // all-zero IDs are invalid
+  return { traceId, spanId };
 }
 
 /**

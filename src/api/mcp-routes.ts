@@ -10,6 +10,7 @@ import { resolveServiceToken } from '../plugins/auth-identity/index';
 import { verifyAccessToken, bearerFrom, type VerifiedToken } from '../mcp/verify';
 import { scopesSatisfy } from '../mcp/oauth';
 import type { ToolRegistration, ToolFamily } from '../mcp/types';
+import { startSpan, traceparent, ATTR } from '../plugins/otel-langfuse/index';
 
 // C23 — the REMOTE MCP SERVER the platform hosts for a consuming app, plus the app-facing management
 // surface. `POST /mcp` speaks JSON-RPC 2.0 over the Streamable-HTTP transport (request/response; no
@@ -140,10 +141,27 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     const tool = await (await mcp()).getTool(app_.id, name);
     if (!tool) return reply.status(200).send(rpcError(id, -32602, `Unknown tool: ${name}`));
 
+    // ── Observability (C36): the ROOT span of this tool call's trace. The app CONTINUES this trace via
+    // the `traceparent` we inject into the callback below, so the whole path (transport → proxy edge →
+    // C29 gate → domain → Postgres → app-event) is ONE trace. Fire-and-forget — never blocks/fails a call.
+    const span = startSpan('mcp.tool_call', {
+      kind: 1, // INTERNAL — the trace root; the app adds the downstream server/child spans
+      attributes: {
+        [ATTR.GEN_AI_OPERATION_NAME]: 'execute_tool',
+        [ATTR.GEN_AI_TOOL_NAME]: name,
+        [ATTR.MCP_CLIENT_USER]: verified.userId,
+        [ATTR.MCP_CLIENT_HOST]: verified.clientId,
+        'mcp.app': app_.name,
+        'mcp.tool.family': tool.family,
+        'mcp.tool.high_risk': tool.high_risk ?? false,
+      },
+    });
+
     // Per-tool SCOPE enforcement against the granted token (the platform's job). The app additionally runs
     // its C29 authorize() inside the handler for write/act tools — we pass it the seam context below.
     if (tool.scope && !scopesSatisfy(verified.scopes, [tool.scope])) {
       await recordCall(app_.id, name, verified, false, 'insufficient_scope');
+      span.setAttribute(ATTR.AUTHZ_DECISION, 'insufficient_scope').end('error', 'insufficient_scope');
       return reply.status(200).send(rpcError(id, -32001, 'insufficient_scope', { required_scope: tool.scope }));
     }
 
@@ -151,6 +169,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     const base = await appCallbackBase(store, app_.id);
     if (!base) {
       await recordCall(app_.id, name, verified, false, 'app_unreachable');
+      span.end('error', 'app_unreachable');
       return reply.status(200).send(rpcError(id, -32011, 'the app handler is not reachable (never provisioned?).'));
     }
     const serviceToken = await resolveServiceToken(app_.id);
@@ -160,7 +179,8 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     try {
       const res = await fetch(`${base}${tool.handler_path}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', ...serviceAuthHeaders(serviceToken) },
+        // `traceparent` propagates THIS trace into the app tier so the proxy edge + dispatch spans join it.
+        headers: { 'content-type': 'application/json', traceparent: traceparent(span), ...serviceAuthHeaders(serviceToken) },
         // The C29 governance SEAM: the app's handler gets the user + the tool's safety family/high-risk hint
         // and runs its own authorize() (the platform enforced scope; the app decides allow/stage/deny).
         body: JSON.stringify({ tool: name, arguments: args, user: { id: verified.userId }, family: tool.family, high_risk: tool.high_risk ?? false, client_id: verified.clientId }),
@@ -173,6 +193,8 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       payload = { error: String((e as Error)?.message ?? e) };
     }
     await recordCall(app_.id, name, verified, ok, ok ? undefined : `handler_status_${httpStatus ?? 'error'}`);
+    if (httpStatus !== undefined) span.setAttribute('http.response.status_code', httpStatus);
+    span.end(ok ? 'ok' : 'error', ok ? undefined : `handler_status_${httpStatus ?? 'error'}`);
 
     // Wrap the app's JSON into an MCP tool result. A structured object rides `structuredContent`; a
     // human-readable rendering rides `content` text. A non-2xx handler → an MCP tool error (isError).
