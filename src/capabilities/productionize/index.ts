@@ -38,6 +38,9 @@ const inputSchema = z.object({
   // P33 — the C20 blob backend: 'filesystem' (default; bytes on the durable volume) or 's3' (object
   // store; operator supplies FORGE_S3_* in .env.prod). Decoupled from platform-store. Remembered.
   blobs_backend: z.enum(['filesystem', 's3']).optional(),
+  // C36 — opt into MCP observability: the compose joins the app + sidecar to the shared `observability`
+  // network and wires OTLP→Langfuse env (empty-default keys → inert until set). Off by default. Remembered.
+  observability: z.boolean().optional(),
 });
 
 type Input = z.infer<typeof inputSchema>;
@@ -103,6 +106,7 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
       data_plane_image: input.data_plane_image,
       cert_resolver: input.cert_resolver,
       blobs_backend: input.blobs_backend,
+      observability: input.observability,
       data_plane_image_env: process.env.FORGE_DATA_PLANE_IMAGE,
     });
 
@@ -163,6 +167,7 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
         withTheme,
         platformDb: withPlatformDb,
         blobsBackend: cfg.blobs_backend,
+        observability: cfg.observability,
       }),
     );
 
@@ -178,7 +183,7 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
     //    now annotated (what it is + how to obtain it) from the C13 secret catalog.
     await writeFile(
       path.join(repo, '.env.prod.example'),
-      generateEnvProdExample({ appName: app.name, host: cfg.host, withPostgres, withRedis, secrets, withJobs, platformDb: withPlatformDb, blobsBackend: cfg.blobs_backend }),
+      generateEnvProdExample({ appName: app.name, host: cfg.host, withPostgres, withRedis, secrets, withJobs, platformDb: withPlatformDb, blobsBackend: cfg.blobs_backend, observability: cfg.observability }),
     );
 
     // 5. PROVISIONING.md — the per-app operator runbook (C13): exactly the secrets THIS

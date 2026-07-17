@@ -88,6 +88,7 @@ describe('convergeProduction — required inputs + digest pins (R1) + convergenc
       data_plane_image: DP,
       cert_resolver: 'myresolver',
       blobs_backend: 'filesystem' as const,
+      observability: false,
     };
     const c = convergeProduction(prev, {}); // no flags at all
     expect(c).toEqual(prev);

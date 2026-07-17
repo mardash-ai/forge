@@ -21,6 +21,11 @@ export interface ProductionConfig {
   // P33 — the C20 blob backend: 'filesystem' (default; durable volume) or 's3' (object store). Decoupled
   // from platform-store=postgres so a single-node deploy keeps blobs on the volume.
   blobs_backend: BlobsBackend;
+  // C36 — MCP observability. When true, the generated compose joins the app + sidecar to the shared
+  // `observability` network and wires the OTLP→Langfuse export env, so the sidecar traces the MCP
+  // transport and the app continues the trace. Empty-default keys → tracing is inert until set, so it
+  // NEVER takes the app down. Off by default (opt-in per app via forge.app.json `production`).
+  observability: boolean;
 }
 
 // What's persisted under forge.app.json `production` (or absent on a first run).
@@ -31,6 +36,7 @@ export interface PrevProduction {
   data_plane_image?: string;
   cert_resolver?: string;
   blobs_backend?: BlobsBackend;
+  observability?: boolean;
 }
 
 // The inputs on this productionize call (flags + the platform env default).
@@ -41,6 +47,7 @@ export interface ProductionFlags {
   data_plane_image?: string;
   cert_resolver?: string;
   blobs_backend?: BlobsBackend;
+  observability?: boolean;
   // Platform default for the data-plane pin (e.g. FORGE_DATA_PLANE_IMAGE the control
   // plane injects). Lowest precedence — a flag or a persisted value wins.
   data_plane_image_env?: string;
@@ -49,6 +56,7 @@ export interface ProductionFlags {
 const DEFAULT_READINESS = '/api/health';
 const DEFAULT_CERT_RESOLVER = 'letsencrypt';
 const DEFAULT_BLOBS_BACKEND: BlobsBackend = 'filesystem';
+const DEFAULT_OBSERVABILITY = false;
 
 export function convergeProduction(prev: PrevProduction, flags: ProductionFlags): ProductionConfig {
   // --host: required on the FIRST run; recovered from the persisted block after.
@@ -97,5 +105,8 @@ export function convergeProduction(prev: PrevProduction, flags: ProductionFlags)
   // P33 — blob backend: flag > persisted > filesystem default. Carried forward convergently.
   const blobs_backend: BlobsBackend = flags.blobs_backend ?? prev.blobs_backend ?? DEFAULT_BLOBS_BACKEND;
 
-  return { host, readiness_path, web_image, data_plane_image, cert_resolver, blobs_backend };
+  // C36 — observability opt-in: flag > persisted > off. Carried forward convergently like the others.
+  const observability = flags.observability ?? prev.observability ?? DEFAULT_OBSERVABILITY;
+
+  return { host, readiness_path, web_image, data_plane_image, cert_resolver, blobs_backend, observability };
 }

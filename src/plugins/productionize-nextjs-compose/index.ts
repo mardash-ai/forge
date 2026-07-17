@@ -254,6 +254,10 @@ export interface ProdComposeOptions {
   blobsBackend?: 'filesystem' | 's3';
   // Reverse-proxy network the old replica is drained out of on a roll (matches C7).
   proxyNet?: string;
+  // C36 — MCP observability. When true, the web + data-plane services join the shared external
+  // `observability` network and get the OTLP→Langfuse export env (endpoint + empty-default LANGFUSE
+  // keys). The sidecar traces the MCP transport; the app continues the trace. Off by default.
+  observability?: boolean;
 }
 
 // P34 — the OPTIONAL auth-provider vars the data-plane (which hosts C10 `/auth/*`) reads. When the app
@@ -355,6 +359,23 @@ export function generateProdCompose(opts: ProdComposeOptions): string {
   const proxyNet = opts.proxyNet ?? 'proxy';
   const db = dbNameFor(appName);
   const blobsBackend = opts.blobsBackend ?? 'filesystem';
+  const observability = opts.observability ?? false;
+  // C36 — the OTLP→Langfuse export env for a tier. The endpoint defaults to the internal Langfuse
+  // address; the LANGFUSE keys are empty-default (`${VAR:-}`) so a missing key silently DISABLES tracing
+  // (the tier is unaffected) instead of failing the deploy — observability must never take the app down.
+  const otelEnv = (serviceName: string): string[] =>
+    observability
+      ? [
+          '      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://langfuse-web:3000/api/public/otel}',
+          `      - OTEL_SERVICE_NAME=${serviceName}`,
+          '      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}',
+          '      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}',
+        ]
+      : [];
+  // Joins the web + sidecar to the shared external `observability` network (where the Langfuse stack
+  // lives) + declares it at the bottom — only when observability is on.
+  const observabilityNet = observability ? '\n      - observability' : '';
+  const observabilityNetDecl = observability ? '\n  observability:\n    external: true' : '';
   // Traefik router/service keys must be a safe slug.
   const svc = appName.replace(/[^a-zA-Z0-9_-]/g, '-');
 
@@ -404,6 +425,8 @@ export function generateProdCompose(opts: ProdComposeOptions): string {
   }
   if (withRedis) webEnv.push('      - REDIS_URL=redis://redis:6379');
   webEnv.push(...sharedSecretEnv);
+  // C36 — the app tier emits the `app.mcp.dispatch` span (continues the transport trace).
+  webEnv.push(...otelEnv(appName));
 
   // Traefik ingress: host rule + the loadbalancer healthcheck the roll relies on.
   const labels: string[] = [
@@ -427,7 +450,7 @@ ${webEnv.join('\n')}
 ${dependsOn.join('\n')}
     networks:
       - ${proxyNet}
-      - internal
+      - internal${observabilityNet}
     stop_grace_period: 30s
     healthcheck:
       test: ${healthTest(`http://localhost:${port}${readinessPath}`)}
@@ -463,6 +486,8 @@ ${labels.join('\n')}`;
   // P34 — the optional Google/SMTP provider vars the sidecar reads for hosted auth (defined-but-empty
   // unless the operator fills .env.prod). Data-plane only — the web tier proxies /auth/* here.
   dpEnv.push(...dpAuthProviderEnv);
+  // C36 — the transport tier emits the `mcp.tool_call` trace ROOT (initOtelLangfuse reads these at boot).
+  dpEnv.push(...otelEnv('forge-data-plane'));
   // The data-plane's ENTIRE state dir (FORGE_STATE_DIR=/forge-state) rides ONE durable
   // named volume. This is load-bearing for auth: C10's users/sessions/`forge_refresh`
   // records live at /forge-state/auth/<appId>.json, so the volume is what lets a signed-in
@@ -520,7 +545,7 @@ ${dpEnv.join('\n')}
     volumes:
 ${dpVolumes.join('\n')}
     networks:
-      - internal
+      - internal${observabilityNet}
     stop_grace_period: 15s
     healthcheck:
       test: ${healthTest(`http://localhost:${DATA_PLANE_PORT}/health`)}
@@ -611,7 +636,7 @@ networks:
   ${proxyNet}:
     external: true
   internal:
-    driver: bridge
+    driver: bridge${observabilityNetDecl}
 
 services:
 ${services.join('\n\n')}
@@ -638,6 +663,8 @@ export interface EnvProdExampleOptions {
   platformDb?: boolean;
   // P33 — the C20 blob backend; when 's3', document the FORGE_S3_* the sidecar needs.
   blobsBackend?: 'filesystem' | 's3';
+  // C36 — when observability is on, document the Langfuse OTLP key pair the compose references.
+  observability?: boolean;
 }
 
 // The `#` comment block that precedes each secret in .env.prod.example — what it is,
@@ -717,6 +744,18 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
     lines.push('FORGE_S3_ACCESS_KEY=');
     lines.push('FORGE_S3_SECRET_KEY=');
     lines.push('FORGE_S3_REGION=us-east-1');
+    lines.push('');
+  }
+  // C36 — MCP observability: the OTLP key pair the app + sidecar authenticate their Langfuse push with.
+  if (opts.observability) {
+    lines.push('# --- MCP observability (C36) — traces the full MCP interaction to the self-hosted Langfuse ---');
+    lines.push('# The forge sidecar (transport) + this app (dispatch) export OTLP spans to the shared');
+    lines.push('# observability stack, stitched into ONE trace. These keys authenticate the OTLP push (the');
+    lines.push('# Langfuse project public/secret key pair). EMPTY = tracing silently disabled (the app is');
+    lines.push('# UNAFFECTED); fill them to enable. Source: the box observability stack .env.langfuse.');
+    lines.push('# OTEL_EXPORTER_OTLP_ENDPOINT defaults to http://langfuse-web:3000/api/public/otel.');
+    lines.push('LANGFUSE_PUBLIC_KEY=');
+    lines.push('LANGFUSE_SECRET_KEY=');
     lines.push('');
   }
   if (opts.withJobs) {

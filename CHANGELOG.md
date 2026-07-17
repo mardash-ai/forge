@@ -9,6 +9,22 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.52.0] — 2026-07-17
+
+### Added
+- **C36 — one-flag MCP observability for any forge app (`production.observability`).** The transport is
+  instrumented (0.51.0), but a consumer still had to hand-wire its prod stack — and `forge productionize`
+  REGENERATES `compose.prod.yaml` every release, so hand-edits don't survive. This makes observability a
+  first-class **generated** concern: set `production.observability: true` in `forge.app.json` (or
+  `productionize --observability`) and the generator emits, for BOTH the web + data-plane tiers, the
+  join to the shared external `observability` network and the OTLP→Langfuse export env
+  (`OTEL_EXPORTER_OTLP_ENDPOINT` defaulting to the internal `langfuse-web`, `OTEL_SERVICE_NAME`, and the
+  `LANGFUSE_PUBLIC_KEY`/`SECRET_KEY` pair). `.env.prod.example` documents the key pair.
+  - **Keys are empty-default (`${VAR:-}`), never deploy-required (`:?`)** — a missing key silently
+    disables tracing and the app is unaffected. Observability can never take the product down.
+  - Convergent + remembered like every other production setting (`converge.ts`): flag > persisted > off,
+    so a flag-less re-run reproduces it. Off by default — opt-in per app. 4 generator tests.
+
 ## [0.51.0] — 2026-07-17
 
 ### Added
