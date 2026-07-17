@@ -130,7 +130,7 @@ export const evalCapability: Capability<Input, EvalRun> = {
           await reporter.createTrace(
             traceId, `eval:${suite.name}/${c.id}/${m.provider}`,
             { prompt: c.prompt },
-            { final_reply: trajectory.finalText, tool_calls: trajectory.toolCalls.map((t) => ({ name: t.name, args: t.args, ok: t.ok })) },
+            { final_reply: trajectory.finalText, tool_calls: trajectory.toolCalls.map((t) => ({ name: t.name, args: t.args, ok: t.ok, result: t.result })) },
             { model: modelLabel, deterministic: det, loop_error: trajectory.error ?? null },
           );
           await reporter.score(traceId, 'passed', passed ? 1 : 0, 'BOOLEAN');

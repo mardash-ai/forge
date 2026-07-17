@@ -25,7 +25,12 @@ const eq = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.strin
 const clamp01 = (n: number): number => (Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0);
 
 function structuredContent(tc: ToolInvocation | undefined): Record<string, unknown> {
-  return (tc?.result as { structuredContent?: Record<string, unknown> })?.structuredContent ?? {};
+  const sc = (tc?.result as { structuredContent?: Record<string, unknown> })?.structuredContent ?? {};
+  // The forge transport double-wraps: the app returns a full McpToolResult ({content, structuredContent}),
+  // which the transport sets as the OUTER structuredContent. Unwrap to the inner structured object so
+  // asserts target the app's real structured payload (e.g. { id, status, delegation }).
+  const inner = (sc as { structuredContent?: Record<string, unknown> }).structuredContent;
+  return inner && typeof inner === 'object' ? inner : sc;
 }
 
 /** Run the case's deterministic asserts against the trajectory. Pure + synchronous. */

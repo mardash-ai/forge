@@ -6,6 +6,7 @@
 // MCP surface hard-gates every tool on `assertActiveAccess` (→ 402 otherwise). No Stripe involved:
 // we write the canonical subscription record directly, the same idempotent upsert the webhook uses.
 
+import { randomBytes } from 'node:crypto';
 import { createUser } from '../../plugins/auth-identity/store';
 import { applyCanonicalSubscription } from '../../billing/service';
 import { emptyProviderRefs } from '../../billing/types';
@@ -21,11 +22,13 @@ export async function seedEvalTenant(
   appId: string,
   opts: { suite: string; caseId: string; runId: string },
 ): Promise<EvalTenant> {
-  const slug = `${opts.suite}-${opts.caseId}-${opts.runId}`
+  // A random suffix guarantees a unique login per EXECUTION (each model × case × run seeds its own
+  // throwaway user) — without it, two models in one run collide on the same email.
+  const label = `${opts.suite}-${opts.caseId}`
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, '-')
-    .slice(0, 60);
-  const email = `eval+${slug}@eval.forge.local`;
+    .slice(0, 40);
+  const email = `eval-${label}-${randomBytes(5).toString('hex')}@eval.forge.local`;
   const user = await createUser(appId, {
     email,
     email_verified: true,
