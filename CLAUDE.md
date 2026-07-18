@@ -9,6 +9,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **⛔ `forge eval` runs cost real money — always ask before running one.** The `eval` capability
+> (`forge eval <suite>`) drives real Claude + GPT + an LLM-judge against a live app surface; every run
+> is real API spend. **Never execute an eval run (`forge eval`, or standing up a control-plane to drive
+> a suite) without the human operator's explicit approval for THAT specific run** — per-run, never
+> carried over, and applies to any subagent too. Building/testing the eval capability is fine; *running
+> a suite* against a live surface is the gated action.
+
 ## Repository Status
 
 Forge has a **running v1 implementation** alongside the specification. The implementation is a Docker-first, API-first platform (TypeScript, run via `tsx`; Fastify API; filesystem-backed Resource/Event store) that can initialize, provision, install, run, build, test, lint, inspect, and explain failures for a Dockerized Next.js web app. The spec in `docs/` remains the source of truth; code must conform to it.
