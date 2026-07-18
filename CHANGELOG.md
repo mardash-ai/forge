@@ -9,6 +9,20 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.55.0] — 2026-07-18
+
+### Added
+- **C30 — the eval harness now records cost per run.** Both providers return token `usage` in every
+  response; the tool-loop was discarding it. Now the loop sums input/output tokens across every
+  model↔tool round-trip (the real billed input — context is re-charged each step), the LLM-judge call's
+  usage is captured via a new optional `onUsage` callback on the model invoker, and a `pricing` module
+  prices both against per-model list pricing (`claude-opus-4-8` $5/$25, `gpt-4o` $2.50/$10, … per 1M;
+  override without a code change via `EVAL_PRICING_JSON`). Every `EvalRun` now carries `cost_usd` +
+  `tokens_in`/`tokens_out` + `cost_estimated` (true when a model isn't in the table), each
+  `EvalCaseResult` carries its own per-execution cost, and Langfuse gets a `cost_usd` score per trace
+  and on each dataset-run link — so a run self-reports what it cost. New `tests/eval-pricing.test.ts`
+  (7 tests) pin the pricing math + that both providers' usage is captured.
+
 ## [0.54.0] — 2026-07-17
 
 ### Added

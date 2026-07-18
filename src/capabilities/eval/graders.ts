@@ -3,7 +3,7 @@
 // assert holds AND the judge's dimension average clears the suite threshold.
 
 import { invokeStructured } from '../../plugins/model-anthropic/index';
-import type { Trajectory, ToolInvocation } from './models';
+import type { Trajectory, ToolInvocation, TokenUsage } from './models';
 import type { EvalCase } from './suite';
 
 export interface Check {
@@ -107,6 +107,8 @@ export async function gradeJudge(opts: {
   case: EvalCase;
   trajectory: Trajectory;
   invoke?: typeof invokeStructured;
+  /** Called with the judge call's token usage so the run cost can include it. */
+  onUsage?: (usage: TokenUsage) => void;
 }): Promise<DimensionScore[]> {
   const invoke = opts.invoke ?? invokeStructured;
   const system =
@@ -124,7 +126,7 @@ export async function gradeJudge(opts: {
     },
   };
   try {
-    const out = await invoke({ apiKey: opts.apiKey, model: opts.model ?? 'claude-opus-4-8', system, input, schema: JUDGE_SCHEMA, maxTokens: 1024 });
+    const out = await invoke({ apiKey: opts.apiKey, model: opts.model ?? 'claude-opus-4-8', system, input, schema: JUDGE_SCHEMA, maxTokens: 1024, onUsage: opts.onUsage });
     const dims = (out as { dimensions?: Array<{ name?: unknown; score?: unknown; reason?: unknown }> })?.dimensions ?? [];
     const byName = new Map(dims.map((d) => [String(d.name), d]));
     // Return exactly the requested dimensions, in order (defensive against a judge that drops/renames one).

@@ -399,6 +399,12 @@ export interface EvalRun extends BaseResource {
   passed_count: number;
   // Compact per-execution rollup.
   results: EvalCaseResult[];
+  // Measured cost of the whole run in USD (every agent trajectory + every judge call), with the token
+  // totals it's derived from. `cost_estimated` is true when a model wasn't in the pricing table.
+  cost_usd: number;
+  tokens_in: number;
+  tokens_out: number;
+  cost_estimated: boolean;
   finished_at: string;
 }
 
@@ -411,6 +417,10 @@ export interface EvalCaseResult {
   trace_id: string;
   // Human-readable one-liner (e.g. the first failing check), for CI logs.
   note: string;
+  // Measured cost of this (model, case) execution in USD + the token totals behind it (agent + judge).
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
 }
 
 export type AnyResource =

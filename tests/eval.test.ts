@@ -82,7 +82,7 @@ const caseOf = (asserts: EvalCase['asserts']): EvalCase => ({
   id: 'c', prompt: 'p', asserts, dimensions: ['grounding'],
 });
 const trajOf = (toolCalls: Trajectory['toolCalls'], finalText = ''): Trajectory => ({
-  provider: 'anthropic', model: 'm', toolCalls, finalText, steps: 1,
+  provider: 'anthropic', model: 'm', toolCalls, finalText, steps: 1, usage: { inputTokens: 0, outputTokens: 0 },
 });
 
 describe('gradeDeterministic', () => {

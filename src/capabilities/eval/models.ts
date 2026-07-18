@@ -26,12 +26,21 @@ export interface ToolInvocation {
   result: unknown;
 }
 
+export interface TokenUsage {
+  /** Summed across every model↔tool round-trip. Each step re-sends the growing history, so this is
+   * the REAL billed input (context is re-charged per call), not the unique prompt size. */
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface Trajectory {
   provider: 'anthropic' | 'openai';
   model: string;
   toolCalls: ToolInvocation[];
   finalText: string;
   steps: number;
+  /** Token usage across the whole loop — the basis for the per-run cost. */
+  usage: TokenUsage;
   /** Set when the loop itself failed (model HTTP error, malformed response) — distinct from a
    * tool call returning an error, which is a legitimate part of a trajectory. */
   error?: string;
@@ -89,6 +98,7 @@ async function runAnthropic(opts: RunAgentOpts): Promise<Trajectory> {
   const finalTextParts: string[] = [];
   const messages: Array<Record<string, unknown>> = [{ role: 'user', content: opts.prompt }];
   const tools = opts.tools.map((t) => ({ name: t.name, description: t.description, input_schema: sanitizeToolSchema(t.inputSchema) }));
+  const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
   for (let step = 0; step < maxSteps; step++) {
     const res = await doFetch(ANTHROPIC_API_URL, {
@@ -98,16 +108,19 @@ async function runAnthropic(opts: RunAgentOpts): Promise<Trajectory> {
     });
     const body = (await res.json().catch(() => ({}))) as {
       content?: Array<Record<string, unknown>>; stop_reason?: string; error?: { message?: string };
+      usage?: { input_tokens?: number; output_tokens?: number };
     };
+    usage.inputTokens += Number(body?.usage?.input_tokens ?? 0);
+    usage.outputTokens += Number(body?.usage?.output_tokens ?? 0);
     if (!res.ok) {
-      return { provider: 'anthropic', model: opts.model, toolCalls, finalText: finalTextParts.join('\n'), steps: step,
+      return { provider: 'anthropic', model: opts.model, toolCalls, finalText: finalTextParts.join('\n'), steps: step, usage,
         error: `anthropic HTTP ${res.status}: ${body?.error?.message ?? ''}`.trim() };
     }
     const blocks = Array.isArray(body.content) ? body.content : [];
     for (const b of blocks) if (b.type === 'text' && typeof b.text === 'string') finalTextParts.push(b.text as string);
     const toolUses = blocks.filter((b) => b.type === 'tool_use');
     if (body.stop_reason !== 'tool_use' || toolUses.length === 0) {
-      return { provider: 'anthropic', model: opts.model, toolCalls, finalText: finalTextParts.join('\n').trim(), steps: step + 1 };
+      return { provider: 'anthropic', model: opts.model, toolCalls, finalText: finalTextParts.join('\n').trim(), steps: step + 1, usage };
     }
     messages.push({ role: 'assistant', content: blocks });
     const toolResults: Array<Record<string, unknown>> = [];
@@ -120,7 +133,7 @@ async function runAnthropic(opts: RunAgentOpts): Promise<Trajectory> {
     }
     messages.push({ role: 'user', content: toolResults });
   }
-  return { provider: 'anthropic', model: opts.model, toolCalls, finalText: finalTextParts.join('\n').trim(), steps: maxSteps,
+  return { provider: 'anthropic', model: opts.model, toolCalls, finalText: finalTextParts.join('\n').trim(), steps: maxSteps, usage,
     error: `reached maxSteps (${maxSteps}) without finishing` };
 }
 
@@ -136,6 +149,7 @@ async function runOpenai(opts: RunAgentOpts): Promise<Trajectory> {
     { role: 'user', content: opts.prompt },
   ];
   const tools = opts.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: sanitizeToolSchema(t.inputSchema) } }));
+  const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
   for (let step = 0; step < maxSteps; step++) {
     const res = await doFetch(OPENAI_API_URL, {
@@ -145,9 +159,12 @@ async function runOpenai(opts: RunAgentOpts): Promise<Trajectory> {
     });
     const body = (await res.json().catch(() => ({}))) as {
       choices?: Array<{ message?: Record<string, unknown>; finish_reason?: string }>; error?: { message?: string };
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
+    usage.inputTokens += Number(body?.usage?.prompt_tokens ?? 0);
+    usage.outputTokens += Number(body?.usage?.completion_tokens ?? 0);
     if (!res.ok) {
-      return { provider: 'openai', model: opts.model, toolCalls, finalText: finalTextParts.join('\n'), steps: step,
+      return { provider: 'openai', model: opts.model, toolCalls, finalText: finalTextParts.join('\n'), steps: step, usage,
         error: `openai HTTP ${res.status}: ${body?.error?.message ?? ''}`.trim() };
     }
     const choice = body.choices?.[0];
@@ -155,7 +172,7 @@ async function runOpenai(opts: RunAgentOpts): Promise<Trajectory> {
     if (typeof msg.content === 'string' && msg.content) finalTextParts.push(msg.content);
     const calls = Array.isArray(msg.tool_calls) ? (msg.tool_calls as Array<Record<string, unknown>>) : [];
     if (calls.length === 0) {
-      return { provider: 'openai', model: opts.model, toolCalls, finalText: finalTextParts.join('\n').trim(), steps: step + 1 };
+      return { provider: 'openai', model: opts.model, toolCalls, finalText: finalTextParts.join('\n').trim(), steps: step + 1, usage };
     }
     messages.push(msg);
     for (const c of calls) {
@@ -168,7 +185,7 @@ async function runOpenai(opts: RunAgentOpts): Promise<Trajectory> {
       messages.push({ role: 'tool', tool_call_id: c.id, content: resultText(result) });
     }
   }
-  return { provider: 'openai', model: opts.model, toolCalls, finalText: finalTextParts.join('\n').trim(), steps: maxSteps,
+  return { provider: 'openai', model: opts.model, toolCalls, finalText: finalTextParts.join('\n').trim(), steps: maxSteps, usage,
     error: `reached maxSteps (${maxSteps}) without finishing` };
 }
 
@@ -179,6 +196,6 @@ export async function runAgent(opts: RunAgentOpts): Promise<Trajectory> {
     return opts.provider === 'anthropic' ? await runAnthropic(opts) : await runOpenai(opts);
   } catch (e) {
     return { provider: opts.provider, model: opts.model, toolCalls: [], finalText: '', steps: 0,
-      error: `agent loop threw: ${(e as Error)?.message ?? String(e)}` };
+      usage: { inputTokens: 0, outputTokens: 0 }, error: `agent loop threw: ${(e as Error)?.message ?? String(e)}` };
   }
 }

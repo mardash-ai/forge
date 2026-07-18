@@ -102,6 +102,9 @@ export interface InvokeInput {
   input: unknown;
   schema: unknown;
   maxTokens: number;
+  /** Optional: called with the response's token usage after a successful invocation, so callers that
+   * price a run (the eval judge) can account for this call's cost. Ignored by injected test fakes. */
+  onUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
 }
 
 export type ModelInvoker = (input: InvokeInput) => Promise<unknown>;
@@ -136,6 +139,8 @@ export const invokeStructured: ModelInvoker = async (input) => {
     const msg = (body as { error?: { message?: string } })?.error?.message ?? `HTTP ${res.status}`;
     throw new Error(`model request failed: ${msg}`);
   }
+  const u = (body as { usage?: { input_tokens?: number; output_tokens?: number } })?.usage;
+  if (input.onUsage) input.onUsage({ inputTokens: Number(u?.input_tokens ?? 0), outputTokens: Number(u?.output_tokens ?? 0) });
   return parseResult(body);
 };
 
