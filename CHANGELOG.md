@@ -9,6 +9,21 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.56.0] — 2026-07-20
+
+### Added
+- **P38 — split-host auth public URL.** Productionize now wires `FORGE_AUTH_PUBLIC_URL` into the
+  data-plane sidecar (defined-but-empty, `${FORGE_AUTH_PUBLIC_URL:-}`) whenever the app uses hosted auth.
+  The data-plane hosts C10 `/auth/*` but builds every auth URL (the OAuth `redirect_uri`, verify/reset
+  links, and the post-login redirect) from `publicBase`, which defaults to the host the request arrived
+  on. In a SPLIT-HOST deploy — the UI on `app.<domain>` proxying `/auth/*` to the platform on
+  `api.<domain>` — that arrival host is the API host, so a Google login callback + its host-only session
+  cookie + the `/home` redirect all land on the API host, stranding the user off the app. Setting
+  `FORGE_AUTH_PUBLIC_URL` in `.env.prod` now pins the user-facing origin (`publicBase` already reads it
+  first; this only makes productionize EMIT it). Empty-default = today's request-host-derived behavior, so
+  single-host apps are unaffected. Data-plane only — the web tier proxies `/auth/*` and never computes an
+  auth URL itself.
+
 ## [0.55.0] — 2026-07-18
 
 ### Added

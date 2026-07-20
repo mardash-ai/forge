@@ -486,6 +486,16 @@ ${labels.join('\n')}`;
   // P34 — the optional Google/SMTP provider vars the sidecar reads for hosted auth (defined-but-empty
   // unless the operator fills .env.prod). Data-plane only — the web tier proxies /auth/* here.
   dpEnv.push(...dpAuthProviderEnv);
+  // P38 — SPLIT-HOST auth public URL. The data-plane hosts C10 `/auth/*`, but it builds every auth URL
+  // (the OAuth redirect_uri, the verify/reset links, and the post-login redirect) from `publicBase`, which
+  // defaults to the host the request ARRIVED on. When the UI lives on a DIFFERENT public host than the API
+  // (e.g. the web tier on app.<domain> proxying `/auth/*` to the platform on api.<domain>), that arrival
+  // host is the API host — so a Google login callback + its host-only session cookie + the `/home` bounce
+  // all land on the API host, stranding the user off the app. FORGE_AUTH_PUBLIC_URL pins the USER-FACING
+  // origin (publicBase reads it FIRST); the data-plane only reads it, so we wire it defined-but-empty from
+  // .env.prod for hosted-auth apps. Empty = today's request-host-derived behavior, so single-host apps are
+  // unaffected. (Not on the web tier — it proxies `/auth/*` here and never computes an auth URL itself.)
+  if (usesAuth) dpEnv.push('      - FORGE_AUTH_PUBLIC_URL=${FORGE_AUTH_PUBLIC_URL:-}');
   // C36 — the transport tier emits the `mcp.tool_call` trace ROOT (initOtelLangfuse reads these at boot).
   dpEnv.push(...otelEnv('forge-data-plane'));
   // The data-plane's ENTIRE state dir (FORGE_STATE_DIR=/forge-state) rides ONE durable

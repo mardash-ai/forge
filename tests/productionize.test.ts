@@ -300,6 +300,21 @@ describe('generateProdCompose — Traefik + healthcheck + stop_grace + data-plan
     expect(occurrences).toBe(1);
   });
 
+  // P38 — split-host auth: the data-plane gets FORGE_AUTH_PUBLIC_URL defined-but-empty (from .env.prod) so a
+  // split-host app (UI on app.<domain>, API on api.<domain>) can pin the user-facing origin its auth URLs
+  // target. Data-plane only (the web tier proxies /auth/* and never computes an auth URL). Empty-default =
+  // today's request-host-derived behavior, so single-host apps are unaffected.
+  it('wires FORGE_AUTH_PUBLIC_URL into the data-plane (not web) when the app uses auth (P38)', () => {
+    const yaml = generateProdCompose({ ...base, secrets: ['AUTH_SESSION_SECRET'] });
+    expect(serviceBlock(yaml, 'data-plane')).toContain('- FORGE_AUTH_PUBLIC_URL=${FORGE_AUTH_PUBLIC_URL:-}');
+    expect(serviceBlock(yaml, 'web')).not.toContain('FORGE_AUTH_PUBLIC_URL');
+  });
+
+  it('does NOT wire FORGE_AUTH_PUBLIC_URL when the app does not use hosted auth (P38)', () => {
+    const dp = serviceBlock(generateProdCompose({ ...base, secrets: ['ANTHROPIC_API_KEY'] }), 'data-plane');
+    expect(dp).not.toContain('FORGE_AUTH_PUBLIC_URL');
+  });
+
   // P36 — cron fires must be authenticated. When the app declares scheduled jobs, AUTH_SERVICE_TOKEN is
   // deploy-required (`${VAR:?…}`) in BOTH tiers so an unset token fails the deploy loudly instead of firing
   // bare, unauthenticated POSTs at publicly-routed /api/cron/*.
