@@ -9,6 +9,17 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.57.0] — 2026-07-20
+
+### Added
+- **P38 (companion) — split-host public URL for the C24 connectors flow.** Productionize now also wires
+  `FORGE_OAUTH_PUBLIC_URL` into the data-plane (defined-but-empty) for hosted-auth apps, mirroring 0.56's
+  `FORGE_AUTH_PUBLIC_URL`. The `/connect/*` flow's `publicBase` reads this SEPARATE var; on a split-host
+  deploy (UI on `app.<domain>`, API on `api.<domain>`) a "Connect Google" callback + its post-connect
+  `return_to` bounce must land on the user-facing host, not the API host the proxied request arrived on.
+  Set it in `.env.prod` to the app host. Empty = today's request-host-derived behavior; single-host apps
+  unaffected. Data-plane only.
+
 ## [0.56.0] — 2026-07-20
 
 ### Added

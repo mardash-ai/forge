@@ -496,6 +496,12 @@ ${labels.join('\n')}`;
   // .env.prod for hosted-auth apps. Empty = today's request-host-derived behavior, so single-host apps are
   // unaffected. (Not on the web tier — it proxies `/auth/*` here and never computes an auth URL itself.)
   if (usesAuth) dpEnv.push('      - FORGE_AUTH_PUBLIC_URL=${FORGE_AUTH_PUBLIC_URL:-}');
+  // P38 companion for the C24 CONNECTORS flow (`/connect/*`): its publicBase reads a SEPARATE var,
+  // FORGE_OAUTH_PUBLIC_URL. Same split-host rationale — a "Connect Google" callback + its post-connect
+  // `return_to` bounce (a relative path like /settings/integrations) must land on the USER-FACING host,
+  // not the API host the proxied request arrived on. Wired defined-but-empty from .env.prod; empty =
+  // request-host-derived (single-host apps unaffected). Data-plane only (the web tier proxies /connect/*).
+  if (usesAuth) dpEnv.push('      - FORGE_OAUTH_PUBLIC_URL=${FORGE_OAUTH_PUBLIC_URL:-}');
   // C36 — the transport tier emits the `mcp.tool_call` trace ROOT (initOtelLangfuse reads these at boot).
   dpEnv.push(...otelEnv('forge-data-plane'));
   // The data-plane's ENTIRE state dir (FORGE_STATE_DIR=/forge-state) rides ONE durable
