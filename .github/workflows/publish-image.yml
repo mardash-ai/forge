@@ -5,9 +5,8 @@ name: Publish control-plane image
 #   - pushing a version tag (e.g. v0.1.0) -> publishes :0.1.0 and :latest
 #   - manual run from the Actions tab      -> publishes :latest
 #
-# Images are MULTI-ARCH (linux/amd64 + linux/arm64) so they run natively on both
-# x86 CI/servers and arm64 (Apple Silicon) dev hosts. QEMU provides the emulation
-# buildx uses to cross-build the non-native arch.
+# Images are arm64-only, built NATIVELY on an arm64 runner (no QEMU) — the only runtime target is the
+# arm64 Apple-Silicon box. (If an x86 host ever needs it, add linux/amd64 back + a QEMU step, or a matrix.)
 #
 # The image name uses the repository owner, so it works for any org/user that
 # hosts this repo (e.g. ghcr.io/mardash-ai/forge-control-plane).
@@ -24,13 +23,12 @@ permissions:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    # Native arm64 runner (no QEMU). The only runtime target is the arm64 box (Apple Silicon Mac mini);
+    # emulating the arm64 leg on an x86 runner took ~3-6 min + double the Actions minutes. Native ≈1 min.
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
@@ -58,7 +56,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
