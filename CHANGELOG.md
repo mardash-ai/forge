@@ -9,6 +9,25 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.58.0] — 2026-07-21
+
+### Added
+- **P41 — billing (Stripe) provider secrets auto-wired into the data-plane.** Productionize wires the
+  auth/email provider secrets into the sidecar (P34: `AUTH_PROVIDER_VARS` → `dpAuthProviderEnv`,
+  defined-but-empty so `.env.prod` is the single source of truth) but had **no equivalent for billing**.
+  An app using C-billing therefore booted its data-plane with **zero `STRIPE_` env**:
+  `resolveBillingConfig()` read not-configured and every checkout / trial-start threw
+  `billingNotConfigured()` even when `.env.prod` held a valid `sk_`/`whsec_`. (This is what broke
+  dorinda-api's "pick a plan → I couldn't start checkout".)
+  - `BILLING_PROVIDER_VARS = [STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET]` wired into the **data-plane
+    only** (the web tier proxies `/billing/*` and never calls Stripe), defined-but-empty, deduped
+    against declared secrets, gated on `usesBilling` (any declared `STRIPE_*`, e.g. the `STRIPE_PRICE_*`
+    catalog the web renders).
+  - C13 secret-catalog entries for both secrets, and the generated `.env.prod.example` +
+    `PROVISIONING.md` now surface them when the app uses billing (zero-drift operator docs).
+  - Regression tests in `tests/productionize.test.ts` (wiring, no-auto-wire-without-billing, dedup,
+    doc surfacing), verified to fail without the fix.
+
 ## [0.57.1] — 2026-07-20
 
 ### Added
