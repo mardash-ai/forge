@@ -50,6 +50,14 @@ const stubStripe: StripeClient = {
   createCustomer: async () => ({ id: `cus_${++customerSeq}` }),
   createCheckoutSession: async () => ({ id: 'cs_1', url: 'https://checkout.stripe.test/cs_1' }),
   createPortalSession: async () => ({ url: 'https://portal.stripe.test/1' }),
+  createTrialingSubscription: async (input) => ({
+    id: 'sub_trial_teardown', status: 'trialing',
+    trial_end: Math.floor(Date.now() / 1000) + input.trialPeriodDays * 24 * 3600,
+    current_period_end: null, cancel_at_period_end: false,
+    customer_id: input.customerId, price_id: input.priceId, currency: 'usd',
+    metadata: input.metadata,
+  }),
+  resumeSubscription: async () => ({ resumed: false, subscription: null }),
   retrieveSubscription: async (): Promise<StripeSubscription | null> => null,
   cancelSubscription: async (_secretKey, id) => {
     canceledSubs.push(id);

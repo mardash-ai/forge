@@ -20,6 +20,7 @@ import {
   type StripeClient,
   type StripeSubscription,
 } from '../src/plugins/stripe-billing/index';
+import { TRIAL_DAYS } from '../src/billing/config';
 import { deriveEntitlements, deriveEntitlement } from '../src/billing/entitlements';
 import { applyCanonicalSubscription } from '../src/billing/service';
 import { noneRecord, emptyProviderRefs, type Catalog, type SubscriptionRecord } from '../src/billing/types';
@@ -47,6 +48,10 @@ let portalInputs: Array<Record<string, unknown>>;
 let subs: Map<string, StripeSubscription | null>;
 let defaultSub: StripeSubscription | null;
 
+// Track calls to new methods in tests.
+let trialSubInputs: Array<Record<string, unknown>>;
+let resumeInputs: Array<Record<string, unknown>>;
+
 const stubStripe: StripeClient = {
   createCustomer: async () => {
     customers += 1;
@@ -59,6 +64,24 @@ const stubStripe: StripeClient = {
   createPortalSession: async (input) => {
     portalInputs.push(input as unknown as Record<string, unknown>);
     return { url: 'https://portal.stripe.test/p/1' };
+  },
+  // §1B — stub creates a trialing sub stub (status: trialing, trial_end: now + TRIAL_DAYS days).
+  createTrialingSubscription: async (input) => {
+    trialSubInputs.push(input as unknown as Record<string, unknown>);
+    customers += 1;
+    const trialEnd = Math.floor(Date.now() / 1000) + input.trialPeriodDays * 24 * 3600;
+    return stripeSub({ id: 'sub_trial_1', status: 'trialing', trial_end: trialEnd,
+      customer_id: input.customerId, price_id: input.priceId, metadata: input.metadata });
+  },
+  // §1E — stub resumes a paused subscription (returns active).
+  resumeSubscription: async (input) => {
+    resumeInputs.push(input as unknown as Record<string, unknown>);
+    const sub = subs.get(input.subscriptionId) ?? defaultSub;
+    if (!sub) return { resumed: false, subscription: null };
+    const resumed = { ...sub, status: 'active', trial_end: null };
+    subs.set(input.subscriptionId, resumed);
+    if (defaultSub?.id === sub.id) defaultSub = resumed;
+    return { resumed: true, subscription: resumed };
   },
   retrieveSubscription: async (_secretKey, subscriptionId) => {
     if (subs.has(subscriptionId)) return subs.get(subscriptionId)!;
@@ -175,6 +198,8 @@ beforeEach(async () => {
   customers = 0;
   checkoutInputs = [];
   portalInputs = [];
+  trialSubInputs = [];
+  resumeInputs = [];
   subs = new Map();
   defaultSub = stripeSub();
   setStripeClient(stubStripe);
@@ -195,7 +220,7 @@ afterEach(async () => {
 
 // ===================================================================================================
 describe('C33 — Stripe → canonical status mapping', () => {
-  it('maps every native Stripe status into the canonical 6-state vocabulary', () => {
+  it('maps every native Stripe status into the canonical 7-state vocabulary', () => {
     expect(mapStripeStatus('active')).toBe('active');
     expect(mapStripeStatus('trialing')).toBe('trialing');
     expect(mapStripeStatus('past_due')).toBe('past_due');
@@ -203,7 +228,8 @@ describe('C33 — Stripe → canonical status mapping', () => {
     expect(mapStripeStatus('incomplete')).toBe('incomplete');
     expect(mapStripeStatus('incomplete_expired')).toBe('canceled');
     expect(mapStripeStatus('canceled')).toBe('canceled');
-    expect(mapStripeStatus('paused')).toBe('canceled');
+    // §1D: paused is DISTINCT from canceled — it is resumable (trial ended, no card, data retained).
+    expect(mapStripeStatus('paused')).toBe('paused');
     expect(mapStripeStatus('something_new')).toBe('canceled'); // unknown → conservative terminal
   });
 });
@@ -251,6 +277,14 @@ describe('C33 — entitlement derivation (grace + free default)', () => {
       expect(d.plan_key).toBe('free');
       expect(d.entitlements['feature.max_items']).toBe(10);
     }
+  });
+
+  it('paused (§1D) → the free default plan (read-only grace, no paid entitlements, DISTINCT from canceled)', () => {
+    const d = deriveEntitlements(base({ status: 'paused' }), catalog);
+    expect(d.status).toBe('paused');
+    expect(d.plan_key).toBe('free'); // free/default entitlements
+    expect(d.entitlements['feature.max_items']).toBe(10);
+    expect(d.entitlements['feature.household']).toBe(false);
   });
 
   it('single-key read reports source plan vs default + a null value for an unknown key', () => {
@@ -577,5 +611,221 @@ describe('C33 — reserved provider webhooks (adapters deferred)', () => {
       expect(res.statusCode).toBe(501);
       expect(res.json().error.code).toBe('not_configured');
     }
+  });
+});
+
+// ===================================================================================================
+describe('C33 §1C — TRIAL_DAYS single-source constant', () => {
+  it('TRIAL_DAYS is 14 (one-line change controls trial length everywhere)', () => {
+    expect(TRIAL_DAYS).toBe(14);
+  });
+});
+
+describe('C33 §1B — POST /billing/trial (no-card trialing subscription at signup)', () => {
+  it('creates a trialing subscription with NO payment method and TRIAL_DAYS trial; persists status trialing immediately', async () => {
+    await configureStripe();
+    await seedCatalog();
+    const { userId, cookie } = await signIn();
+
+    const res = await server.inject({
+      method: 'POST', url: '/billing/trial',
+      headers: { 'x-forge-service-token': SERVICE_TOKEN },
+      payload: { subscriber: userId, plan_key: 'pro_month', customer_email: 'payer@demo.test' },
+    });
+    expect(res.statusCode).toBe(200);
+    const record = res.json();
+    expect(record.status).toBe('trialing');
+    expect(record.trial_end).toBeTruthy(); // trial_end is set
+    expect(record.source).toBe('stripe');
+    expect(record.provider_refs.stripe_subscription_id).toBe('sub_trial_1');
+
+    // Stripe was called with the CORRECT parameters (TRIAL_DAYS, plan price, no card required).
+    expect(trialSubInputs).toHaveLength(1);
+    expect(trialSubInputs[0]).toMatchObject({ priceId: 'price_pro_month', trialPeriodDays: TRIAL_DAYS });
+    // No checkout session was opened.
+    expect(checkoutInputs).toHaveLength(0);
+
+    // Entitlement reads immediately reflect trialing → active plan's entitlements.
+    const ent = await server.inject({ method: 'GET', url: '/billing/entitlements', headers: { cookie } });
+    expect(ent.json()).toMatchObject({ status: 'trialing', plan_key: 'pro_month' });
+    expect(ent.json().entitlements['feature.household']).toBe(true);
+  });
+
+  it('requires SERVICE token (a browser cannot start a trial for an arbitrary subscriber)', async () => {
+    await configureStripe();
+    await seedCatalog();
+    const { cookie } = await signIn();
+    const res = await server.inject({
+      method: 'POST', url: '/billing/trial', headers: { cookie },
+      payload: { subscriber: 'someone', plan_key: 'pro_month' },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('requires subscriber + plan_key (missing → 422)', async () => {
+    await configureStripe();
+    await seedCatalog();
+    for (const bad of [{ plan_key: 'pro_month' }, { subscriber: 'u' }, {}]) {
+      const res = await server.inject({ method: 'POST', url: '/billing/trial', headers: { 'x-forge-service-token': SERVICE_TOKEN }, payload: bad });
+      expect(res.statusCode).toBe(422);
+    }
+  });
+
+  it('degrades to 503 when Stripe is not configured', async () => {
+    await seedCatalog();
+    const res = await server.inject({
+      method: 'POST', url: '/billing/trial',
+      headers: { 'x-forge-service-token': SERVICE_TOKEN },
+      payload: { subscriber: 'u1', plan_key: 'pro_month' },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error.code).toBe('billing_not_configured');
+  });
+});
+
+describe('C33 §1D — paused status (trial ended, no card, read-only grace)', () => {
+  it('a paused webhook → record status:"paused" + free default entitlements (read-only grace)', async () => {
+    await configureStripe();
+    await seedCatalog();
+    const { userId, cookie } = await signIn();
+
+    // Stripe reports the subscription paused (trial ended, no card added).
+    defaultSub = stripeSub({ status: 'paused', trial_end: null,
+      metadata: { subscriber: userId, app: APP_ID, plan_key: 'pro_month' } });
+
+    const res = await deliverEvent({ id: 'evt_paused', type: 'customer.subscription.updated', data: { object: { id: 'sub_123' } } });
+    expect(res.json().outcome).toBe('processed');
+
+    const sub = await server.inject({ method: 'GET', url: '/billing/subscription', headers: { cookie } });
+    expect(sub.json().status).toBe('paused'); // DISTINCT from canceled
+    expect(sub.json().source).toBe('stripe');
+
+    // paused → free default entitlements (§1D: read-only grace, not terminal).
+    const ent = await server.inject({ method: 'GET', url: '/billing/entitlements', headers: { cookie } });
+    expect(ent.json().status).toBe('paused');
+    expect(ent.json().plan_key).toBe('free');
+    expect(ent.json().entitlements['feature.max_items']).toBe(10);
+  });
+});
+
+describe('C33 §1E — setup_intent.succeeded / payment_method.attached (card added at conversion)', () => {
+  it('setup_intent.succeeded with a paused subscription → resumes it + reconciles to active', async () => {
+    await configureStripe();
+    await seedCatalog();
+    const { userId, cookie } = await signIn();
+
+    // Seed a paused subscription record with a known customer id.
+    const pausedSub = stripeSub({
+      id: 'sub_123', status: 'paused',
+      customer_id: 'cus_test_1',
+      metadata: { subscriber: userId, app: APP_ID, plan_key: 'pro_month' },
+    });
+    subs.set('sub_123', pausedSub);
+    defaultSub = pausedSub;
+
+    // First establish the paused state in our store via a subscription webhook.
+    await deliverEvent({ id: 'evt_p1', type: 'customer.subscription.updated', data: { object: { id: 'sub_123' } } });
+    let sub = await server.inject({ method: 'GET', url: '/billing/subscription', headers: { cookie } });
+    expect(sub.json().status).toBe('paused');
+
+    // After our stub's resumeSubscription is called, the subscription becomes active.
+    // (The stub already updates subs map + defaultSub when resume is called.)
+    const res = await deliverEvent({
+      id: 'evt_si', type: 'setup_intent.succeeded',
+      data: { object: { id: 'seti_1', customer: 'cus_test_1', payment_method: 'pm_1', status: 'succeeded' } },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().outcome).toBe('processed');
+
+    // resumeSubscription was called by the platform webhook handler.
+    expect(resumeInputs).toHaveLength(1);
+    expect(resumeInputs[0]).toMatchObject({ subscriptionId: 'sub_123' });
+
+    // Subscription is now active.
+    sub = await server.inject({ method: 'GET', url: '/billing/subscription', headers: { cookie } });
+    expect(sub.json().status).toBe('active');
+  });
+
+  it('payment_method.attached with a paused subscription → resumes it + reconciles to active', async () => {
+    await configureStripe();
+    await seedCatalog();
+    const { userId, cookie } = await signIn();
+
+    const pausedSub = stripeSub({
+      id: 'sub_456', status: 'paused', customer_id: 'cus_test_1',
+      metadata: { subscriber: userId, app: APP_ID, plan_key: 'pro_month' },
+    });
+    subs.set('sub_456', pausedSub);
+    defaultSub = pausedSub;
+    await deliverEvent({ id: 'evt_p2', type: 'customer.subscription.updated', data: { object: { id: 'sub_456' } } });
+
+    const res = await deliverEvent({
+      id: 'evt_pm', type: 'payment_method.attached',
+      data: { object: { id: 'pm_2', customer: 'cus_test_1' } },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().outcome).toBe('processed');
+    expect(resumeInputs.length).toBeGreaterThan(0);
+
+    const sub = await server.inject({ method: 'GET', url: '/billing/subscription', headers: { cookie } });
+    expect(sub.json().status).toBe('active');
+  });
+
+  it('setup_intent.succeeded for a TRIALING subscriber does NOT call resumeSubscription (not paused)', async () => {
+    await configureStripe();
+    await seedCatalog();
+    const { userId } = await signIn();
+    const trialEnd = Math.floor(Date.now() / 1000) + 7 * 24 * 3600;
+    const trialSub = stripeSub({
+      id: 'sub_789', status: 'trialing', trial_end: trialEnd, customer_id: 'cus_test_1',
+      metadata: { subscriber: userId, app: APP_ID, plan_key: 'pro_month' },
+    });
+    subs.set('sub_789', trialSub);
+    defaultSub = trialSub;
+    await deliverEvent({ id: 'evt_t1', type: 'customer.subscription.created', data: { object: { id: 'sub_789' } } });
+
+    await deliverEvent({
+      id: 'evt_si2', type: 'setup_intent.succeeded',
+      data: { object: { id: 'seti_2', customer: 'cus_test_1', payment_method: 'pm_3', status: 'succeeded' } },
+    });
+    // No resume called — the subscription is trialing, not paused.
+    expect(resumeInputs).toHaveLength(0);
+  });
+
+  it('setup_intent.succeeded with unknown customer → 200 ignored', async () => {
+    await configureStripe();
+    const res = await deliverEvent({
+      id: 'evt_si3', type: 'setup_intent.succeeded',
+      data: { object: { id: 'seti_3', customer: 'cus_nobody', payment_method: 'pm_x' } },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().outcome).toBe('ignored');
+  });
+});
+
+describe('C33 §1F — customer.subscription.trial_will_end webhook (T-2 reminder)', () => {
+  it('trial_will_end reconciles the subscription and fires the T-2 notification (billing.subscription.trial_will_end)', async () => {
+    await configureStripe();
+    await seedCatalog();
+    const { userId } = await signIn();
+    const trialEnd = Math.floor(Date.now() / 1000) + 2 * 24 * 3600; // 2 days from now
+    defaultSub = stripeSub({
+      id: 'sub_t2', status: 'trialing', trial_end: trialEnd,
+      customer_id: 'cus_test_1',
+      metadata: { subscriber: userId, app: APP_ID, plan_key: 'pro_month' },
+    });
+
+    const res = await deliverEvent({
+      id: 'evt_twe', type: 'customer.subscription.trial_will_end',
+      data: { object: { id: 'sub_t2' } },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().outcome).toBe('processed');
+
+    // The notification must be recorded in the in_app inbox.
+    const notifs = await store.listNotifications(APP_ID, { owner: userId, includeDismissed: true });
+    const trialNotif = notifs.find((n) => n.key === 'billing.subscription.trial_will_end');
+    expect(trialNotif).toBeTruthy();
+    expect(trialNotif!.title).toMatch(/two days/i);
   });
 });

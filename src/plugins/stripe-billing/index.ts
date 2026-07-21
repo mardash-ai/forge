@@ -55,6 +55,24 @@ export interface CreateCheckoutInput {
   paymentMethodCollection?: 'always' | 'if_required';
 }
 
+// §1B — direct subscription creation at signup: no payment method, trial + pause on end.
+// Used by POST /billing/trial (server-side call at signup; distinct from Checkout which opens a UI page).
+export interface CreateTrialingSubscriptionInput {
+  secretKey: string;
+  customerId: string;
+  priceId: string;
+  // Trial length (days). MUST equal TRIAL_DAYS; expressed as a parameter so the stub is stateless.
+  trialPeriodDays: number;
+  metadata: Record<string, string>; // { subscriber, app, plan_key }
+}
+
+// §1E — resume a paused subscription after a card has been added. `billing_cycle_anchor: 'now'`
+// restarts the billing cycle from the resume date (the first charge happens immediately for the period).
+export interface ResumeSubscriptionInput {
+  secretKey: string;
+  subscriptionId: string;
+}
+
 export interface CreatePortalInput {
   secretKey: string;
   customerId: string;
@@ -71,6 +89,12 @@ export interface StripeClient {
   createCustomer(input: CreateCustomerInput): Promise<{ id: string }>;
   createCheckoutSession(input: CreateCheckoutInput): Promise<{ id: string; url: string }>;
   createPortalSession(input: CreatePortalInput): Promise<{ url: string }>;
+  // §1B — create a trialing subscription directly (no Checkout UI) with NO payment method and
+  // `trial_settings.end_behavior.missing_payment_method: 'pause'`. Returns the normalized subscription.
+  createTrialingSubscription(input: CreateTrialingSubscriptionInput): Promise<StripeSubscription>;
+  // §1E — resume a paused subscription after a card has been added at conversion. Idempotent — an
+  // already-active / already-canceled subscription resolves to `{ resumed: false }`.
+  resumeSubscription(input: ResumeSubscriptionInput): Promise<{ resumed: boolean; subscription: StripeSubscription | null }>;
   // Re-fetch the CANONICAL subscription (idempotent reconciliation input). null when it no longer exists.
   retrieveSubscription(secretKey: string, subscriptionId: string): Promise<StripeSubscription | null>;
   // Cancel a subscription NOW (administrative teardown). Idempotent — a subscription that is already gone
@@ -82,7 +106,8 @@ export interface StripeClient {
 }
 
 // --- Stripe → canonical status mapping ----------------------------------------------------------------
-// Every native Stripe status collapses into the canonical 6-state vocabulary consumers branch on.
+// Every native Stripe status collapses into the canonical 7-state vocabulary consumers branch on.
+// `paused` is distinct from `canceled` (§1D): the subscription persists; adding a card resumes it.
 export function mapStripeStatus(stripeStatus: string): SubscriptionStatus {
   switch (stripeStatus) {
     case 'active':
@@ -94,9 +119,10 @@ export function mapStripeStatus(stripeStatus: string): SubscriptionStatus {
       return 'past_due';
     case 'incomplete':
       return 'incomplete';
+    case 'paused': // §1D: trial ended with no payment method; read-only grace; can resume
+      return 'paused';
     case 'incomplete_expired': // the initial payment never succeeded and the window expired → terminal
     case 'canceled':
-    case 'paused': // trial ended with no payment method; grants nothing → terminal for entitlement purposes
       return 'canceled';
     default:
       return 'canceled';
@@ -208,6 +234,45 @@ export const sdkStripeClient: StripeClient = {
       metadata,
     });
     return { id: customer.id };
+  },
+
+  // §1B — create the trialing subscription directly (no Checkout UI). The subscription starts in
+  // `trialing` status; no payment method is collected; `missing_payment_method: pause` ensures that
+  // trial-end with no card pauses the subscription (no invoice, no charge) rather than canceling.
+  async createTrialingSubscription({ secretKey, customerId, priceId, trialPeriodDays, metadata }) {
+    const sub = await stripeApi(secretKey).subscriptions.create({
+      customer: customerId,
+      items: [{ price: priceId }],
+      trial_period_days: trialPeriodDays,
+      trial_settings: {
+        end_behavior: {
+          missing_payment_method: 'pause',
+        },
+      },
+      metadata,
+    });
+    return normalizeSubscription(sub);
+  },
+
+  // §1E — resume a paused subscription after a card has been added. billing_cycle_anchor: 'now'
+  // starts a fresh billing cycle from the resume date so the subscriber is charged immediately.
+  async resumeSubscription({ secretKey, subscriptionId }) {
+    try {
+      const sub = await stripeApi(secretKey).subscriptions.resume(subscriptionId, {
+        billing_cycle_anchor: 'now',
+      });
+      return { resumed: true, subscription: normalizeSubscription(sub) };
+    } catch (err) {
+      // Already active / canceled / not found → idempotent no-op, not an error.
+      if (err instanceof Stripe.errors.StripeInvalidRequestError && err.statusCode === 404) {
+        return { resumed: false, subscription: null };
+      }
+      if (err instanceof Stripe.errors.StripeInvalidRequestError && err.statusCode === 400) {
+        // Subscription is not in a paused state (e.g. already active) → idempotent.
+        return { resumed: false, subscription: null };
+      }
+      throw err;
+    }
   },
 
   async createCheckoutSession(input) {

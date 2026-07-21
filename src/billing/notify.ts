@@ -86,6 +86,17 @@ export function billingTransitionNotification(
     };
   }
 
+  // §1D — trial ended with no card. No charge, no gotcha; the subscription is resumable.
+  if (to === 'paused') {
+    return {
+      ...common,
+      key: 'billing.subscription.paused',
+      title: 'Your trial has ended — your data is safe',
+      body: 'Nothing was charged. Add a card anytime to pick up right where you left off.',
+      idempotencyKey: `billing:${ref}:paused:${marker}`,
+    };
+  }
+
   if (to === 'canceled') {
     return {
       ...common,
@@ -108,6 +119,29 @@ export function billingTransitionNotification(
   }
 
   return null;
+}
+
+// §1F / §1B — trial-will-end (T-2) notification triggered by `customer.subscription.trial_will_end`.
+// This is NOT a status-change notification (the subscription stays `trialing`) — it is a PROACTIVE
+// value-forward reminder: "here's what you got done, nothing's charged unless you act."
+// Distinct from `billingTransitionNotification` because there is no previous/new status change.
+export function billingTrialWillEndNotification(
+  record: SubscriptionRecord,
+  publicBase: string | undefined = process.env.FORGE_AUTH_PUBLIC_URL,
+): NotifyInput | null {
+  if (!record.subscriber) return null;
+  const url = billingDeepLink(publicBase);
+  const ref = subscriptionRef(record);
+  // Key on trial_end so a re-delivery within the same trial window dedupes.
+  return {
+    owner: record.subscriber,
+    channels: [...BILLING_NOTIFY_CHANNELS],
+    key: 'billing.subscription.trial_will_end',
+    title: 'Two days left on your trial',
+    body: 'Add a card anytime to keep going — nothing is charged unless you do.',
+    idempotencyKey: `billing:${ref}:trial_will_end:${record.trial_end ?? record.updated_at}`,
+    data: { url, status: record.status },
+  };
 }
 
 // Best-effort fan-out: build the notification for the transition and hand it to notify(). NEVER throws —

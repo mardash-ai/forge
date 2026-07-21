@@ -10,6 +10,10 @@ export const STRIPE_SECRET_KEY = 'STRIPE_SECRET_KEY';
 export const STRIPE_WEBHOOK_SECRET = 'STRIPE_WEBHOOK_SECRET';
 export const STRIPE_TAX_ENABLED = 'STRIPE_TAX_ENABLED';
 
+// §1C — single source of trial length. Every trialing subscription is created with this value;
+// changing the trial is a one-line edit here with NO other code changes needed.
+export const TRIAL_DAYS = 14;
+
 export interface BillingConfig {
   // Fully operational (checkout/portal can run) only when the secret key is present.
   configured: boolean;

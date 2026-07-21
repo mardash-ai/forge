@@ -9,13 +9,18 @@
 // schema change. `null` = the free/none default (no payment source yet).
 export type BillingSource = 'stripe' | 'apple' | 'google';
 
-// The canonical 6-state subscription vocabulary. EVERY source's native states map into these; consumers
+// The canonical 7-state subscription vocabulary. EVERY source's native states map into these; consumers
 // branch on this vocabulary, never a raw provider state. `none` is the explicit free/never-subscribed
 // default — a subscription READ never 404s, it returns a `none` record.
+//
+// `paused` (§1D) — distinct from `canceled`: trial ended with no payment method (Stripe's
+// `missing_payment_method: pause` behavior). Data retained; no charge; adding a card RESUMES the SAME
+// subscription. Consumers map paused → read-only "grace" state. Use `canceled` for true termination only.
 export type SubscriptionStatus =
   | 'active'
   | 'trialing'
   | 'past_due'
+  | 'paused'
   | 'canceled'
   | 'incomplete'
   | 'none';
@@ -24,6 +29,7 @@ export const SUBSCRIPTION_STATUSES: readonly SubscriptionStatus[] = [
   'active',
   'trialing',
   'past_due',
+  'paused',
   'canceled',
   'incomplete',
   'none',

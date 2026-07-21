@@ -19,6 +19,7 @@ import {
 } from '../src/plugins/stripe-billing/index';
 import {
   billingTransitionNotification,
+  billingTrialWillEndNotification,
   billingDeepLink,
   BILLING_NOTIFY_CHANNELS,
 } from '../src/billing/notify';
@@ -89,6 +90,27 @@ describe('C33+C21 — billingTransitionNotification (pure mapping)', () => {
     expect(billingTransitionNotification('incomplete', rec({ status: 'active' }), PUBLIC_BASE)).toBeNull();
   });
 
+  it('§1D → paused notifies with the no-charge, resumable-grace copy + /billing deep-link', () => {
+    const n = billingTransitionNotification('trialing', rec({ status: 'paused' }), PUBLIC_BASE);
+    expect(n).not.toBeNull();
+    expect(n!.key).toBe('billing.subscription.paused');
+    expect(n!.title).toMatch(/trial has ended/i);
+    expect(n!.body).toMatch(/nothing was charged/i);
+    expect((n!.data as { url: string }).url).toBe(`${PUBLIC_BASE}/billing`);
+    expect(n!.idempotencyKey).toContain('paused');
+  });
+
+  it('billingTrialWillEndNotification returns T-2 reminder with correct idempotency key', () => {
+    const record = rec({ status: 'trialing', trial_end: '2026-08-01T00:00:00.000Z' });
+    const n = billingTrialWillEndNotification(record, PUBLIC_BASE);
+    expect(n).not.toBeNull();
+    expect(n!.key).toBe('billing.subscription.trial_will_end');
+    expect(n!.title).toMatch(/two days/i);
+    expect(n!.channels).toContain('email');
+    expect(n!.idempotencyKey).toContain('trial_will_end');
+    expect(n!.idempotencyKey).toContain('2026-08-01');
+  });
+
   it('a new billing PERIOD yields a NEW idempotency key (a re-failure next period notifies again)', () => {
     const p1 = billingTransitionNotification('active', rec({ status: 'past_due', current_period_end: '2026-08-01T00:00:00.000Z' }), PUBLIC_BASE);
     const p2 = billingTransitionNotification('active', rec({ status: 'past_due', current_period_end: '2026-09-01T00:00:00.000Z' }), PUBLIC_BASE);
@@ -115,6 +137,14 @@ describe('C33+C21 — webhook fires the notification on a real transition (idemp
     createCustomer: async () => ({ id: 'cus_test_1' }),
     createCheckoutSession: async () => ({ id: 'cs_1', url: 'https://checkout.test/cs_1' }),
     createPortalSession: async () => ({ url: 'https://portal.test/p/1' }),
+    createTrialingSubscription: async (input) => ({
+      id: 'sub_trial_notify', status: 'trialing',
+      trial_end: Math.floor(Date.now() / 1000) + input.trialPeriodDays * 24 * 3600,
+      current_period_end: null, cancel_at_period_end: false,
+      customer_id: input.customerId, price_id: input.priceId, currency: 'usd',
+      metadata: input.metadata,
+    }),
+    resumeSubscription: async () => ({ resumed: false, subscription: null }),
     retrieveSubscription: async (_secretKey, subscriptionId) => (subs.has(subscriptionId) ? subs.get(subscriptionId)! : defaultSub),
     cancelSubscription: async () => ({ canceled: true }),
     deleteCustomer: async () => ({ deleted: true }),

@@ -9,6 +9,38 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.57.1] — 2026-07-20
+
+### Added
+- **C33 — no-card trial + status-as-entitlement lifecycle (stripe-billing plugin).** Implements the
+  full no-card trial + pause-on-end billing lifecycle from `PRICING_BILLING_SPEC.md §1B–§1G`:
+  - **`POST /billing/trial`** (service-token gated): creates a Stripe `Customer` + `Subscription` at
+    signup in `trialing` status with **no payment method** and a 14-day trial; sets
+    `trial_settings.end_behavior.missing_payment_method = pause` so trial-end with no card pauses
+    the subscription (no invoice, no charge) instead of creating an unpaid invoice.
+  - **`TRIAL_DAYS = 14`** single-source constant in `billing/config.ts`; changing the trial length
+    is a one-line edit with no other code changes.
+  - **`paused` canonical status** added to `SubscriptionStatus` (7-state vocabulary). `paused` is
+    distinct from `canceled`: the subscription persists at Stripe, data is retained, and adding a
+    card resumes the SAME subscription (`paused` → `active`, no new Stripe object).
+  - **Full webhook set** per spec §1B — `customer.subscription.trial_will_end` (T-2 reminder via
+    `billing.subscription.trial_will_end` in-app/email/push notification), `customer.subscription.
+    updated` / `deleted` (entitlement sync), `setup_intent.succeeded` / `payment_method.attached`
+    (card added at conversion — platform finds the subscription by customer id, resumes if paused,
+    reconciles), `invoice.paid` / `invoice.payment_failed` (post-conversion dunning only, §1G).
+  - **`paused` notification** (`billing.subscription.paused`): "Your trial has ended — your data is
+    safe. Nothing was charged. Add a card anytime." Fires on `trialing → paused` transition.
+  - **`resumeSubscription`** on `StripeClient`: resumes a paused subscription after card collection
+    (`billing_cycle_anchor: now`); exposed via the `setup_intent.succeeded` /
+    `payment_method.attached` webhook path — no new Stripe object is created (§1E).
+  - **`createTrialingSubscription`** on `StripeClient`: direct subscription creation (no Checkout
+    UI) with `trial_period_days`, no default payment method, and the `pause` end-behavior setting.
+  - **`deleteCustomer`** now also cancels `paused` subscriptions on teardown (paused is a live
+    Stripe object that must be cleaned up on account closure / right-to-be-forgotten).
+  - 18 new tests across `billing.test.ts` and `billing-notify.test.ts` covering: TRIAL_DAYS
+    constant, paused status mapping, paused entitlements (read-only grace), `POST /billing/trial`,
+    `paused` webhook + notification, setup_intent/payment_method resume flow, T-2 notification.
+
 ## [0.57.0] — 2026-07-20
 
 ### Added

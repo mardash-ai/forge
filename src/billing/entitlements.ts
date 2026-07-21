@@ -36,6 +36,7 @@ export function grantsPaidPlan(record: SubscriptionRecord, now: Date = new Date(
       // GRACE: paid entitlements persist until the paid-through boundary; then the subscriber falls to free.
       if (!record.current_period_end) return false;
       return new Date(record.current_period_end).getTime() > now.getTime();
+    case 'paused':   // §1D: trial ended with no card; read-only grace, no entitlements, not terminal
     case 'canceled':
     case 'none':
     default:

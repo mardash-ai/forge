@@ -12,6 +12,7 @@ import {
   putCatalog,
   createCheckout,
   createPortal,
+  createTrialingSubscriptionAtSignup,
   handleStripeWebhook,
   reconcileApp,
   deleteCustomer,
@@ -242,6 +243,39 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
     if (!returnUrl) return reply.status(422).send({ error: { code: 'invalid_input', message: '`return_url` is required.', retry: 'change-input' } });
     try {
       return reply.status(200).send(await createPortal(app_.id, resolved.subscriber, returnUrl));
+    } catch (e) {
+      return errorReply(reply, e);
+    }
+  });
+
+  // §1B — create a trialing subscription at signup with NO payment method and TRIAL_DAYS trial.
+  // SERVER-SIDE ONLY — SERVICE token gated (never end-user reachable). The consumer's server calls this
+  // immediately after account creation; the subscription starts `trialing` with no card required, and
+  // `trial_settings.end_behavior.missing_payment_method: pause` ensures trial-end with no card pauses
+  // (no invoice, no charge) rather than creating an unpaid invoice. Idempotent if the customer already
+  // has a subscription (the stored record is updated via the monotonic-version upsert).
+  //
+  //   POST /billing/trial  { subscriber, plan_key, scope_ref?, customer_email? } → SubscriptionRecord
+  app.post('/billing/trial', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_.id))) return reply.status(401).send(needAuth);
+    const b = (req.body ?? {}) as { subscriber?: string; plan_key?: string; scope_ref?: string; customer_email?: string };
+    const subscriber = trimmed(b.subscriber);
+    const planKey = trimmed(b.plan_key);
+    if (!subscriber || !planKey) {
+      return reply.status(422).send({ error: { code: 'invalid_input', message: '`subscriber` and `plan_key` are required.', retry: 'change-input' } });
+    }
+    try {
+      const record = await createTrialingSubscriptionAtSignup({
+        appId: app_.id,
+        subscriber,
+        planKey,
+        ...(trimmed(b.scope_ref) ? { scopeRef: trimmed(b.scope_ref)! } : {}),
+        ...(trimmed(b.customer_email) ? { customerEmail: trimmed(b.customer_email)! } : {}),
+      });
+      await recordC3(app_.id, 'billing.trial_started', subscriber, { plan_key: planKey, trial_end: record.trial_end });
+      return reply.status(200).send(record);
     } catch (e) {
       return errorReply(reply, e);
     }

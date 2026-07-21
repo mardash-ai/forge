@@ -1,7 +1,7 @@
 import { getBackends } from '../storage/backends';
 import { ForgeError } from '../shared/errors';
 import { nowIso } from '../shared/time';
-import { resolveBillingConfig } from './config';
+import { resolveBillingConfig, TRIAL_DAYS } from './config';
 import {
   getStripeClient,
   mapStripeStatus,
@@ -27,7 +27,8 @@ import {
   type SubscriptionStatus,
 } from './types';
 import { pruneWebhookEvents, type BillingState } from './state';
-import { notifyBillingTransition } from './notify';
+import { notifyBillingTransition, billingTrialWillEndNotification } from './notify';
+import { notify } from '../notifications/delivery';
 
 // C33 — the billing SERVICE: the payment-source-agnostic core behavior the routes call. It owns the plans
 // catalog (validate + replace), the entitlement derivation (delegated to ./entitlements), the Stripe web
@@ -226,6 +227,77 @@ export async function createPortal(appId: string, subscriber: string, returnUrl:
   return { url };
 }
 
+// --- §1B — create a trialing subscription at signup (no payment method, TRIAL_DAYS, pause on end) ----
+// Server-side op (SERVICE token gated in the route — never end-user reachable directly). Creates a
+// Stripe Customer (reused if already present) + Subscription in `trialing` status with NO payment method
+// and `trial_settings.end_behavior.missing_payment_method: 'pause'`. Persists the subscription-of-record
+// immediately so entitlement reads return `trialing` without waiting for a webhook.
+export interface TrialInput {
+  appId: string;
+  subscriber: string;
+  planKey: string;
+  scopeRef?: string;
+  customerEmail?: string;
+}
+
+export async function createTrialingSubscriptionAtSignup(input: TrialInput): Promise<SubscriptionRecord> {
+  const cfg = await resolveBillingConfig(input.appId);
+  if (!cfg.configured || !cfg.secretKey) throw billingNotConfigured();
+
+  const state = await (await backend()).read(input.appId);
+  const plan = state.catalog?.plans.find((p) => p.plan_key === input.planKey);
+  if (!plan) throw unknownPlan(input.planKey);
+  const priceId = plan.prices.stripe.price_id;
+  if (!priceId) throw priceUnconfigured(input.planKey);
+
+  const stripe = getStripeClient();
+
+  // Reuse or create the Stripe Customer.
+  let customerId = state.subscriptions[input.subscriber]?.provider_refs.stripe_customer_id ?? null;
+  if (!customerId) {
+    const created = await stripe.createCustomer({
+      secretKey: cfg.secretKey,
+      ...(input.customerEmail ? { email: input.customerEmail } : {}),
+      metadata: { subscriber: input.subscriber, app: input.appId },
+    });
+    customerId = created.id;
+  }
+
+  const metadata: Record<string, string> = { subscriber: input.subscriber, app: input.appId, plan_key: input.planKey };
+  if (input.scopeRef) metadata.scope_ref = input.scopeRef;
+
+  // Create the trialing subscription: NO payment method, TRIAL_DAYS trial, pause on trial end.
+  const sub = await stripe.createTrialingSubscription({
+    secretKey: cfg.secretKey,
+    customerId,
+    priceId,
+    trialPeriodDays: TRIAL_DAYS,
+    metadata,
+  });
+
+  // Immediately persist the canonical record so entitlement checks work before the first webhook arrives.
+  const fields: Omit<SubscriptionRecord, 'version' | 'created_at' | 'updated_at'> = {
+    subscriber: input.subscriber,
+    app: input.appId,
+    plan_key: input.planKey,
+    status: mapStripeStatus(sub.status),
+    source: 'stripe',
+    current_period_end: unixToIso(sub.current_period_end),
+    cancel_at_period_end: sub.cancel_at_period_end,
+    trial_end: unixToIso(sub.trial_end),
+    currency: sub.currency,
+    scope_ref: input.scopeRef ?? null,
+    provider_refs: {
+      ...emptyProviderRefs(),
+      stripe_customer_id: customerId,
+      stripe_subscription_id: sub.id,
+      stripe_price_id: sub.price_id,
+    },
+  };
+  const { record } = await applyCanonicalSubscription(input.appId, fields, Date.now());
+  return record;
+}
+
 // Upsert only the stripe_customer_id (+ optional echo-only scope_ref) onto the subscriber's record,
 // preserving any existing subscription state (or seeding a fresh `none` record).
 async function rememberCustomer(appId: string, subscriber: string, customerId: string, scopeRef?: string): Promise<void> {
@@ -340,7 +412,8 @@ async function reconcileSubscription(
 }
 
 // Pull a subscription id out of a handled event's object (subscription events carry it as `id`; checkout
-// sessions + invoices carry it as `subscription`).
+// sessions + invoices carry it as `subscription`). Returns null for customer-keyed events like
+// setup_intent.succeeded / payment_method.attached — those are routed via customerIdFromEvent instead.
 function subscriptionIdFromEvent(event: StripeEvent): string | null {
   const obj = event.data.object;
   if (event.type.startsWith('customer.subscription.')) {
@@ -350,13 +423,29 @@ function subscriptionIdFromEvent(event: StripeEvent): string | null {
   return typeof sub === 'string' ? sub : (sub as { id?: string } | null)?.id ?? null;
 }
 
+// For `setup_intent.succeeded` and `payment_method.attached` the subscription is not directly on the
+// event — we look it up by Stripe customer id from our store.
+function customerIdFromEvent(event: StripeEvent): string | null {
+  const obj = event.data.object;
+  const cust = obj.customer;
+  return typeof cust === 'string' ? cust : null;
+}
+
+// §1B full webhook set (spec §1B, PRICING_BILLING_SPEC.md).
+// customer.subscription.trial_will_end — T-2 reminder trigger (reconcile + fire T-2 notification).
+// setup_intent.succeeded / payment_method.attached — card added at conversion; find sub by customer ID,
+//   resume if paused (§1E), then reconcile so entitlements reflect the new status immediately.
+// invoice.paid / invoice.payment_failed — post-conversion dunning only (§1G).
 const HANDLED_EVENT_TYPES = new Set([
   'checkout.session.completed',
   'customer.subscription.created',
   'customer.subscription.updated',
   'customer.subscription.deleted',
+  'customer.subscription.trial_will_end', // §1B / §1F: T-2 reminder trigger
   'invoice.paid',
   'invoice.payment_failed',
+  'setup_intent.succeeded',        // §1B / §1E: card added at conversion; resume if paused
+  'payment_method.attached',       // §1B / §1E: card attached to customer; resume if paused
 ]);
 
 export interface WebhookResult {
@@ -396,12 +485,49 @@ export async function handleStripeWebhook(
 
   if (!HANDLED_EVENT_TYPES.has(event.type)) return { status: 200, outcome: 'ignored', event_type: event.type };
 
+  // --- customer-keyed events (setup_intent.succeeded / payment_method.attached) --------------------
+  // These events carry a `customer` id, not a `subscription` id. We resolve the subscription by
+  // looking up our stored record for that customer, then resume it if it is paused (§1E).
+  if (event.type === 'setup_intent.succeeded' || event.type === 'payment_method.attached') {
+    const customerId = customerIdFromEvent(event);
+    if (!customerId) return { status: 200, outcome: 'ignored', event_type: event.type };
+
+    const state = await (await backend()).read(appId);
+    const existing = Object.values(state.subscriptions).find(
+      (r) => r.provider_refs.stripe_customer_id === customerId,
+    );
+    if (!existing?.provider_refs.stripe_subscription_id) {
+      return { status: 200, outcome: 'ignored', event_type: event.type };
+    }
+    const subscriptionId = existing.provider_refs.stripe_subscription_id;
+
+    // If the subscription is paused, resume it now that a card has been added (§1E). We use the
+    // stripe client directly here so a Stripe error propagates → 5xx → Stripe retries.
+    if (existing.status === 'paused') {
+      await getStripeClient().resumeSubscription({ secretKey: cfg.secretKey!, subscriptionId });
+    }
+    const record = await reconcileSubscription(appId, cfg.secretKey!, subscriptionId, appName);
+    return { status: 200, outcome: 'processed', event_type: event.type, record };
+  }
+
+  // --- subscription-keyed events (standard path) -----------------------------------------------
   const subscriptionId = subscriptionIdFromEvent(event);
   if (!subscriptionId) return { status: 200, outcome: 'ignored', event_type: event.type };
 
   // Re-fetch canonical + upsert. A throw here propagates → route 5xx → Stripe retries (and the mark above
   // does not block reprocessing correctness because the upsert is idempotent).
   const record = await reconcileSubscription(appId, cfg.secretKey!, subscriptionId, appName);
+
+  // §1F / §1B — T-2 reminder: fire best-effort when Stripe signals trial will end in ~3 days.
+  if (event.type === 'customer.subscription.trial_will_end' && record) {
+    try {
+      const input = billingTrialWillEndNotification(record);
+      if (input) await notify(appId, appName, input);
+    } catch {
+      // Swallow — billing reconciliation correctness must never hinge on notification delivery.
+    }
+  }
+
   return { status: 200, outcome: 'processed', event_type: event.type, record };
 }
 
@@ -471,7 +597,8 @@ export async function deleteCustomer(appId: string, subscriber: string): Promise
   // Provider-side teardown FIRST (only when configured) so a failure aborts before we drop the local row.
   if (stripeConfigured) {
     const stripe = getStripeClient();
-    if (subscriptionId && (record.status === 'active' || record.status === 'trialing')) {
+    // Also cancel `paused` subscriptions (§1D: paused is live at Stripe; must clean up on teardown).
+    if (subscriptionId && (record.status === 'active' || record.status === 'trialing' || record.status === 'paused')) {
       const { canceled } = await stripe.cancelSubscription(cfg.secretKey!, subscriptionId);
       base.subscription_canceled = canceled;
     }
