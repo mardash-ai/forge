@@ -300,6 +300,38 @@ describe('generateProdCompose — Traefik + healthcheck + stop_grace + data-plan
     expect(occurrences).toBe(1);
   });
 
+  // P41 — when the app uses billing (declares any STRIPE_* secret, e.g. the STRIPE_PRICE_* catalog the web
+  // renders), the Stripe SECRET + WEBHOOK secrets are wired into the DATA-PLANE (which hosts /billing/* +
+  // the /hooks/billing/stripe webhook — the tier that actually calls Stripe) as defined-but-empty even if
+  // not separately declared, so .env.prod is the single source of truth. They must NOT appear on the web
+  // tier. This is the regression guard for the "pick a plan -> I couldn't start checkout" outage: the
+  // sidecar had ZERO STRIPE_ env, so resolveBillingConfig() read not-configured and every checkout and
+  // trial-start threw billingNotConfigured() even though .env.prod held a valid key.
+  it('wires STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET into the data-plane when the app uses billing (P41)', () => {
+    const yaml = generateProdCompose({ ...base, secrets: ['STRIPE_PRICE_PERSONAL_MONTH'] });
+    const dp = serviceBlock(yaml, 'data-plane');
+    const web = serviceBlock(yaml, 'web');
+    for (const n of ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET']) {
+      expect(dp).toContain(`- ${n}=\${${n}:-}`);
+      expect(web).not.toContain(`- ${n}=`); // the web proxies /billing/* to the sidecar; it never calls Stripe
+    }
+  });
+
+  it('does NOT auto-wire billing-provider vars when the app does not use billing (P41)', () => {
+    const dp = serviceBlock(generateProdCompose({ ...base, secrets: ['ANTHROPIC_API_KEY'] }), 'data-plane');
+    expect(dp).not.toContain('STRIPE_SECRET_KEY');
+    expect(dp).not.toContain('STRIPE_WEBHOOK_SECRET');
+  });
+
+  it('does not double-emit a billing-provider var the app also declared (P41 dedup)', () => {
+    const dp = serviceBlock(
+      generateProdCompose({ ...base, secrets: ['STRIPE_PRICE_PERSONAL_MONTH', 'STRIPE_SECRET_KEY'] }),
+      'data-plane',
+    );
+    const occurrences = dp.split('\n').filter((l) => l.includes('STRIPE_SECRET_KEY=')).length;
+    expect(occurrences).toBe(1);
+  });
+
   // P38 — split-host auth: the data-plane gets FORGE_AUTH_PUBLIC_URL defined-but-empty (from .env.prod) so a
   // split-host app (UI on app.<domain>, API on api.<domain>) can pin the user-facing origin its auth URLs
   // target. Data-plane only (the web tier proxies /auth/* and never computes an auth URL). Empty-default =
@@ -526,6 +558,18 @@ describe('generateEnvProdExample — now annotates each secret (C13)', () => {
     expect(env).toContain('#   Generate: openssl rand -base64 32');
     expect(env).toContain(PROVISIONING_FILE);
   });
+
+  it('surfaces the auto-wired Stripe secrets when the app uses billing (P41)', () => {
+    const env = generateEnvProdExample({
+      appName: 'acme', host: 'app.example.com', withPostgres: true, withRedis: false,
+      secrets: ['STRIPE_PRICE_PERSONAL_MONTH'],
+    });
+    // usesBilling is marked by the declared STRIPE_PRICE_*; the two undeclared provider secrets are surfaced.
+    expect(env).toContain('# STRIPE_SECRET_KEY —');
+    expect(env).toContain('STRIPE_SECRET_KEY=');
+    expect(env).toContain('# STRIPE_WEBHOOK_SECRET —');
+    expect(env).toContain('STRIPE_WEBHOOK_SECRET=');
+  });
 });
 
 describe('generateProvisioningRunbook — per-app operator runbook (C13)', () => {
@@ -567,6 +611,21 @@ describe('generateProvisioningRunbook — per-app operator runbook (C13)', () =>
   it('omits the sign-in section for an app that does not use auth', () => {
     const md = generateProvisioningRunbook({ ...base, secrets: [] });
     expect(md).not.toContain('Enabling a working sign-in method');
+  });
+
+  it('spells out the Stripe secrets when the app uses billing (P41)', () => {
+    const md = generateProvisioningRunbook({ ...base, secrets: ['STRIPE_PRICE_PERSONAL_MONTH'] });
+    expect(md).toContain('Enabling billing');
+    expect(md).toContain('STRIPE_SECRET_KEY');
+    expect(md).toContain('STRIPE_WEBHOOK_SECRET');
+    // The exact webhook endpoint (host-substituted) an operator registers in Stripe.
+    expect(md).toContain('https://app.example.com/hooks/billing/stripe');
+    expect(md).toContain('wired into the data-plane');
+  });
+
+  it('omits the billing section for an app that does not use billing (P41)', () => {
+    const md = generateProvisioningRunbook({ ...base, secrets: [] });
+    expect(md).not.toContain('Enabling billing');
   });
 
   it('is deterministic — identical inputs produce identical bytes (convergent)', () => {

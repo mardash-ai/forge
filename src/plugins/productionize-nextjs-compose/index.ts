@@ -265,6 +265,16 @@ export interface ProdComposeOptions {
 // separately declared, so an operator fills them in .env.prod alone (the single source of truth) with no
 // re-provision. Absence stays detectable (`GET /auth/config` reports google:false), never a crash.
 const AUTH_PROVIDER_VARS = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SMTP_URL', 'EMAIL_FROM'] as const;
+// P41 — the OPTIONAL billing-provider vars the data-plane reads (it hosts C-billing `/billing/*` + the
+// Stripe webhook `/hooks/billing/stripe`, i.e. the tier that actually calls Stripe). Same treatment as the
+// P34 auth wiring above: wired into the sidecar as defined-but-empty (`${NAME:-}`) when the app uses
+// billing and hasn't already declared them, so an operator enables Stripe by filling .env.prod alone.
+// Without this the sidecar boots with no key, resolveBillingConfig() reports not-configured, and every
+// checkout/trial-start throws billingNotConfigured() even when .env.prod is correct.
+const BILLING_PROVIDER_VARS = ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'] as const;
+// An app "uses billing" when it declares any STRIPE_* secret (e.g. the STRIPE_PRICE_* price catalog the web
+// renders) — the billing analogue of AUTH_SESSION_SECRET marking "uses hosted auth".
+const BILLING_MARKER_PREFIX = 'STRIPE_';
 // The token the C2 scheduler presents on a cron fire and the app verifies. Its presence in the declared
 // set marks an app "uses hosted auth" for the P34 wiring above.
 const AUTH_SESSION_SECRET_VAR = 'AUTH_SESSION_SECRET';
@@ -384,6 +394,7 @@ export function generateProdCompose(opts: ProdComposeOptions): string {
   // app declares scheduled cron jobs, so an unset token fails the deploy loudly instead of firing bare,
   // unauthenticated POSTs at publicly-routed `/api/cron/*`.
   const usesAuth = secrets.includes(AUTH_SESSION_SECRET_VAR);
+  const usesBilling = secrets.some((s) => s.startsWith(BILLING_MARKER_PREFIX));
   const cronTokenInterp = `\${${AUTH_SERVICE_TOKEN_VAR}:?${CRON_TOKEN_REQUIRED_REASON}}`;
   const interpFor = (name: string): string =>
     withJobs && name === AUTH_SERVICE_TOKEN_VAR ? cronTokenInterp : secretInterpolation(name);
@@ -396,6 +407,11 @@ export function generateProdCompose(opts: ProdComposeOptions): string {
   // operator enables Google/SMTP by filling .env.prod alone.
   const dpAuthProviderEnv: string[] = usesAuth
     ? AUTH_PROVIDER_VARS.filter((v) => !secrets.includes(v)).map((v) => `      - ${v}=\${${v}:-}`)
+    : [];
+  // P41 — same shape as the auth wiring: the sidecar (not the web) is what calls Stripe, so these land in
+  // the data-plane only, defined-but-empty, and are skipped if already declared (no double env line).
+  const dpBillingProviderEnv: string[] = usesBilling
+    ? BILLING_PROVIDER_VARS.filter((v) => !secrets.includes(v)).map((v) => `      - ${v}=\${${v}:-}`)
     : [];
 
   const dependsOn: string[] = [];
@@ -486,6 +502,7 @@ ${labels.join('\n')}`;
   // P34 — the optional Google/SMTP provider vars the sidecar reads for hosted auth (defined-but-empty
   // unless the operator fills .env.prod). Data-plane only — the web tier proxies /auth/* here.
   dpEnv.push(...dpAuthProviderEnv);
+  dpEnv.push(...dpBillingProviderEnv);
   // P38 — SPLIT-HOST auth public URL. The data-plane hosts C10 `/auth/*`, but it builds every auth URL
   // (the OAuth redirect_uri, the verify/reset links, and the post-login redirect) from `publicBase`, which
   // defaults to the host the request ARRIVED on. When the UI lives on a DIFFERENT public host than the API
@@ -749,6 +766,21 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
       }
     }
   }
+  // P41 — when the app uses billing (declares any STRIPE_* secret), the Stripe SECRET + WEBHOOK secrets are
+  // already wired into the data-plane by productionize (defined-but-empty), so .env.prod is the single
+  // source of truth: fill a value here and redeploy. Only surfaced for vars not already declared above.
+  const usesBilling = opts.secrets.some((s) => s.startsWith(BILLING_MARKER_PREFIX));
+  if (usesBilling) {
+    const undeclared = BILLING_PROVIDER_VARS.filter((v) => !opts.secrets.includes(v));
+    if (undeclared.length) {
+      lines.push('# --- Billing provider (C-billing · Stripe) — wired into the data-plane; fill to enable checkout/webhooks ---');
+      for (const v of undeclared) {
+        lines.push(...envCommentLines(describeSecret(v)));
+        lines.push(`${v}=`);
+        lines.push('');
+      }
+    }
+  }
   // P33 — the S3 object store for blobs (C20), only when the app opted in (--blobs-backend s3).
   if (opts.blobsBackend === 's3') {
     lines.push('# --- Blob object store (C20, S3-compatible) — required because blobs_backend=s3 (P33) ---');
@@ -834,6 +866,7 @@ export function generateProvisioningRunbook(opts: ProvisioningRunbookOptions): s
   const usesAuth = declared.has(AUTH_SESSION_SECRET_NAME);
   const hasGoogle = GOOGLE_SECRET_NAMES.every((n) => declared.has(n));
   const hasEmail = EMAIL_SECRET_NAMES.every((n) => declared.has(n));
+  const usesBilling = opts.secrets.some((n) => n.startsWith(BILLING_MARKER_PREFIX));
 
   const out: string[] = [];
   out.push(`# Provisioning — ${opts.appName}`);
@@ -892,6 +925,23 @@ export function generateProvisioningRunbook(opts: ProvisioningRunbookOptions): s
       out.push('```');
       out.push('');
     }
+  }
+
+  // P41 — the billing analogue of the sign-in section: proactively surface the two Stripe secrets the
+  // data-plane needs (both already wired), so an operator enabling billing knows exactly what to set.
+  if (usesBilling) {
+    out.push('## Enabling billing (C-billing · Stripe)');
+    out.push('');
+    out.push('This app uses billing. The data-plane sidecar is the tier that calls Stripe; it needs two secrets, both already wired into the data-plane (P41) — set the values in `app/.env.prod` and redeploy:');
+    out.push('');
+    out.push(`- **\`STRIPE_SECRET_KEY\`** (\`sk_test_…\` / \`sk_live_…\`) — required for checkout + trials. Without it every checkout/trial-start returns a clean 503.${declared.has('STRIPE_SECRET_KEY') ? ' _(declared as a secret)_' : ' _(wired into the data-plane — just fill `.env.prod`)_'}`);
+    out.push(`- **\`STRIPE_WEBHOOK_SECRET\`** (\`whsec_…\`) — required for the subscription lifecycle (trial_will_end, conversion, cancellation, invoice paid/failed). Add a webhook endpoint at \`https://${opts.host}/hooks/billing/stripe\` and copy its signing secret.${declared.has('STRIPE_WEBHOOK_SECRET') ? ' _(declared as a secret)_' : ' _(wired into the data-plane — just fill `.env.prod`)_'}`);
+    out.push('');
+    out.push('```sh');
+    out.push('# edit app/.env.prod — STRIPE_SECRET_KEY=sk_test_…  STRIPE_WEBHOOK_SECRET=whsec_…');
+    out.push(`./forge deploy --app ${opts.appName}`);
+    out.push('```');
+    out.push('');
   }
 
   if (opts.withJobs) {

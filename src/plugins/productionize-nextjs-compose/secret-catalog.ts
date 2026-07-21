@@ -148,6 +148,22 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     requires_note: 'Optional — enables the Google connector. Needs BOTH creds; either alone leaves the connector unconfigured. Sealed into the app’s C5 vault (or injected as env) — never committed.',
     obtain: 'From the same Google Cloud OAuth 2.0 Web client as GOOGLE_CONNECT_CLIENT_ID (shown once on creation; you can add a new secret later).',
   },
+  STRIPE_SECRET_KEY: {
+    name: 'STRIPE_SECRET_KEY',
+    capability: 'C-billing · Stripe (subscriptions/checkout)',
+    requirement: 'conditional',
+    what: 'Stripe secret API key (`sk_test_…` / `sk_live_…`) the data-plane billing sidecar uses to call Stripe — create customers, trialing subscriptions, and Checkout sessions.',
+    requires_note: 'Required for an app that uses billing. Without it the sidecar reports billing not-configured and every checkout/trial-start returns a clean 503 (billingNotConfigured). Wired into the DATA-PLANE only — the web tier proxies /billing/* and never calls Stripe, so the secret key never needs to reach it.',
+    obtain: 'Stripe Dashboard → Developers → API keys → Secret key (use the TEST key while testing). It is a server-side secret — never expose it in the browser bundle.',
+  },
+  STRIPE_WEBHOOK_SECRET: {
+    name: 'STRIPE_WEBHOOK_SECRET',
+    capability: 'C-billing · Stripe (webhook verification)',
+    requirement: 'conditional',
+    what: 'Signing secret (`whsec_…`) the data-plane uses to VERIFY the signature of Stripe webhook events delivered to `/hooks/billing/stripe`.',
+    requires_note: 'Paired with STRIPE_SECRET_KEY. Without it trials/checkouts still start, but webhook events cannot be verified, so the subscription lifecycle (trial_will_end, conversion, cancellation, invoice.paid/failed) never updates. Wired into the DATA-PLANE only.',
+    obtain: 'Stripe Dashboard → Developers → Webhooks → add an endpoint at `https://<host>/hooks/billing/stripe`, then reveal that endpoint’s Signing secret (`whsec_…`).',
+  },
 };
 
 // The C10 auth session secret — its presence in the declared set is how we detect an
