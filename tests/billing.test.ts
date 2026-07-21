@@ -829,3 +829,85 @@ describe('C33 §1F — customer.subscription.trial_will_end webhook (T-2 reminde
     expect(trialNotif!.title).toMatch(/two days/i);
   });
 });
+
+// ===================================================================================================
+// Admin account lockout — reproduce the EXACT trial-expired `paused` state WITHOUT touching Stripe, so a
+// paid subscription is preserved and instantly restored on unlock. SERVICE-token gated.
+describe('C33 — admin account lockout (POST /billing/admin/lock — forge-side overlay, no Stripe mutation)', () => {
+  // Seed an ACTIVE paid subscription (the paying-customer case) keyed to `subscriber`.
+  const seedActive = async (subscriber: string) => {
+    await configureStripe();
+    defaultSub = stripeSub({ status: 'active', metadata: { subscriber, app: APP_ID, plan_key: 'pro_month' } });
+    subs.set('sub_123', defaultSub);
+    await applyCanonicalSubscription(APP_ID, {
+      subscriber, app: APP_ID, plan_key: 'pro_month', status: 'active', source: 'stripe',
+      current_period_end: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
+      cancel_at_period_end: false, trial_end: null, currency: 'usd', scope_ref: null,
+      provider_refs: { ...emptyProviderRefs(), stripe_customer_id: 'cus_test_1', stripe_subscription_id: 'sub_123', stripe_price_id: 'price_pro_month' },
+    }, 1000);
+  };
+  const lock = (subscriber: string, locked: boolean) => server.inject({
+    method: 'POST', url: '/billing/admin/lock', headers: { 'x-forge-service-token': SERVICE_TOKEN }, payload: { subscriber, locked },
+  });
+  const readSub = (subscriber: string) => server.inject({
+    method: 'GET', url: `/billing/subscription?subscriber=${subscriber}`, headers: { 'x-forge-service-token': SERVICE_TOKEN },
+  });
+  const readEnt = (subscriber: string) => server.inject({
+    method: 'GET', url: `/billing/entitlements?subscriber=${subscriber}`, headers: { 'x-forge-service-token': SERVICE_TOKEN },
+  });
+
+  it('lock reproduces the EXACT trial-expired state (status paused → entitlement falls to the free/default plan)', async () => {
+    await seedCatalog();
+    await seedActive('user_lock');
+    expect((await readEnt('user_lock')).json()).toMatchObject({ status: 'active', plan_key: 'pro_month' });
+    const res = await lock('user_lock', true);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ locked: true, changed: true, status: 'paused', had_subscription: true });
+    expect((await readSub('user_lock')).json().status).toBe('paused');
+    expect((await readEnt('user_lock')).json()).toMatchObject({ status: 'paused', plan_key: 'free' });
+  });
+
+  it('lock NEVER mutates Stripe (no cancel/resume; the real subscription stays active)', async () => {
+    await seedCatalog();
+    await seedActive('user_nostripe');
+    resumeInputs = [];
+    await lock('user_nostripe', true);
+    expect(resumeInputs).toHaveLength(0);
+    expect(subs.get('sub_123')!.status).toBe('active'); // the live Stripe subscription is untouched
+  });
+
+  it('unlock restores the prior status and re-reconciles from Stripe (the paid subscription is reactivated)', async () => {
+    await seedCatalog();
+    await seedActive('user_unlock');
+    await lock('user_unlock', true);
+    expect((await readSub('user_unlock')).json().status).toBe('paused');
+    const res = await lock('user_unlock', false);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ locked: false, changed: true });
+    expect((await readSub('user_unlock')).json().status).toBe('active');
+    expect((await readEnt('user_unlock')).json()).toMatchObject({ status: 'active', plan_key: 'pro_month' });
+  });
+
+  it('the lock is STICKY — a reconcile sweep and a subscription.updated webhook do NOT silently un-lock it', async () => {
+    await seedCatalog();
+    await seedActive('user_sticky');
+    await lock('user_sticky', true);
+    const rec = await server.inject({ method: 'POST', url: '/billing/reconcile', headers: { 'x-forge-service-token': SERVICE_TOKEN } });
+    expect(rec.statusCode).toBe(200);
+    await deliverEvent({ id: 'evt_sticky', type: 'customer.subscription.updated', data: { object: { id: 'sub_123' } } });
+    expect((await readSub('user_sticky')).json().status).toBe('paused'); // still locked
+  });
+
+  it('is idempotent — a repeated lock or unlock reports changed:false', async () => {
+    await seedActive('user_idem');
+    expect((await lock('user_idem', true)).json().changed).toBe(true);
+    expect((await lock('user_idem', true)).json().changed).toBe(false);
+    expect((await lock('user_idem', false)).json().changed).toBe(true);
+    expect((await lock('user_idem', false)).json().changed).toBe(false);
+  });
+
+  it('requires a service token (end-users cannot lock accounts)', async () => {
+    const res = await server.inject({ method: 'POST', url: '/billing/admin/lock', payload: { subscriber: 'x', locked: true } });
+    expect(res.statusCode).toBe(401);
+  });
+});

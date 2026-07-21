@@ -9,6 +9,23 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.59.0] — 2026-07-21
+
+### Added
+- **C33 — admin account lockout (`POST /billing/admin/lock`, SERVICE-token gated).** A forge-side "lock"
+  that reproduces the EXACT trial-expired state (`status: paused` → entitlement locked out: read-only +
+  billing redirect) **without mutating Stripe** — the real subscription, card, and status are preserved and
+  instantly restored on unlock. Built for acceptance-testing billing redirects + post-trial lockout, and as
+  a support "suspend" that never risks a paying customer's subscription.
+  - `SubscriptionRecord` gains `admin_locked_at` + `admin_lock_prev_status` (both optional/backward-compatible).
+    While `admin_locked_at` is set, `status` is overlaid to `paused`, `grantsPaidPlan` returns false, and
+    reconciliation (webhook + the reconcile sweep) is **skipped** so the lock is sticky and can't be un-set
+    behind the operator. Unlock clears the flag, restores the saved prior status, then best-effort
+    re-reconciles from Stripe (the source of truth).
+  - Body `{ subscriber, locked }`; idempotent; emits `billing.admin_locked` / `billing.admin_unlocked` (C3).
+  - Regression tests (lock→paused+locked-out, no-Stripe-mutation, unlock→restored, sticky-vs-webhook/sweep,
+    idempotent, service-token-gated); the sticky guard is verified to fail without the reconcile skip.
+
 ## [0.58.0] — 2026-07-21
 
 ### Added

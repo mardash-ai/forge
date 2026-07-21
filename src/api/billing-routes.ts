@@ -13,6 +13,7 @@ import {
   createCheckout,
   createPortal,
   createTrialingSubscriptionAtSignup,
+  setAdminLock,
   handleStripeWebhook,
   reconcileApp,
   deleteCustomer,
@@ -317,6 +318,32 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
     if (!(await hasValidServiceToken(req, app_.id))) return reply.status(401).send(needAuth);
     try {
       return reply.status(200).send(await reconcileApp(app_.id, app_.name));
+    } catch (e) {
+      return errorReply(reply, e);
+    }
+  });
+
+  // Administrative account lockout (testing / support) — SERVICE-token gated (NOT end-user reachable).
+  // Reproduces the EXACT trial-expired `paused` state (entitlement locked out) WITHOUT touching Stripe, so a
+  // paid subscription is preserved and instantly restored on unlock. Body: `{ subscriber, locked }` —
+  // `locked:true` locks (→ paused), `locked:false` unlocks (restores the saved prior status + re-reconciles).
+  // Idempotent. The consumer's admin tool calls this to simulate trial-expiry / suspend an account.
+  app.post('/billing/admin/lock', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_.id))) return reply.status(401).send(needAuth);
+    const b = (req.body ?? {}) as { subscriber?: string; locked?: boolean };
+    const subscriber = trimmed(b.subscriber);
+    if (!subscriber || typeof b.locked !== 'boolean') {
+      return reply.status(422).send({ error: { code: 'invalid_input', message: '`subscriber` (string) and `locked` (boolean) are required.', retry: 'change-input' } });
+    }
+    try {
+      const out = await setAdminLock(app_.id, subscriber, b.locked);
+      await recordC3(app_.id, b.locked ? 'billing.admin_locked' : 'billing.admin_unlocked', subscriber, {
+        status: out.status,
+        changed: out.changed,
+      });
+      return reply.status(200).send(out);
     } catch (e) {
       return errorReply(reply, e);
     }

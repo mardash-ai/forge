@@ -402,6 +402,9 @@ async function reconcileSubscription(
   const state = await (await backend()).read(appId);
   const existing = Object.values(state.subscriptions).find((r) => r.provider_refs.stripe_subscription_id === sub.id)
     ?? (sub.metadata.subscriber ? state.subscriptions[sub.metadata.subscriber] : undefined);
+  // Sticky admin lockout: while an operator lock is in place, a webhook / sweep re-pull must NOT overwrite
+  // the forced `paused` overlay (that would silently un-lock the account). Skip; unlock re-reconciles.
+  if (existing?.admin_locked_at) return existing;
   const canonical = canonicalFromStripe(appId, sub, state.catalog, existing);
   if (!canonical) return null;
   const { applied, record, previous_status } = await applyCanonicalSubscription(appId, canonical.fields, version);
@@ -544,7 +547,8 @@ export async function reconcileApp(appId: string, appName?: string): Promise<{ r
   let skipped = 0;
   for (const record of Object.values(state.subscriptions)) {
     const subId = record.provider_refs.stripe_subscription_id;
-    if (!subId || record.status === 'none' || record.status === 'canceled') {
+    // Admin-locked subs are sticky (see reconcileSubscription) — skip them here too, before any Stripe call.
+    if (!subId || record.status === 'none' || record.status === 'canceled' || record.admin_locked_at) {
       skipped++;
       continue;
     }
@@ -556,6 +560,78 @@ export async function reconcileApp(appId: string, appName?: string): Promise<{ r
     }
   }
   return { reconciled, skipped };
+}
+
+// --- administrative account lockout (testing / support) -------------------------------------------
+// A forge-side "lock" that reproduces the EXACT trial-expired state (`status: paused` → entitlement locked
+// out: read-only + billing redirect) WITHOUT mutating Stripe. The real Stripe subscription, card, and
+// status are untouched; only the record's `status` is overlaid to `paused` and a sticky `admin_locked_at`
+// flag is set so reconciliation (webhook + sweep) never un-locks it behind the operator. `admin_lock_prev_
+// status` holds the status to restore. Unlock clears the flag, restores the prior status, then best-effort
+// re-reconciles from Stripe (the source of truth) so a card added / period rolled during the lock is
+// reflected. Idempotent. This is the primary tool for acceptance-testing billing redirect + post-trial
+// lockout, and a support "suspend" that never risks a paying customer's subscription.
+export interface AdminLockResult {
+  subscriber: string;
+  locked: boolean; // the resulting lock state
+  changed: boolean; // whether this call actually changed anything
+  status: SubscriptionStatus; // the record status after the call (`paused` while locked)
+  had_subscription: boolean; // whether a real subscription-of-record existed before the call
+}
+
+export async function setAdminLock(appId: string, subscriber: string, locked: boolean): Promise<AdminLockResult> {
+  const store = await backend();
+  const out = await store.mutate<AdminLockResult>(appId, (state) => {
+    const now = nowIso();
+    const version = Date.now();
+    const existing = state.subscriptions[subscriber];
+    const hadSubscription = Boolean(existing);
+    const base = existing ?? noneRecord(appId, subscriber, defaultPlan(state.catalog)?.plan_key ?? null, now);
+    const currentlyLocked = Boolean(base.admin_locked_at);
+
+    if (locked === currentlyLocked) {
+      // Idempotent no-op (already in the requested state).
+      return { state, result: { subscriber, locked, changed: false, status: base.status, had_subscription: hadSubscription } };
+    }
+
+    const record: SubscriptionRecord = locked
+      ? {
+          ...base,
+          admin_locked_at: now,
+          admin_lock_prev_status: base.status, // restore target
+          status: 'paused', // the exact trial-expired state
+          version,
+          updated_at: now,
+        }
+      : {
+          ...base,
+          admin_locked_at: null,
+          admin_lock_prev_status: null,
+          status: base.admin_lock_prev_status ?? 'none', // restore what we saved
+          version,
+          updated_at: now,
+        };
+    return {
+      state: { ...state, subscriptions: { ...state.subscriptions, [subscriber]: record } },
+      result: { subscriber, locked, changed: true, status: record.status, had_subscription: hadSubscription },
+    };
+  });
+
+  // On UNLOCK, best-effort refresh from Stripe so the restored status reflects the true current state.
+  // Never throws — the saved-status restore above already stands if Stripe is unreachable/unconfigured.
+  if (!locked && out.changed) {
+    try {
+      const cfg = await resolveBillingConfig(appId);
+      const subId = (await store.read(appId)).subscriptions[subscriber]?.provider_refs.stripe_subscription_id;
+      if (cfg.configured && cfg.secretKey && subId) {
+        const refreshed = await reconcileSubscription(appId, cfg.secretKey, subId);
+        if (refreshed) return { ...out, status: refreshed.status };
+      }
+    } catch {
+      /* best-effort; the deterministic prev-status restore already applied */
+    }
+  }
+  return out;
 }
 
 // --- administrative billing-customer teardown (account closure / right-to-be-forgotten) -----------

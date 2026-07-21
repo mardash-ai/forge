@@ -80,6 +80,14 @@ export interface SubscriptionRecord {
   version: number; // monotonic reconciliation version (fetch recency); guards out-of-order upserts
   created_at: string;
   updated_at: string;
+  // --- Admin lockout overlay (testing / support). A sticky, forge-side lock that reproduces the EXACT
+  // trial-expired state (`status` forced to `paused` → entitlement locked out: read-only + billing
+  // redirect) WITHOUT touching Stripe — the real subscription / card / status are preserved and restored
+  // on unlock. While `admin_locked_at` is set, reconciliation (webhook + sweep) is SKIPPED so the lock is
+  // never un-set behind the operator; `admin_lock_prev_status` is the status to restore on unlock. Both are
+  // absent on a normal record (backward-compatible with existing stored records).
+  admin_locked_at?: string | null;
+  admin_lock_prev_status?: SubscriptionStatus | null;
 }
 
 // The free/never-subscribed default record for a subscriber (status "none"). `plan_key` is the app's

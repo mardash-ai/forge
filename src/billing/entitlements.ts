@@ -27,6 +27,9 @@ export function planByKey(catalog: Catalog | null, planKey: string | null): Plan
 // Whether the record's status grants the subscriber their OWN (paid) plan right now — accounting for the
 // grace window on past_due / incomplete.
 export function grantsPaidPlan(record: SubscriptionRecord, now: Date = new Date()): boolean {
+  // An admin lockout (testing / support) forces locked-out regardless of the underlying status. The lock
+  // op also overlays `status` to `paused`, but this makes the flag authoritative on its own.
+  if (record.admin_locked_at) return false;
   switch (record.status) {
     case 'active':
     case 'trialing':
