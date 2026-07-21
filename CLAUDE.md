@@ -101,6 +101,7 @@ These come from the Laws, Architecture, and API Philosophy. Violating them is a 
 - **Humans and agents use the same contracts.** Agents are Builders, not features. Do not build agent-only or human-only access paths to Capabilities and Resources.
 - **Long-running work returns a Resource, not a blocked call** (e.g. `POST /capabilities/build` → `202` + a Build Resource the caller observes via state and Events). Mutating APIs should be idempotent.
 - **Workflow composition is explicit architecture, not a domain primitive.** Do not hide critical behavior inside Plugins or inside a workflow engine.
+- **Building/extending a capability? Run the checklist FIRST.** [`docs/BUILDING_A_CAPABILITY.md`](docs/BUILDING_A_CAPABILITY.md) is the pre-ship requirements list — secret injection into the right tier (productionize), the C13 catalog + operator runbook, zero-drift MCP/admin docs, real regression tests, and the versioned release + adopt. Shipping the runtime code without the **wiring** is the recurring failure mode: billing shipped `billingNotConfigured()` on every checkout because its Stripe secret was never injected into the data-plane (productionize had no billing secret path — fixed in P41/0.58.0). If a capability reads a secret on the data-plane, it is not done until productionize wires it, the catalog/runbook document it, and a test would fail without the wiring.
 
 ## Intended Repository Layout (per `06_FORGE_REPOSITORY.md`)
 
