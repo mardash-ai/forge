@@ -352,6 +352,22 @@ describe('generateProdCompose — Traefik + healthcheck + stop_grace + data-plan
     expect(dp).not.toContain('FORGE_OAUTH_PUBLIC_URL');
   });
 
+  // C23 host split — the MCP resource identifier + AS issuer must resolve to the MACHINE-FACING api host,
+  // so FORGE_MCP_PUBLIC_URL is wired into the data-plane (which hosts /mcp) defined-but-empty when the app
+  // uses hosted auth. NOT on the web tier (it proxies /mcp to the sidecar and never computes the origin).
+  it('wires FORGE_MCP_PUBLIC_URL into the data-plane (not web) when the app uses auth (C23 host split)', () => {
+    const yaml = generateProdCompose({ ...base, secrets: ['AUTH_SESSION_SECRET'] });
+    const dp = serviceBlock(yaml, 'data-plane');
+    expect(dp).toContain('- FORGE_MCP_PUBLIC_URL=${FORGE_MCP_PUBLIC_URL:-}');
+    const web = serviceBlock(yaml, 'web');
+    expect(web).not.toContain('FORGE_MCP_PUBLIC_URL');
+  });
+
+  it('does NOT wire FORGE_MCP_PUBLIC_URL when the app does not use hosted auth (C23 host split)', () => {
+    const dp = serviceBlock(generateProdCompose({ ...base, secrets: ['ANTHROPIC_API_KEY'] }), 'data-plane');
+    expect(dp).not.toContain('FORGE_MCP_PUBLIC_URL');
+  });
+
   // P36 — cron fires must be authenticated. When the app declares scheduled jobs, AUTH_SERVICE_TOKEN is
   // deploy-required (`${VAR:?…}`) in BOTH tiers so an unset token fails the deploy loudly instead of firing
   // bare, unauthenticated POSTs at publicly-routed /api/cron/*.
@@ -569,6 +585,27 @@ describe('generateEnvProdExample — now annotates each secret (C13)', () => {
     expect(env).toContain('STRIPE_SECRET_KEY=');
     expect(env).toContain('# STRIPE_WEBHOOK_SECRET —');
     expect(env).toContain('STRIPE_WEBHOOK_SECRET=');
+  });
+
+  // C23 host split — the .env.prod.example documents FORGE_MCP_PUBLIC_URL (the machine-facing MCP resource
+  // identifier + issuer origin) alongside its user-facing P38 siblings when the app uses hosted auth.
+  it('documents the split-host public URLs incl. FORGE_MCP_PUBLIC_URL when the app uses auth (C23)', () => {
+    const env = generateEnvProdExample({
+      appName: 'acme', host: 'app.example.com', withPostgres: false, withRedis: false,
+      secrets: ['AUTH_SESSION_SECRET'],
+    });
+    expect(env).toContain('FORGE_MCP_PUBLIC_URL=');
+    expect(env).toContain('# FORGE_MCP_PUBLIC_URL — the MCP OAuth resource identifier + issuer origin');
+    expect(env).toContain('FORGE_AUTH_PUBLIC_URL=');
+    expect(env).toContain('FORGE_OAUTH_PUBLIC_URL=');
+  });
+
+  it('does NOT document the split-host public URLs for an app that does not use auth (C23)', () => {
+    const env = generateEnvProdExample({
+      appName: 'acme', host: 'app.example.com', withPostgres: false, withRedis: false,
+      secrets: ['ANTHROPIC_API_KEY'],
+    });
+    expect(env).not.toContain('FORGE_MCP_PUBLIC_URL');
   });
 });
 

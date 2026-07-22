@@ -78,7 +78,12 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
   const mcp = () => getBackends().then((b) => b.mcp);
 
   function publicBase(req: FastifyRequest): string {
-    const explicit = process.env.FORGE_OAUTH_PUBLIC_URL;
+    // The OAuth AS issuer (RFC 8414) this server advertises is the MACHINE-FACING api host — the origin the
+    // MCP endpoint + this authorization server are actually reached on. That is INDEPENDENT of the
+    // browser-facing `/connect/*` callback (connect-routes.ts), which uses FORGE_OAUTH_PUBLIC_URL to pin the
+    // USER-FACING app host. Prefer FORGE_MCP_PUBLIC_URL; fall back to FORGE_OAUTH_PUBLIC_URL (back-compat —
+    // prod set that before the split); then the forwarded-host header.
+    const explicit = process.env.FORGE_MCP_PUBLIC_URL || process.env.FORGE_OAUTH_PUBLIC_URL;
     if (explicit) return explicit.replace(/\/+$/, '');
     const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]!.trim() || 'https';
     const host = String(req.headers['x-forwarded-host'] ?? req.headers['host'] ?? 'localhost');

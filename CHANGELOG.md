@@ -9,6 +9,29 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+### Added
+- **C23 — MCP tool annotations on the wire.** `ToolRegistration` gains five OPTIONAL annotation hints
+  (`title`, `read_only_hint`, `destructive_hint`, `idempotent_hint`, `open_world_hint`; snake_case at rest,
+  matching the existing `high_risk`/`input_schema` convention). `POST /mcp/tools` accepts them and stores
+  each only when supplied (no forced defaults; `title` must be a trimmed non-empty string). `tools/list`
+  surfaces a top-level `title` plus a camelCase `annotations` object (`title`, `readOnlyHint`,
+  `destructiveHint`, `idempotentHint`, `openWorldHint`), attached only when at least one hint was declared.
+  No migration — the tool blob is stored as JSONB, so the new optional fields round-trip for free.
+
+### Changed
+- **C23 — MCP resource identifier / OAuth AS issuer host split (`FORGE_MCP_PUBLIC_URL`).** The MCP endpoint
+  and its OAuth authorization server are served on the **machine-facing api host**, but `publicBase()` (in
+  both `mcp-routes.ts` and `oauth-routes.ts`) preferred `FORGE_OAUTH_PUBLIC_URL`, which prod pins to the
+  **user-facing app host** for the browser `/connect/*` callback — so the server wrongly advertised
+  `resource: https://app.<domain>/mcp` and an app-host issuer while it is actually reached on api. Both
+  `publicBase()` functions now prefer a dedicated `FORGE_MCP_PUBLIC_URL` (the RFC 9728 resource identifier +
+  RFC 8414 issuer origin), falling back to `FORGE_OAUTH_PUBLIC_URL` (back-compat) then the forwarded-host
+  header. `connect-routes.ts` is untouched — its `FORGE_OAUTH_PUBLIC_URL` (browser Google-connect callback)
+  stays on the app host. Productionize wires `FORGE_MCP_PUBLIC_URL` into the data-plane defined-but-empty
+  (under the same hosted-auth gate as the sibling public-URL vars) and documents it in `.env.prod.example`
+  as "the MCP OAuth resource identifier + issuer origin — the machine-facing api host (e.g.
+  https://api.dorinda.ai)". Empty = request-host-derived, so single-host apps are unaffected.
+
 ## [0.59.0] — 2026-07-21
 
 ### Added

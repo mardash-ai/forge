@@ -20,6 +20,13 @@ export interface ToolRegistration {
   scope: string; // the OAuth scope a token must hold to call this tool
   family: ToolFamily; // read | write | action (the C29 seam hint)
   high_risk?: boolean; // app hint: this tool is a high-risk class (staging suggested at the app's authorize())
+  // MCP tool-annotation hints (optional; all snake_case at rest, surfaced camelCase under `annotations`
+  // on tools/list). The MCP host uses them as behavioural hints — none is forced/defaulted; the app opts in.
+  title?: string; // MCP annotation: a human-readable display title for the tool
+  read_only_hint?: boolean; // MCP annotation: the tool does not modify its environment
+  destructive_hint?: boolean; // MCP annotation: the tool may perform destructive updates (only if not read-only)
+  idempotent_hint?: boolean; // MCP annotation: repeated calls with the same args have no additional effect
+  open_world_hint?: boolean; // MCP annotation: the tool interacts with an open/external world (vs a closed domain)
   handler_path: string; // app path the platform POSTs the call to, e.g. /api/mcp/tools/create_note
   created_at: string;
   updated_at: string;

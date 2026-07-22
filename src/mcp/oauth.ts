@@ -80,7 +80,8 @@ export function isExpired(expiresAtIso: string | undefined, now: Date = new Date
 // --- authorization-server metadata (RFC 8414) -----------------------------------
 
 // The discovery document the MCP connector / Apps SDK reads to find the endpoints. `issuer` is the public
-// base URL the app proxies to the sidecar (derived from forwarded headers or FORGE_OAUTH_PUBLIC_URL), so
+// base URL the MCP server + this AS are reached on (the machine-facing api host — derived from forwarded
+// headers, or pinned by FORGE_MCP_PUBLIC_URL, falling back to FORGE_OAUTH_PUBLIC_URL for back-compat), so
 // the whole surface can relocate to a dedicated public edge later WITHOUT changing tool contracts.
 export function authServerMetadata(issuer: string, scopesSupported: string[] = []): Record<string, unknown> {
   const base = issuer.replace(/\/+$/, '');

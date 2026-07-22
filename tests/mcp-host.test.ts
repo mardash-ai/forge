@@ -179,6 +179,74 @@ describe('C23 — instruction versioning + proactive scheduling (C2)', () => {
   });
 });
 
+describe('C23 — MCP tool annotations on the wire', () => {
+  it('emits a top-level title + camelCase annotations for a tool registered with hints', async () => {
+    await registerTool({
+      name: 'archive_note',
+      title: '  Archive a note  ', // trimmed on the way in
+      read_only_hint: false,
+      destructive_hint: true,
+      idempotent_hint: true,
+      open_world_hint: false,
+    });
+    const bearer = await mintAccess(['notes:read']);
+    const list = await rpc('tools/list', {}, bearer);
+    const tool = list.json().result.tools.find((t: { name: string }) => t.name === 'archive_note');
+    expect(tool.title).toBe('Archive a note');
+    // camelCase on the wire, exactly the declared keys/booleans (false is meaningful — not dropped).
+    expect(tool.annotations).toEqual({
+      title: 'Archive a note',
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+  });
+
+  it('omits `annotations` (and title) entirely for a tool registered with NO hints — no forced defaults', async () => {
+    await registerTool(); // plain get_note, no annotation hints
+    const bearer = await mintAccess(['notes:read']);
+    const list = await rpc('tools/list', {}, bearer);
+    const tool = list.json().result.tools.find((t: { name: string }) => t.name === 'get_note');
+    expect(tool).toBeTruthy();
+    expect(tool.annotations).toBeUndefined();
+    expect(tool.title).toBeUndefined();
+  });
+});
+
+// Change B — the MCP resource identifier (RFC 9728) + AS issuer must resolve to the MACHINE-FACING api host.
+// FORGE_MCP_PUBLIC_URL pins it, independent of the browser-facing FORGE_OAUTH_PUBLIC_URL (the app host).
+describe('C23 — resource-identifier host split (FORGE_MCP_PUBLIC_URL)', () => {
+  it('advertises resource + AS under FORGE_MCP_PUBLIC_URL when it AND FORGE_OAUTH_PUBLIC_URL are both set', async () => {
+    const prevMcp = process.env.FORGE_MCP_PUBLIC_URL;
+    const prevOauth = process.env.FORGE_OAUTH_PUBLIC_URL;
+    process.env.FORGE_OAUTH_PUBLIC_URL = 'https://app.dorinda.ai'; // the browser/app host — must NOT win here
+    process.env.FORGE_MCP_PUBLIC_URL = 'https://api.dorinda.ai'; // the machine-facing api host — must win
+    try {
+      const body = (await get('/.well-known/oauth-protected-resource')).json();
+      expect(body.resource).toBe('https://api.dorinda.ai/mcp');
+      expect(body.authorization_servers).toEqual(['https://api.dorinda.ai']);
+    } finally {
+      if (prevMcp === undefined) delete process.env.FORGE_MCP_PUBLIC_URL; else process.env.FORGE_MCP_PUBLIC_URL = prevMcp;
+      if (prevOauth === undefined) delete process.env.FORGE_OAUTH_PUBLIC_URL; else process.env.FORGE_OAUTH_PUBLIC_URL = prevOauth;
+    }
+  });
+
+  it('falls back to FORGE_OAUTH_PUBLIC_URL when FORGE_MCP_PUBLIC_URL is unset (back-compat)', async () => {
+    const prevMcp = process.env.FORGE_MCP_PUBLIC_URL;
+    const prevOauth = process.env.FORGE_OAUTH_PUBLIC_URL;
+    delete process.env.FORGE_MCP_PUBLIC_URL;
+    process.env.FORGE_OAUTH_PUBLIC_URL = 'https://legacy.example';
+    try {
+      const body = (await get('/.well-known/oauth-protected-resource')).json();
+      expect(body.resource).toBe('https://legacy.example/mcp');
+    } finally {
+      if (prevMcp === undefined) delete process.env.FORGE_MCP_PUBLIC_URL; else process.env.FORGE_MCP_PUBLIC_URL = prevMcp;
+      if (prevOauth === undefined) delete process.env.FORGE_OAUTH_PUBLIC_URL; else process.env.FORGE_OAUTH_PUBLIC_URL = prevOauth;
+    }
+  });
+});
+
 describe('C23 — connector (consent) management', () => {
   it('lists and revokes a user’s consent, cutting their tokens off', async () => {
     const bearer = await mintAccess(['notes:read'], 'userA', 'clientZ');

@@ -519,6 +519,12 @@ ${labels.join('\n')}`;
   // not the API host the proxied request arrived on. Wired defined-but-empty from .env.prod; empty =
   // request-host-derived (single-host apps unaffected). Data-plane only (the web tier proxies /connect/*).
   if (usesAuth) dpEnv.push('      - FORGE_OAUTH_PUBLIC_URL=${FORGE_OAUTH_PUBLIC_URL:-}');
+  // Split-host companion for the C23 MCP server + its OAuth AS. The RFC 9728 resource identifier + RFC 8414
+  // issuer must resolve to the MACHINE-FACING api host (where `/mcp` + the AS are actually reached), NOT the
+  // user-facing app host FORGE_OAUTH_PUBLIC_URL pins for the browser `/connect/*` callback. publicBase()
+  // reads FORGE_MCP_PUBLIC_URL first, then falls back to FORGE_OAUTH_PUBLIC_URL. Wired defined-but-empty from
+  // .env.prod; empty = request-host-derived (single-host apps unaffected). Data-plane only (it hosts /mcp).
+  if (usesAuth) dpEnv.push('      - FORGE_MCP_PUBLIC_URL=${FORGE_MCP_PUBLIC_URL:-}');
   // C36 — the transport tier emits the `mcp.tool_call` trace ROOT (initOtelLangfuse reads these at boot).
   dpEnv.push(...otelEnv('forge-data-plane'));
   // The data-plane's ENTIRE state dir (FORGE_STATE_DIR=/forge-state) rides ONE durable
@@ -765,6 +771,21 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
         lines.push('');
       }
     }
+  }
+  // Split-host public URLs (P38 + C23). When the UI (app.<domain>) and the API/MCP (api.<domain>) live on
+  // DIFFERENT hosts, these pin the origin each surface must advertise. All three are wired into the
+  // data-plane defined-but-empty; empty = request-host-derived, so single-host apps need none of them.
+  if (usesAuth) {
+    lines.push('# --- Split-host public URLs (P38 · C23) — pin ONLY when the UI and API/MCP live on different hosts ---');
+    lines.push('# Empty = derived from the incoming request host (single-host apps leave all three blank).');
+    lines.push('# FORGE_AUTH_PUBLIC_URL — USER-FACING origin for hosted C10 sign-in URLs (e.g. https://app.example.com).');
+    lines.push('# FORGE_OAUTH_PUBLIC_URL — USER-FACING origin for the C24 "Connect" (/connect/*) callback.');
+    lines.push('# FORGE_MCP_PUBLIC_URL — the MCP OAuth resource identifier + issuer origin: the MACHINE-FACING api');
+    lines.push('#   host the /mcp endpoint + its OAuth AS are reached on (e.g. https://api.example.com).');
+    lines.push('FORGE_AUTH_PUBLIC_URL=');
+    lines.push('FORGE_OAUTH_PUBLIC_URL=');
+    lines.push('FORGE_MCP_PUBLIC_URL=');
+    lines.push('');
   }
   // P41 — when the app uses billing (declares any STRIPE_* secret), the Stripe SECRET + WEBHOOK secrets are
   // already wired into the data-plane by productionize (defined-but-empty), so .env.prod is the single

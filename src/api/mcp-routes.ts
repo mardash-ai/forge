@@ -54,7 +54,12 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
   const mcp = () => getBackends().then((b) => b.mcp);
 
   function publicBase(req: FastifyRequest): string {
-    const explicit = process.env.FORGE_OAUTH_PUBLIC_URL;
+    // The MCP resource identifier (RFC 9728) + OAuth AS issuer (RFC 8414) must resolve to the MACHINE-FACING
+    // api host — the origin the `/mcp` endpoint + its authorization server are actually reached on. That is
+    // INDEPENDENT of the browser-facing `/connect/*` callback (connect-routes.ts), which uses
+    // FORGE_OAUTH_PUBLIC_URL to pin the USER-FACING app host. Prefer FORGE_MCP_PUBLIC_URL; fall back to
+    // FORGE_OAUTH_PUBLIC_URL (back-compat — prod set that before the split); then the forwarded-host header.
+    const explicit = process.env.FORGE_MCP_PUBLIC_URL || process.env.FORGE_OAUTH_PUBLIC_URL;
     if (explicit) return explicit.replace(/\/+$/, '');
     const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]!.trim() || 'https';
     const host = String(req.headers['x-forwarded-host'] ?? req.headers['host'] ?? 'localhost');
@@ -110,12 +115,25 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       if (method === 'tools/list') {
         const tools = await (await mcp()).listTools(app_.id);
         return reply.status(200).send(rpcResult(id!, {
-          tools: tools.map((t) => ({
-            name: t.name,
-            description: t.description,
-            inputSchema: t.input_schema ?? { type: 'object' },
-            ...(t.output_schema ? { outputSchema: t.output_schema } : {}),
-          })),
+          tools: tools.map((t) => {
+            // MCP tool annotations on the wire — camelCase, built from the snake_case registration hints.
+            // Only the keys the app declared appear; the whole object is omitted when it would be empty.
+            const annotations: Record<string, unknown> = {
+              ...(t.title ? { title: t.title } : {}),
+              ...(t.read_only_hint !== undefined ? { readOnlyHint: t.read_only_hint } : {}),
+              ...(t.destructive_hint !== undefined ? { destructiveHint: t.destructive_hint } : {}),
+              ...(t.idempotent_hint !== undefined ? { idempotentHint: t.idempotent_hint } : {}),
+              ...(t.open_world_hint !== undefined ? { openWorldHint: t.open_world_hint } : {}),
+            };
+            return {
+              name: t.name,
+              description: t.description,
+              ...(t.title ? { title: t.title } : {}),
+              inputSchema: t.input_schema ?? { type: 'object' },
+              ...(t.output_schema ? { outputSchema: t.output_schema } : {}),
+              ...(Object.keys(annotations).length ? { annotations } : {}),
+            };
+          }),
         }));
       }
       if (method === 'tools/call') {
@@ -235,6 +253,13 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       scope: typeof b.scope === 'string' ? b.scope : '',
       family,
       ...(b.high_risk !== undefined ? { high_risk: Boolean(b.high_risk) } : {}),
+      // MCP tool-annotation hints — stored only when the app supplied them (no forced defaults). `title`
+      // must be a trimmed non-empty string; the booleans ride through as-declared (false is meaningful).
+      ...(typeof b.title === 'string' && b.title.trim() ? { title: b.title.trim() } : {}),
+      ...(b.read_only_hint !== undefined ? { read_only_hint: Boolean(b.read_only_hint) } : {}),
+      ...(b.destructive_hint !== undefined ? { destructive_hint: Boolean(b.destructive_hint) } : {}),
+      ...(b.idempotent_hint !== undefined ? { idempotent_hint: Boolean(b.idempotent_hint) } : {}),
+      ...(b.open_world_hint !== undefined ? { open_world_hint: Boolean(b.open_world_hint) } : {}),
       handler_path: b.handler_path,
       created_at: existing?.created_at ?? now,
       updated_at: now,

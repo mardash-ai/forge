@@ -92,6 +92,23 @@ describe('C23 — discovery + dynamic client registration', () => {
     // A registration with no valid redirect_uri is rejected.
     expect((await post('/oauth/register', { redirect_uris: [] })).statusCode).toBe(400);
   });
+
+  // The AS issuer is the MACHINE-FACING api host — FORGE_MCP_PUBLIC_URL pins it, winning over the
+  // browser-facing FORGE_OAUTH_PUBLIC_URL (the app host) when both are set (the host-split).
+  it('the AS issuer prefers FORGE_MCP_PUBLIC_URL over FORGE_OAUTH_PUBLIC_URL (host split)', async () => {
+    const prevMcp = process.env.FORGE_MCP_PUBLIC_URL;
+    const prevOauth = process.env.FORGE_OAUTH_PUBLIC_URL;
+    process.env.FORGE_OAUTH_PUBLIC_URL = 'https://app.dorinda.ai';
+    process.env.FORGE_MCP_PUBLIC_URL = 'https://api.dorinda.ai';
+    try {
+      const meta = (await get('/.well-known/oauth-authorization-server')).json();
+      expect(meta.issuer).toBe('https://api.dorinda.ai');
+      expect(meta.token_endpoint).toBe('https://api.dorinda.ai/oauth/token');
+    } finally {
+      if (prevMcp === undefined) delete process.env.FORGE_MCP_PUBLIC_URL; else process.env.FORGE_MCP_PUBLIC_URL = prevMcp;
+      if (prevOauth === undefined) delete process.env.FORGE_OAUTH_PUBLIC_URL; else process.env.FORGE_OAUTH_PUBLIC_URL = prevOauth;
+    }
+  });
 });
 
 describe('C23 — authorize + consent (requires a C10 login)', () => {
