@@ -198,6 +198,41 @@ describe('C23 — the full authorization_code + PKCE + refresh flow', () => {
     expect(userId).toBeTruthy();
   });
 
+  // Mint a full token pair via the normal code+PKCE flow (for the Basic-auth refresh tests).
+  const freshTokens = async (): Promise<{ clientId: string; refreshToken: string }> => {
+    const fresh = await runToCode();
+    const tok = await post('/oauth/token', { grant_type: 'authorization_code', code: fresh.code, code_verifier: verifier, client_id: fresh.clientId, redirect_uri: REDIRECT });
+    expect(tok.statusCode).toBe(200);
+    return { clientId: fresh.clientId, refreshToken: tok.json().refresh_token };
+  };
+
+  it('accepts a refresh identified ONLY via HTTP Basic (RFC 6749 §2.3.1) — no body client_id', async () => {
+    // Connector hosts commonly switch to Basic client auth on refresh (id in the header, empty
+    // secret for a public client). Previously only body.client_id was read, so this exact shape
+    // failed `unknown client_id` and the connector died at access-token expiry.
+    const fresh = await freshTokens();
+    const basic = `Basic ${Buffer.from(`${fresh.clientId}:`).toString('base64')}`;
+    const refreshed = await post(
+      '/oauth/token',
+      { grant_type: 'refresh_token', refresh_token: fresh.refreshToken }, // NO client_id in the body
+      { authorization: basic },
+    );
+    expect(refreshed.statusCode).toBe(200);
+    expect(typeof refreshed.json().access_token).toBe('string');
+  });
+
+  it('rejects a token call whose Basic client id CONTRADICTS the body client_id', async () => {
+    const fresh = await freshTokens();
+    const basic = `Basic ${Buffer.from('mcpc_someone_else:').toString('base64')}`;
+    const r = await post(
+      '/oauth/token',
+      { grant_type: 'refresh_token', refresh_token: fresh.refreshToken, client_id: fresh.clientId },
+      { authorization: basic },
+    );
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toBe('invalid_client');
+  });
+
   it('denying consent redirects with error=access_denied', async () => {
     const clientId = await registerClient();
     const challenge = pkceChallenge(verifier);

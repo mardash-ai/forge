@@ -282,7 +282,7 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
     };
 
     if (grantType === 'authorization_code') {
-      const client = await authClient(b.client_id);
+      const client = await authClient(extractClientId(req, b));
       if (client === 'invalid_client') return oauthError(reply, 401, 'invalid_client', 'client authentication failed.');
       if (!client) return oauthError(reply, 400, 'invalid_client', 'unknown client_id.');
       if (!b.code) return oauthError(reply, 400, 'invalid_request', 'code is required.');
@@ -300,7 +300,7 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
     }
 
     if (grantType === 'refresh_token') {
-      const client = await authClient(b.client_id);
+      const client = await authClient(extractClientId(req, b));
       if (client === 'invalid_client') return oauthError(reply, 401, 'invalid_client', 'client authentication failed.');
       if (!client) return oauthError(reply, 400, 'invalid_client', 'unknown client_id.');
       if (!b.refresh_token) return oauthError(reply, 400, 'invalid_request', 'refresh_token is required.');
@@ -355,20 +355,45 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
   }
 }
 
-// A confidential client's secret from either Basic auth or the body (client_secret_post).
-function extractClientSecret(req: FastifyRequest, body: Record<string, string>): string | undefined {
+// Decode the `Authorization: Basic base64(client_id:client_secret)` pair, if present. Both halves are
+// application/x-www-form-urlencoded inside the Basic credentials (RFC 6749 §2.3.1) — decode defensively.
+function basicAuthPair(req: FastifyRequest): { id?: string; secret?: string } {
   const auth = req.headers.authorization;
   const h = Array.isArray(auth) ? auth[0] : auth;
-  if (h && /^Basic\s+/i.test(h)) {
-    try {
-      const decoded = Buffer.from(h.replace(/^Basic\s+/i, ''), 'base64').toString('utf8');
-      const idx = decoded.indexOf(':');
-      if (idx >= 0) return decoded.slice(idx + 1);
-    } catch {
-      /* ignore */
-    }
+  if (!h || !/^Basic\s+/i.test(h)) return {};
+  try {
+    const decoded = Buffer.from(h.replace(/^Basic\s+/i, ''), 'base64').toString('utf8');
+    const idx = decoded.indexOf(':');
+    if (idx < 0) return {};
+    const dec = (s: string) => {
+      try {
+        return decodeURIComponent(s);
+      } catch {
+        return s;
+      }
+    };
+    return { id: dec(decoded.slice(0, idx)) || undefined, secret: decoded.slice(idx + 1) ? dec(decoded.slice(idx + 1)) : undefined };
+  } catch {
+    return {};
   }
-  return body.client_secret || undefined;
+}
+
+/**
+ * The client id from the body (`client_id`) OR HTTP Basic auth (RFC 6749 §2.3.1 — servers MUST support
+ * Basic; some clients, incl. connector hosts, identify this way on token/refresh calls with no body
+ * client_id — previously only the body was read, so a Basic-only refresh failed `unknown client_id`).
+ * If both are present they must AGREE (mismatch → undefined → the caller's invalid_client path).
+ */
+function extractClientId(req: FastifyRequest, body: Record<string, string>): string | undefined {
+  const fromBody = body.client_id || undefined;
+  const fromBasic = basicAuthPair(req).id;
+  if (fromBody && fromBasic && fromBody !== fromBasic) return undefined;
+  return fromBody ?? fromBasic;
+}
+
+// A confidential client's secret from either Basic auth or the body (client_secret_post).
+function extractClientSecret(req: FastifyRequest, body: Record<string, string>): string | undefined {
+  return basicAuthPair(req).secret ?? (body.client_secret || undefined);
 }
 
 // --- redirect / html helpers ----------------------------------------------------

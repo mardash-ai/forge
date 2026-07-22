@@ -9,6 +9,18 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.62.1] - 2026-07-22
+
+### Fixed
+- **C23 — token endpoint now accepts HTTP Basic client identification (RFC 6749 §2.3.1).** The
+  `authorization_code` and `refresh_token` grants read the client id from the request BODY only;
+  `extractClientSecret` decoded the `Authorization: Basic id:secret` header but DISCARDED the id half.
+  A client identifying itself only via Basic (id in the header, empty secret for a public client — a
+  shape connector hosts commonly use on refresh) failed with `unknown client_id`, so its session died
+  at access-token expiry. `extractClientId` now reads body OR Basic (mismatch between the two →
+  `invalid_client`), with both halves form-urldecoded per the RFC. Guard-proven tests: a Basic-only
+  refresh succeeds; a contradictory Basic-vs-body id is rejected.
+
 ## [0.62.0] - 2026-07-22
 
 ### Added
