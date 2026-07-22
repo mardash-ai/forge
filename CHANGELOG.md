@@ -9,6 +9,8 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-07-22
+
 ### Added
 - **C23 — MCP tool annotations on the wire.** `ToolRegistration` gains five OPTIONAL annotation hints
   (`title`, `read_only_hint`, `destructive_hint`, `idempotent_hint`, `open_world_hint`; snake_case at rest,
