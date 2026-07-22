@@ -9,6 +9,8 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.64.0] - 2026-07-22
+
 ### Added
 - **Productionize emits the dedicated-mTLS-host MCP wiring (durability) — new `mcp_mtls_host` /
   `mcp_mtls_tls_options` production config.** The mTLS wiring dorinda-api carried as HAND-ADDED lines in
