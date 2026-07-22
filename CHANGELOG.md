@@ -9,6 +9,8 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.61.0] - 2026-07-22
+
 ### Security
 - **C23 — the MCP management surface is now SERVICE-token gated (closes an unauthenticated-write hole).**
   The app→sidecar management routes (`POST/GET /mcp/tools`, `DELETE /mcp/tools/:name`,
