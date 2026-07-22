@@ -54,17 +54,41 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
   };
   const mcp = () => getBackends().then((b) => b.mcp);
 
-  function publicBase(req: FastifyRequest): string {
-    // The MCP resource identifier (RFC 9728) + OAuth AS issuer (RFC 8414) must resolve to the MACHINE-FACING
-    // api host — the origin the `/mcp` endpoint + its authorization server are actually reached on. That is
-    // INDEPENDENT of the browser-facing `/connect/*` callback (connect-routes.ts), which uses
-    // FORGE_OAUTH_PUBLIC_URL to pin the USER-FACING app host. Prefer FORGE_MCP_PUBLIC_URL; fall back to
-    // FORGE_OAUTH_PUBLIC_URL (back-compat — prod set that before the split); then the forwarded-host header.
+  // issuerBase — the PINNED OAuth authorization-server / issuer origin (RFC 8414). The AS must stay on the
+  // certless MACHINE-FACING api host: the browser consent + DCR flow can't present a client cert, so the AS
+  // never relocates to a dedicated mTLS host. INDEPENDENT of the browser-facing `/connect/*` callback
+  // (connect-routes.ts), which uses FORGE_OAUTH_PUBLIC_URL to pin the USER-FACING app host. Prefer
+  // FORGE_MCP_PUBLIC_URL; fall back to FORGE_OAUTH_PUBLIC_URL (back-compat — prod set that before the split);
+  // then the forwarded-host header.
+  function issuerBase(req: FastifyRequest): string {
     const explicit = process.env.FORGE_MCP_PUBLIC_URL || process.env.FORGE_OAUTH_PUBLIC_URL;
     if (explicit) return explicit.replace(/\/+$/, '');
     const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]!.trim() || 'https';
     const host = String(req.headers['x-forwarded-host'] ?? req.headers['host'] ?? 'localhost');
     return `${proto}://${host}`;
+  }
+
+  // resourceBase — the MCP RESOURCE identifier origin (RFC 8707 / RFC 9728): the public host the client
+  // actually CONNECTED to, which may DIFFER from the pinned issuer above. ChatGPT's connector lives on a
+  // dedicated mTLS host (mcp.dorinda.ai) while Claude + browsers stay on the certless api host — a request
+  // arriving via mcp.dorinda.ai must advertise `resource=https://mcp.dorinda.ai/mcp` so the client echoes
+  // THAT into its token and our audience check (verifyAccessToken) expects the same value. So this is
+  // PER-REQUEST, unlike the pinned issuerBase.
+  //
+  // Anti-spoofing (fail safe): the forwarded host is honored ONLY when it is the primary MCP host
+  // (FORGE_MCP_PUBLIC_URL) or an explicitly-allowlisted alternate (FORGE_MCP_ALT_HOSTS — comma-separated
+  // hostnames). A forged X-Forwarded-Host would otherwise poison the advertised resource, so an
+  // un-allowlisted host NEVER wins: we fall back to the pin (then FORGE_OAUTH_PUBLIC_URL, then — dev only —
+  // the forwarded origin). Trailing slashes trimmed.
+  function resourceBase(req: FastifyRequest): string {
+    const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]!.trim() || 'https';
+    const fwdHost = String(req.headers['x-forwarded-host'] ?? req.headers['host'] ?? 'localhost').split(',')[0]!.trim();
+    const pin = process.env.FORGE_MCP_PUBLIC_URL?.replace(/\/+$/, '');
+    const allowed = new Set<string>();
+    if (pin) { try { allowed.add(new URL(pin).host); } catch { /* malformed pin — ignore */ } }
+    for (const h of (process.env.FORGE_MCP_ALT_HOSTS ?? '').split(',')) { const t = h.trim(); if (t) allowed.add(t); }
+    if (fwdHost && allowed.has(fwdHost)) return `${proto}://${fwdHost}`;
+    return pin ?? process.env.FORGE_OAUTH_PUBLIC_URL?.replace(/\/+$/, '') ?? `${proto}://${fwdHost}`;
   }
 
   // Change C — a restrictive Content-Security-Policy on this MACHINE-FACING JSON surface (POST /mcp, the
@@ -93,10 +117,11 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     return false;
   }
 
-  // === the protected-resource pointer (RFC 9728) — sends the host to our authorization server ======
+  // === the protected-resource pointer (RFC 9728) — advertises the PER-REQUEST resource id + the PINNED AS ===
+  // `resource` names the host the client connected to (resourceBase, per-host); `authorization_servers` points
+  // at the pinned certless OAuth AS (issuerBase) — the two diverge for a request via a dedicated mTLS host.
   app.get('/.well-known/oauth-protected-resource', async (req, reply) => {
-    const base = publicBase(req);
-    return reply.status(200).send({ resource: `${base}/mcp`, authorization_servers: [base] });
+    return reply.status(200).send({ resource: `${resourceBase(req)}/mcp`, authorization_servers: [issuerBase(req)] });
   });
 
   // === the MCP endpoint (Streamable-HTTP, JSON-RPC 2.0) ============================================
@@ -107,12 +132,14 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     // Gate on the OAuth access token; a missing/invalid token → 401 with the discovery pointer so the MCP
     // client kicks off the OAuth flow (RFC 9728 WWW-Authenticate). Change A (RFC 8707): pass THIS server's
     // resource id as the expected audience — a token bound to a DIFFERENT resource is rejected here, while a
-    // token with no bound resource still verifies (back-compat with tokens issued before aud-binding).
-    const verified = await verifyAccessToken(app_.id, bearerFrom(req.headers.authorization), `${publicBase(req)}/mcp`);
+    // token with no bound resource still verifies (back-compat with tokens issued before aud-binding). The
+    // resource id is PER-HOST (resourceBase): a token minted for the dedicated mTLS host is accepted only on
+    // that host, and the WWW-Authenticate pointer names the same host so discovery loops back consistently.
+    const verified = await verifyAccessToken(app_.id, bearerFrom(req.headers.authorization), `${resourceBase(req)}/mcp`);
     if (!verified) {
       return reply
         .status(401)
-        .header('WWW-Authenticate', `Bearer resource_metadata="${publicBase(req)}/.well-known/oauth-protected-resource"`)
+        .header('WWW-Authenticate', `Bearer resource_metadata="${resourceBase(req)}/.well-known/oauth-protected-resource"`)
         .send({ error: 'invalid_token', error_description: 'a valid OAuth access token is required.' });
     }
 

@@ -355,17 +355,20 @@ describe('generateProdCompose — Traefik + healthcheck + stop_grace + data-plan
   // C23 host split — the MCP resource identifier + AS issuer must resolve to the MACHINE-FACING api host,
   // so FORGE_MCP_PUBLIC_URL is wired into the data-plane (which hosts /mcp) defined-but-empty when the app
   // uses hosted auth. NOT on the web tier (it proxies /mcp to the sidecar and never computes the origin).
-  it('wires FORGE_MCP_PUBLIC_URL into the data-plane (not web) when the app uses auth (C23 host split)', () => {
+  it('wires FORGE_MCP_PUBLIC_URL + FORGE_MCP_ALT_HOSTS into the data-plane (not web) when the app uses auth (C23 host split)', () => {
     const yaml = generateProdCompose({ ...base, secrets: ['AUTH_SESSION_SECRET'] });
     const dp = serviceBlock(yaml, 'data-plane');
     expect(dp).toContain('- FORGE_MCP_PUBLIC_URL=${FORGE_MCP_PUBLIC_URL:-}');
+    expect(dp).toContain('- FORGE_MCP_ALT_HOSTS=${FORGE_MCP_ALT_HOSTS:-}'); // Tier-3 — dedicated mTLS host allowlist
     const web = serviceBlock(yaml, 'web');
     expect(web).not.toContain('FORGE_MCP_PUBLIC_URL');
+    expect(web).not.toContain('FORGE_MCP_ALT_HOSTS');
   });
 
-  it('does NOT wire FORGE_MCP_PUBLIC_URL when the app does not use hosted auth (C23 host split)', () => {
+  it('does NOT wire FORGE_MCP_PUBLIC_URL / FORGE_MCP_ALT_HOSTS when the app does not use hosted auth (C23 host split)', () => {
     const dp = serviceBlock(generateProdCompose({ ...base, secrets: ['ANTHROPIC_API_KEY'] }), 'data-plane');
     expect(dp).not.toContain('FORGE_MCP_PUBLIC_URL');
+    expect(dp).not.toContain('FORGE_MCP_ALT_HOSTS');
   });
 
   // P36 — cron fires must be authenticated. When the app declares scheduled jobs, AUTH_SERVICE_TOKEN is
@@ -596,6 +599,8 @@ describe('generateEnvProdExample — now annotates each secret (C13)', () => {
     });
     expect(env).toContain('FORGE_MCP_PUBLIC_URL=');
     expect(env).toContain('# FORGE_MCP_PUBLIC_URL — the MCP OAuth resource identifier + issuer origin');
+    expect(env).toContain('FORGE_MCP_ALT_HOSTS=');
+    expect(env).toContain('# FORGE_MCP_ALT_HOSTS — comma-separated ADDITIONAL hostnames allowed to appear as the MCP resource');
     expect(env).toContain('FORGE_AUTH_PUBLIC_URL=');
     expect(env).toContain('FORGE_OAUTH_PUBLIC_URL=');
   });
@@ -606,6 +611,7 @@ describe('generateEnvProdExample — now annotates each secret (C13)', () => {
       secrets: ['ANTHROPIC_API_KEY'],
     });
     expect(env).not.toContain('FORGE_MCP_PUBLIC_URL');
+    expect(env).not.toContain('FORGE_MCP_ALT_HOSTS');
   });
 });
 

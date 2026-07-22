@@ -525,6 +525,12 @@ ${labels.join('\n')}`;
   // reads FORGE_MCP_PUBLIC_URL first, then falls back to FORGE_OAUTH_PUBLIC_URL. Wired defined-but-empty from
   // .env.prod; empty = request-host-derived (single-host apps unaffected). Data-plane only (it hosts /mcp).
   if (usesAuth) dpEnv.push('      - FORGE_MCP_PUBLIC_URL=${FORGE_MCP_PUBLIC_URL:-}');
+  // Tier-3 companion — comma-separated ADDITIONAL hostnames allowed to appear as the MCP resource identifier
+  // (RFC 8707/9728) when a DEDICATED mTLS host (e.g. mcp.dorinda.ai for ChatGPT's connector) fronts /mcp
+  // alongside the certless api host. The forwarded host is honored as the resource id only if it's the
+  // primary MCP host or in this list (else it falls back to the pin — anti-spoofing). Wired defined-but-empty;
+  // empty = pin-only (single-host apps unaffected).
+  if (usesAuth) dpEnv.push('      - FORGE_MCP_ALT_HOSTS=${FORGE_MCP_ALT_HOSTS:-}');
   // C36 — the transport tier emits the `mcp.tool_call` trace ROOT (initOtelLangfuse reads these at boot).
   dpEnv.push(...otelEnv('forge-data-plane'));
   // The data-plane's ENTIRE state dir (FORGE_STATE_DIR=/forge-state) rides ONE durable
@@ -782,9 +788,13 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
     lines.push('# FORGE_OAUTH_PUBLIC_URL — USER-FACING origin for the C24 "Connect" (/connect/*) callback.');
     lines.push('# FORGE_MCP_PUBLIC_URL — the MCP OAuth resource identifier + issuer origin: the MACHINE-FACING api');
     lines.push('#   host the /mcp endpoint + its OAuth AS are reached on (e.g. https://api.example.com).');
+    lines.push('# FORGE_MCP_ALT_HOSTS — comma-separated ADDITIONAL hostnames allowed to appear as the MCP resource');
+    lines.push('#   identifier — e.g. a dedicated mTLS host `mcp.dorinda.ai`; the forwarded host is only honored if');
+    lines.push('#   it is the primary MCP host or in this list.');
     lines.push('FORGE_AUTH_PUBLIC_URL=');
     lines.push('FORGE_OAUTH_PUBLIC_URL=');
     lines.push('FORGE_MCP_PUBLIC_URL=');
+    lines.push('FORGE_MCP_ALT_HOSTS=');
     lines.push('');
   }
   // P41 — when the app uses billing (declares any STRIPE_* secret), the Stripe SECRET + WEBHOOK secrets are

@@ -9,6 +9,20 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+### Added
+- **C23 — per-host MCP resource identifier (dedicated mTLS host support).** `POST /mcp` and the RFC 9728
+  protected-resource discovery doc now derive the MCP **resource identifier** (RFC 8707) from the host the
+  client actually connected to, split from the **pinned** OAuth issuer. A request arriving via a dedicated
+  host (e.g. a cert-required `mcp.dorinda.ai` for ChatGPT's connector) advertises
+  `resource=https://mcp.dorinda.ai/mcp` and the audience check (`verifyAccessToken`) expects that same value,
+  while the OAuth **authorization server** stays pinned to the certless api host (browser consent + DCR can't
+  present a client cert). Anti-spoofing: a forwarded host is honored as the resource identifier **only** when
+  it is the primary MCP host (`FORGE_MCP_PUBLIC_URL`) or listed in the new **`FORGE_MCP_ALT_HOSTS`**
+  (comma-separated hostnames) allowlist — otherwise it falls back to the pin and **never** advertises an
+  un-allowlisted host. **Back-compatible:** a single-host `api.dorinda.ai` request is unchanged (its host is
+  the pin, so resource + issuer both resolve to api; existing tokens/clients unaffected). Productionize wires
+  `FORGE_MCP_ALT_HOSTS` into the data-plane defined-but-empty and documents it in `.env.prod.example`.
+
 ## [0.61.0] - 2026-07-22
 
 ### Security

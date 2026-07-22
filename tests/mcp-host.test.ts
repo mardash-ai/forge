@@ -375,3 +375,63 @@ describe('Change A — RFC 8707 audience binding at /mcp', () => {
     });
   });
 });
+
+// Tier-3 — the MCP RESOURCE identifier is PER-HOST (the host the client connected to) while the OAuth AS
+// issuer stays PINNED to the certless api host. ChatGPT's connector lives on a dedicated mTLS host
+// (mcp.dorinda.ai); Claude + browsers stay on api.dorinda.ai. The forwarded host is honored only when it's
+// the primary MCP host or in the FORGE_MCP_ALT_HOSTS allowlist — a spoofed host falls back to the pin.
+describe('Tier-3 — per-host MCP resource identifier (dedicated mTLS host)', () => {
+  const setEnv = (k: string, v: string | undefined) => { if (v === undefined) delete process.env[k]; else process.env[k] = v; };
+  // Pin the certless AS host + allowlist the dedicated mTLS alt host for the duration of fn, then restore.
+  const withHosts = async (env: { mcp?: string; alt?: string; oauth?: string }, fn: () => Promise<void>): Promise<void> => {
+    const prev = { mcp: process.env.FORGE_MCP_PUBLIC_URL, alt: process.env.FORGE_MCP_ALT_HOSTS, oauth: process.env.FORGE_OAUTH_PUBLIC_URL };
+    setEnv('FORGE_MCP_PUBLIC_URL', env.mcp); setEnv('FORGE_MCP_ALT_HOSTS', env.alt); setEnv('FORGE_OAUTH_PUBLIC_URL', env.oauth);
+    try { await fn(); } finally {
+      setEnv('FORGE_MCP_PUBLIC_URL', prev.mcp); setEnv('FORGE_MCP_ALT_HOSTS', prev.alt); setEnv('FORGE_OAUTH_PUBLIC_URL', prev.oauth);
+    }
+  };
+  const wellKnown = (host: string) =>
+    server.inject({ method: 'GET', url: '/.well-known/oauth-protected-resource', headers: { 'x-forwarded-proto': 'https', 'x-forwarded-host': host } });
+
+  it('advertises an ALLOWLISTED forwarded alt host as the resource id, AS issuer stays pinned to api', async () => {
+    await withHosts({ mcp: 'https://api.dorinda.ai', alt: 'mcp.dorinda.ai' }, async () => {
+      const body = (await wellKnown('mcp.dorinda.ai')).json();
+      expect(body.resource).toBe('https://mcp.dorinda.ai/mcp');
+      expect(body.authorization_servers).toEqual(['https://api.dorinda.ai']); // issuer pinned to the certless host
+    });
+  });
+
+  it('the PRIMARY forwarded host (api) → resource + AS both api (back-compat, single-host unchanged)', async () => {
+    await withHosts({ mcp: 'https://api.dorinda.ai', alt: 'mcp.dorinda.ai' }, async () => {
+      const body = (await wellKnown('api.dorinda.ai')).json();
+      expect(body.resource).toBe('https://api.dorinda.ai/mcp');
+      expect(body.authorization_servers).toEqual(['https://api.dorinda.ai']);
+    });
+  });
+
+  it('a SPOOFED forwarded host not in the allowlist falls back to the pin — never advertises it', async () => {
+    await withHosts({ mcp: 'https://api.dorinda.ai', alt: 'mcp.dorinda.ai' }, async () => {
+      const res = await wellKnown('evil.com');
+      const body = res.json();
+      expect(body.resource).toBe('https://api.dorinda.ai/mcp'); // fell back to the pin
+      expect(body.authorization_servers).toEqual(['https://api.dorinda.ai']);
+      expect(res.payload).not.toContain('evil.com'); // evil.com never surfaces anywhere in the doc
+    });
+  });
+
+  it('POST /mcp: a token bound to the alt host passes VIA that host, is rejected via the pinned api host', async () => {
+    await withHosts({ mcp: 'https://api.dorinda.ai', alt: 'mcp.dorinda.ai' }, async () => {
+      await registerTool();
+      const token = await mintAccess(['notes:read'], 'userA', 'client1', 'https://mcp.dorinda.ai/mcp');
+      const call = (host: string) => server.inject({
+        method: 'POST', url: '/mcp',
+        headers: { authorization: `Bearer ${token}`, 'x-forwarded-proto': 'https', 'x-forwarded-host': host },
+        payload: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_note', arguments: {} } } as object,
+      });
+      // arrives via the alt host → expectedResource = https://mcp.dorinda.ai/mcp → matches the token's aud → 200
+      expect((await call('mcp.dorinda.ai')).json().result.structuredContent).toBeTruthy();
+      // arrives via the pinned api host → expectedResource = https://api.dorinda.ai/mcp → aud mismatch → 401
+      expect((await call('api.dorinda.ai')).statusCode).toBe(401);
+    });
+  });
+});
