@@ -21,6 +21,7 @@ import {
   authServerMetadata,
 } from '../mcp/oauth';
 import type { OAuthClient, OAuthGrant, Consent, TokenEndpointAuthMethod } from '../mcp/types';
+import { startSpan } from '../plugins/otel-langfuse/index';
 
 // C23 — the OAuth 2.1 AUTHORIZATION SERVER. The consuming app becomes an OAuth provider: it registers
 // clients (RFC 7591 dynamic registration), runs the authorize + consent flow (PKCE mandatory), and mints
@@ -119,10 +120,20 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
     const b = (req.body ?? {}) as {
       app?: string; client_name?: string; redirect_uris?: unknown; token_endpoint_auth_method?: string; scope?: string;
     };
+    // C36 — every registration outcome gets a span (`oauth.register`): outcome + the PUBLIC client_name.
+    // Never any secret (the minted client_secret is NOT recorded). Fire-and-forget, never blocks the flow.
+    const span = startSpan('oauth.register', {
+      attributes: { ...(b.client_name ? { 'oauth.client_name': String(b.client_name) } : {}) },
+    });
+    const outcome = (o: string, ok = false): void => {
+      span.setAttribute('oauth.outcome', o);
+      span.end(ok ? 'ok' : 'error', ok ? undefined : o);
+    };
     const app_ = await resolveAppId(req, b.app);
-    if (!app_) return reply.status(404).send(unknownApp);
+    if (!app_) { outcome('invalid_request'); return reply.status(404).send(unknownApp); }
+    span.setAttribute('mcp.app', app_.name);
     const redirectUris = Array.isArray(b.redirect_uris) ? b.redirect_uris.filter((u): u is string => typeof u === 'string' && /^https?:\/\//.test(u)) : [];
-    if (redirectUris.length === 0) return oauthError(reply, 400, 'invalid_redirect_uri', 'at least one absolute http(s) `redirect_uris` entry is required.');
+    if (redirectUris.length === 0) { outcome('invalid_redirect_uri'); return oauthError(reply, 400, 'invalid_redirect_uri', 'at least one absolute http(s) `redirect_uris` entry is required.'); }
     const method: TokenEndpointAuthMethod =
       b.token_endpoint_auth_method === 'client_secret_basic' || b.token_endpoint_auth_method === 'client_secret_post'
         ? b.token_endpoint_auth_method
@@ -146,6 +157,8 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
       created_at: nowIso(),
     };
     await (await mcp()).putClient(app_.id, client);
+    span.setAttribute('oauth.client_id', client_id); // the public identifier — never the secret
+    outcome('registered', true);
     return reply.status(201).send({
       client_id,
       ...(rawSecret ? { client_secret: rawSecret, client_secret_expires_at: 0 } : {}),
@@ -207,20 +220,31 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
   // === consent decision → mint an authorization code =============================================
   app.post('/oauth/authorize/decision', async (req, reply) => {
     const b = (req.body ?? {}) as Record<string, string>;
+    // C36 — the consent DECISION gets a span (`oauth.authorize_decision`): approve/deny (or the error that
+    // preempted it) + the PUBLIC client_id. NEVER the authorization code, PKCE values, or any token.
+    const span = startSpan('oauth.authorize_decision', {
+      attributes: { ...(b.client_id ? { 'oauth.client_id': b.client_id } : {}) },
+    });
+    const outcome = (o: string, ok = false): void => {
+      span.setAttribute('oauth.outcome', o);
+      span.end(ok ? 'ok' : 'error', ok ? undefined : o);
+    };
     const app_ = await resolveAppId(req);
     const theme = await themeFor(app_?.id);
-    if (!app_) return htmlReply(reply, 404, errorPage(theme, 'Unknown app', 'This request targets an unknown app.'));
+    if (!app_) { outcome('invalid_request'); return htmlReply(reply, 404, errorPage(theme, 'Unknown app', 'This request targets an unknown app.')); }
+    span.setAttribute('mcp.app', app_.name);
     const user = await currentUser(req, app_.id);
-    if (!user) return reply.code(302).header('location', '/auth/login').send();
+    if (!user) { outcome('login_required'); return reply.code(302).header('location', '/auth/login').send(); }
 
     const client = b.client_id ? await (await mcp()).getClient(app_.id, b.client_id) : null;
-    if (!client) return htmlReply(reply, 400, errorPage(theme, 'Unknown client', 'The client_id is not registered.'));
+    if (!client) { outcome('invalid_client'); return htmlReply(reply, 400, errorPage(theme, 'Unknown client', 'The client_id is not registered.')); }
     const redirectUri = b.redirect_uri;
     if (!redirectUri || !client.redirect_uris.includes(redirectUri)) {
+      outcome('invalid_redirect_uri');
       return htmlReply(reply, 400, errorPage(theme, 'Invalid redirect_uri', 'The redirect_uri does not match a registered value.'));
     }
-    if (b.decision !== 'approve') return redirectError(reply, redirectUri, 'access_denied', b.state);
-    if (!b.code_challenge) return redirectError(reply, redirectUri, 'invalid_request', b.state, 'code_challenge (PKCE) is required');
+    if (b.decision !== 'approve') { outcome('deny', true); return redirectError(reply, redirectUri, 'access_denied', b.state); }
+    if (!b.code_challenge) { outcome('invalid_request'); return redirectError(reply, redirectUri, 'invalid_request', b.state, 'code_challenge (PKCE) is required'); }
 
     const scopes = parseScopes(b.scope);
     // Record consent (revocable; lets a repeat authorize / refresh proceed without re-prompting).
@@ -258,15 +282,41 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
     const url = new URL(redirectUri);
     url.searchParams.set('code', code.token);
     if (b.state) url.searchParams.set('state', b.state);
+    outcome('approve', true);
     return reply.code(303).header('location', url.toString()).send();
   });
 
   // === token endpoint =============================================================================
   app.post('/oauth/token', async (req, reply) => {
     const b = (req.body ?? {}) as Record<string, string>;
-    const app_ = await resolveAppId(req, b.app);
-    if (!app_) return reply.status(404).send(unknownApp);
     const grantType = b.grant_type;
+    // C36 — every token-endpoint outcome gets a span (`oauth.token`): grant_type, the PUBLIC client_id,
+    // and the outcome (`issued` | the oauth error code — invalid_client/invalid_grant/invalid_target/…).
+    // A failed exchange used to die INVISIBLY (a connector silently losing its session left zero trace).
+    // NEVER recorded: authorization codes, access/refresh tokens, client secrets, PKCE values.
+    const span = startSpan('oauth.token', {
+      attributes: {
+        ...(grantType ? { 'oauth.grant_type': grantType } : {}),
+        ...(extractClientId(req, b) ? { 'oauth.client_id': extractClientId(req, b)! } : {}),
+      },
+    });
+    const fail = (status: number, error: string, description?: string) => {
+      span.setAttribute('oauth.outcome', error);
+      span.end('error', description ?? error);
+      return oauthError(reply, status, error, description);
+    };
+    const issued = (tokens: unknown) => {
+      span.setAttribute('oauth.outcome', 'issued');
+      span.end('ok');
+      return reply.status(200).send(tokens);
+    };
+    const app_ = await resolveAppId(req, b.app);
+    if (!app_) {
+      span.setAttribute('oauth.outcome', 'invalid_request');
+      span.end('error', 'unknown app');
+      return reply.status(404).send(unknownApp);
+    }
+    span.setAttribute('mcp.app', app_.name);
     const store_ = await mcp();
 
     // Client authentication (confidential clients present a secret; public clients are PKCE-only).
@@ -283,43 +333,43 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
 
     if (grantType === 'authorization_code') {
       const client = await authClient(extractClientId(req, b));
-      if (client === 'invalid_client') return oauthError(reply, 401, 'invalid_client', 'client authentication failed.');
-      if (!client) return oauthError(reply, 400, 'invalid_client', 'unknown client_id.');
-      if (!b.code) return oauthError(reply, 400, 'invalid_request', 'code is required.');
+      if (client === 'invalid_client') return fail(401, 'invalid_client', 'client authentication failed.');
+      if (!client) return fail(400, 'invalid_client', 'unknown client_id.');
+      if (!b.code) return fail(400, 'invalid_request', 'code is required.');
       // Consume the code (one-shot — a replay finds nothing).
       const codeGrant = await store_.consumeGrant(app_.id, 'code', hashToken(b.code));
-      if (!codeGrant || isExpired(codeGrant.expires_at)) return oauthError(reply, 400, 'invalid_grant', 'authorization code is invalid or expired.');
-      if (codeGrant.client_id !== client.client_id) return oauthError(reply, 400, 'invalid_grant', 'code was issued to a different client.');
-      if (codeGrant.redirect_uri && b.redirect_uri && codeGrant.redirect_uri !== b.redirect_uri) return oauthError(reply, 400, 'invalid_grant', 'redirect_uri mismatch.');
-      if (!verifyPkce(b.code_verifier, codeGrant.code_challenge, codeGrant.code_challenge_method)) return oauthError(reply, 400, 'invalid_grant', 'PKCE verification failed.');
+      if (!codeGrant || isExpired(codeGrant.expires_at)) return fail(400, 'invalid_grant', 'authorization code is invalid or expired.');
+      if (codeGrant.client_id !== client.client_id) return fail(400, 'invalid_grant', 'code was issued to a different client.');
+      if (codeGrant.redirect_uri && b.redirect_uri && codeGrant.redirect_uri !== b.redirect_uri) return fail(400, 'invalid_grant', 'redirect_uri mismatch.');
+      if (!verifyPkce(b.code_verifier, codeGrant.code_challenge, codeGrant.code_challenge_method)) return fail(400, 'invalid_grant', 'PKCE verification failed.');
       // RFC 8707 — the issued tokens inherit the CODE's bound resource. A `resource` presented at exchange
       // must match what was requested at authorize (else invalid_target); omitting it inherits the code's.
-      if (trimmed(b.resource) && trimmed(b.resource) !== codeGrant.resource) return oauthError(reply, 400, 'invalid_target', 'resource does not match the authorization request.');
+      if (trimmed(b.resource) && trimmed(b.resource) !== codeGrant.resource) return fail(400, 'invalid_target', 'resource does not match the authorization request.');
       const tokens = await issueTokens(app_.id, client.client_id, codeGrant.owner, codeGrant.scopes, undefined, codeGrant.resource);
-      return reply.status(200).send(tokens);
+      return issued(tokens);
     }
 
     if (grantType === 'refresh_token') {
       const client = await authClient(extractClientId(req, b));
-      if (client === 'invalid_client') return oauthError(reply, 401, 'invalid_client', 'client authentication failed.');
-      if (!client) return oauthError(reply, 400, 'invalid_client', 'unknown client_id.');
-      if (!b.refresh_token) return oauthError(reply, 400, 'invalid_request', 'refresh_token is required.');
+      if (client === 'invalid_client') return fail(401, 'invalid_client', 'client authentication failed.');
+      if (!client) return fail(400, 'invalid_client', 'unknown client_id.');
+      if (!b.refresh_token) return fail(400, 'invalid_request', 'refresh_token is required.');
       // Rotate: consume the presented refresh (one-shot), issue a fresh access + refresh pair.
       const refreshGrant = await store_.consumeGrant(app_.id, 'refresh', hashToken(b.refresh_token));
-      if (!refreshGrant || isExpired(refreshGrant.expires_at)) return oauthError(reply, 400, 'invalid_grant', 'refresh token is invalid or expired.');
-      if (refreshGrant.client_id !== client.client_id) return oauthError(reply, 400, 'invalid_grant', 'refresh token was issued to a different client.');
+      if (!refreshGrant || isExpired(refreshGrant.expires_at)) return fail(400, 'invalid_grant', 'refresh token is invalid or expired.');
+      if (refreshGrant.client_id !== client.client_id) return fail(400, 'invalid_grant', 'refresh token was issued to a different client.');
       let scopes = refreshGrant.scopes;
       if (b.scope) {
         const requested = parseScopes(b.scope);
-        if (!scopesSubset(requested, refreshGrant.scopes)) return oauthError(reply, 400, 'invalid_scope', 'requested scope exceeds the original grant.');
+        if (!scopesSubset(requested, refreshGrant.scopes)) return fail(400, 'invalid_scope', 'requested scope exceeds the original grant.');
         scopes = requested;
       }
       // RFC 8707 — carry the audience binding across the rotation so the rotated access token stays bound.
       const tokens = await issueTokens(app_.id, client.client_id, refreshGrant.owner, scopes, refreshGrant.token_hash, refreshGrant.resource);
-      return reply.status(200).send(tokens);
+      return issued(tokens);
     }
 
-    return oauthError(reply, 400, 'unsupported_grant_type', 'supported: authorization_code, refresh_token.');
+    return fail(400, 'unsupported_grant_type', 'supported: authorization_code, refresh_token.');
   });
 
   // === token revocation (RFC 7009) ===============================================================

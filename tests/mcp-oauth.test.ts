@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,6 +10,7 @@ import { signSessionToken } from '../src/shared/session';
 import { pkceChallenge } from '../src/mcp/oauth';
 import { verifyAccessToken } from '../src/mcp/verify';
 import { nowIso } from '../src/shared/time';
+import { initOtelLangfuse } from '../src/plugins/otel-langfuse/index';
 import type { Application } from '../src/resources/types';
 
 // C23 — the OAuth 2.1 authorization-server flow, end to end. Exercised through the configured MCP store
@@ -313,5 +314,119 @@ describe('Change A — RFC 8707 resource/audience binding round-trips authorize 
     expect(consent.statusCode).toBe(200);
     expect(consent.body).toContain('name="resource"');
     expect(consent.body).toContain(RESOURCE);
+  });
+});
+
+// C36 — OAuth endpoint outcome spans: `oauth.token`, `oauth.register`, `oauth.authorize_decision`. A failed
+// token exchange used to die INVISIBLY. Spans are captured by intercepting the exporter's fire-and-forget
+// fetch to the OTLP collector URL (nothing else in these flows uses fetch). NEVER on a span: authorization
+// codes, access/refresh tokens, client secrets, PKCE values.
+describe('C36 — OAuth endpoint outcome spans', () => {
+  const OTLP = 'http://otel-collector.test/api/public/otel';
+  const verifier = 'span-pkce-code-verifier-0123456789abcdef';
+  let exported: unknown[];
+
+  interface WireSpan {
+    name: string;
+    status: { code: number };
+    attributes: Array<{ key: string; value: { stringValue?: string; intValue?: number; boolValue?: boolean } }>;
+  }
+  const spans = (): WireSpan[] =>
+    (exported as Array<{ resourceSpans: Array<{ scopeSpans: Array<{ spans: WireSpan[] }> }> }>)
+      .flatMap((b) => b.resourceSpans.flatMap((rs) => rs.scopeSpans.flatMap((ss) => ss.spans)));
+  const spanNamed = (name: string): WireSpan | undefined => spans().filter((s) => s.name === name).at(-1);
+  const attr = (s: WireSpan | undefined, key: string): string | number | boolean | undefined => {
+    const v = s?.attributes.find((a) => a.key === key)?.value;
+    return v === undefined ? undefined : (v.stringValue ?? v.intValue ?? v.boolValue);
+  };
+
+  beforeEach(() => {
+    exported = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(((url: unknown, init?: RequestInit) => {
+      if (String(url).startsWith(OTLP)) exported.push(JSON.parse(String(init?.body)));
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    }) as typeof fetch);
+    initOtelLangfuse({ endpoint: OTLP, publicKey: 'pk-test', secretKey: 'sk-test' });
+  });
+  afterEach(() => {
+    initOtelLangfuse({ publicKey: '', secretKey: '' }); // disable again so other tests are unaffected
+    vi.restoreAllMocks();
+  });
+
+  // Approve consent for a fresh client + user → an authorization code (the input to /oauth/token).
+  const approveToCode = async (): Promise<{ clientId: string; code: string; challenge: string }> => {
+    const clientId = await registerClient();
+    const challenge = pkceChallenge(verifier);
+    const { cookie } = await loginCookie();
+    const decision = await post('/oauth/authorize/decision', {
+      client_id: clientId, redirect_uri: REDIRECT, scope: 'notes:read', state: 's1',
+      code_challenge: challenge, code_challenge_method: 'S256', decision: 'approve',
+    }, { cookie });
+    expect(decision.statusCode).toBe(303);
+    const url = new URL(decision.headers.location as string);
+    return { clientId, code: url.searchParams.get('code')!, challenge };
+  };
+
+  it('an issuing exchange records oauth.token outcome=issued (grant_type + public client_id) — and NO code/token/PKCE material', async () => {
+    const { clientId, code, challenge } = await approveToCode();
+    const tok = await post('/oauth/token', { grant_type: 'authorization_code', code, code_verifier: verifier, client_id: clientId, redirect_uri: REDIRECT });
+    expect(tok.statusCode).toBe(200);
+
+    const span = spanNamed('oauth.token');
+    expect(span).toBeTruthy();
+    expect(span!.status.code).toBe(2); // ok
+    expect(attr(span, 'oauth.outcome')).toBe('issued');
+    expect(attr(span, 'oauth.grant_type')).toBe('authorization_code');
+    expect(attr(span, 'oauth.client_id')).toBe(clientId);
+    // The secrecy guardrail — nothing sensitive from the exchange reaches the wire.
+    const wire = JSON.stringify(exported);
+    expect(wire).not.toContain(code);
+    expect(wire).not.toContain(tok.json().access_token);
+    expect(wire).not.toContain(tok.json().refresh_token);
+    expect(wire).not.toContain(verifier);
+    expect(wire).not.toContain(challenge);
+  });
+
+  it('failing exchanges record the oauth error code as the outcome (unsupported_grant_type / invalid_client / invalid_grant)', async () => {
+    await post('/oauth/token', { grant_type: 'password', username: 'u', password: 'p' });
+    expect(attr(spanNamed('oauth.token'), 'oauth.outcome')).toBe('unsupported_grant_type');
+    expect(spanNamed('oauth.token')!.status.code).toBe(3);
+
+    await post('/oauth/token', { grant_type: 'authorization_code', code: 'whatever', client_id: 'mcpc_nope' });
+    expect(attr(spanNamed('oauth.token'), 'oauth.outcome')).toBe('invalid_client');
+
+    const { clientId, code } = await approveToCode();
+    await post('/oauth/token', { grant_type: 'authorization_code', code, code_verifier: 'the-wrong-verifier', client_id: clientId, redirect_uri: REDIRECT });
+    expect(attr(spanNamed('oauth.token'), 'oauth.outcome')).toBe('invalid_grant');
+  });
+
+  it('registration records oauth.register outcome=registered with the client_name (and the invalid case its error)', async () => {
+    const clientId = await registerClient(); // client_name: 'ChatGPT'
+    const reg = spanNamed('oauth.register');
+    expect(attr(reg, 'oauth.outcome')).toBe('registered');
+    expect(attr(reg, 'oauth.client_name')).toBe('ChatGPT');
+    expect(attr(reg, 'oauth.client_id')).toBe(clientId);
+
+    await post('/oauth/register', { redirect_uris: [] });
+    expect(attr(spanNamed('oauth.register'), 'oauth.outcome')).toBe('invalid_redirect_uri');
+  });
+
+  it('the consent decision records approve/deny on oauth.authorize_decision — with no code_challenge on the wire', async () => {
+    await approveToCode();
+    const approved = spanNamed('oauth.authorize_decision');
+    expect(attr(approved, 'oauth.outcome')).toBe('approve');
+    expect(approved!.status.code).toBe(2); // a decision is a successful outcome, approve or deny
+
+    const clientId = await registerClient();
+    const challenge = pkceChallenge(verifier);
+    const { cookie } = await loginCookie();
+    await post('/oauth/authorize/decision', {
+      client_id: clientId, redirect_uri: REDIRECT, scope: 'notes:read', state: 's2',
+      code_challenge: challenge, code_challenge_method: 'S256', decision: 'deny',
+    }, { cookie });
+    const denied = spanNamed('oauth.authorize_decision');
+    expect(attr(denied, 'oauth.outcome')).toBe('deny');
+    expect(attr(denied, 'oauth.client_id')).toBe(clientId);
+    expect(JSON.stringify(exported)).not.toContain(challenge); // PKCE values never recorded
   });
 });

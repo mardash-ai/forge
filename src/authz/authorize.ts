@@ -161,7 +161,8 @@ function privateLeak(caller: string, action: Action): 'private-resource' | null 
 //   2. SAFETY FLOOR: a high-risk action ALWAYS returns needs-approval — NON-OVERRIDABLE (an allow policy
 //      can never downgrade it).
 //   3. Otherwise the strongest matching policy's effect (allow | needs-approval) — priority-ordered.
-//   4. No policy matched → the default posture (conservative 'needs-approval'; configurable to 'allow').
+//   4. No policy matched → the default posture (conservative 'needs-approval'; configurable to 'allow');
+//      the decision carries NO `rule` (nothing fired — `rule` names only a rule that actually fired).
 // Role matching + permission gating (step 3) use the RESOLVED role/permissions when membership is present,
 // NEVER the request's `role`. With NO membership + NO resource scope this is byte-identical to pre-C31.
 export function authorize(actor: Actor, action: Action, policies: PolicyRule[], opts: AuthorizeOptions = {}): AuthzDecision {
@@ -216,9 +217,11 @@ export function authorize(actor: Actor, action: Action, policies: PolicyRule[], 
       ...resolved,
     };
   }
+  // No policy matched — the bare default posture. `rule` is OMITTED: the contract documents it as "the
+  // rule id that FIRED, if any", and nothing fired here. (The old `rule: 'default'` sentinel silently
+  // broke a consumer's bare-default detection; deployed consumers accept both shapes, so absent is safe.)
   return {
     decision: opts.defaultDecision ?? 'needs-approval',
-    rule: 'default',
     reason: 'no policy matched; default posture',
     high_risk: false,
     action_class: cls,

@@ -93,7 +93,7 @@ export interface PolicyRule {
 // The decision the enforcement point returns.
 export interface AuthzDecision {
   decision: Decision;
-  rule?: string; // governing rule id, or a synthetic 'safety-floor:<class>' / 'default' / 'not-a-member' / 'private-resource'
+  rule?: string; // the rule id that FIRED, if any: a policy id or a synthetic 'safety-floor:<class>' / 'not-a-member' / 'private-resource'. ABSENT when no policy matched (the bare default posture — the old 'default' sentinel is gone)
   reason: string; // human-readable "why" the consumer can render
   high_risk: boolean; // whether the action hit the non-overridable safety floor
   action_class: string; // canonical class key (for the audit trail + progressive-autonomy counts)

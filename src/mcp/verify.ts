@@ -22,6 +22,12 @@ export function bearerFrom(header: string | string[] | undefined): string | null
   return m ? m[1]!.trim() : null;
 }
 
+// Why a verification failed — for the C36 `mcp.auth_reject` span, never for the wire response (the
+// endpoint keeps answering a uniform `invalid_token` 401 so a probe can't distinguish the cases).
+//   invalid_token     — absent/unknown/expired token.
+//   resource_mismatch — a valid token bound (RFC 8707) to a DIFFERENT resource than this host.
+export type TokenRejectReason = 'invalid_token' | 'resource_mismatch';
+
 // Verify a raw access token for an app. Returns the identity + granted scopes, or null when the token is
 // unknown, of the wrong kind, or expired.
 //
@@ -31,11 +37,21 @@ export function bearerFrom(header: string | string[] | undefined): string | null
 // verifies (BACK-COMPAT: tokens issued before aud-binding, and clients that never sent `resource`, keep
 // working); and when the caller passes no expected resource, no audience check is applied.
 export async function verifyAccessToken(appId: string, rawToken: string | null, expectedResource?: string): Promise<VerifiedToken | null> {
-  if (!rawToken) return null;
+  return (await verifyAccessTokenDetailed(appId, rawToken, expectedResource)).verified;
+}
+
+// The same verification with the failure REASON attached (C36 observability). The plain
+// `verifyAccessToken` above delegates here — one evaluation path, two shapes.
+export async function verifyAccessTokenDetailed(
+  appId: string,
+  rawToken: string | null,
+  expectedResource?: string,
+): Promise<{ verified: VerifiedToken | null; reason?: TokenRejectReason }> {
+  if (!rawToken) return { verified: null, reason: 'invalid_token' };
   const mcp = (await getBackends()).mcp;
   const grant = await mcp.getGrant(appId, 'access', hashToken(rawToken));
-  if (!grant) return null;
-  if (isExpired(grant.expires_at)) return null;
-  if (expectedResource && grant.resource && grant.resource !== expectedResource) return null;
-  return { userId: grant.owner, scopes: grant.scopes, clientId: grant.client_id, ...(grant.resource ? { resource: grant.resource } : {}) };
+  if (!grant) return { verified: null, reason: 'invalid_token' };
+  if (isExpired(grant.expires_at)) return { verified: null, reason: 'invalid_token' };
+  if (expectedResource && grant.resource && grant.resource !== expectedResource) return { verified: null, reason: 'resource_mismatch' };
+  return { verified: { userId: grant.owner, scopes: grant.scopes, clientId: grant.client_id, ...(grant.resource ? { resource: grant.resource } : {}) } };
 }

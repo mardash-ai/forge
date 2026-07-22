@@ -20,6 +20,14 @@ export const ATTR = {
   GEN_AI_TOOL_OUTPUT:     'gen_ai.tool.output',
   GEN_AI_USAGE_INPUT_TOKENS:  'gen_ai.usage.input_tokens',
   GEN_AI_USAGE_OUTPUT_TOKENS: 'gen_ai.usage.output_tokens',
+  // Langfuse-native observation INPUT/OUTPUT. These are the ONLY keys here that Langfuse's OTel
+  // ingest maps onto an observation's input/output panes (its highest-precedence mapping, per the
+  // Langfuse property-mapping contract: langfuse.observation.input/output → observation I/O). The
+  // `gen_ai.tool.*` keys above are NOT in that mapping — they ride along as plain attributes
+  // (metadata), so a payload recorded only there never surfaces as observation input/output.
+  // Values are (JSON) strings — serialize + size-cap with `capPayload()` before recording.
+  LANGFUSE_OBSERVATION_INPUT:  'langfuse.observation.input',
+  LANGFUSE_OBSERVATION_OUTPUT: 'langfuse.observation.output',
   // Additional context
   MCP_CLIENT_USER:  'mcp.client.user',
   MCP_CLIENT_HOST:  'mcp.client.host',
@@ -150,6 +158,30 @@ function exportSpan(span: OtlpSpan): void {
     body,
     signal: AbortSignal.timeout(5000), // 5 s hard cap — never blocks a tool call
   }).catch(() => { /* silently discard collector errors */ });
+}
+
+// ── Payload capture (tool-call arguments / results on the trace) ──────────
+
+/** Per-side byte cap for a recorded payload (observation input or output). */
+export const PAYLOAD_CAP_BYTES = 8192;
+
+/**
+ * Serialize a payload for span capture: strings pass through, everything else is
+ * JSON-stringified, and the result is capped at `capBytes` UTF-8 bytes with a
+ * `…[truncated]` suffix when cut. Never throws — an unserializable value records
+ * as its String() form. Callers must pass ONLY application payloads (tool
+ * arguments / results), never transport auth material.
+ */
+export function capPayload(value: unknown, capBytes: number = PAYLOAD_CAP_BYTES): string {
+  let s: string;
+  if (typeof value === 'string') s = value;
+  else {
+    try { s = JSON.stringify(value) ?? String(value); } catch { s = String(value); }
+  }
+  if (Buffer.byteLength(s, 'utf8') <= capBytes) return s;
+  // Cut on the byte budget, then drop any multi-byte character broken by the cut.
+  const cut = Buffer.from(s, 'utf8').subarray(0, capBytes).toString('utf8').replace(/�+$/, '');
+  return `${cut}…[truncated]`;
 }
 
 // ── Public span API ────────────────────────────────────────────────────────

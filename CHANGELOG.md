@@ -9,6 +9,49 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+### Added
+- **C36 — tool-call payloads on the MCP trace + spans for the failure paths that died invisibly.**
+  - **Payload tracing (the headline):** the `mcp.tool_call` span now records the tool-call **arguments**
+    as the observation INPUT and the **returned payload** as the observation OUTPUT — on success AND on
+    failure outcomes (`isError` payloads / `handler_status_*` error bodies land on the trace too). Uses
+    the **Langfuse-native** OTel keys its ingest actually maps onto observation input/output:
+    **`langfuse.observation.input`** / **`langfuse.observation.output`** (the `gen_ai.tool.*` attribute
+    names are NOT in Langfuse's input/output mapping — they ride along as plain metadata only).
+    Guardrails: env-gated **`FORGE_MCP_TRACE_PAYLOADS`** (default ON; the literal string `false`
+    disables), each side capped at **8192 bytes** with a `…[truncated]` suffix (`capPayload()` in the
+    otel-langfuse plugin), and NEVER auth material — strictly the arguments/payload, never the
+    Authorization header, tokens, or client secrets.
+  - **Unknown tool now produces a span:** the `mcp.tool_call` span starts BEFORE the tool lookup, so a
+    `tools/call` for a nonexistent tool ends as an `unknown_tool` error span carrying the requested name
+    (+ the input payload) instead of failing pre-span with zero visibility.
+  - **Transport auth rejections are visible:** a failed `POST /mcp` token verification emits a short
+    **`mcp.auth_reject`** span with the requested JSON-RPC method and a distinguishable reason —
+    `invalid_token` vs `resource_mismatch` (new `verifyAccessTokenDetailed()` in `src/mcp/verify.ts`;
+    the plain `verifyAccessToken` seam delegates to it, shape unchanged). The wire response stays a
+    uniform `invalid_token` 401; no token material is ever recorded.
+  - **OAuth endpoint outcomes:** **`oauth.token`** spans every token exchange (grant_type, the public
+    client_id, and outcome `issued` | the oauth error code — invalid_client/invalid_grant/
+    invalid_target/…); **`oauth.register`** spans registration (outcome + client_name); and
+    **`oauth.authorize_decision`** spans the consent decision (approve/deny). Never recorded:
+    authorization codes, access/refresh tokens, client secrets, PKCE values.
+  - **Edge + tool call join ONE trace:** `mcp.tool_call` (and `mcp.auth_reject`) now ADOPT an incoming
+    W3C `traceparent` header as their parent via the plugin's existing `parentFromTraceparent()`, so the
+    edge proxy's OTLP trace and the transport span stitch together (absent header ⇒ roots a fresh trace,
+    as before).
+  - **Productionize:** the data-plane env block wires
+    `FORGE_MCP_TRACE_PAYLOADS=${FORGE_MCP_TRACE_PAYLOADS:-true}` for MCP-hosting (hosted-auth) apps, and
+    `.env.prod.example` documents it (tool-call arguments + results are recorded on the Langfuse trace;
+    set false to disable payload capture).
+
+### Changed
+- **C29 — the no-match default decision no longer carries the `rule: 'default'` sentinel.** The contract
+  documents `rule` as "the rule id that FIRED, if any" — nothing fires on the bare default posture, so
+  the key is now ABSENT (the `no policy matched; default posture` reason text is unchanged). The
+  sentinel had silently broken a consumer's bare-default detection; that consumer was fixed to accept
+  BOTH shapes and is deployed, so this cleanup is back-compatible with the live fleet. Decisions where a
+  rule actually fires (policy ids, `safety-floor:<class>`, `not-a-member`, `private-resource`) still
+  name it.
+
 ## [0.62.1] - 2026-07-22
 
 ### Fixed

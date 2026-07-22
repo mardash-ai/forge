@@ -531,6 +531,10 @@ ${labels.join('\n')}`;
   // primary MCP host or in this list (else it falls back to the pin — anti-spoofing). Wired defined-but-empty;
   // empty = pin-only (single-host apps unaffected).
   if (usesAuth) dpEnv.push('      - FORGE_MCP_ALT_HOSTS=${FORGE_MCP_ALT_HOSTS:-}');
+  // C36 — payload capture on the `mcp.tool_call` span: tool-call arguments + results are recorded on the
+  // Langfuse trace (observation input/output) by DEFAULT; an operator sets FORGE_MCP_TRACE_PAYLOADS=false
+  // in .env.prod to disable payload capture. Default-true interpolation so the wire default is explicit.
+  if (usesAuth) dpEnv.push('      - FORGE_MCP_TRACE_PAYLOADS=${FORGE_MCP_TRACE_PAYLOADS:-true}');
   // C36 — the transport tier emits the `mcp.tool_call` trace ROOT (initOtelLangfuse reads these at boot).
   dpEnv.push(...otelEnv('forge-data-plane'));
   // The data-plane's ENTIRE state dir (FORGE_STATE_DIR=/forge-state) rides ONE durable
@@ -833,8 +837,11 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
     lines.push('# Langfuse project public/secret key pair). EMPTY = tracing silently disabled (the app is');
     lines.push('# UNAFFECTED); fill them to enable. Source: the box observability stack .env.langfuse.');
     lines.push('# OTEL_EXPORTER_OTLP_ENDPOINT defaults to http://langfuse-web:3000/api/public/otel.');
+    lines.push('# FORGE_MCP_TRACE_PAYLOADS — tool-call arguments + results are recorded on the Langfuse trace');
+    lines.push('#   (the observation input/output); set false to disable payload capture. Default: true.');
     lines.push('LANGFUSE_PUBLIC_KEY=');
     lines.push('LANGFUSE_SECRET_KEY=');
+    lines.push('FORGE_MCP_TRACE_PAYLOADS=true');
     lines.push('');
   }
   if (opts.withJobs) {

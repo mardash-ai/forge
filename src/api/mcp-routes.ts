@@ -8,10 +8,10 @@ import { APP_HEADER } from '../shared/session';
 import { appCallbackBase, serviceAuthHeaders } from '../shared/app-callback';
 import { resolveServiceToken } from '../plugins/auth-identity/index';
 import { hasValidServiceToken } from '../shared/service-auth';
-import { verifyAccessToken, bearerFrom, type VerifiedToken } from '../mcp/verify';
+import { verifyAccessTokenDetailed, bearerFrom, type VerifiedToken } from '../mcp/verify';
 import { scopesSatisfy } from '../mcp/oauth';
 import type { ToolRegistration, ToolFamily } from '../mcp/types';
-import { startSpan, traceparent, ATTR } from '../plugins/otel-langfuse/index';
+import { startSpan, traceparent, parentFromTraceparent, capPayload, ATTR } from '../plugins/otel-langfuse/index';
 
 // C23 — the REMOTE MCP SERVER the platform hosts for a consuming app, plus the app-facing management
 // surface. `POST /mcp` speaks JSON-RPC 2.0 over the Streamable-HTTP transport (request/response; no
@@ -39,6 +39,12 @@ const FAMILIES: ToolFamily[] = ['read', 'write', 'action'];
 
 const invalid = (message: string) => ({ error: { code: 'invalid_input', message, retry: 'change-input' } });
 const unknownApp = { error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } };
+
+// C36 payload capture gate — tool-call ARGUMENTS + the returned PAYLOAD are recorded on the trace as the
+// Langfuse observation input/output by default; ONLY the literal string "false" disables. Read per call so
+// an operator toggle needs no process restart. The capture is strictly the application payload — the
+// Authorization header / bearer / service token NEVER enter the recorded values.
+const tracePayloads = (): boolean => process.env.FORGE_MCP_TRACE_PAYLOADS !== 'false';
 
 export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () => string | undefined } = {}): void {
   const resolveAppId = async (req: FastifyRequest, explicit?: string): Promise<{ id: string; name: string } | null> => {
@@ -135,8 +141,17 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     // token with no bound resource still verifies (back-compat with tokens issued before aud-binding). The
     // resource id is PER-HOST (resourceBase): a token minted for the dedicated mTLS host is accepted only on
     // that host, and the WWW-Authenticate pointer names the same host so discovery loops back consistently.
-    const verified = await verifyAccessToken(app_.id, bearerFrom(req.headers.authorization), `${resourceBase(req)}/mcp`);
+    const { verified, reason } = await verifyAccessTokenDetailed(app_.id, bearerFrom(req.headers.authorization), `${resourceBase(req)}/mcp`);
     if (!verified) {
+      // C36 — a transport auth rejection used to die INVISIBLY (no span, zero trace-side evidence a client
+      // was knocking). Emit a short span with the reject reason (invalid_token vs resource_mismatch) + the
+      // requested JSON-RPC method, adopting the edge's `traceparent` when present so it lands on the edge
+      // trace. NO token material is ever recorded. The wire response stays a uniform invalid_token 401.
+      const method = (req.body as { method?: unknown } | undefined)?.method;
+      startSpan('mcp.auth_reject', {
+        parent: parentFromTraceparent(req.headers.traceparent),
+        attributes: { 'mcp.app': app_.name, ...(typeof method === 'string' ? { 'mcp.method': method } : {}) },
+      }).end('error', reason ?? 'invalid_token');
       return reply
         .status(401)
         .header('WWW-Authenticate', `Bearer resource_metadata="${resourceBase(req)}/.well-known/oauth-protected-resource"`)
@@ -197,7 +212,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
         }));
       }
       if (method === 'tools/call') {
-        return await handleToolCall(reply, app_, verified, id!, params);
+        return await handleToolCall(req, reply, app_, verified, id!, params);
       }
       return reply.status(200).send(rpcError(id!, -32601, `Method not found: ${method}`));
     } catch (e) {
@@ -207,6 +222,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
 
   // The tool-call handler: scope enforcement → dispatch to the app → wrap the result → C3 attribution.
   async function handleToolCall(
+    req: FastifyRequest,
     reply: FastifyReply,
     app_: { id: string; name: string },
     verified: VerifiedToken,
@@ -216,24 +232,36 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     const name = params?.name as string | undefined;
     const args = (params?.arguments as Record<string, unknown> | undefined) ?? {};
     if (!name || typeof name !== 'string') return reply.status(200).send(rpcError(id, -32602, 'tools/call requires a string `name`.'));
-    const tool = await (await mcp()).getTool(app_.id, name);
-    if (!tool) return reply.status(200).send(rpcError(id, -32602, `Unknown tool: ${name}`));
 
-    // ── Observability (C36): the ROOT span of this tool call's trace. The app CONTINUES this trace via
-    // the `traceparent` we inject into the callback below, so the whole path (transport → proxy edge →
-    // C29 gate → domain → Postgres → app-event) is ONE trace. Fire-and-forget — never blocks/fails a call.
+    // ── Observability (C36): the transport span of this tool call's trace, started BEFORE the tool lookup
+    // so a call to a NONEXISTENT tool still produces a span (it used to fail pre-span — zero visibility).
+    // When the edge proxy sent a W3C `traceparent`, this span ADOPTS it as its parent so edge + tool join
+    // ONE trace; otherwise it roots a fresh trace. The app CONTINUES the trace via the `traceparent` we
+    // inject into the callback below, so the whole path (edge → transport → proxy edge → C29 gate → domain
+    // → Postgres → app-event) is ONE trace. Fire-and-forget — never blocks/fails a call.
+    // Payload capture: the tool-call ARGUMENTS ride the span as the Langfuse observation INPUT (and the
+    // returned payload as the OUTPUT, below) — env-gated (FORGE_MCP_TRACE_PAYLOADS, default on) and
+    // byte-capped; arguments/payload only, never the Authorization header or any token/secret.
     const span = startSpan('mcp.tool_call', {
-      kind: 1, // INTERNAL — the trace root; the app adds the downstream server/child spans
+      kind: 1, // INTERNAL — the app adds the downstream server/child spans
+      parent: parentFromTraceparent(req.headers.traceparent),
       attributes: {
         [ATTR.GEN_AI_OPERATION_NAME]: 'execute_tool',
         [ATTR.GEN_AI_TOOL_NAME]: name,
         [ATTR.MCP_CLIENT_USER]: verified.userId,
         [ATTR.MCP_CLIENT_HOST]: verified.clientId,
         'mcp.app': app_.name,
-        'mcp.tool.family': tool.family,
-        'mcp.tool.high_risk': tool.high_risk ?? false,
+        ...(tracePayloads() ? { [ATTR.LANGFUSE_OBSERVATION_INPUT]: capPayload(args) } : {}),
       },
     });
+
+    const tool = await (await mcp()).getTool(app_.id, name);
+    if (!tool) {
+      span.end('error', 'unknown_tool');
+      return reply.status(200).send(rpcError(id, -32602, `Unknown tool: ${name}`));
+    }
+    span.setAttribute('mcp.tool.family', tool.family);
+    span.setAttribute('mcp.tool.high_risk', tool.high_risk ?? false);
 
     // Per-tool SCOPE enforcement against the granted token (the platform's job). The app additionally runs
     // its C29 authorize() inside the handler for write/act tools — we pass it the seam context below.
@@ -272,6 +300,9 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     }
     await recordCall(app_.id, name, verified, ok, ok ? undefined : `handler_status_${httpStatus ?? 'error'}`);
     if (httpStatus !== undefined) span.setAttribute('http.response.status_code', httpStatus);
+    // C36 — the returned payload is the observation OUTPUT, on SUCCESS AND FAILURE alike: an isError /
+    // handler_status_* error body is exactly what you need to see on the trace to debug the bounce.
+    if (tracePayloads()) span.setAttribute(ATTR.LANGFUSE_OBSERVATION_OUTPUT, capPayload(payload));
     span.end(ok ? 'ok' : 'error', ok ? undefined : `handler_status_${httpStatus ?? 'error'}`);
 
     // Wrap the app's JSON into an MCP tool result. A structured object rides `structuredContent`; a

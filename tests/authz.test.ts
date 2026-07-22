@@ -61,6 +61,18 @@ describe('C29 — deterministic decisions', () => {
     expect(authorize(actor(), read(), [], { now: NOW, defaultDecision: 'allow' }).decision).toBe('allow');
   });
 
+  it("the no-match default carries NO rule id (the old 'default' sentinel is gone) — a fired rule still names itself", () => {
+    // `rule` is documented as "the rule id that FIRED, if any" — on the bare default posture nothing
+    // fired, so the key is ABSENT (not a synthetic sentinel a consumer must special-case).
+    const d = authorize(actor(), read(), [], { now: NOW });
+    expect(d.decision).toBe('needs-approval');
+    expect(d.reason).toBe('no policy matched; default posture'); // the human "why" is kept
+    expect(d).not.toHaveProperty('rule');
+    // …while a rule that actually fires still returns its id, unchanged.
+    const fired = authorize(actor(), read(), [rule({ id: 'allow_reads', effect: 'allow', match: { type: ['read'] } })], { now: NOW });
+    expect(fired.rule).toBe('allow_reads');
+  });
+
   it('a matching deny policy wins (strictest)', () => {
     const policies = [
       rule({ id: 'allow_all', effect: 'allow', priority: 100, match: {} }),

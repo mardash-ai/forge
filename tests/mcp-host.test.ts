@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,6 +10,7 @@ import { registerMcpRoutes } from '../src/api/mcp-routes';
 import { newToken } from '../src/plugins/auth-identity/index';
 import { expiresAtIso } from '../src/mcp/oauth';
 import { nowIso } from '../src/shared/time';
+import { initOtelLangfuse } from '../src/plugins/otel-langfuse/index';
 import type { Application } from '../src/resources/types';
 
 // C23 — the hosted remote MCP server (Streamable-HTTP JSON-RPC) + the app-facing management surface.
@@ -347,6 +348,153 @@ describe('Change C — Content-Security-Policy on the MCP host', () => {
     expect(ping.headers['content-security-policy']).toContain("frame-ancestors 'none'");
     const mgmt = await get('/mcp/tools');
     expect(mgmt.headers['content-security-policy']).toContain("base-uri 'none'");
+  });
+});
+
+// C36 — payload tracing + failure-path spans on the `mcp.tool_call` trace. The exporter is a
+// fire-and-forget fetch to the OTLP collector, so the tests intercept fetch for the collector URL ONLY
+// (the tool dispatch to the stub app passes through untouched) and assert on the exported OTLP bodies.
+describe('C36 — payload tracing + failure-path spans', () => {
+  const OTLP = 'http://otel-collector.test/api/public/otel';
+  let exported: unknown[];
+
+  interface WireSpan {
+    name: string;
+    traceId: string;
+    parentSpanId?: string;
+    status: { code: number };
+    attributes: Array<{ key: string; value: { stringValue?: string; intValue?: number; boolValue?: boolean } }>;
+  }
+  const spans = (): WireSpan[] =>
+    (exported as Array<{ resourceSpans: Array<{ scopeSpans: Array<{ spans: WireSpan[] }> }> }>)
+      .flatMap((b) => b.resourceSpans.flatMap((rs) => rs.scopeSpans.flatMap((ss) => ss.spans)));
+  const spanNamed = (name: string): WireSpan | undefined => spans().filter((s) => s.name === name).at(-1);
+  const attr = (s: WireSpan | undefined, key: string): string | number | boolean | undefined => {
+    const v = s?.attributes.find((a) => a.key === key)?.value;
+    return v === undefined ? undefined : (v.stringValue ?? v.intValue ?? v.boolValue);
+  };
+
+  beforeEach(() => {
+    exported = [];
+    const realFetch = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(((url: unknown, init?: RequestInit) => {
+      if (String(url).startsWith(OTLP)) {
+        exported.push(JSON.parse(String(init?.body)));
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      }
+      return realFetch(url as Parameters<typeof fetch>[0], init);
+    }) as typeof fetch);
+    initOtelLangfuse({ endpoint: OTLP, publicKey: 'pk-test', secretKey: 'sk-test' });
+  });
+  afterEach(() => {
+    initOtelLangfuse({ publicKey: '', secretKey: '' }); // disable again so other tests are unaffected
+    vi.restoreAllMocks();
+    delete process.env.FORGE_MCP_TRACE_PAYLOADS;
+  });
+
+  it('records tool-call arguments as the Langfuse observation INPUT and the returned payload as the OUTPUT — never auth material', async () => {
+    await registerTool();
+    const bearer = await mintAccess(['notes:read']);
+    const res = await rpc('tools/call', { name: 'get_note', arguments: { id: 'n1' } }, bearer);
+    expect(res.json().result.structuredContent).toBeTruthy();
+
+    const span = spanNamed('mcp.tool_call');
+    expect(span).toBeTruthy();
+    // The EXACT Langfuse-native keys its OTel ingest maps onto observation input/output.
+    expect(attr(span, 'langfuse.observation.input')).toBe(JSON.stringify({ id: 'n1' }));
+    expect(String(attr(span, 'langfuse.observation.output'))).toContain('"note":"hello"');
+    // Guardrail: neither the OAuth bearer nor the service token ever reaches the wire.
+    const wire = JSON.stringify(exported);
+    expect(wire).not.toContain(bearer);
+    expect(wire).not.toContain(SVC_TOKEN);
+  });
+
+  it('FORGE_MCP_TRACE_PAYLOADS=false disables payload capture (the span itself still exports)', async () => {
+    process.env.FORGE_MCP_TRACE_PAYLOADS = 'false';
+    await registerTool();
+    const bearer = await mintAccess(['notes:read']);
+    await rpc('tools/call', { name: 'get_note', arguments: { id: 'n1' } }, bearer);
+
+    const span = spanNamed('mcp.tool_call');
+    expect(span).toBeTruthy();
+    expect(attr(span, 'langfuse.observation.input')).toBeUndefined();
+    expect(attr(span, 'langfuse.observation.output')).toBeUndefined();
+    expect(attr(span, 'gen_ai.tool.name')).toBe('get_note'); // context attributes are unaffected
+  });
+
+  it('caps each recorded side at 8192 bytes with a …[truncated] suffix', async () => {
+    await registerTool();
+    const bearer = await mintAccess(['notes:read']);
+    await rpc('tools/call', { name: 'get_note', arguments: { blob: 'x'.repeat(20_000) } }, bearer);
+
+    const input = String(attr(spanNamed('mcp.tool_call'), 'langfuse.observation.input'));
+    expect(input.endsWith('…[truncated]')).toBe(true);
+    expect(Buffer.byteLength(input, 'utf8')).toBeLessThanOrEqual(8192 + Buffer.byteLength('…[truncated]', 'utf8'));
+  });
+
+  it('a failing handler records the error payload as the OUTPUT on an error span (failure outcomes stay visible)', async () => {
+    await registerTool({ name: 'boom', scope: '', handler_path: '/api/mcp/tools/boom' });
+    const bearer = await mintAccess([]);
+    expect((await rpc('tools/call', { name: 'boom', arguments: {} }, bearer)).json().result.isError).toBe(true);
+
+    const span = spanNamed('mcp.tool_call');
+    expect(span!.status.code).toBe(3); // error
+    expect(attr(span, 'error.message')).toBe('handler_status_500');
+    expect(String(attr(span, 'langfuse.observation.output'))).toContain('kaboom');
+  });
+
+  it('a tools/call for a NONEXISTENT tool still produces a span: error unknown_tool + the requested name + input', async () => {
+    const bearer = await mintAccess([]);
+    const res = await rpc('tools/call', { name: 'not_a_tool', arguments: { q: 1 } }, bearer);
+    expect(res.json().error.code).toBe(-32602); // wire behavior unchanged
+
+    const span = spanNamed('mcp.tool_call');
+    expect(span).toBeTruthy();
+    expect(span!.status.code).toBe(3);
+    expect(attr(span, 'error.message')).toBe('unknown_tool');
+    expect(attr(span, 'gen_ai.tool.name')).toBe('not_a_tool');
+    expect(attr(span, 'langfuse.observation.input')).toBe(JSON.stringify({ q: 1 }));
+  });
+
+  it('a transport auth rejection emits an mcp.auth_reject span with the reason + method — and NO token material', async () => {
+    const res = await rpc('tools/call', { name: 'get_note', arguments: {} }, 'not-a-real-bearer-token');
+    expect(res.statusCode).toBe(401);
+
+    const span = spanNamed('mcp.auth_reject');
+    expect(span).toBeTruthy();
+    expect(span!.status.code).toBe(3);
+    expect(attr(span, 'error.message')).toBe('invalid_token');
+    expect(attr(span, 'mcp.method')).toBe('tools/call');
+    expect(JSON.stringify(exported)).not.toContain('not-a-real-bearer-token');
+  });
+
+  it('a resource-mismatched token (RFC 8707) rejects with reason resource_mismatch — distinguishable from invalid_token', async () => {
+    const prev = process.env.FORGE_MCP_PUBLIC_URL;
+    process.env.FORGE_MCP_PUBLIC_URL = 'https://api.example';
+    try {
+      const wrong = await mintAccess(['notes:read'], 'userA', 'client1', 'https://evil.example/mcp');
+      expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, wrong)).statusCode).toBe(401);
+      expect(attr(spanNamed('mcp.auth_reject'), 'error.message')).toBe('resource_mismatch');
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_MCP_PUBLIC_URL; else process.env.FORGE_MCP_PUBLIC_URL = prev;
+    }
+  });
+
+  it('adopts an incoming W3C traceparent as the parent — the edge + the tool call join ONE trace', async () => {
+    await registerTool();
+    const bearer = await mintAccess(['notes:read']);
+    const edgeTrace = 'ab'.repeat(16);
+    const edgeSpan = 'cd'.repeat(8);
+    const res = await server.inject({
+      method: 'POST', url: '/mcp',
+      headers: { authorization: `Bearer ${bearer}`, traceparent: `00-${edgeTrace}-${edgeSpan}-01` },
+      payload: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_note', arguments: {} } } as object,
+    });
+    expect(res.json().result.structuredContent).toBeTruthy();
+
+    const span = spanNamed('mcp.tool_call');
+    expect(span!.traceId).toBe(edgeTrace);
+    expect(span!.parentSpanId).toBe(edgeSpan);
   });
 });
 

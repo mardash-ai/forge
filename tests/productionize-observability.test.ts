@@ -64,6 +64,22 @@ describe('C36 productionize observability wiring', () => {
     expect(on).toContain('LANGFUSE_SECRET_KEY=');
   });
 
+  // C36 — payload capture on the mcp.tool_call trace: the toggle is wired for MCP-hosting apps and
+  // documented where the operator fills the Langfuse keys.
+  it('wires FORGE_MCP_TRACE_PAYLOADS (default-true) into the data-plane for MCP-hosting (auth) apps — never the web tier', () => {
+    const c = generateProdCompose({ ...base, secrets: ['AUTH_SESSION_SECRET'] });
+    expect(dataPlaneBlock(c)).toContain('- FORGE_MCP_TRACE_PAYLOADS=${FORGE_MCP_TRACE_PAYLOADS:-true}');
+    expect(webBlock(c)).not.toContain('FORGE_MCP_TRACE_PAYLOADS');
+    // No hosted auth → no MCP host → the toggle is not wired at all.
+    expect(generateProdCompose(base)).not.toContain('FORGE_MCP_TRACE_PAYLOADS');
+  });
+
+  it('.env.prod.example documents FORGE_MCP_TRACE_PAYLOADS (payload capture + the false toggle) in the observability block', () => {
+    const on = generateEnvProdExample({ appName: 'demo', host: 'h', withPostgres: false, withRedis: false, secrets: [], observability: true });
+    expect(on).toContain('FORGE_MCP_TRACE_PAYLOADS=true');
+    expect(on).toContain('set false to disable payload capture');
+  });
+
   it('convergeProduction carries observability forward (flag > persisted > off) like the other config', () => {
     const need = { web_image: base.webImage, data_plane_image: base.dataPlaneImage, host: 'h' };
     // default off

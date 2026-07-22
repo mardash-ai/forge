@@ -14,6 +14,8 @@ import {
   ATTR,
   traceparent,
   parentFromTraceparent,
+  capPayload,
+  PAYLOAD_CAP_BYTES,
 } from '../src/plugins/otel-langfuse/index';
 import type { ObservabilityStack } from '../src/resources/types';
 
@@ -273,5 +275,42 @@ describe('otel-langfuse plugin: ATTR constants', () => {
     expect(ATTR.MCP_CLIENT_HOST).toBe('mcp.client.host');
     expect(ATTR.AUTHZ_DECISION).toBe('authz.decision');
     expect(ATTR.OUTCOME).toBe('outcome');
+  });
+
+  it('exports the Langfuse-NATIVE observation input/output keys (the ones its OTel ingest maps to observation I/O)', () => {
+    // Load-bearing: Langfuse's ingest maps `langfuse.observation.input`/`.output` onto the observation's
+    // input/output panes; it does NOT map `gen_ai.tool.input`/`.output` (those stay plain attributes).
+    expect(ATTR.LANGFUSE_OBSERVATION_INPUT).toBe('langfuse.observation.input');
+    expect(ATTR.LANGFUSE_OBSERVATION_OUTPUT).toBe('langfuse.observation.output');
+  });
+});
+
+describe('otel-langfuse plugin: capPayload (C36 payload capture)', () => {
+  it('passes small strings through and JSON-stringifies everything else', () => {
+    expect(capPayload('hello')).toBe('hello');
+    expect(capPayload({ id: 'n1', n: 2 })).toBe('{"id":"n1","n":2}');
+    expect(capPayload(undefined)).toBe('undefined'); // JSON.stringify(undefined) → String() fallback
+  });
+
+  it(`caps at ${PAYLOAD_CAP_BYTES} bytes with a …[truncated] suffix`, () => {
+    const big = 'x'.repeat(PAYLOAD_CAP_BYTES * 3);
+    const capped = capPayload(big);
+    expect(capped.endsWith('…[truncated]')).toBe(true);
+    expect(Buffer.byteLength(capped, 'utf8')).toBeLessThanOrEqual(PAYLOAD_CAP_BYTES + Buffer.byteLength('…[truncated]', 'utf8'));
+    // Under the cap → untouched, no suffix.
+    expect(capPayload('y'.repeat(100))).toBe('y'.repeat(100));
+  });
+
+  it('never splits a multi-byte character at the cut and never throws on circular payloads', () => {
+    // 4-byte emoji straddling the byte budget — the broken tail is dropped, not emitted as U+FFFD junk.
+    const emoji = '🚀'.repeat(PAYLOAD_CAP_BYTES); // 4 bytes each → way past the cap
+    const capped = capPayload(emoji);
+    expect(capped.endsWith('…[truncated]')).toBe(true);
+    expect(capped).not.toContain('�');
+    // Circular structure — JSON.stringify throws; capPayload must not.
+    const circ: Record<string, unknown> = {};
+    circ.self = circ;
+    expect(() => capPayload(circ)).not.toThrow();
+    expect(capPayload(circ)).toBe('[object Object]');
   });
 });
