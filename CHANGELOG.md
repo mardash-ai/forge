@@ -9,6 +9,8 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.63.0] - 2026-07-22
+
 ### Added
 - **C36 — tool-call payloads on the MCP trace + spans for the failure paths that died invisibly.**
   - **Payload tracing (the headline):** the `mcp.tool_call` span now records the tool-call **arguments**
