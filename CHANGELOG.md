@@ -9,6 +9,32 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+### Added
+- **Productionize emits the dedicated-mTLS-host MCP wiring (durability) — new `mcp_mtls_host` /
+  `mcp_mtls_tls_options` production config.** The mTLS wiring dorinda-api carried as HAND-ADDED lines in
+  its generated `compose.prod.yaml` (which any `forge productionize` re-run would silently clobber) is
+  now emitted by the generator itself. With `--mcp-mtls-host <host>` set on a hosted-auth app, the
+  compose gains: a SECOND Traefik router (`mcp`) on the web service for that host —
+  `entrypoints=websecure`, `tls.certresolver=<cert_resolver>`, `tls.options=<mcp_mtls_tls_options>`
+  (default **`openai-mtls@file`**), plus the `mcpcert` `passtlsclientcert.pem=true` middleware — with a
+  generated comment explaining the topology (the reverse proxy OWNS the tls.options definition; the APP
+  owns the SAN check on the forwarded cert), and the data-plane's `FORGE_MCP_ALT_HOSTS` interpolation now
+  DEFAULTS to the configured mTLS host (previously always empty). Both fields converge like the rest of
+  the `production` block (flag > persisted > default; remembered in `forge.app.json`), so a regen
+  REPRODUCES the block — proven by a parity test asserting the exact label strings dorinda-api carries.
+- **Productionize always wires the MCP OAuth access-token TTL for hosted-auth apps.**
+  `FORGE_OAUTH_ACCESS_TTL_SECONDS=${FORGE_OAUTH_ACCESS_TTL_SECONDS:-28800}` lands on the data-plane env
+  (and is documented in the generated `.env.prod.example`): 8h, because connector hosts may NOT refresh
+  mid-session — they ride one access token until expiry, then show the connector as unavailable until
+  the user reconnects.
+- **C36 — Langfuse-native user id on the `mcp.tool_call` span (Users view).** The span now also sets
+  **`langfuse.user.id`** to the verified token's userId (keeping `mcp.client.user` as the plain span
+  attribute), so Langfuse groups MCP traces per user in its Users view. Verified against the Langfuse v3
+  ingestion source (`OtelIngestionProcessor.ts`, v3.224.0): `langfuse.user.id` is the highest-precedence
+  key in `extractUserId()`, and it is honored on NON-root spans too (the key is in `hasTraceUpdates()`'s
+  exact-match list, so a child span carrying it emits a trace-update that sets the trace-level userId —
+  load-bearing, since `mcp.tool_call` joins the edge trace as a child).
+
 ## [0.63.0] - 2026-07-22
 
 ### Added

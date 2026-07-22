@@ -283,6 +283,8 @@ program
   .option('--data-plane-image <ref>', 'digest-pinned Forge data-plane image (default: FORGE_DATA_PLANE_IMAGE)')
   .option('--cert-resolver <name>', 'Traefik TLS cert resolver name (default letsencrypt)')
   .option('--blobs-backend <kind>', 'C20 blob backend: filesystem (default, durable volume) or s3 (object store) — P33')
+  .option('--mcp-mtls-host <host>', 'dedicated mTLS MCP host: emits a second Traefik router terminating mutual TLS for /mcp + defaults FORGE_MCP_ALT_HOSTS to it (remembered; pass "" to clear)')
+  .option('--mcp-mtls-tls-options <ref>', 'Traefik file-provider tls.options ref for the mTLS router (default openai-mtls@file)')
   .action(async (opts) => {
     await runCapability('productionize', {
       app: opts.app,
@@ -294,6 +296,10 @@ program
       ...(opts.dataPlaneImage ? { data_plane_image: opts.dataPlaneImage } : {}),
       ...(opts.certResolver ? { cert_resolver: opts.certResolver } : {}),
       ...(opts.blobsBackend ? { blobs_backend: opts.blobsBackend } : {}),
+      // `!== undefined` (not truthiness): an explicit --mcp-mtls-host "" must reach converge to CLEAR the
+      // persisted host — a truthy check would silently drop the clear.
+      ...(opts.mcpMtlsHost !== undefined ? { mcp_mtls_host: opts.mcpMtlsHost } : {}),
+      ...(opts.mcpMtlsTlsOptions !== undefined ? { mcp_mtls_tls_options: opts.mcpMtlsTlsOptions } : {}),
     });
   });
 

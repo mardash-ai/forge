@@ -28,6 +28,13 @@ export const ATTR = {
   // Values are (JSON) strings — serialize + size-cap with `capPayload()` before recording.
   LANGFUSE_OBSERVATION_INPUT:  'langfuse.observation.input',
   LANGFUSE_OBSERVATION_OUTPUT: 'langfuse.observation.output',
+  // Langfuse-native trace USER id — groups traces per user in Langfuse's Users view. Verified against
+  // Langfuse v3 (langfuse/langfuse v3.224.0, packages/shared/src/server/otel/OtelIngestionProcessor.ts):
+  // `extractUserId()` checks `langfuse.user.id` FIRST (then `user.id`, metadata forms). Propagation is
+  // NOT root-only: the key is in `hasTraceUpdates()`'s exact-match list, so a NON-root span carrying it
+  // emits a trace-UPDATE event whose body sets the trace-level userId — which matters because
+  // `mcp.tool_call` is not the trace root once it joins the edge trace via `traceparent`.
+  LANGFUSE_USER_ID: 'langfuse.user.id',
   // Additional context
   MCP_CLIENT_USER:  'mcp.client.user',
   MCP_CLIENT_HOST:  'mcp.client.host',

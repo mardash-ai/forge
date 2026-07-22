@@ -107,6 +107,29 @@ describe('convergeProduction — required inputs + digest pins (R1) + convergenc
     expect(convergeProduction(prev, { host: 'new.example.com' }).host).toBe('new.example.com');
   });
 
+  // Change A — the dedicated mTLS MCP host converges like the rest (flag > persisted > absent) and is
+  // REMEMBERED, so a flag-less re-productionize reproduces the mTLS wiring instead of clobbering it.
+  it('mcp_mtls_host is absent by default and remembered once set (durability)', () => {
+    expect(convergeProduction({}, ok).mcp_mtls_host).toBeUndefined();
+    expect(convergeProduction({}, ok).mcp_mtls_tls_options).toBeUndefined();
+    const set = convergeProduction({}, { ...ok, mcp_mtls_host: 'mcp.example.com' });
+    expect(set.mcp_mtls_host).toBe('mcp.example.com');
+    expect(set.mcp_mtls_tls_options).toBe('openai-mtls@file'); // default tls.options ref
+    // A flag-less re-run recovers BOTH from the persisted block.
+    const rerun = convergeProduction({ ...ok, mcp_mtls_host: 'mcp.example.com', mcp_mtls_tls_options: 'openai-mtls@file' }, {});
+    expect(rerun.mcp_mtls_host).toBe('mcp.example.com');
+    expect(rerun.mcp_mtls_tls_options).toBe('openai-mtls@file');
+  });
+
+  it('mcp_mtls_tls_options can be overridden and an explicitly-empty mcp_mtls_host clears the wiring', () => {
+    const custom = convergeProduction({}, { ...ok, mcp_mtls_host: 'mcp.example.com', mcp_mtls_tls_options: 'my-mtls@file' });
+    expect(custom.mcp_mtls_tls_options).toBe('my-mtls@file');
+    // Clearing: an explicit empty flag beats the persisted host (and drops the orphaned tls options too).
+    const cleared = convergeProduction({ ...ok, mcp_mtls_host: 'mcp.example.com' }, { mcp_mtls_host: '' });
+    expect(cleared.mcp_mtls_host).toBeUndefined();
+    expect(cleared.mcp_mtls_tls_options).toBeUndefined();
+  });
+
   it('falls back to the platform env default for the data-plane image', () => {
     const c = convergeProduction({}, { host: 'app.example.com', web_image: WEB, data_plane_image_env: DP });
     expect(c.data_plane_image).toBe(DP);
@@ -409,10 +432,83 @@ describe('generateProdCompose — Traefik + healthcheck + stop_grace + data-plan
     expect(dp).toContain('- FORGE_S3_BUCKET=${FORGE_S3_BUCKET:-}');
   });
 
+  // Change A — the dedicated-mTLS-host wiring is EMITTED by productionize (durable), no longer hand-added
+  // to the generated compose (where a regen would silently clobber it). The parity test asserts the EXACT
+  // strings dorinda-api's compose.prod.yaml carries today — proving a regen with `mcp_mtls_host:
+  // mcp.dorinda.ai` reproduces the block that used to be hand-maintained, byte for byte.
+  it('emits the EXACT dorinda-api mTLS router block when mcpMtlsHost is set on a hosted-auth app (durability parity)', () => {
+    const yaml = generateProdCompose({
+      ...base,
+      appName: 'dorinda-api',
+      host: 'api.dorinda.ai',
+      secrets: ['AUTH_SESSION_SECRET'],
+      mcpMtlsHost: 'mcp.dorinda.ai', // no explicit tls options — the default must produce openai-mtls@file
+    });
+    const web = serviceBlock(yaml, 'web');
+    // The seven labels, contiguous and in the exact order the hand-added block carries today.
+    expect(web).toContain(
+      [
+        '      - "traefik.http.routers.mcp.rule=Host(`mcp.dorinda.ai`)"',
+        '      - "traefik.http.routers.mcp.entrypoints=websecure"',
+        '      - "traefik.http.routers.mcp.tls=true"',
+        '      - "traefik.http.routers.mcp.tls.certresolver=letsencrypt"',
+        '      - "traefik.http.routers.mcp.tls.options=openai-mtls@file"',
+        '      - "traefik.http.middlewares.mcpcert.passtlsclientcert.pem=true"',
+        '      - "traefik.http.routers.mcp.middlewares=mcpcert"',
+      ].join('\n'),
+    );
+    // The topology comment: proxygen owns the tls.options, the app owns the SAN check.
+    expect(web).toContain('DEDICATED mTLS host for /mcp');
+    expect(web).toContain('OWNS that options definition');
+    expect(web).toContain('SAN check');
+    // The data-plane allowlists the mTLS host as an MCP resource id — the exact line dorinda-api carries.
+    const dp = serviceBlock(yaml, 'data-plane');
+    expect(dp).toContain('      - FORGE_MCP_ALT_HOSTS=${FORGE_MCP_ALT_HOSTS:-mcp.dorinda.ai}');
+    // …and the OAuth access-token TTL, exactly as hand-added today.
+    expect(dp).toContain('      - FORGE_OAUTH_ACCESS_TTL_SECONDS=${FORGE_OAUTH_ACCESS_TTL_SECONDS:-28800}');
+  });
+
+  it('emits NO mcp router labels without mcpMtlsHost — but the OAuth TTL still emits for hosted-auth apps', () => {
+    const yaml = generateProdCompose({ ...base, secrets: ['AUTH_SESSION_SECRET'] });
+    expect(yaml).not.toContain('traefik.http.routers.mcp.');
+    expect(yaml).not.toContain('mcpcert');
+    const dp = serviceBlock(yaml, 'data-plane');
+    expect(dp).toContain('- FORGE_MCP_ALT_HOSTS=${FORGE_MCP_ALT_HOSTS:-}'); // empty default — pin-only
+    expect(dp).toContain('- FORGE_OAUTH_ACCESS_TTL_SECONDS=${FORGE_OAUTH_ACCESS_TTL_SECONDS:-28800}');
+    const web = serviceBlock(yaml, 'web');
+    expect(web).not.toContain('FORGE_OAUTH_ACCESS_TTL_SECONDS'); // data-plane only (it mints the tokens)
+  });
+
+  it('emits neither the mTLS router nor the OAuth TTL when the app does not use hosted auth', () => {
+    const yaml = generateProdCompose({ ...base, secrets: ['ANTHROPIC_API_KEY'], mcpMtlsHost: 'mcp.example.com' });
+    expect(yaml).not.toContain('traefik.http.routers.mcp.');
+    expect(yaml).not.toContain('FORGE_OAUTH_ACCESS_TTL_SECONDS');
+    expect(yaml).not.toContain('FORGE_MCP_ALT_HOSTS');
+  });
+
+  it('parameterizes the mTLS host, cert resolver, and tls.options ref', () => {
+    const web = serviceBlock(
+      generateProdCompose({
+        ...base,
+        secrets: ['AUTH_SESSION_SECRET'],
+        certResolver: 'myresolver',
+        mcpMtlsHost: 'mcp.other.io',
+        mcpMtlsTlsOptions: 'custom-mtls@file',
+      }),
+      'web',
+    );
+    expect(web).toContain('- "traefik.http.routers.mcp.rule=Host(`mcp.other.io`)"');
+    expect(web).toContain('- "traefik.http.routers.mcp.tls.certresolver=myresolver"');
+    expect(web).toContain('- "traefik.http.routers.mcp.tls.options=custom-mtls@file"');
+  });
+
   it('is deterministic — identical inputs produce identical bytes (idempotency)', () => {
     expect(generateProdCompose(base)).toBe(generateProdCompose({ ...base }));
     expect(generateProdCompose({ ...base, withJobs: true, secrets: ['ANTHROPIC_API_KEY'] })).toBe(
       generateProdCompose({ ...base, withJobs: true, secrets: ['ANTHROPIC_API_KEY'] }),
+    );
+    expect(generateProdCompose({ ...base, secrets: ['AUTH_SESSION_SECRET'], mcpMtlsHost: 'mcp.example.com' })).toBe(
+      generateProdCompose({ ...base, secrets: ['AUTH_SESSION_SECRET'], mcpMtlsHost: 'mcp.example.com' }),
     );
   });
 });
@@ -612,6 +708,28 @@ describe('generateEnvProdExample — now annotates each secret (C13)', () => {
     });
     expect(env).not.toContain('FORGE_MCP_PUBLIC_URL');
     expect(env).not.toContain('FORGE_MCP_ALT_HOSTS');
+    expect(env).not.toContain('FORGE_OAUTH_ACCESS_TTL_SECONDS');
+  });
+
+  // Change A — the MCP OAuth access-token TTL the compose now wires for every hosted-auth app is
+  // documented alongside it: 8h default because connector hosts may not refresh mid-session.
+  it('documents FORGE_OAUTH_ACCESS_TTL_SECONDS (8h; connectors may not refresh mid-session) for auth apps', () => {
+    const env = generateEnvProdExample({
+      appName: 'acme', host: 'app.example.com', withPostgres: false, withRedis: false,
+      secrets: ['AUTH_SESSION_SECRET'],
+    });
+    expect(env).toContain('FORGE_OAUTH_ACCESS_TTL_SECONDS=');
+    expect(env).toContain('28800');
+    expect(env).toContain('may NOT refresh mid-session');
+  });
+
+  it('notes the FORGE_MCP_ALT_HOSTS default when the app declares a dedicated mTLS MCP host', () => {
+    const env = generateEnvProdExample({
+      appName: 'acme', host: 'api.example.com', withPostgres: false, withRedis: false,
+      secrets: ['AUTH_SESSION_SECRET'], mcpMtlsHost: 'mcp.example.com',
+    });
+    expect(env).toContain('dedicated mTLS MCP host `mcp.example.com`');
+    expect(env).toContain('already defaults');
   });
 });
 

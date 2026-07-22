@@ -283,6 +283,14 @@ describe('otel-langfuse plugin: ATTR constants', () => {
     expect(ATTR.LANGFUSE_OBSERVATION_INPUT).toBe('langfuse.observation.input');
     expect(ATTR.LANGFUSE_OBSERVATION_OUTPUT).toBe('langfuse.observation.output');
   });
+
+  it('exports the Langfuse-NATIVE trace user id key (Users view), honored on non-root spans too', () => {
+    // Load-bearing (verified against langfuse/langfuse v3.224.0 OtelIngestionProcessor): extractUserId()
+    // checks `langfuse.user.id` FIRST, and the key is in hasTraceUpdates()'s exact-match list — so a
+    // NON-root span carrying it still sets the trace-level userId (mcp.tool_call is not the root once it
+    // joins the edge trace).
+    expect(ATTR.LANGFUSE_USER_ID).toBe('langfuse.user.id');
+  });
 });
 
 describe('otel-langfuse plugin: capPayload (C36 payload capture)', () => {

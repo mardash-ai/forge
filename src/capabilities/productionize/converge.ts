@@ -1,5 +1,5 @@
 import { invalidInput } from '../../shared/errors';
-import { isDigestPinned, normalizeReadinessPath } from '../../plugins/productionize-nextjs-compose/index';
+import { isDigestPinned, normalizeReadinessPath, DEFAULT_MCP_MTLS_TLS_OPTIONS } from '../../plugins/productionize-nextjs-compose/index';
 
 // Pure convergence logic for Productionize (C8).
 //
@@ -26,6 +26,15 @@ export interface ProductionConfig {
   // transport and the app continues the trace. Empty-default keys → tracing is inert until set, so it
   // NEVER takes the app down. Off by default (opt-in per app via forge.app.json `production`).
   observability: boolean;
+  // DEDICATED mTLS MCP host (e.g. mcp.example.com) — a connector host that requires MUTUAL TLS on /mcp
+  // gets its OWN hostname as a SECOND Traefik router on the same web service, while the primary host
+  // stays certless. Optional; absent = no mTLS router is emitted. Remembered, so a re-productionize
+  // REPRODUCES the mTLS wiring instead of clobbering it (the durable-fix reason this field exists).
+  mcp_mtls_host?: string;
+  // The Traefik FILE-PROVIDER tls.options ref the mTLS router terminates with (the reverse proxy owns
+  // that definition — client CA + RequireAndVerify). Only meaningful alongside mcp_mtls_host; defaults
+  // to `openai-mtls@file`.
+  mcp_mtls_tls_options?: string;
 }
 
 // What's persisted under forge.app.json `production` (or absent on a first run).
@@ -37,6 +46,8 @@ export interface PrevProduction {
   cert_resolver?: string;
   blobs_backend?: BlobsBackend;
   observability?: boolean;
+  mcp_mtls_host?: string;
+  mcp_mtls_tls_options?: string;
 }
 
 // The inputs on this productionize call (flags + the platform env default).
@@ -48,6 +59,8 @@ export interface ProductionFlags {
   cert_resolver?: string;
   blobs_backend?: BlobsBackend;
   observability?: boolean;
+  mcp_mtls_host?: string;
+  mcp_mtls_tls_options?: string;
   // Platform default for the data-plane pin (e.g. FORGE_DATA_PLANE_IMAGE the control
   // plane injects). Lowest precedence — a flag or a persisted value wins.
   data_plane_image_env?: string;
@@ -108,5 +121,16 @@ export function convergeProduction(prev: PrevProduction, flags: ProductionFlags)
   // C36 — observability opt-in: flag > persisted > off. Carried forward convergently like the others.
   const observability = flags.observability ?? prev.observability ?? DEFAULT_OBSERVABILITY;
 
-  return { host, readiness_path, web_image, data_plane_image, cert_resolver, blobs_backend, observability };
+  // Dedicated mTLS MCP host: flag > persisted > absent. An explicitly-empty flag clears it. The
+  // tls.options ref only travels WITH a host (no orphaned options in forge.app.json); it defaults to
+  // `openai-mtls@file` and converges flag > persisted > default like the others.
+  const mcp_mtls_host = (flags.mcp_mtls_host ?? prev.mcp_mtls_host ?? '').trim();
+  const mcp_mtls_tls_options =
+    (flags.mcp_mtls_tls_options ?? prev.mcp_mtls_tls_options ?? DEFAULT_MCP_MTLS_TLS_OPTIONS).trim() ||
+    DEFAULT_MCP_MTLS_TLS_OPTIONS;
+
+  return {
+    host, readiness_path, web_image, data_plane_image, cert_resolver, blobs_backend, observability,
+    ...(mcp_mtls_host ? { mcp_mtls_host, mcp_mtls_tls_options } : {}),
+  };
 }

@@ -258,7 +258,19 @@ export interface ProdComposeOptions {
   // `observability` network and get the OTLP→Langfuse export env (endpoint + empty-default LANGFUSE
   // keys). The sidecar traces the MCP transport; the app continues the trace. Off by default.
   observability?: boolean;
+  // DEDICATED mTLS MCP host (e.g. mcp.example.com). When set AND the app uses hosted auth, the web
+  // service gets a SECOND Traefik router (`mcp`) for this host that terminates MUTUAL TLS via the
+  // file-provider tls.options ref below, and the data-plane's FORGE_MCP_ALT_HOSTS defaults to it.
+  // Absent = no mTLS router (single-host apps unchanged).
+  mcpMtlsHost?: string;
+  // Traefik file-provider tls.options ref the mTLS router uses (default `openai-mtls@file`). The
+  // reverse proxy owns that options definition; this compose only references it.
+  mcpMtlsTlsOptions?: string;
 }
+
+// The default Traefik file-provider tls.options ref for the dedicated mTLS MCP router — the
+// `openai-mtls` options block (client CA + RequireAndVerify) the shared reverse proxy defines.
+export const DEFAULT_MCP_MTLS_TLS_OPTIONS = 'openai-mtls@file';
 
 // P34 — the OPTIONAL auth-provider vars the data-plane (which hosts C10 `/auth/*`) reads. When the app
 // uses hosted auth they are wired into the sidecar env as defined-but-empty (`${NAME:-}`) even if not
@@ -370,6 +382,8 @@ export function generateProdCompose(opts: ProdComposeOptions): string {
   const db = dbNameFor(appName);
   const blobsBackend = opts.blobsBackend ?? 'filesystem';
   const observability = opts.observability ?? false;
+  const mcpMtlsHost = (opts.mcpMtlsHost ?? '').trim();
+  const mcpMtlsTlsOptions = (opts.mcpMtlsTlsOptions ?? DEFAULT_MCP_MTLS_TLS_OPTIONS).trim() || DEFAULT_MCP_MTLS_TLS_OPTIONS;
   // C36 — the OTLP→Langfuse export env for a tier. The endpoint defaults to the internal Langfuse
   // address; the LANGFUSE keys are empty-default (`${VAR:-}`) so a missing key silently DISABLES tracing
   // (the tier is unaffected) instead of failing the deploy — observability must never take the app down.
@@ -456,6 +470,31 @@ export function generateProdCompose(opts: ProdComposeOptions): string {
     `      - "traefik.http.services.${svc}.loadbalancer.healthcheck.path=${readinessPath}"`,
     `      - "traefik.http.services.${svc}.loadbalancer.healthcheck.interval=10s"`,
   ];
+  // Dedicated mTLS MCP host — a SECOND router (`mcp`) on the SAME web service, for a connector host
+  // that requires MUTUAL TLS on /mcp (e.g. ChatGPT's connector). The primary router above is untouched,
+  // so certless MCP clients keep using the primary host. Division of ownership: the shared reverse
+  // proxy (proxygen) OWNS the file-provider tls.options definition (the connector CA +
+  // RequireAndVerify policy); the APP owns the SAN check on the client cert the `mcpcert`
+  // passtlsclientcert middleware forwards (fail-closed). No `.service=` — Traefik's single-service
+  // default binds this router to the one service on the container, same as the primary router.
+  if (usesAuth && mcpMtlsHost) {
+    labels.push(
+      `      # --- ${mcpMtlsHost} — DEDICATED mTLS host for /mcp: a SECOND router on the SAME web service`,
+      `      # (the ${host} router above is untouched — certless MCP clients keep using it). Traefik`,
+      `      # terminates MUTUAL TLS via the file-provider tls.options ref: the shared reverse proxy`,
+      `      # (proxygen) OWNS that options definition (client CA + RequireAndVerify); THIS APP owns the`,
+      `      # SAN check on the client cert the mcpcert passtlsclientcert middleware forwards`,
+      `      # (fail-closed). No \`.service=\` — Traefik's single-service default binds this router to`,
+      `      # the one service on the container, same as the primary router.`,
+      `      - "traefik.http.routers.mcp.rule=Host(\`${mcpMtlsHost}\`)"`,
+      '      - "traefik.http.routers.mcp.entrypoints=websecure"',
+      '      - "traefik.http.routers.mcp.tls=true"',
+      `      - "traefik.http.routers.mcp.tls.certresolver=${certResolver}"`,
+      `      - "traefik.http.routers.mcp.tls.options=${mcpMtlsTlsOptions}"`,
+      '      - "traefik.http.middlewares.mcpcert.passtlsclientcert.pem=true"',
+      '      - "traefik.http.routers.mcp.middlewares=mcpcert"',
+    );
+  }
 
   const web = `  web:
     image: ${webImage}
@@ -528,9 +567,15 @@ ${labels.join('\n')}`;
   // Tier-3 companion — comma-separated ADDITIONAL hostnames allowed to appear as the MCP resource identifier
   // (RFC 8707/9728) when a DEDICATED mTLS host (e.g. mcp.dorinda.ai for ChatGPT's connector) fronts /mcp
   // alongside the certless api host. The forwarded host is honored as the resource id only if it's the
-  // primary MCP host or in this list (else it falls back to the pin — anti-spoofing). Wired defined-but-empty;
-  // empty = pin-only (single-host apps unaffected).
-  if (usesAuth) dpEnv.push('      - FORGE_MCP_ALT_HOSTS=${FORGE_MCP_ALT_HOSTS:-}');
+  // primary MCP host or in this list (else it falls back to the pin — anti-spoofing). When the app declares
+  // an mTLS MCP host, the interpolation DEFAULTS to it (the sidecar must accept that host as a resource id
+  // or every mTLS-routed call bounces); otherwise defined-but-empty = pin-only (single-host apps unaffected).
+  if (usesAuth) dpEnv.push(`      - FORGE_MCP_ALT_HOSTS=\${FORGE_MCP_ALT_HOSTS:-${mcpMtlsHost}}`);
+  // MCP OAuth access-token lifetime (seconds). Connector hosts may NOT refresh mid-session — they ride one
+  // access token until expiry, then surface the connector as "unavailable" until the user reconnects — so
+  // the default is 8h (28800): a working day on one token. Default-carrying interpolation so the wire
+  // default is explicit; override in .env.prod.
+  if (usesAuth) dpEnv.push('      - FORGE_OAUTH_ACCESS_TTL_SECONDS=${FORGE_OAUTH_ACCESS_TTL_SECONDS:-28800}');
   // C36 — payload capture on the `mcp.tool_call` span: tool-call arguments + results are recorded on the
   // Langfuse trace (observation input/output) by DEFAULT; an operator sets FORGE_MCP_TRACE_PAYLOADS=false
   // in .env.prod to disable payload capture. Default-true interpolation so the wire default is explicit.
@@ -714,6 +759,9 @@ export interface EnvProdExampleOptions {
   blobsBackend?: 'filesystem' | 's3';
   // C36 — when observability is on, document the Langfuse OTLP key pair the compose references.
   observability?: boolean;
+  // Dedicated mTLS MCP host — when set, the compose defaults FORGE_MCP_ALT_HOSTS to it; the example
+  // documents that default so the env doc never drifts from the emitted interpolation.
+  mcpMtlsHost?: string;
 }
 
 // The `#` comment block that precedes each secret in .env.prod.example — what it is,
@@ -793,12 +841,24 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
     lines.push('# FORGE_MCP_PUBLIC_URL — the MCP OAuth resource identifier + issuer origin: the MACHINE-FACING api');
     lines.push('#   host the /mcp endpoint + its OAuth AS are reached on (e.g. https://api.example.com).');
     lines.push('# FORGE_MCP_ALT_HOSTS — comma-separated ADDITIONAL hostnames allowed to appear as the MCP resource');
-    lines.push('#   identifier — e.g. a dedicated mTLS host `mcp.dorinda.ai`; the forwarded host is only honored if');
-    lines.push('#   it is the primary MCP host or in this list.');
+    lines.push('#   identifier — e.g. a dedicated mTLS host; the forwarded host is only honored if it is the primary');
+    lines.push('#   MCP host or in this list.');
+    const mtlsHost = (opts.mcpMtlsHost ?? '').trim();
+    if (mtlsHost) {
+      lines.push(`#   This app declares the dedicated mTLS MCP host \`${mtlsHost}\` — the compose already defaults`);
+      lines.push(`#   FORGE_MCP_ALT_HOSTS to it; set a value here only to REPLACE that default (include \`${mtlsHost}\`).`);
+    }
     lines.push('FORGE_AUTH_PUBLIC_URL=');
     lines.push('FORGE_OAUTH_PUBLIC_URL=');
     lines.push('FORGE_MCP_PUBLIC_URL=');
     lines.push('FORGE_MCP_ALT_HOSTS=');
+    lines.push('');
+    lines.push('# --- MCP OAuth access-token lifetime (C23) ---');
+    lines.push('# FORGE_OAUTH_ACCESS_TTL_SECONDS — lifetime (seconds) of the MCP OAuth access tokens the data-plane');
+    lines.push('#   mints. Default 28800 (8h): connector hosts may NOT refresh mid-session — they ride one access');
+    lines.push('#   token until expiry, then show the connector as unavailable until the user reconnects, so 8h keeps');
+    lines.push('#   a session alive for a working day. Empty = the 28800 default.');
+    lines.push('FORGE_OAUTH_ACCESS_TTL_SECONDS=');
     lines.push('');
   }
   // P41 — when the app uses billing (declares any STRIPE_* secret), the Stripe SECRET + WEBHOOK secrets are

@@ -249,6 +249,11 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
         [ATTR.GEN_AI_OPERATION_NAME]: 'execute_tool',
         [ATTR.GEN_AI_TOOL_NAME]: name,
         [ATTR.MCP_CLIENT_USER]: verified.userId,
+        // Langfuse-NATIVE user id (Users view): its OTel ingest maps `langfuse.user.id` onto the
+        // trace-level userId — including from THIS non-root span (the key triggers a trace-update
+        // event, verified against the Langfuse v3 ingestion source; see ATTR.LANGFUSE_USER_ID).
+        // `mcp.client.user` above stays as the plain span attribute the C36 dashboards/tests read.
+        [ATTR.LANGFUSE_USER_ID]: verified.userId,
         [ATTR.MCP_CLIENT_HOST]: verified.clientId,
         'mcp.app': app_.name,
         ...(tracePayloads() ? { [ATTR.LANGFUSE_OBSERVATION_INPUT]: capPayload(args) } : {}),

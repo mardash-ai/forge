@@ -41,6 +41,12 @@ const inputSchema = z.object({
   // C36 — opt into MCP observability: the compose joins the app + sidecar to the shared `observability`
   // network and wires OTLP→Langfuse env (empty-default keys → inert until set). Off by default. Remembered.
   observability: z.boolean().optional(),
+  // Dedicated mTLS MCP host (e.g. mcp.example.com): emits a SECOND Traefik router on the web service that
+  // terminates mutual TLS for /mcp and defaults FORGE_MCP_ALT_HOSTS to this host. Remembered — a re-run
+  // REPRODUCES the mTLS wiring. Pass an empty string to clear it.
+  mcp_mtls_host: z.string().optional(),
+  // Traefik file-provider tls.options ref for that router (default `openai-mtls@file`). Remembered.
+  mcp_mtls_tls_options: z.string().optional(),
 });
 
 type Input = z.infer<typeof inputSchema>;
@@ -107,6 +113,8 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
       cert_resolver: input.cert_resolver,
       blobs_backend: input.blobs_backend,
       observability: input.observability,
+      mcp_mtls_host: input.mcp_mtls_host,
+      mcp_mtls_tls_options: input.mcp_mtls_tls_options,
       data_plane_image_env: process.env.FORGE_DATA_PLANE_IMAGE,
     });
 
@@ -168,6 +176,8 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
         platformDb: withPlatformDb,
         blobsBackend: cfg.blobs_backend,
         observability: cfg.observability,
+        mcpMtlsHost: cfg.mcp_mtls_host,
+        mcpMtlsTlsOptions: cfg.mcp_mtls_tls_options,
       }),
     );
 
@@ -183,7 +193,7 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
     //    now annotated (what it is + how to obtain it) from the C13 secret catalog.
     await writeFile(
       path.join(repo, '.env.prod.example'),
-      generateEnvProdExample({ appName: app.name, host: cfg.host, withPostgres, withRedis, secrets, withJobs, platformDb: withPlatformDb, blobsBackend: cfg.blobs_backend, observability: cfg.observability }),
+      generateEnvProdExample({ appName: app.name, host: cfg.host, withPostgres, withRedis, secrets, withJobs, platformDb: withPlatformDb, blobsBackend: cfg.blobs_backend, observability: cfg.observability, mcpMtlsHost: cfg.mcp_mtls_host }),
     );
 
     // 5. PROVISIONING.md — the per-app operator runbook (C13): exactly the secrets THIS

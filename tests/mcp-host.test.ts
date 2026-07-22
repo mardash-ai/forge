@@ -409,6 +409,21 @@ describe('C36 — payload tracing + failure-path spans', () => {
     expect(wire).not.toContain(SVC_TOKEN);
   });
 
+  // Change B — the Langfuse-NATIVE user id on the `mcp.tool_call` span, so Langfuse groups traces per
+  // user in its Users view. `langfuse.user.id` is the highest-precedence key in the v3 ingest's
+  // extractUserId(), and it propagates from NON-root spans too (it is in hasTraceUpdates()'s exact-match
+  // list — load-bearing, because this span joins the edge trace as a CHILD when a traceparent arrives).
+  it('sets the Langfuse-native user id (langfuse.user.id) to the token owner — alongside mcp.client.user', async () => {
+    await registerTool();
+    const bearer = await mintAccess(['notes:read']);
+    await rpc('tools/call', { name: 'get_note', arguments: { id: 'n1' } }, bearer);
+
+    const span = spanNamed('mcp.tool_call');
+    expect(span).toBeTruthy();
+    expect(attr(span, 'langfuse.user.id')).toBe('userA');
+    expect(attr(span, 'mcp.client.user')).toBe('userA'); // the plain span attribute stays
+  });
+
   it('FORGE_MCP_TRACE_PAYLOADS=false disables payload capture (the span itself still exports)', async () => {
     process.env.FORGE_MCP_TRACE_PAYLOADS = 'false';
     await registerTool();

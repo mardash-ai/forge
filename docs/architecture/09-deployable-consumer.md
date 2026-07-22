@@ -226,7 +226,10 @@ make up
 ./forge productionize --app <APP> --host <DOMAIN>
 #    Optional flags: --readiness-path /api/health (default), --cert-resolver <name> (default letsencrypt),
 #    --web-image <ref@sha256:…> / --data-plane-image <ref@sha256:…> (else the data-plane defaults from
-#    FORGE_DATA_PLANE_IMAGE). Values persist in forge.app.json `production`; a flag-less re-run reproduces them.
+#    FORGE_DATA_PLANE_IMAGE), --mcp-mtls-host <host> (dedicated mTLS MCP host: a SECOND Traefik router
+#    terminating mutual TLS for /mcp, tls.options ref via --mcp-mtls-tls-options (default openai-mtls@file),
+#    and FORGE_MCP_ALT_HOSTS defaulting to that host).
+#    Values persist in forge.app.json `production`; a flag-less re-run reproduces them.
 
 # 3. Fill app/.env.prod (copy from app/.env.prod.example) — see §4. NEVER commit it.
 
