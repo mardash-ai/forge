@@ -19,10 +19,12 @@ import type { Application } from '../src/resources/types';
 // validated on BOTH backends.
 const APP = 'demo';
 const APP_ID = 'app_demo';
+const SVC_TOKEN = 'test-service-token-abc123'; // Change D — the app→sidecar management-surface service token
 let dir: string;
 let prevDir: string | undefined;
 let prevHost: string | undefined;
 let prevPort: string | undefined;
+let prevSvc: string | undefined;
 let server: FastifyInstance;
 let stub: FastifyInstance;
 let calls: string[];
@@ -37,10 +39,11 @@ const seedApp = async (): Promise<void> => {
 
 // Mint an access grant directly (the OAuth flow itself is covered in mcp-oauth.test.ts). Returns the raw
 // bearer the /mcp endpoint verifies.
-const mintAccess = async (scopes: string[], owner = 'userA', clientId = 'client1'): Promise<string> => {
+const mintAccess = async (scopes: string[], owner = 'userA', clientId = 'client1', resource?: string): Promise<string> => {
   const { token, hash } = newToken();
   await (await getBackends()).mcp.putGrant(APP_ID, {
-    kind: 'access', token_hash: hash, client_id: clientId, owner, scopes, expires_at: expiresAtIso(3600), created_at: nowIso(),
+    kind: 'access', token_hash: hash, client_id: clientId, owner, scopes, expires_at: expiresAtIso(3600),
+    ...(resource ? { resource } : {}), created_at: nowIso(),
   });
   return token;
 };
@@ -49,8 +52,10 @@ beforeEach(async () => {
   prevDir = process.env.FORGE_STATE_DIR;
   prevHost = process.env.FORGE_APP_CALLBACK_HOST;
   prevPort = process.env.FORGE_APP_CALLBACK_PORT;
+  prevSvc = process.env.AUTH_SERVICE_TOKEN;
   dir = await mkdtemp(path.join(tmpdir(), 'forge-mcp-host-'));
   process.env.FORGE_STATE_DIR = dir;
+  process.env.AUTH_SERVICE_TOKEN = SVC_TOKEN; // resolveServiceToken picks this up via the env fallback
   await store.init();
   await seedApp();
 
@@ -80,6 +85,7 @@ afterEach(async () => {
   if (prevDir === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prevDir;
   if (prevHost === undefined) delete process.env.FORGE_APP_CALLBACK_HOST; else process.env.FORGE_APP_CALLBACK_HOST = prevHost;
   if (prevPort === undefined) delete process.env.FORGE_APP_CALLBACK_PORT; else process.env.FORGE_APP_CALLBACK_PORT = prevPort;
+  if (prevSvc === undefined) delete process.env.AUTH_SERVICE_TOKEN; else process.env.AUTH_SERVICE_TOKEN = prevSvc;
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -89,8 +95,12 @@ const rpc = (method: string, params: unknown, bearer?: string, id: number | stri
     headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
     payload: { jsonrpc: '2.0', id, method, params } as object,
   });
-const post = (url: string, payload: unknown) => server.inject({ method: 'POST', url, payload: payload as object });
-const get = (url: string) => server.inject({ method: 'GET', url });
+// The management-surface helpers present the service token (Change D). Ungated routes (`.well-known`) ignore
+// it harmlessly; the JSON-RPC `rpc` helper below deliberately does NOT send it (POST /mcp is OAuth-gated).
+const post = (url: string, payload: unknown, headers: Record<string, string> = {}) =>
+  server.inject({ method: 'POST', url, headers: { 'x-forge-service-token': SVC_TOKEN, ...headers }, payload: payload as object });
+const get = (url: string, headers: Record<string, string> = {}) =>
+  server.inject({ method: 'GET', url, headers: { 'x-forge-service-token': SVC_TOKEN, ...headers } });
 
 const registerTool = (over: Record<string, unknown> = {}) =>
   post('/mcp/tools', { name: 'get_note', description: 'Read a note', input_schema: { type: 'object' }, scope: 'notes:read', family: 'read', handler_path: '/api/mcp/tools/get_note', ...over });
@@ -257,10 +267,111 @@ describe('C23 — connector (consent) management', () => {
     // token works before revocation
     expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, bearer)).json().result.structuredContent).toBeTruthy();
 
-    const del = await server.inject({ method: 'DELETE', url: '/mcp/consents/clientZ?owner=userA' });
+    const del = await server.inject({ method: 'DELETE', url: '/mcp/consents/clientZ?owner=userA', headers: { 'x-forge-service-token': SVC_TOKEN } });
     expect(del.json().revoked).toBe(true);
     // the token is now dead → 401
     expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, bearer)).statusCode).toBe(401);
     expect((await get('/mcp/consents?owner=userA')).json().consents).toHaveLength(0);
+  });
+});
+
+// Change D — the app→sidecar MANAGEMENT surface is proxied to the public internet by the consumer and
+// carries no OAuth, so every /mcp/* management route MUST require the app's C10 service token. FAIL CLOSED.
+describe('Change D — management routes require the x-forge-service-token', () => {
+  // A management call WITHOUT any service token (the raw inject helper — no header).
+  const noToken = (method: 'GET' | 'POST' | 'DELETE', url: string, payload?: unknown) =>
+    server.inject({ method, url, ...(payload !== undefined ? { payload: payload as object } : {}) });
+
+  it('rejects EVERY management route with 401 when no service token is presented', async () => {
+    expect((await noToken('POST', '/mcp/tools', { name: 'get_note', scope: 'notes:read', family: 'read', handler_path: '/api/mcp/tools/get_note' })).statusCode).toBe(401);
+    expect((await noToken('GET', '/mcp/tools')).statusCode).toBe(401);
+    expect((await noToken('DELETE', '/mcp/tools/get_note')).statusCode).toBe(401);
+    expect((await noToken('POST', '/mcp/instructions', { text: 'v1' })).statusCode).toBe(401);
+    expect((await noToken('GET', '/mcp/instructions')).statusCode).toBe(401);
+    expect((await noToken('POST', '/mcp/proactive', { tool: 'whats_next', every: '6h', target_path: '/api/cron/x' })).statusCode).toBe(401);
+    expect((await noToken('GET', '/mcp/consents?owner=userA')).statusCode).toBe(401);
+    expect((await noToken('DELETE', '/mcp/consents/clientZ?owner=userA')).statusCode).toBe(401);
+  });
+
+  it('rejects a WRONG service token, accepts the CORRECT one', async () => {
+    const wrong = await server.inject({ method: 'GET', url: '/mcp/tools', headers: { 'x-forge-service-token': 'not-the-token' } });
+    expect(wrong.statusCode).toBe(401);
+    const okReg = await post('/mcp/tools', { name: 'get_note', description: 'Read a note', input_schema: { type: 'object' }, scope: 'notes:read', family: 'read', handler_path: '/api/mcp/tools/get_note' });
+    expect(okReg.statusCode).toBe(200);
+    expect((await get('/mcp/tools')).statusCode).toBe(200);
+  });
+
+  it('FAILS CLOSED when AUTH_SERVICE_TOKEN is unset in the environment — never fail open', async () => {
+    const prev = process.env.AUTH_SERVICE_TOKEN;
+    delete process.env.AUTH_SERVICE_TOKEN;
+    try {
+      // Even presenting the previously-valid token is rejected: with nothing configured there is nothing to match.
+      const r = await server.inject({ method: 'GET', url: '/mcp/tools', headers: { 'x-forge-service-token': SVC_TOKEN } });
+      expect(r.statusCode).toBe(401);
+    } finally {
+      if (prev === undefined) delete process.env.AUTH_SERVICE_TOKEN; else process.env.AUTH_SERVICE_TOKEN = prev;
+    }
+  });
+
+  it('does NOT gate POST /mcp (OAuth-gated) nor the public .well-known discovery doc', async () => {
+    // POST /mcp with no bearer → 401 from the OAUTH gate (not the service-token gate); with a bearer → 200.
+    expect((await rpc('initialize', {})).statusCode).toBe(401);
+    const bearer = await mintAccess([]);
+    expect((await rpc('initialize', {}, bearer)).statusCode).toBe(200);
+    // Discovery is public — 200 with no token of any kind.
+    expect((await noToken('GET', '/.well-known/oauth-protected-resource')).statusCode).toBe(200);
+  });
+});
+
+// Change B — per-tool securitySchemes on tools/list (ChatGPT Apps SDK shape).
+describe('Change B — per-tool securitySchemes on tools/list', () => {
+  it('emits an oauth2 scheme carrying the tool scope, and noauth for a scopeless tool', async () => {
+    await registerTool(); // get_note, scope notes:read
+    await registerTool({ name: 'ping_pub', scope: '', family: 'read', handler_path: '/api/mcp/tools/get_note' });
+    const bearer = await mintAccess(['notes:read']);
+    const tools = (await rpc('tools/list', {}, bearer)).json().result.tools;
+    const gated = tools.find((t: { name: string }) => t.name === 'get_note');
+    const open = tools.find((t: { name: string }) => t.name === 'ping_pub');
+    expect(gated.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['notes:read'] }]);
+    expect(open.securitySchemes).toEqual([{ type: 'noauth' }]);
+  });
+});
+
+// Change C — a restrictive CSP on the machine-facing MCP surface.
+describe('Change C — Content-Security-Policy on the MCP host', () => {
+  it('sets a restrictive CSP on the discovery doc, POST /mcp, and the management surface', async () => {
+    const wk = await server.inject({ method: 'GET', url: '/.well-known/oauth-protected-resource' });
+    expect(wk.headers['content-security-policy']).toContain("default-src 'none'");
+    const bearer = await mintAccess([]);
+    const ping = await rpc('ping', {}, bearer);
+    expect(ping.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+    const mgmt = await get('/mcp/tools');
+    expect(mgmt.headers['content-security-policy']).toContain("base-uri 'none'");
+  });
+});
+
+// Change A — RFC 8707 access-token audience binding enforced by the resource server at POST /mcp.
+describe('Change A — RFC 8707 audience binding at /mcp', () => {
+  const withResourceHost = async (fn: () => Promise<void>): Promise<void> => {
+    const prev = process.env.FORGE_MCP_PUBLIC_URL;
+    process.env.FORGE_MCP_PUBLIC_URL = 'https://api.example'; // → the server's resource id is https://api.example/mcp
+    try {
+      await fn();
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_MCP_PUBLIC_URL; else process.env.FORGE_MCP_PUBLIC_URL = prev;
+    }
+  };
+
+  it('a token bound to THIS resource passes, a DIFFERENT resource is rejected (401), an UNBOUND token still passes', async () => {
+    await registerTool();
+    await withResourceHost(async () => {
+      const good = await mintAccess(['notes:read'], 'userA', 'client1', 'https://api.example/mcp');
+      const wrong = await mintAccess(['notes:read'], 'userA', 'client1', 'https://evil.example/mcp');
+      const unbound = await mintAccess(['notes:read'], 'userA', 'client1'); // no resource → back-compat
+
+      expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, good)).json().result.structuredContent).toBeTruthy();
+      expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, wrong)).statusCode).toBe(401);
+      expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, unbound)).json().result.structuredContent).toBeTruthy();
+    });
   });
 });

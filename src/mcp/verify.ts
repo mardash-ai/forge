@@ -11,6 +11,7 @@ export interface VerifiedToken {
   userId: string;
   scopes: string[];
   clientId: string;
+  resource?: string; // RFC 8707 — the resource/audience the token is bound to (undefined = unbound)
 }
 
 // Extract a Bearer token from an Authorization header value. Returns null when absent/malformed.
@@ -23,11 +24,18 @@ export function bearerFrom(header: string | string[] | undefined): string | null
 
 // Verify a raw access token for an app. Returns the identity + granted scopes, or null when the token is
 // unknown, of the wrong kind, or expired.
-export async function verifyAccessToken(appId: string, rawToken: string | null): Promise<VerifiedToken | null> {
+//
+// RFC 8707 audience binding (optional `expectedResource`): when the caller passes the resource it is (e.g.
+// the `${issuer}/mcp` id the /mcp endpoint serves) AND the token carries a bound `resource`, the two must
+// match — a token minted for a DIFFERENT resource is rejected. A token with NO bound resource still
+// verifies (BACK-COMPAT: tokens issued before aud-binding, and clients that never sent `resource`, keep
+// working); and when the caller passes no expected resource, no audience check is applied.
+export async function verifyAccessToken(appId: string, rawToken: string | null, expectedResource?: string): Promise<VerifiedToken | null> {
   if (!rawToken) return null;
   const mcp = (await getBackends()).mcp;
   const grant = await mcp.getGrant(appId, 'access', hashToken(rawToken));
   if (!grant) return null;
   if (isExpired(grant.expires_at)) return null;
-  return { userId: grant.owner, scopes: grant.scopes, clientId: grant.client_id };
+  if (expectedResource && grant.resource && grant.resource !== expectedResource) return null;
+  return { userId: grant.owner, scopes: grant.scopes, clientId: grant.client_id, ...(grant.resource ? { resource: grant.resource } : {}) };
 }

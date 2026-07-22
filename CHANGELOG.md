@@ -9,6 +9,40 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+### Security
+- **C23 — the MCP management surface is now SERVICE-token gated (closes an unauthenticated-write hole).**
+  The app→sidecar management routes (`POST/GET /mcp/tools`, `DELETE /mcp/tools/:name`,
+  `POST/GET /mcp/instructions`, `POST /mcp/proactive`, `GET /mcp/consents`,
+  `DELETE /mcp/consents/:client_id`) carried **no** authentication, yet the consumer proxies `/mcp/*` to the
+  **public** internet — so anyone could register/rewrite an app's tools + instruction ("training") block,
+  schedule proactive prompts, or revoke a user's consent. Every management route now requires the app's C10
+  `AUTH_SERVICE_TOKEN`, presented as an `x-forge-service-token` header and compared in **constant time**
+  (reusing the existing `auth-identity` verifier via `shared/service-auth`). **Fails closed**: an app with no
+  configured token rejects (`401`). `POST /mcp` (JSON-RPC — already OAuth-token gated) and the public
+  `GET /.well-known/oauth-protected-resource` discovery doc are intentionally **not** gated. **Consumer
+  action required:** the app's on-boot MCP bootstrap (and anything else calling `/mcp/*` management) must now
+  send `x-forge-service-token: $AUTH_SERVICE_TOKEN`.
+
+### Added
+- **C23 — RFC 8707 access-token audience binding (ChatGPT App Directory requirement).** `POST /oauth/authorize`
+  parses the optional `resource` request param and binds it onto the authorization-code grant; `POST /oauth/token`
+  threads that `resource` onto the issued access + refresh grants (and carries it across a refresh rotation). A
+  `resource` presented at token exchange must match the code's (else `invalid_target`). `OAuthGrant` and
+  `VerifiedToken` gain an optional `resource`; `verifyAccessToken` takes an optional expected-resource argument
+  and `POST /mcp` passes `${issuer}/mcp` — a token bound to a **different** resource is rejected there.
+  **Back-compatible:** a token with **no** bound resource still verifies, so existing live tokens keep working.
+  (No non-standard AS-metadata flag is advertised — RFC 8414 defines none for resource indicators.)
+- **C23 — per-tool `securitySchemes` on `tools/list` (ChatGPT Apps SDK shape).** Each emitted tool now carries a
+  top-level `securitySchemes` array: an `oauth2` scheme referencing the tool's OAuth `scope`
+  (`[{ "type": "oauth2", "scopes": ["<scope>"] }]`), or `[{ "type": "noauth" }]` for a scopeless tool. This only
+  **declares** the requirement to the host; the platform still enforces scope on every call.
+
+### Changed
+- **C23 — restrictive `Content-Security-Policy` on the machine-facing MCP surface.** `POST /mcp`, the
+  `/.well-known/oauth-protected-resource` discovery doc, and the `/mcp/*` management routes now respond with
+  `default-src 'none'; frame-ancestors 'none'; base-uri 'none'` (a URL-scoped Fastify `onSend` hook — it never
+  touches the HTML OAuth consent page). JSON responses are unaffected.
+
 ## [0.60.0] - 2026-07-22
 
 ### Added

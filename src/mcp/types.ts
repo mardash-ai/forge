@@ -85,6 +85,10 @@ export interface OAuthGrant {
   owner: string; // the user id the grant acts as
   scopes: string[];
   expires_at: string; // ISO
+  // RFC 8707 resource indicator — the audience this grant is bound to (e.g. `${issuer}/mcp`). Threaded
+  // authorization code → access/refresh; the resource server rejects a token presented to a DIFFERENT
+  // resource. OPTIONAL: absent on grants issued before aud-binding (and on clients that omit `resource`).
+  resource?: string;
   // PKCE (authorization codes only).
   code_challenge?: string;
   code_challenge_method?: 'S256' | 'plain';

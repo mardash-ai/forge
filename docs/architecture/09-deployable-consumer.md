@@ -367,6 +367,15 @@ both of which a fresh clone inherits so its **first** `forge release` works with
    instruction-block upsert — keyed so a re-run is a no-op (the C23 store upserts by name/version). Both must
    be safe to run on **every** boot (idempotent), since containers restart. Guard each with a short retry so
    it tolerates the DB/data-plane still becoming healthy.
+
+   **The `/mcp/*` management calls are SERVICE-token gated.** These management routes (register/list/delete a
+   tool, version the instruction block, schedule a proactive prompt, list/revoke a consent) are proxied to
+   the **public** internet by the consumer and carry no OAuth, so the platform gates every one of them on
+   `AUTH_SERVICE_TOKEN` — present it as an `x-forge-service-token: <token>` header on each management POST/GET/DELETE
+   (the same principal + header the C2 cron fire uses; the platform does a **constant-time** compare and **fails
+   closed** when the token is unset). The bootstrap must therefore send the header; a bare call is rejected `401`.
+   `POST /mcp` (JSON-RPC, OAuth-token gated) and the public `GET /.well-known/oauth-protected-resource` discovery
+   doc are **not** service-token gated.
 2. **Deploy-time step.** Alternatively a `release`-time hook the scaffold defines runs the same
    migrate + register once per deploy. On-boot is preferred because it also self-heals a manually-started
    container and needs no orchestrator cooperation.

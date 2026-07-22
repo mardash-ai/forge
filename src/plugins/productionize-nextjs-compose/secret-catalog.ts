@@ -86,7 +86,7 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     name: 'AUTH_SERVICE_TOKEN',
     capability: 'C10 · Identity/Auth (service/cron principal)',
     requirement: 'conditional',
-    what: 'Shared token the C2 scheduler presents on each cron fire (as `Authorization: Bearer` AND `x-forge-service-token`) and the app verifies to gate `/api/cron/*`.',
+    what: 'Shared service principal. The C2 scheduler presents it on each cron fire (as `Authorization: Bearer` AND `x-forge-service-token`) and the app verifies it to gate `/api/cron/*`. The SAME token also gates the platform C23 MCP management surface (`/mcp/tools`, `/mcp/instructions`, `/mcp/proactive`, `/mcp/consents`) — the app must present it as `x-forge-service-token` when it registers its tool surface on boot.',
     // P36 — this is REQUIRED, not merely optional, once the app declares scheduled jobs: Traefik routes all
     // `/api/*` publicly, so an UNSET token means cron endpoints are open and the scheduler fires bare,
     // unauthenticated POSTs. productionize makes it deploy-required (`${VAR:?…}`) when jobs are declared.

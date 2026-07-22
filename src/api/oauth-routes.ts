@@ -198,6 +198,8 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
         state: q.state ?? '',
         code_challenge: q.code_challenge,
         code_challenge_method: q.code_challenge_method ?? 'S256',
+        // RFC 8707 resource indicator — carried through consent so it binds onto the minted code grant.
+        ...(trimmed(q.resource) ? { resource: trimmed(q.resource)! } : {}),
       },
     }));
   });
@@ -243,6 +245,8 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
       owner: user.userId,
       scopes,
       expires_at: expiresAtIso(codeTtlSeconds()),
+      // RFC 8707 — bind the requested resource (if any) onto the code so token exchange can propagate it.
+      ...(trimmed(b.resource) ? { resource: trimmed(b.resource)! } : {}),
       code_challenge: b.code_challenge,
       code_challenge_method: (b.code_challenge_method as 'S256' | 'plain') ?? 'S256',
       redirect_uri: redirectUri,
@@ -288,7 +292,10 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
       if (codeGrant.client_id !== client.client_id) return oauthError(reply, 400, 'invalid_grant', 'code was issued to a different client.');
       if (codeGrant.redirect_uri && b.redirect_uri && codeGrant.redirect_uri !== b.redirect_uri) return oauthError(reply, 400, 'invalid_grant', 'redirect_uri mismatch.');
       if (!verifyPkce(b.code_verifier, codeGrant.code_challenge, codeGrant.code_challenge_method)) return oauthError(reply, 400, 'invalid_grant', 'PKCE verification failed.');
-      const tokens = await issueTokens(app_.id, client.client_id, codeGrant.owner, codeGrant.scopes);
+      // RFC 8707 — the issued tokens inherit the CODE's bound resource. A `resource` presented at exchange
+      // must match what was requested at authorize (else invalid_target); omitting it inherits the code's.
+      if (trimmed(b.resource) && trimmed(b.resource) !== codeGrant.resource) return oauthError(reply, 400, 'invalid_target', 'resource does not match the authorization request.');
+      const tokens = await issueTokens(app_.id, client.client_id, codeGrant.owner, codeGrant.scopes, undefined, codeGrant.resource);
       return reply.status(200).send(tokens);
     }
 
@@ -307,7 +314,8 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
         if (!scopesSubset(requested, refreshGrant.scopes)) return oauthError(reply, 400, 'invalid_scope', 'requested scope exceeds the original grant.');
         scopes = requested;
       }
-      const tokens = await issueTokens(app_.id, client.client_id, refreshGrant.owner, scopes, refreshGrant.token_hash);
+      // RFC 8707 — carry the audience binding across the rotation so the rotated access token stays bound.
+      const tokens = await issueTokens(app_.id, client.client_id, refreshGrant.owner, scopes, refreshGrant.token_hash, refreshGrant.resource);
       return reply.status(200).send(tokens);
     }
 
@@ -329,17 +337,19 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
     return reply.status(200).send({});
   });
 
-  // Issue a scoped access + rotating refresh token pair, persisting only their HASHES.
-  async function issueTokens(appId: string, clientId: string, owner: string, scopes: string[], parentHash?: string) {
+  // Issue a scoped access + rotating refresh token pair, persisting only their HASHES. `resource` (RFC 8707)
+  // is the audience the pair is bound to — threaded from the authorization code (or carried across a refresh
+  // rotation) so the resource server can reject a token presented to a different resource.
+  async function issueTokens(appId: string, clientId: string, owner: string, scopes: string[], parentHash?: string, resource?: string) {
     const store_ = await mcp();
     const now = nowIso();
     const access = newToken();
     const refresh = newToken();
     const accessTtl = accessTtlSeconds();
-    await store_.putGrant(appId, { kind: 'access', token_hash: access.hash, client_id: clientId, owner, scopes, expires_at: expiresAtIso(accessTtl), visibility: 'private', created_at: now });
+    await store_.putGrant(appId, { kind: 'access', token_hash: access.hash, client_id: clientId, owner, scopes, expires_at: expiresAtIso(accessTtl), ...(resource ? { resource } : {}), visibility: 'private', created_at: now });
     await store_.putGrant(appId, {
       kind: 'refresh', token_hash: refresh.hash, client_id: clientId, owner, scopes, expires_at: expiresAtIso(refreshTtlSeconds()),
-      ...(parentHash ? { parent_hash: parentHash } : {}), visibility: 'private', created_at: now,
+      ...(resource ? { resource } : {}), ...(parentHash ? { parent_hash: parentHash } : {}), visibility: 'private', created_at: now,
     });
     return { access_token: access.token, token_type: 'Bearer', expires_in: accessTtl, refresh_token: refresh.token, scope: scopeString(scopes) };
   }

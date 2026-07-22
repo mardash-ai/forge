@@ -210,3 +210,73 @@ describe('C23 — the full authorization_code + PKCE + refresh flow', () => {
     expect(decision.headers.location).toContain('error=access_denied');
   });
 });
+
+// Change A — RFC 8707 resource indicator: the `resource` requested at authorize binds onto the code and is
+// threaded onto the issued access/refresh tokens; a mismatch at token exchange is rejected; and a flow with
+// NO resource still issues a working (unbound) token (BACK-COMPAT — existing live clients keep working).
+describe('Change A — RFC 8707 resource/audience binding round-trips authorize → token', () => {
+  const verifier = 'the-pkce-code-verifier-0123456789abcdef';
+  const RESOURCE = 'https://api.example/mcp';
+
+  // Mint an authorization code, optionally carrying a `resource` (as the consent form would post it).
+  const codeWithResource = async (resource?: string): Promise<{ clientId: string; code: string; userId: string }> => {
+    const clientId = await registerClient();
+    const challenge = pkceChallenge(verifier);
+    const { cookie, userId } = await loginCookie();
+    const decision = await post('/oauth/authorize/decision', {
+      client_id: clientId, redirect_uri: REDIRECT, scope: 'notes:read', state: 'r1',
+      code_challenge: challenge, code_challenge_method: 'S256', decision: 'approve',
+      ...(resource ? { resource } : {}),
+    }, { cookie });
+    expect(decision.statusCode).toBe(303);
+    const url = new URL(decision.headers.location as string);
+    return { clientId, code: url.searchParams.get('code')!, userId };
+  };
+
+  it('binds the resource onto the access token: matching verify passes, a different resource is rejected', async () => {
+    const { clientId, code, userId } = await codeWithResource(RESOURCE);
+    const tok = await post('/oauth/token', { grant_type: 'authorization_code', code, code_verifier: verifier, client_id: clientId, redirect_uri: REDIRECT, resource: RESOURCE });
+    expect(tok.statusCode).toBe(200);
+    const access = tok.json().access_token as string;
+    // Verifies for the bound resource + surfaces it on VerifiedToken.
+    expect(await verifyAccessToken(APP_ID, access, RESOURCE)).toMatchObject({ userId, resource: RESOURCE });
+    // Rejected against a DIFFERENT resource; and an unbound check (no expected resource) still passes.
+    expect(await verifyAccessToken(APP_ID, access, 'https://evil.example/mcp')).toBeNull();
+    expect(await verifyAccessToken(APP_ID, access)).toMatchObject({ userId, resource: RESOURCE });
+
+    // The binding survives a refresh rotation.
+    const refreshed = await post('/oauth/token', { grant_type: 'refresh_token', refresh_token: tok.json().refresh_token, client_id: clientId });
+    expect(refreshed.statusCode).toBe(200);
+    expect(await verifyAccessToken(APP_ID, refreshed.json().access_token, RESOURCE)).toMatchObject({ userId, resource: RESOURCE });
+  });
+
+  it('rejects a token exchange whose resource does not match the code (invalid_target)', async () => {
+    const { clientId, code } = await codeWithResource(RESOURCE);
+    const bad = await post('/oauth/token', { grant_type: 'authorization_code', code, code_verifier: verifier, client_id: clientId, redirect_uri: REDIRECT, resource: 'https://evil.example/mcp' });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error).toBe('invalid_target');
+  });
+
+  it('a code with NO resource still issues a working, UNBOUND token — back-compat', async () => {
+    const { clientId, code, userId } = await codeWithResource(); // no resource requested
+    const tok = await post('/oauth/token', { grant_type: 'authorization_code', code, code_verifier: verifier, client_id: clientId, redirect_uri: REDIRECT });
+    expect(tok.statusCode).toBe(200);
+    // Even when a resource server expects one, an unbound token still verifies (existing live tokens keep working).
+    const v = await verifyAccessToken(APP_ID, tok.json().access_token, RESOURCE);
+    expect(v).toMatchObject({ userId });
+    expect(v!.resource).toBeUndefined();
+  });
+
+  it('threads the resource through the GET /oauth/authorize consent form', async () => {
+    const clientId = await registerClient();
+    const challenge = pkceChallenge(verifier);
+    const { cookie } = await loginCookie();
+    const consent = await get(
+      `/oauth/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(REDIRECT)}&scope=notes:read&state=xyz&code_challenge=${challenge}&code_challenge_method=S256&resource=${encodeURIComponent(RESOURCE)}`,
+      { cookie },
+    );
+    expect(consent.statusCode).toBe(200);
+    expect(consent.body).toContain('name="resource"');
+    expect(consent.body).toContain(RESOURCE);
+  });
+});

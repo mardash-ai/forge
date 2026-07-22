@@ -7,6 +7,7 @@ import { nowIso } from '../shared/time';
 import { APP_HEADER } from '../shared/session';
 import { appCallbackBase, serviceAuthHeaders } from '../shared/app-callback';
 import { resolveServiceToken } from '../plugins/auth-identity/index';
+import { hasValidServiceToken } from '../shared/service-auth';
 import { verifyAccessToken, bearerFrom, type VerifiedToken } from '../mcp/verify';
 import { scopesSatisfy } from '../mcp/oauth';
 import type { ToolRegistration, ToolFamily } from '../mcp/types';
@@ -66,6 +67,32 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     return `${proto}://${host}`;
   }
 
+  // Change C — a restrictive Content-Security-Policy on this MACHINE-FACING JSON surface (POST /mcp, the
+  // RFC 9728 discovery doc, and the /mcp/* management routes). These responses are never a browsing context,
+  // so lock everything down + forbid framing/base-uri hijacks. Scoped by URL so it never touches the HTML
+  // OAuth consent page (oauth-routes.ts) — which needs inline styles — even though routes share one instance.
+  const MCP_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
+  app.addHook('onSend', async (req, reply) => {
+    const path = req.url.split('?')[0]!;
+    if (path === '/mcp' || path.startsWith('/mcp/') || path === '/.well-known/oauth-protected-resource') {
+      reply.header('content-security-policy', MCP_CSP);
+    }
+  });
+
+  // Change D (security) — the app→sidecar MANAGEMENT surface carries NO OAuth (unlike POST /mcp) yet the
+  // consumer proxies `/mcp/*` to the PUBLIC internet, so without a gate an unauthenticated caller could
+  // register/rewrite tools + instruction blocks, schedule proactive prompts, or revoke a user's consent.
+  // Every management route requires the app's C10 service token (`x-forge-service-token`, constant-time
+  // compare — the same principal + verifier the C2 cron fire / C24 broker / billing admin ops present).
+  // FAIL CLOSED: an app with no configured AUTH_SERVICE_TOKEN rejects. This gate is deliberately NOT on
+  // `POST /mcp` (OAuth-token gated) nor the public `.well-known/oauth-protected-resource` discovery doc.
+  const needServiceToken = { error: { code: 'unauthorized', message: 'a valid x-forge-service-token is required.', retry: 'needs-human' } };
+  async function requireServiceToken(req: FastifyRequest, reply: FastifyReply, appId: string): Promise<boolean> {
+    if (await hasValidServiceToken(req, appId)) return true;
+    reply.status(401).send(needServiceToken);
+    return false;
+  }
+
   // === the protected-resource pointer (RFC 9728) — sends the host to our authorization server ======
   app.get('/.well-known/oauth-protected-resource', async (req, reply) => {
     const base = publicBase(req);
@@ -78,8 +105,10 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     if (!app_) return reply.status(404).send(unknownApp);
 
     // Gate on the OAuth access token; a missing/invalid token → 401 with the discovery pointer so the MCP
-    // client kicks off the OAuth flow (RFC 9728 WWW-Authenticate).
-    const verified = await verifyAccessToken(app_.id, bearerFrom(req.headers.authorization));
+    // client kicks off the OAuth flow (RFC 9728 WWW-Authenticate). Change A (RFC 8707): pass THIS server's
+    // resource id as the expected audience — a token bound to a DIFFERENT resource is rejected here, while a
+    // token with no bound resource still verifies (back-compat with tokens issued before aud-binding).
+    const verified = await verifyAccessToken(app_.id, bearerFrom(req.headers.authorization), `${publicBase(req)}/mcp`);
     if (!verified) {
       return reply
         .status(401)
@@ -132,6 +161,10 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
               inputSchema: t.input_schema ?? { type: 'object' },
               ...(t.output_schema ? { outputSchema: t.output_schema } : {}),
               ...(Object.keys(annotations).length ? { annotations } : {}),
+              // Change B — per-tool securitySchemes (ChatGPT Apps SDK shape). Every tool is OAuth-gated by its
+              // `scope`, so advertise an oauth2 scheme referencing that scope; a scopeless tool advertises
+              // `noauth`. This only DECLARES the requirement — the platform still enforces scope on each call.
+              securitySchemes: t.scope ? [{ type: 'oauth2', scopes: [t.scope] }] : [{ type: 'noauth' }],
             };
           }),
         }));
@@ -240,6 +273,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     const b = (req.body ?? {}) as Partial<ToolRegistration> & { app?: string };
     const app_ = await resolveAppId(req, b.app);
     if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await requireServiceToken(req, reply, app_.id))) return;
     if (!b.name || !TOOL_NAME_RE.test(b.name)) return reply.status(422).send(invalid('a tool `name` (a-zA-Z0-9_- up to 64) is required.'));
     if (!b.handler_path || !b.handler_path.startsWith('/')) return reply.status(422).send(invalid('a `handler_path` app path (e.g. /api/mcp/tools/create_note) is required.'));
     const family: ToolFamily = FAMILIES.includes(b.family as ToolFamily) ? (b.family as ToolFamily) : 'action';
@@ -271,12 +305,14 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
   app.get('/mcp/tools', async (req, reply) => {
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await requireServiceToken(req, reply, app_.id))) return;
     return { tools: await (await mcp()).listTools(app_.id) };
   });
 
   app.delete('/mcp/tools/:name', async (req, reply) => {
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await requireServiceToken(req, reply, app_.id))) return;
     const { name } = req.params as { name: string };
     return { deleted: await (await mcp()).deleteTool(app_.id, name) };
   });
@@ -285,6 +321,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     const b = (req.body ?? {}) as { app?: string; text?: string; label?: string };
     const app_ = await resolveAppId(req, b.app);
     if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await requireServiceToken(req, reply, app_.id))) return;
     if (typeof b.text !== 'string' || !b.text.trim()) return reply.status(422).send(invalid('a non-empty instruction `text` is required.'));
     const block = await (await mcp()).appendInstructions(app_.id, { text: b.text, ...(b.label ? { label: b.label } : {}), created_at: nowIso() });
     return reply.status(200).send({ instructions: block });
@@ -293,6 +330,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
   app.get('/mcp/instructions', async (req, reply) => {
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await requireServiceToken(req, reply, app_.id))) return;
     const q = req.query as { version?: string };
     const block = q.version ? await (await mcp()).getInstructions(app_.id, Number(q.version)) : await (await mcp()).latestInstructions(app_.id);
     if (!block) return reply.status(404).send({ error: { code: 'not_found', message: 'no instruction block declared.', retry: 'change-input' } });
@@ -305,6 +343,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     const b = (req.body ?? {}) as { app?: string; tool?: string; every?: string; cron?: string; target_path?: string; disabled?: boolean; remove?: boolean };
     const app_ = await resolveAppId(req, b.app);
     if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await requireServiceToken(req, reply, app_.id))) return;
     if (!b.tool || !TOOL_NAME_RE.test(b.tool)) return reply.status(422).send(invalid('a `tool` name is required.'));
     const jobName = `mcp-proactive-${b.tool}`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     try {
@@ -330,6 +369,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
   app.get('/mcp/consents', async (req, reply) => {
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await requireServiceToken(req, reply, app_.id))) return;
     const q = req.query as { owner?: string };
     if (!q.owner) return reply.status(400).send(invalid('an `owner` is required.'));
     return { consents: await (await mcp()).listConsents(app_.id, q.owner) };
@@ -338,6 +378,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
   app.delete('/mcp/consents/:client_id', async (req, reply) => {
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await requireServiceToken(req, reply, app_.id))) return;
     const { client_id } = req.params as { client_id: string };
     const q = req.query as { owner?: string };
     if (!q.owner) return reply.status(400).send(invalid('an `owner` is required.'));
