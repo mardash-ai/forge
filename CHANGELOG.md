@@ -9,6 +9,8 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-07-22
+
 ### Added
 - **C23 — per-host MCP resource identifier (dedicated mTLS host support).** `POST /mcp` and the RFC 9728
   protected-resource discovery doc now derive the MCP **resource identifier** (RFC 8707) from the host the
