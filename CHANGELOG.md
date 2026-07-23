@@ -9,6 +9,16 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.66.0] - 2026-07-23
+
+### Added
+- **C24 — `GET /connect` accepts a service-token + `owner` (query/body), like the broker.** A consuming
+  app's SERVER-TO-SERVER connector read can now authenticate over the trusted C10 service-token channel
+  with the owner it already resolved, instead of re-forwarding the end-user's browser session cookie —
+  which is fragile server-side and was silently yielding an empty connection list (the app's Integrations
+  page showed a connected Google account as "not connected"). Session auth is unchanged; a service token
+  with no `owner` is refused (401). Same trust model as `/connect/:provider/token` and `/connect/:provider/send`.
+
 ## [0.65.0] - 2026-07-23
 
 ### Fixed

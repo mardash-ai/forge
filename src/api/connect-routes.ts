@@ -191,13 +191,30 @@ export function registerConnectRoutes(app: FastifyInstance, opts: { defaultApp?:
     }
   });
 
+  // Owner resolution for the connector READ surface: the C10 session (user-in-the-loop) OR a valid C10
+  // SERVICE token + an explicit `owner` (query or body) — the SAME trust model as the broker
+  // (`/connect/:provider/token`) and send. A consuming app's SERVER-TO-SERVER read authenticates over
+  // this trusted channel with the owner IT already resolved, rather than re-forwarding the end-user's
+  // browser session cookie (fragile server-side — it silently yielded an empty list). Returns the owner
+  // or null (→ 401). A service token with NO owner is a client error the caller surfaces as 401.
+  async function resolveReadOwner(req: FastifyRequest, appId: string): Promise<string | null> {
+    const user = await sessionUser(req, appId);
+    if (user) return user.userId;
+    const presented = serviceTokenPresented(req);
+    const configured = await resolveServiceToken(appId);
+    if (!presented || !serviceTokenMatches(presented, configured)) return null;
+    const q = trimmed((req.query as { owner?: string } | undefined)?.owner);
+    const b = trimmed((req.body as { owner?: string } | undefined)?.owner);
+    return q ?? b ?? null;
+  }
+
   // === list my connections =======================================================================
   app.get('/connect', async (req, reply) => {
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
-    const user = await sessionUser(req, app_.id);
-    if (!user) return reply.status(401).send(needAuth);
-    return { connections: await listConnections(app_.id, user.userId) };
+    const owner = await resolveReadOwner(req, app_.id);
+    if (!owner) return reply.status(401).send(needAuth);
+    return { connections: await listConnections(app_.id, owner) };
   });
 
   // === disconnect ================================================================================

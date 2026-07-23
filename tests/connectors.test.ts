@@ -245,6 +245,32 @@ describe('C24 — management (list / disconnect)', () => {
     expect(res.statusCode).toBe(401);
   });
 
+  it('GET /connect lists connections for a SERVICE-token + ?owner (consuming app server-to-server read)', async () => {
+    await configureGoogle();
+    await setSecret(APP_ID, 'AUTH_SERVICE_TOKEN', 'svc-token-123');
+    const { userId, cookie } = await signIn();
+    await connect(cookie); // the user connected in a session earlier
+    // Later, the app's own server-to-server read authenticates over the trusted service channel with the
+    // owner it already resolved — NOT by re-forwarding the browser cookie (fragile server-side). Same
+    // trust model as the broker. (Fixes the Integrations "not connected" display bug.)
+    const res = await server.inject({
+      method: 'GET',
+      url: `/connect?owner=${encodeURIComponent(userId)}`,
+      headers: { 'x-forge-service-token': 'svc-token-123' },
+    });
+    expect(res.statusCode).toBe(200);
+    const list = res.json().connections as Array<Record<string, unknown>>;
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ provider: 'google', status: 'connected' });
+  });
+
+  it('GET /connect with a valid service token but NO owner is refused (401)', async () => {
+    await configureGoogle();
+    await setSecret(APP_ID, 'AUTH_SERVICE_TOKEN', 'svc-token-123');
+    const res = await server.inject({ method: 'GET', url: '/connect', headers: { 'x-forge-service-token': 'svc-token-123' } });
+    expect(res.statusCode).toBe(401);
+  });
+
   it('DELETE revokes at the provider and deletes the stored tokens', async () => {
     await configureGoogle();
     const { userId, cookie } = await signIn();
