@@ -9,6 +9,24 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.65.0] - 2026-07-23
+
+### Fixed
+- **C23 — serve OAuth discovery at the RFC 9728/8414 path-suffixed `…/mcp` URLs.** An MCP client that
+  connects to the resource `<host>/mcp` derives the discovery URL by appending the resource path
+  (`/.well-known/oauth-protected-resource/mcp`, `/.well-known/oauth-authorization-server/mcp`). forge
+  served both docs only at the ROOT well-known paths, so Claude's connector validation — which requires
+  the path-suffixed form — got 404s and reported a **"server configuration issue"** (connector unusable;
+  confirmed live via the edge access log). Both docs are now served at the path-suffixed URLs too, and
+  the `POST /mcp` 401 `WWW-Authenticate` advertises the path-suffixed protected-resource URL. Guard-proven.
+
+### Changed
+- **C23 — access-token TTL cap raised 24h → 30d** (`FORGE_OAUTH_ACCESS_TTL_SECONDS`). Some connector
+  hosts ride the access token until expiry rather than refreshing mid-session, then show the connector
+  "unavailable" until a manual reconnect; the 24h ceiling forced frequent reconnects. Default stays 1h;
+  access tokens remain individually revocable, so a longer operator-chosen TTL trades a bounded,
+  revocable window for a much better connector UX.
+
 ## [0.64.0] - 2026-07-22
 
 ### Added

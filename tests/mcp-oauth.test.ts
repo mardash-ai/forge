@@ -85,6 +85,13 @@ describe('C23 — discovery + dynamic client registration', () => {
       token_endpoint: 'https://app.example/oauth/token',
       code_challenge_methods_supported: ['S256'],
     });
+    // RFC 8414 §3.1 path-suffixed variant — an MCP client connecting to `<host>/mcp` derives the AS
+    // metadata URL by appending the resource path. Claude's connector validation requires it; a 404
+    // there is reported as a "server configuration issue" (live-confirmed 2026-07-23). Same doc, both.
+    const suff = await get('/.well-known/oauth-authorization-server/mcp', { host: 'app.example' });
+    expect(suff.statusCode).toBe(200);
+    expect(suff.json()).toEqual(meta);
+
     const reg = await post('/oauth/register', { client_name: 'App', redirect_uris: [REDIRECT] });
     expect(reg.statusCode).toBe(201);
     expect(reg.json().client_id).toMatch(/^mcpc_/);

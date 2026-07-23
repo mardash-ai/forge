@@ -104,7 +104,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
   const MCP_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
   app.addHook('onSend', async (req, reply) => {
     const path = req.url.split('?')[0]!;
-    if (path === '/mcp' || path.startsWith('/mcp/') || path === '/.well-known/oauth-protected-resource') {
+    if (path === '/mcp' || path.startsWith('/mcp/') || path === '/.well-known/oauth-protected-resource' || path === '/.well-known/oauth-protected-resource/mcp') {
       reply.header('content-security-policy', MCP_CSP);
     }
   });
@@ -126,9 +126,15 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
   // === the protected-resource pointer (RFC 9728) — advertises the PER-REQUEST resource id + the PINNED AS ===
   // `resource` names the host the client connected to (resourceBase, per-host); `authorization_servers` points
   // at the pinned certless OAuth AS (issuerBase) — the two diverge for a request via a dedicated mTLS host.
-  app.get('/.well-known/oauth-protected-resource', async (req, reply) => {
-    return reply.status(200).send({ resource: `${resourceBase(req)}/mcp`, authorization_servers: [issuerBase(req)] });
-  });
+  // Served at BOTH the root well-known AND the resource-path-suffixed URL (`…/oauth-protected-resource/mcp`):
+  // per RFC 9728 §3.1 the metadata URL for a resource at `<host>/mcp` is the path-suffixed form, and Claude's
+  // connector validation REQUIRES it — a 404 there is reported to the user as a "server configuration issue"
+  // (verified live 2026-07-23 via the edge access log). The WWW-Authenticate pointer (POST /mcp 401 below)
+  // advertises this same path-suffixed URL so discovery loops back to the canonical location.
+  const protectedResourceHandler = async (req: FastifyRequest, reply: FastifyReply) =>
+    reply.status(200).send({ resource: `${resourceBase(req)}/mcp`, authorization_servers: [issuerBase(req)] });
+  app.get('/.well-known/oauth-protected-resource', protectedResourceHandler);
+  app.get('/.well-known/oauth-protected-resource/mcp', protectedResourceHandler);
 
   // === the MCP endpoint (Streamable-HTTP, JSON-RPC 2.0) ============================================
   app.post('/mcp', async (req, reply) => {
@@ -154,7 +160,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       }).end('error', reason ?? 'invalid_token');
       return reply
         .status(401)
-        .header('WWW-Authenticate', `Bearer resource_metadata="${resourceBase(req)}/.well-known/oauth-protected-resource"`)
+        .header('WWW-Authenticate', `Bearer resource_metadata="${resourceBase(req)}/.well-known/oauth-protected-resource/mcp"`)
         .send({ error: 'invalid_token', error_description: 'a valid OAuth access token is required.' });
     }
 

@@ -256,6 +256,23 @@ describe('C23 — resource-identifier host split (FORGE_MCP_PUBLIC_URL)', () => 
       if (prevOauth === undefined) delete process.env.FORGE_OAUTH_PUBLIC_URL; else process.env.FORGE_OAUTH_PUBLIC_URL = prevOauth;
     }
   });
+
+  // RFC 9728 §3.1 — a resource at `<host>/mcp` publishes its metadata at the PATH-SUFFIXED well-known
+  // URL. Claude's connector validation derives + requires this form; a 404 there was reported to the
+  // user as a "server configuration issue" (live-confirmed 2026-07-23). Both discovery docs must serve
+  // the path-suffixed URL identically to the root, and the 401 pointer must name the suffixed URL.
+  it('serves the protected-resource metadata at the RFC 9728 path-suffixed /mcp URL (Claude connector requirement)', async () => {
+    const rootPr = (await get('/.well-known/oauth-protected-resource')).json();
+    const suffPrRes = await get('/.well-known/oauth-protected-resource/mcp');
+    expect(suffPrRes.statusCode).toBe(200);
+    expect(suffPrRes.json()).toEqual(rootPr);
+  });
+
+  it('the 401 WWW-Authenticate points at the path-suffixed protected-resource metadata', async () => {
+    const unauth = await rpc('initialize', {});
+    expect(unauth.statusCode).toBe(401);
+    expect(String(unauth.headers['www-authenticate'])).toContain('/.well-known/oauth-protected-resource/mcp"');
+  });
 });
 
 describe('C23 — connector (consent) management', () => {

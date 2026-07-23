@@ -108,12 +108,19 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
     reply.status(status).send({ error, ...(description ? { error_description: description } : {}) });
 
   // === discovery ==================================================================================
-  app.get('/.well-known/oauth-authorization-server', async (req, reply) => {
+  // Served at BOTH the root well-known AND the resource-path-suffixed URL. An MCP client connecting to
+  // the resource `<host>/mcp` derives the discovery URL by appending the resource path to the
+  // well-known prefix (RFC 8414 §3.1 / RFC 9728 §3.1 path-insertion); Claude's connector validation
+  // REQUIRES the `…/oauth-authorization-server/mcp` form and flags a "server configuration issue" when
+  // it 404s. Serving both keeps root-form and path-form clients happy. (Verified live 2026-07-23.)
+  const authServerMetadataHandler = async (req: FastifyRequest, reply: FastifyReply) => {
     const app_ = await resolveAppId(req);
     let scopes: string[] = [];
     if (app_) scopes = [...new Set((await (await mcp()).listTools(app_.id)).map((t) => t.scope))];
     return reply.status(200).send(authServerMetadata(publicBase(req), scopes));
-  });
+  };
+  app.get('/.well-known/oauth-authorization-server', authServerMetadataHandler);
+  app.get('/.well-known/oauth-authorization-server/mcp', authServerMetadataHandler);
 
   // === dynamic client registration (RFC 7591) ====================================================
   app.post('/oauth/register', async (req, reply) => {

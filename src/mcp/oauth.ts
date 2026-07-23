@@ -64,7 +64,13 @@ export const DEFAULT_ACCESS_TTL_SECONDS = 60 * 60; // access token — 1h
 export const DEFAULT_REFRESH_TTL_SECONDS = 60 * 60 * 24 * 30; // refresh token — 30d
 
 export const codeTtlSeconds = (): number => intFromEnv('FORGE_OAUTH_CODE_TTL_SECONDS', DEFAULT_CODE_TTL_SECONDS, 10, 600);
-export const accessTtlSeconds = (): number => intFromEnv('FORGE_OAUTH_ACCESS_TTL_SECONDS', DEFAULT_ACCESS_TTL_SECONDS, 60, 60 * 60 * 24);
+// Access-token TTL. Default 1h (short — the OAuth norm; a refreshing client keeps a rolling session via
+// the 30d refresh token). Cap raised from 24h → 30d so an operator whose connector client does NOT refresh
+// mid-session (some MCP hosts ride the access token until expiry, then show the connector "unavailable"
+// until a manual reconnect) can pick a session length that fits daily use instead of forcing frequent
+// reconnects. Access tokens stay individually revocable (/oauth/revoke + verify checks revocation), so a
+// longer TTL trades a bounded, revocable exposure window for a much better connector UX.
+export const accessTtlSeconds = (): number => intFromEnv('FORGE_OAUTH_ACCESS_TTL_SECONDS', DEFAULT_ACCESS_TTL_SECONDS, 60, 60 * 60 * 24 * 30);
 export const refreshTtlSeconds = (): number => intFromEnv('FORGE_OAUTH_REFRESH_TTL_SECONDS', DEFAULT_REFRESH_TTL_SECONDS, 60, 60 * 60 * 24 * 365);
 
 export function expiresAtIso(ttlSeconds: number, now: Date = new Date()): string {
