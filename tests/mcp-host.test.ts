@@ -6,7 +6,12 @@ import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { store } from '../src/storage/store';
 import { getBackends } from '../src/storage/backends';
-import { registerMcpRoutes } from '../src/api/mcp-routes';
+import {
+  registerMcpRoutes,
+  subscribeToolListChanged,
+  broadcastToolListChanged,
+  toolListSubscriberCount,
+} from '../src/api/mcp-routes';
 import { newToken } from '../src/plugins/auth-identity/index';
 import { expiresAtIso } from '../src/mcp/oauth';
 import { nowIso } from '../src/shared/time';
@@ -131,6 +136,88 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
     const tools = list.json().result.tools;
     expect(tools).toHaveLength(1);
     expect(tools[0]).toMatchObject({ name: 'get_note', inputSchema: { type: 'object' } });
+  });
+
+  // ── tools/list_changed — clients must learn about a changed tool surface WITHOUT a user reconnect ──
+  describe('notifications/tools/list_changed', () => {
+    it('initialize advertises tools.listChanged:true (tells clients to watch for surface changes)', async () => {
+      const bearer = await mintAccess(['notes:read']);
+      const init = await rpc('initialize', { protocolVersion: '2025-06-18' }, bearer);
+      // false here = "my tools never change" → clients cache forever and only a manual reconnect helps.
+      expect(init.json().result.capabilities).toMatchObject({ tools: { listChanged: true } });
+    });
+
+    it('REGISTERING a tool pushes list_changed to every connected stream', async () => {
+      const frames: string[] = [];
+      const unsub = subscribeToolListChanged(APP_ID, (f) => frames.push(f));
+      try {
+        await registerTool();
+        expect(frames).toHaveLength(1);
+        expect(frames[0]).toContain('event: message');
+        const data = JSON.parse(frames[0]!.split('data: ')[1]!);
+        expect(data).toEqual({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+      } finally {
+        unsub();
+      }
+    });
+
+    it('DELETING a tool (the prune path) also pushes list_changed', async () => {
+      await registerTool();
+      const frames: string[] = [];
+      const unsub = subscribeToolListChanged(APP_ID, (f) => frames.push(f));
+      try {
+        const del = await server.inject({
+          method: 'DELETE',
+          url: '/mcp/tools/get_note',
+          headers: { 'x-forge-service-token': SVC_TOKEN },
+        });
+        expect(del.statusCode).toBe(200);
+        expect(frames).toHaveLength(1);
+        expect(frames[0]).toContain('notifications/tools/list_changed');
+      } finally {
+        unsub();
+      }
+    });
+
+    it('only notifies the app whose surface changed, and unsubscribe stops delivery (no leak)', async () => {
+      const mine: string[] = [];
+      const other: string[] = [];
+      const unsubMine = subscribeToolListChanged(APP_ID, (f) => mine.push(f));
+      const unsubOther = subscribeToolListChanged('app_someone_else', (f) => other.push(f));
+      try {
+        await registerTool();
+        expect(mine).toHaveLength(1);
+        expect(other).toHaveLength(0); // a different app's clients are untouched
+      } finally {
+        unsubMine();
+        unsubOther();
+      }
+      expect(toolListSubscriberCount(APP_ID)).toBe(0); // unsubscribed → registry drained
+      await registerTool();
+      expect(mine).toHaveLength(1); // no delivery after unsubscribe
+    });
+
+    it('a dead client (throwing writer) is dropped and never fails the registration', async () => {
+      const unsub = subscribeToolListChanged(APP_ID, () => {
+        throw new Error('socket closed');
+      });
+      try {
+        const res = await post('/mcp/tools', {
+          name: 'get_note',
+          description: 'd',
+          handler_path: '/api/mcp/tools/get_note',
+          family: 'read',
+        });
+        expect(res.statusCode).toBe(200); // registration still succeeds
+        expect(toolListSubscriberCount(APP_ID)).toBe(0); // the broken stream was pruned
+      } finally {
+        unsub();
+      }
+    });
+
+    it('broadcast to an app with no streams is a no-op (returns 0)', () => {
+      expect(broadcastToolListChanged('app_nobody_listening')).toBe(0);
+    });
   });
 
   it('dispatches tools/call to the app handler and records the call to C3', async () => {

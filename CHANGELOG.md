@@ -9,6 +9,28 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.69.0] - 2026-07-23
+
+### Added
+- **C23 — `notifications/tools/list_changed` (no more "reconnect to see new tools").** MCP clients CACHE
+  `tools/list`; the host previously advertised `tools.listChanged: false`, so a client that connected
+  before a tool was added kept serving the stale surface until the **user manually reconnected the
+  connector**. The host now:
+  - serves the Streamable-HTTP **standalone server→client stream** at **`GET /mcp`** (SSE, same OAuth
+    Bearer gate as `POST /mcp`, with a 25s keep-alive and `X-Accel-Buffering: no` so proxies don't buffer),
+  - advertises **`capabilities.tools.listChanged: true`**, and
+  - **pushes `notifications/tools/list_changed`** to every connected stream for that app whenever the tool
+    surface changes (`POST /mcp/tools` register/update and `DELETE /mcp/tools/:name` prune).
+
+  Compliant clients re-fetch `tools/list` on their own — a newly added tool reaches connected AIs with no
+  user action. Best-effort + isolated: a dead stream is pruned and can never fail a tool registration, and
+  only the app whose surface changed is notified. Guard-proven (5 tests fail without the wiring).
+
+  *Scope (v1, honest):* the subscriber registry is **in-process**. The data-plane runs single-instance
+  today; horizontal scaling would need a cross-instance fanout (e.g. Postgres LISTEN/NOTIFY) so a client
+  attached to replica A sees a registration that hit replica B.
+
+
 ## [0.68.0] - 2026-07-23
 
 ### Added

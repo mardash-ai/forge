@@ -14,14 +14,18 @@ import type { ToolRegistration, ToolFamily } from '../mcp/types';
 import { startSpan, traceparent, parentFromTraceparent, capPayload, ATTR } from '../plugins/otel-langfuse/index';
 
 // C23 — the REMOTE MCP SERVER the platform hosts for a consuming app, plus the app-facing management
-// surface. `POST /mcp` speaks JSON-RPC 2.0 over the Streamable-HTTP transport (request/response; no
-// persistent SSE server-push in v1, per O1) and is gated by the OAuth access token the C23 AS issued: it
+// surface. `POST /mcp` speaks JSON-RPC 2.0 over the Streamable-HTTP transport (request/response), and
+// `GET /mcp` is the STANDALONE server→client SSE stream over which we push server-initiated
+// notifications (today `notifications/tools/list_changed`, so a connected client re-fetches `tools/list`
+// when the surface changes instead of caching it until the user reconnects). Both are gated by the
+// OAuth access token the C23 AS issued: it
 // serves the app's registered tools as MCP tools and DISPATCHES each `tools/call` to the app's handler (the
 // C2 sidecar→app callback), enforcing the tool's scope and recording the call to the C3 audit trail. The
 // `/mcp/*` management routes are internal app→sidecar calls (like the C3/C4 routes) that register the tool
 // surface, version the instruction block, and schedule proactive prompts via C2.
 //
 //   POST /mcp                              JSON-RPC: initialize | tools/list | tools/call | ping  (Bearer-gated)
+//   GET  /mcp                              SSE server→client stream: pushes notifications/tools/list_changed (Bearer-gated)
 //   GET  /.well-known/oauth-protected-resource   -> points the host at the C23 authorization server
 //   POST /mcp/tools    { name, description, input_schema, scope, family, handler_path, … }  -> register a tool
 //   GET  /mcp/tools                        -> the app's tool surface
@@ -45,6 +49,64 @@ const unknownApp = { error: { code: 'not_found', message: 'unknown app (pass `ap
 // an operator toggle needs no process restart. The capture is strictly the application payload — the
 // Authorization header / bearer / service token NEVER enter the recorded values.
 const tracePayloads = (): boolean => process.env.FORGE_MCP_TRACE_PAYLOADS !== 'false';
+
+// ── tools/list_changed — server→client push over the Streamable-HTTP GET stream ──────────────────
+//
+// WHY: MCP clients CACHE `tools/list`. Before this, the server advertised `tools.listChanged: false`
+// ("my tool surface never changes"), so a client that connected before a tool was added kept serving
+// the stale set until the USER manually reconnected the connector — a terrible upgrade story for a
+// live product. The spec's answer is `notifications/tools/list_changed`, which needs a server→client
+// channel: the Streamable-HTTP standalone `GET /mcp` SSE stream. We now hold those streams open per
+// app and push the notification the moment the tool surface changes (register / delete), so compliant
+// clients re-fetch on their own with no user action.
+//
+// SCOPE (v1, honest): the registry is IN-PROCESS. The data-plane runs as a single instance today, so
+// the app's management POST and the client's open stream land on the same process. If the data-plane
+// is ever scaled horizontally, this needs a cross-instance fanout (Postgres LISTEN/NOTIFY) — a client
+// attached to replica A would otherwise miss a registration that hit replica B.
+type SseWriter = (frame: string) => void;
+const toolListSubscribers = new Map<string, Set<SseWriter>>();
+
+/** Attach a server→client stream for `appId`. Returns an unsubscribe fn (call on connection close). */
+export function subscribeToolListChanged(appId: string, write: SseWriter): () => void {
+  const set = toolListSubscribers.get(appId) ?? new Set<SseWriter>();
+  set.add(write);
+  toolListSubscribers.set(appId, set);
+  return () => {
+    const s = toolListSubscribers.get(appId);
+    if (!s) return;
+    s.delete(write);
+    if (s.size === 0) toolListSubscribers.delete(appId);
+  };
+}
+
+/**
+ * Push `notifications/tools/list_changed` to every open stream for `appId`. Returns how many streams
+ * were notified. Best-effort: a write failure (client vanished) drops that subscriber and never throws,
+ * so a dead connection can't fail a tool registration.
+ */
+export function broadcastToolListChanged(appId: string): number {
+  const subs = toolListSubscribers.get(appId);
+  if (!subs || subs.size === 0) return 0;
+  // A JSON-RPC notification (no `id`) framed as an SSE `message` event, per Streamable HTTP.
+  const frame = `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' })}\n\n`;
+  let sent = 0;
+  for (const write of [...subs]) {
+    try {
+      write(frame);
+      sent += 1;
+    } catch {
+      subs.delete(write);
+    }
+  }
+  if (subs.size === 0) toolListSubscribers.delete(appId);
+  return sent;
+}
+
+/** Test-only: how many streams are currently attached for an app. */
+export function toolListSubscriberCount(appId: string): number {
+  return toolListSubscribers.get(appId)?.size ?? 0;
+}
 
 export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () => string | undefined } = {}): void {
   const resolveAppId = async (req: FastifyRequest, explicit?: string): Promise<{ id: string; name: string } | null> => {
@@ -181,7 +243,10 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
         const clientProto = (params?.protocolVersion as string) || MCP_PROTOCOL_VERSION;
         return reply.status(200).send(rpcResult(id!, {
           protocolVersion: clientProto,
-          capabilities: { tools: { listChanged: false } },
+          // listChanged: TRUE — we push `notifications/tools/list_changed` over the standalone
+          // `GET /mcp` SSE stream whenever the tool surface changes, so clients re-fetch `tools/list`
+          // automatically instead of serving a cached surface until the user reconnects.
+          capabilities: { tools: { listChanged: true } },
           serverInfo: { name: `forge-mcp:${app_.name}`, version: MCP_SERVER_VERSION },
           ...(latest ? { instructions: latest.text } : {}),
         }));
@@ -343,6 +408,61 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
   }
 
   // === management surface (internal app→sidecar) ==================================================
+  // GET /mcp — the Streamable-HTTP STANDALONE server→client stream. The client opens it once and holds
+  // it; we push server-initiated JSON-RPC notifications (today: `notifications/tools/list_changed`) so a
+  // connected client re-fetches `tools/list` the moment the surface changes — no user reconnect. Same
+  // OAuth gate as POST /mcp (it is the same protected resource). Carries NO request/response traffic.
+  app.get('/mcp', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.status(404).send(unknownApp);
+
+    const { verified } = await verifyAccessTokenDetailed(
+      app_.id,
+      bearerFrom(req.headers.authorization),
+      `${resourceBase(req)}/mcp`,
+    );
+    if (!verified) {
+      return reply
+        .status(401)
+        .header('WWW-Authenticate', `Bearer resource_metadata="${resourceBase(req)}/.well-known/oauth-protected-resource/mcp"`)
+        .send({ error: 'invalid_token', error_description: 'a valid OAuth access token is required.' });
+    }
+
+    // Take over the socket — this is a long-lived stream, not a buffered Fastify reply.
+    reply.hijack();
+    const res = reply.raw;
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      // Stop an intermediary (Traefik/nginx) from buffering the stream — without this the client can
+      // sit waiting on a proxy buffer and never see a notification.
+      'X-Accel-Buffering': 'no',
+    });
+    res.write(': connected\n\n'); // flush headers through proxies immediately
+
+    const unsubscribe = subscribeToolListChanged(app_.id, (frame) => res.write(frame));
+    // Idle keep-alive so a proxy doesn't reap a quiet connection (comment frames are ignored by clients).
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(': ping\n\n');
+      } catch {
+        /* socket gone — the close handler cleans up */
+      }
+    }, 25_000);
+    heartbeat.unref?.();
+
+    let done = false;
+    const cleanup = () => {
+      if (done) return;
+      done = true;
+      clearInterval(heartbeat);
+      unsubscribe();
+    };
+    req.raw.on('close', cleanup);
+    req.raw.on('error', cleanup);
+  });
+
   app.post('/mcp/tools', async (req, reply) => {
     const b = (req.body ?? {}) as Partial<ToolRegistration> & { app?: string };
     const app_ = await resolveAppId(req, b.app);
@@ -373,6 +493,10 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       updated_at: now,
     };
     await (await mcp()).putTool(app_.id, tool);
+    // The tool surface changed → tell every connected client to re-fetch `tools/list` (MCP
+    // `notifications/tools/list_changed`). Without this a client keeps serving its cached tool set
+    // until the USER manually reconnects the connector.
+    broadcastToolListChanged(app_.id);
     return reply.status(200).send({ tool });
   });
 
@@ -388,7 +512,10 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     if (!app_) return reply.status(404).send(unknownApp);
     if (!(await requireServiceToken(req, reply, app_.id))) return;
     const { name } = req.params as { name: string };
-    return { deleted: await (await mcp()).deleteTool(app_.id, name) };
+    const deleted = await (await mcp()).deleteTool(app_.id, name);
+    // A removed tool is also a surface change (the prune path) — notify so clients drop it promptly.
+    if (deleted) broadcastToolListChanged(app_.id);
+    return { deleted };
   });
 
   app.post('/mcp/instructions', async (req, reply) => {
