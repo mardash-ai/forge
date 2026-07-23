@@ -207,7 +207,11 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
 
     const requested = parseScopes(q.scope ?? client.scope);
     return htmlReply(reply, 200, consentPage(theme, {
-      appName: app_.name,
+      // The USER-FACING brand on the consent screen ("<client> wants to connect to <appName>"). Prefer
+      // FORGE_OAUTH_DISPLAY_NAME (e.g. "Dorinda") over the internal app slug ("dorinda-api") so the
+      // interstitial a connecting user (incl. a directory reviewer) sees is the product name, not the
+      // deploy name. Falls back to app_.name when the env is unset (back-compat).
+      appName: process.env.FORGE_OAUTH_DISPLAY_NAME?.trim() || app_.name,
       clientName: client.client_name ?? client.client_id,
       email: user.email,
       scopes: requested,

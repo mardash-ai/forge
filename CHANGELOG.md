@@ -9,6 +9,15 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.67.0] - 2026-07-23
+
+### Changed
+- **C23 — OAuth consent shows the product brand, not the internal app slug.** The consent interstitial
+  ("<client> wants to connect to <app>") now prefers `FORGE_OAUTH_DISPLAY_NAME` (e.g. "Dorinda") over
+  the internal app name ("dorinda-api"), so a connecting user — including a directory reviewer — sees
+  the product name. Falls back to the app name when unset (back-compat).
+
+
 ## [0.66.0] - 2026-07-23
 
 ### Added

@@ -133,6 +133,24 @@ describe('C23 — authorize + consent (requires a C10 login)', () => {
     expect(consent.statusCode).toBe(200);
     expect(consent.body).toContain('notes:read');
     expect(consent.body.toLowerCase()).toContain('allow');
+    // Default: the app name is shown as-is.
+    expect(consent.body).toContain(APP);
+  });
+
+  it('the consent screen prefers FORGE_OAUTH_DISPLAY_NAME (the product brand) over the app slug', async () => {
+    const prev = process.env.FORGE_OAUTH_DISPLAY_NAME;
+    process.env.FORGE_OAUTH_DISPLAY_NAME = 'Dorinda';
+    try {
+      const clientId = await registerClient();
+      const challenge = pkceChallenge('verifier-brand-1234567890');
+      const { cookie } = await loginCookie();
+      const consent = await get(authorizeUrl(clientId, challenge), { cookie });
+      expect(consent.statusCode).toBe(200);
+      expect(consent.body).toContain('Dorinda'); // the brand shows…
+      expect(consent.body).not.toContain(`connect to <b>${APP}</b>`); // …not the internal slug
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_OAUTH_DISPLAY_NAME; else process.env.FORGE_OAUTH_DISPLAY_NAME = prev;
+    }
   });
 
   it('rejects an unregistered redirect_uri and a missing PKCE challenge', async () => {
