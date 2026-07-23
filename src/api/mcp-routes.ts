@@ -290,6 +290,11 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       return reply.status(200).send(rpcError(id, -32011, 'the app handler is not reachable (never provisioned?).'));
     }
     const serviceToken = await resolveServiceToken(app_.id);
+    // The DCR-registered client NAME (e.g. "Claude", "ChatGPT") — the opaque `mcpc_…` client_id alone
+    // can't tell an app WHICH AI host is calling, so a consumer can't render "Connected" per platform.
+    // Forward the human name so the app can label the connection it records. Best-effort (never blocks a
+    // tool call). Only the public client_name is passed — never a secret.
+    const clientName = (await (await mcp()).getClient(app_.id, verified.clientId).catch(() => null))?.client_name;
     let ok = false;
     let payload: unknown;
     let httpStatus: number | undefined;
@@ -300,7 +305,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
         headers: { 'content-type': 'application/json', traceparent: traceparent(span), ...serviceAuthHeaders(serviceToken) },
         // The C29 governance SEAM: the app's handler gets the user + the tool's safety family/high-risk hint
         // and runs its own authorize() (the platform enforced scope; the app decides allow/stage/deny).
-        body: JSON.stringify({ tool: name, arguments: args, user: { id: verified.userId }, family: tool.family, high_risk: tool.high_risk ?? false, client_id: verified.clientId }),
+        body: JSON.stringify({ tool: name, arguments: args, user: { id: verified.userId }, family: tool.family, high_risk: tool.high_risk ?? false, client_id: verified.clientId, ...(clientName ? { client_name: clientName } : {}) }),
         signal: AbortSignal.timeout(TOOL_CALL_TIMEOUT_MS),
       });
       httpStatus = res.status;

@@ -29,6 +29,7 @@ let prevSvc: string | undefined;
 let server: FastifyInstance;
 let stub: FastifyInstance;
 let calls: string[];
+let lastDispatchBody: Record<string, unknown> | undefined;
 
 const seedApp = async (): Promise<void> => {
   const now = nowIso();
@@ -65,6 +66,7 @@ beforeEach(async () => {
   stub = Fastify({ logger: false });
   stub.post('/api/mcp/tools/get_note', async (req) => {
     calls.push('get_note');
+    lastDispatchBody = req.body as Record<string, unknown>;
     return { note: 'hello', echoed: (req.body as { arguments?: unknown }).arguments };
   });
   stub.post('/api/mcp/tools/boom', async (_req, reply) => {
@@ -144,6 +146,30 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
     // Attribution (C3): who, which host, which tool.
     const events = await store.listAppEvents({ app_id: APP_ID, owner: 'userA', subject: 'get_note' });
     expect(events.some((e) => e.type === 'mcp.tool_call' && (e.data as { ok?: boolean }).ok === true && (e.data as { host?: string }).host === 'client1')).toBe(true);
+  });
+
+  it('forwards the DCR client NAME to the app handler so it can label the connection ("Connected" per AI)', async () => {
+    await registerTool();
+    // The client registered itself (DCR) with a human name — e.g. Claude / ChatGPT.
+    await (await getBackends()).mcp.putClient(APP_ID, {
+      client_id: 'client1', client_name: 'Claude', redirect_uris: ['https://claude.ai/api/mcp/auth_callback'],
+      token_endpoint_auth_method: 'none', created_at: nowIso(),
+    });
+    const bearer = await mintAccess(['notes:read']); // grant for client1
+    lastDispatchBody = undefined;
+    const res = await rpc('tools/call', { name: 'get_note', arguments: { id: 'n1' } }, bearer);
+    expect(res.statusCode).toBe(200);
+    expect(lastDispatchBody).toMatchObject({ client_id: 'client1', client_name: 'Claude' });
+  });
+
+  it('omits client_name when the client has no registered name (back-compat)', async () => {
+    await registerTool();
+    const bearer = await mintAccess(['notes:read']); // client1, no putClient registration
+    lastDispatchBody = undefined;
+    await rpc('tools/call', { name: 'get_note', arguments: {} }, bearer);
+    const body = lastDispatchBody as Record<string, unknown> | undefined;
+    expect(body?.client_id).toBe('client1');
+    expect(body && 'client_name' in body).toBe(false);
   });
 
   it('enforces per-tool scope against the granted token', async () => {

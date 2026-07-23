@@ -9,6 +9,16 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.68.0] - 2026-07-23
+
+### Added
+- **C23 — MCP tool dispatch forwards the DCR client NAME to the app handler.** The dispatch body now
+  includes `client_name` (e.g. "Claude", "ChatGPT") alongside the opaque `client_id`, so a consuming
+  app can label the connection it records and render "Connected" per AI platform (the opaque `mcpc_…`
+  id alone can't identify the host). Omitted when the client registered no name (back-compat). Only the
+  public name is forwarded — never a secret.
+
+
 ## [0.67.0] - 2026-07-23
 
 ### Changed
