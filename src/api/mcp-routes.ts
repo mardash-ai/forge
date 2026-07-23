@@ -87,19 +87,28 @@ export function subscribeToolListChanged(appId: string, write: SseWriter): () =>
  */
 export function broadcastToolListChanged(appId: string): number {
   const subs = toolListSubscribers.get(appId);
-  if (!subs || subs.size === 0) return 0;
-  // A JSON-RPC notification (no `id`) framed as an SSE `message` event, per Streamable HTTP.
-  const frame = `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' })}\n\n`;
+  const attached = subs?.size ?? 0;
   let sent = 0;
-  for (const write of [...subs]) {
-    try {
-      write(frame);
-      sent += 1;
-    } catch {
-      subs.delete(write);
+  if (subs && attached > 0) {
+    // A JSON-RPC notification (no `id`) framed as an SSE `message` event, per Streamable HTTP.
+    const frame = `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' })}\n\n`;
+    for (const write of [...subs]) {
+      try {
+        write(frame);
+        sent += 1;
+      } catch {
+        subs.delete(write);
+      }
     }
+    if (subs.size === 0) toolListSubscribers.delete(appId);
   }
-  if (subs.size === 0) toolListSubscribers.delete(appId);
+  // OBSERVABILITY (the point): `notified=0` is the loud diagnostic — the tool surface changed but NO
+  // client was holding the stream, so every connected AI is still serving a stale `tools/list` and will
+  // keep doing so until it reconnects. Anything >0 proves a real client is consuming the push channel.
+  console.log(`[mcp] tools/list_changed app=${appId} notified=${sent} attached=${attached}`);
+  startSpan('mcp.tools_list_changed', {
+    attributes: { 'mcp.app': appId, 'mcp.streams_notified': sent, 'mcp.streams_attached': attached },
+  }).end('ok');
   return sent;
 }
 
@@ -442,6 +451,18 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     res.write(': connected\n\n'); // flush headers through proxies immediately
 
     const unsubscribe = subscribeToolListChanged(app_.id, (frame) => res.write(frame));
+    // OBSERVABILITY: a stream open is the ONLY proof a client actually consumes the push channel (vs.
+    // caching `tools/list` and needing a user reconnect). Client name comes from the DCR registration
+    // (e.g. "Claude"/"ChatGPT") so the log says WHICH AI is holding the channel.
+    const clientName =
+      (await (await mcp()).getClient(app_.id, verified.clientId).catch(() => null))?.client_name ?? 'unknown';
+    const openedAt = Date.now();
+    console.log(
+      `[mcp] stream OPEN app=${app_.name} client=${clientName} attached=${toolListSubscriberCount(app_.id)}`,
+    );
+    startSpan('mcp.stream_open', {
+      attributes: { 'mcp.app': app_.name, 'mcp.client_name': clientName },
+    }).end('ok');
     // Idle keep-alive so a proxy doesn't reap a quiet connection (comment frames are ignored by clients).
     const heartbeat = setInterval(() => {
       try {
@@ -458,6 +479,12 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       done = true;
       clearInterval(heartbeat);
       unsubscribe();
+      // A very SHORT-lived stream is itself a finding (a proxy or the client is dropping it), which
+      // would silently defeat the whole mechanism — so record how long it actually stayed open.
+      const heldSec = Math.round((Date.now() - openedAt) / 1000);
+      console.log(
+        `[mcp] stream CLOSE app=${app_.name} client=${clientName} held=${heldSec}s attached=${toolListSubscriberCount(app_.id)}`,
+      );
     };
     req.raw.on('close', cleanup);
     req.raw.on('error', cleanup);

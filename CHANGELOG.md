@@ -9,6 +9,21 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.69.1] - 2026-07-23
+
+### Added
+- **C23/C36 — observability for the `tools/list_changed` push channel.** Whether a connected AI actually
+  HOLDS the SSE stream was previously invisible, so "clients auto-refresh now" was unprovable. The
+  data-plane now logs + spans the channel's real behavior:
+  - `[mcp] stream OPEN app=… client=… attached=N` / `[mcp] stream CLOSE app=… client=… held=Ns attached=N`
+    — a stream open is the only direct proof a client consumes the push channel; `client` is the DCR name
+    (e.g. "Claude"/"ChatGPT") so it says WHICH AI. A very short `held=` exposes a proxy/client dropping it.
+  - `[mcp] tools/list_changed app=… notified=N attached=N` on every surface change. **`notified=0` is the
+    loud diagnostic**: the tool surface changed but nobody was listening, so every connected AI is still
+    serving a stale `tools/list` until it reconnects.
+  - Spans `mcp.stream_open` + `mcp.tools_list_changed` (with `mcp.streams_notified` / `mcp.streams_attached`).
+
+
 ## [0.69.0] - 2026-07-23
 
 ### Added
