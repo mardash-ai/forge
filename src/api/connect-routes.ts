@@ -14,6 +14,7 @@ import {
   completeConnect,
   listConnections,
   disconnect,
+  disconnectAll,
   getFreshAccessToken,
 } from '../connectors/service';
 
@@ -29,6 +30,8 @@ import {
 //   GET    /connect/:provider/callback        -> exchange code, store sealed tokens, 302 to return_to
 //   GET    /connect                           -> { connections:[…] } for the session user (never a token)
 //   DELETE /connect/:provider                 -> { disconnected } for the session user (revoke + delete)
+//   DELETE /connect                           -> { providers, disconnected } revoke + delete ALL (C34
+//                                                account teardown); session OR service-token + owner
 //   POST   /connect/:provider/token           -> { access_token, … } FRESH (auto-refresh); session OR service
 //   POST   /connect/:provider/send            -> { message } send AS the user (C25 SendMessage); session OR service
 //
@@ -227,6 +230,24 @@ export function registerConnectRoutes(app: FastifyInstance, opts: { defaultApp?:
     const disconnected = await disconnect(app_.id, user.userId, provider);
     if (disconnected) await recordC3(app_.id, 'connector.disconnected', provider, user.userId, {});
     return { disconnected };
+  });
+
+  // === disconnect EVERY provider (account teardown; session OR service-token) =====================
+  // The C34 sibling of the billing / membership / identity teardowns: purging an account MUST also
+  // withdraw the grants it holds AT THE PROVIDER, or "delete my account" leaves a live refresh token
+  // for the user's Gmail/Calendar and the app still listed in their third-party access. Machine
+  // callers (a consumer's admin purge) present the service token and pass `owner` — the same
+  // trusted-internal model as the broker below; a browser session can only ever tear down its OWN.
+  app.delete('/connect', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.status(404).send(unknownApp);
+    const owner = await resolveReadOwner(req, app_.id);
+    if (!owner) return reply.status(401).send(needAuth);
+    const result = await disconnectAll(app_.id, owner);
+    for (const provider of result.providers) {
+      await recordC3(app_.id, 'connector.disconnected', provider, owner, { reason: 'teardown' });
+    }
+    return result;
   });
 
   // === broker: a fresh, valid access token (session OR service-token) =============================

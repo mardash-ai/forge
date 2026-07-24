@@ -9,6 +9,23 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.71.0] - 2026-07-23
+
+### Added
+- **C24/C34 — `DELETE /connect`: revoke and drop EVERY provider grant an owner holds** (session, or
+  service-token + `owner` for a machine caller). Each connection is revoked **at the provider** — Google's
+  `revoke_endpoint` — before its sealed tokens are deleted, so account teardown actually withdraws the
+  grant instead of orphaning it. Returns `{ providers, disconnected }`; idempotent (no connections ⇒
+  `{ providers: [], disconnected: 0 }`) and best-effort per provider, so one failure cannot strand the
+  rest. Emits a `connector.disconnected` C3 event per provider with `reason: "teardown"`.
+
+### Fixed
+- **A purged account used to leave a LIVE Google grant behind.** The per-provider `DELETE /connect/:provider`
+  is session-only, so a consumer's admin purge — a machine call with no browser session — had no way to
+  reach it and simply deleted its local rows. The refresh token stayed valid at Google and the app stayed
+  listed under the user's third-party access: a "delete my account" that left standing permission to read
+  the user's Gmail and Calendar. `DELETE /connect` is the teardown channel that closes it.
+
 ## [0.70.0] - 2026-07-23
 
 ### Added

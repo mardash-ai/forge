@@ -188,6 +188,32 @@ export async function listConnections(appId: string, owner: string): Promise<Con
   return conns.map(toConnectionView);
 }
 
+/**
+ * Disconnect EVERY provider an owner has connected — the C34 account-teardown counterpart to the
+ * per-provider {@link disconnect}. Each is revoked AT THE PROVIDER before its local tokens are
+ * dropped, so deleting an account also withdraws the live Google/Gmail/Calendar grant rather than
+ * orphaning it. Without this, a purged account leaves a working refresh token on the provider's side
+ * and the app still listed under the user's third-party access — a deletion that doesn't delete.
+ *
+ * Idempotent (no connections ⇒ `{ providers: [], disconnected: 0 }`) and best-effort per provider:
+ * one provider failing never blocks the rest, since stranding the others' tokens would be worse.
+ */
+export async function disconnectAll(
+  appId: string,
+  owner: string,
+): Promise<{ providers: string[]; disconnected: number }> {
+  const conns = await (await backend()).listConnections(appId, owner);
+  const providers: string[] = [];
+  for (const conn of conns) {
+    try {
+      if (await disconnect(appId, owner, conn.provider)) providers.push(conn.provider);
+    } catch {
+      // Keep going — one provider's failure must not strand the others' tokens.
+    }
+  }
+  return { providers, disconnected: providers.length };
+}
+
 export async function disconnect(appId: string, owner: string, provider: string): Promise<boolean> {
   const store = await backend();
   const conn = await store.getConnection(appId, owner, provider);

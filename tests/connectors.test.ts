@@ -283,6 +283,76 @@ describe('C24 — management (list / disconnect)', () => {
   });
 });
 
+/**
+ * C34 account teardown. Deleting an account MUST also withdraw the grants it holds AT THE PROVIDER —
+ * otherwise "delete my account" leaves a live refresh token for the user's Gmail/Calendar and the app
+ * still listed under their third-party access. A consumer's purge is a MACHINE call, so this has to
+ * work over the service-token + owner channel; the per-provider DELETE is session-only.
+ */
+describe('C24 — DELETE /connect (disconnect every provider; account teardown)', () => {
+  it('revokes AT THE PROVIDER and deletes the tokens, over the service-token + owner channel', async () => {
+    await configureGoogle();
+    await setSecret(APP_ID, 'AUTH_SERVICE_TOKEN', 'svc-token-123');
+    const { userId, cookie } = await signIn();
+    await connect(cookie);
+
+    const res = await server.inject({
+      method: 'DELETE',
+      url: `/connect?owner=${encodeURIComponent(userId)}`,
+      headers: { 'x-forge-service-token': 'svc-token-123' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ providers: ['google'], disconnected: 1 });
+    // The point of the feature: the grant is withdrawn at Google, not merely forgotten locally.
+    expect(revokes).toHaveLength(1);
+    expect(await (await getBackends()).connections.getConnection(APP_ID, userId, 'google')).toBeNull();
+  });
+
+  it('works for the session user too (tearing down their OWN grants)', async () => {
+    await configureGoogle();
+    const { userId, cookie } = await signIn();
+    await connect(cookie);
+    const res = await server.inject({ method: 'DELETE', url: '/connect', headers: { cookie } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ providers: ['google'], disconnected: 1 });
+    expect(revokes).toHaveLength(1);
+    expect(await (await getBackends()).connections.getConnection(APP_ID, userId, 'google')).toBeNull();
+  });
+
+  it('is idempotent — a second teardown revokes nothing and still answers 200', async () => {
+    await configureGoogle();
+    const { cookie } = await signIn();
+    await connect(cookie);
+    await server.inject({ method: 'DELETE', url: '/connect', headers: { cookie } });
+    revokes = [];
+    const again = await server.inject({ method: 'DELETE', url: '/connect', headers: { cookie } });
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toMatchObject({ providers: [], disconnected: 0 });
+    expect(revokes).toHaveLength(0);
+  });
+
+  it('refuses an unauthenticated call, and a service token with NO owner (never a blind teardown)', async () => {
+    await configureGoogle();
+    await setSecret(APP_ID, 'AUTH_SERVICE_TOKEN', 'svc-token-123');
+    expect((await server.inject({ method: 'DELETE', url: '/connect' })).statusCode).toBe(401);
+    expect(
+      (await server.inject({
+        method: 'DELETE',
+        url: '/connect',
+        headers: { 'x-forge-service-token': 'svc-token-123' },
+      })).statusCode,
+    ).toBe(401);
+    expect(
+      (await server.inject({
+        method: 'DELETE',
+        url: '/connect?owner=someone',
+        headers: { 'x-forge-service-token': 'wrong-token' },
+      })).statusCode,
+    ).toBe(401);
+  });
+});
+
 describe('C24 — broker (fresh access token + auto-refresh)', () => {
   it('returns the stored token while it is still valid (no refresh)', async () => {
     await configureGoogle();
