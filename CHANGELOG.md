@@ -9,6 +9,22 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.72.0] - 2026-07-24
+
+### Added
+- **C23/C34 — `DELETE /mcp/consents?owner=…`: revoke EVERY connector a user has authorized**
+  (service-token gated). Drops each consent AND its live tokens, then sweeps any orphan grant left
+  without a consent row, so the result is "this owner holds no MCP credentials" whatever the prior
+  state. Returns `{ clients, revoked_consents, revoked_grants }`; owner-scoped, so another user's
+  connectors are never touched. `revokeUserGrants` already existed in every backend but had no caller
+  and no HTTP surface — this exposes it for account teardown.
+
+### Fixed
+- **A purged account's connected AI kept working.** MCP access tokens outlived the account: after a
+  consumer purged an owner, its Claude connector still authenticated and **re-created rows under the
+  dead owner id** (observed live 2026-07-24). Per-client revoke existed but a teardown does not know
+  the client list, so nothing cut the AIs off — the connector stayed live until the token expired.
+
 ## [0.71.0] - 2026-07-23
 
 ### Added

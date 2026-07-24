@@ -438,6 +438,65 @@ describe('C23 — connector (consent) management', () => {
     expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, bearer)).statusCode).toBe(401);
     expect((await get('/mcp/consents?owner=userA')).json().consents).toHaveLength(0);
   });
+
+  /**
+   * C34 account teardown. Deleting an account MUST cut every connected AI off. Observed live
+   * 2026-07-24: after purging an account its Claude connector still worked and RE-CREATED rows under
+   * the DEAD owner id, because the MCP access token outlived the account. Revoking per-client requires
+   * knowing the clients; teardown needs ONE owner-scoped call — and it has to kill the TOKENS, not just
+   * the consent rows, or the AI keeps working until the token expires.
+   */
+  it('DELETE /mcp/consents revokes EVERY connector for an owner — live tokens included', async () => {
+    const bearerA = await mintAccess(['notes:read'], 'userA', 'clientOne');
+    const bearerB = await mintAccess(['notes:read'], 'userA', 'clientTwo');
+    const other = await mintAccess(['notes:read'], 'userB', 'clientOne');
+    for (const client_id of ['clientOne', 'clientTwo']) {
+      await (await getBackends()).mcp.putConsent(APP_ID, { client_id, owner: 'userA', scopes: ['notes:read'], created_at: nowIso(), updated_at: nowIso() });
+    }
+    await (await getBackends()).mcp.putConsent(APP_ID, { client_id: 'clientOne', owner: 'userB', scopes: ['notes:read'], created_at: nowIso(), updated_at: nowIso() });
+    await registerTool();
+
+    // All three tokens work before teardown.
+    for (const b of [bearerA, bearerB, other]) {
+      expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, b)).statusCode).toBe(200);
+    }
+
+    const res = await server.inject({ method: 'DELETE', url: '/mcp/consents?owner=userA', headers: { 'x-forge-service-token': SVC_TOKEN } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().revoked_consents).toBe(2);
+    expect((res.json().clients as string[]).sort()).toEqual(['clientOne', 'clientTwo']);
+
+    // THE POINT: every one of that owner's tokens is dead — the AIs are cut off immediately.
+    expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, bearerA)).statusCode).toBe(401);
+    expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, bearerB)).statusCode).toBe(401);
+    expect((await get('/mcp/consents?owner=userA')).json().consents).toHaveLength(0);
+
+    // ...and ANOTHER user's connector is untouched — teardown is owner-scoped, never a blast radius.
+    expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, other)).statusCode).toBe(200);
+    expect((await get('/mcp/consents?owner=userB')).json().consents).toHaveLength(1);
+  });
+
+  it('sweeps an ORPHAN token that has no consent row (nothing may survive teardown)', async () => {
+    const orphan = await mintAccess(['notes:read'], 'userC', 'clientGhost'); // token, but no consent
+    await registerTool();
+    expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, orphan)).statusCode).toBe(200);
+
+    const res = await server.inject({ method: 'DELETE', url: '/mcp/consents?owner=userC', headers: { 'x-forge-service-token': SVC_TOKEN } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().revoked_consents).toBe(0);
+    expect(res.json().revoked_grants).toBeGreaterThanOrEqual(1);
+    expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, orphan)).statusCode).toBe(401);
+  });
+
+  it('requires a service token and an owner (never a blind, unauthenticated teardown)', async () => {
+    expect((await server.inject({ method: 'DELETE', url: '/mcp/consents?owner=userA' })).statusCode).toBe(401);
+    expect(
+      (await server.inject({ method: 'DELETE', url: '/mcp/consents?owner=userA', headers: { 'x-forge-service-token': 'wrong' } })).statusCode,
+    ).toBe(401);
+    expect(
+      (await server.inject({ method: 'DELETE', url: '/mcp/consents', headers: { 'x-forge-service-token': SVC_TOKEN } })).statusCode,
+    ).toBe(400);
+  });
 });
 
 // Change D — the app→sidecar MANAGEMENT surface is proxied to the public internet by the consumer and

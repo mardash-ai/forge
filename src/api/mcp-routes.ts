@@ -669,6 +669,35 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     return { consents: await (await mcp()).listConsents(app_.id, q.owner) };
   });
 
+  // Revoke EVERY connector this user has authorized — the C34 account-teardown counterpart to the
+  // per-client revoke below. Deleting an account MUST cut the connected AIs off: an MCP access token
+  // outlives the account otherwise, and the next tool call succeeds against a deleted owner. Observed
+  // live 2026-07-24 — a purged account's Claude connector kept working and RE-CREATED rows under the
+  // dead owner id. Both halves matter: the consent record AND the live tokens.
+  app.delete('/mcp/consents', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await requireServiceToken(req, reply, app_.id))) return;
+    const q = req.query as { owner?: string };
+    if (!q.owner) return reply.status(400).send(invalid('an `owner` is required.'));
+
+    const store = await mcp();
+    const consents = await store.listConsents(app_.id, q.owner);
+    for (const c of consents) {
+      // The per-client revoke drops that client's consent AND its live tokens, transactionally.
+      await store.revokeConsent(app_.id, c.client_id, q.owner);
+    }
+    // Sweep any grant left WITHOUT a consent row — an orphan token is precisely what must not survive —
+    // so the result is "this owner holds no MCP credentials", whatever the prior state was.
+    const orphanGrants = await store.revokeUserGrants(app_.id, q.owner);
+
+    return {
+      clients: consents.map((c) => c.client_id),
+      revoked_consents: consents.length,
+      revoked_grants: orphanGrants,
+    };
+  });
+
   app.delete('/mcp/consents/:client_id', async (req, reply) => {
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
