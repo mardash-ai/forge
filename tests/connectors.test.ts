@@ -332,6 +332,27 @@ describe('C24 — DELETE /connect (disconnect every provider; account teardown)'
     expect(revokes).toHaveLength(0);
   });
 
+  it('a SESSION can never tear down another owner — ?owner= is ignored for a browser caller', async () => {
+    await configureGoogle();
+    const victim = await signIn('victim@test.example');
+    await connect(victim.cookie);
+    const attacker = await signIn('attacker@test.example');
+
+    // The attacker holds a valid session and names the victim explicitly. `owner` is honored ONLY for a
+    // valid service token (server-side); a session always resolves to its OWN userId.
+    const res = await server.inject({
+      method: 'DELETE',
+      url: `/connect?owner=${encodeURIComponent(victim.userId)}`,
+      headers: { cookie: attacker.cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ providers: [], disconnected: 0 }); // tore down its OWN (nothing)
+    expect(revokes).toHaveLength(0);
+    // The victim's grant is untouched.
+    expect(await (await getBackends()).connections.getConnection(APP_ID, victim.userId, 'google')).not.toBeNull();
+  });
+
   it('refuses an unauthenticated call, and a service token with NO owner (never a blind teardown)', async () => {
     await configureGoogle();
     await setSecret(APP_ID, 'AUTH_SERVICE_TOKEN', 'svc-token-123');
