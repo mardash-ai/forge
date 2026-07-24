@@ -65,19 +65,67 @@ const tracePayloads = (): boolean => process.env.FORGE_MCP_TRACE_PAYLOADS !== 'f
 // is ever scaled horizontally, this needs a cross-instance fanout (Postgres LISTEN/NOTIFY) — a client
 // attached to replica A would otherwise miss a registration that hit replica B.
 type SseWriter = (frame: string) => void;
-const toolListSubscribers = new Map<string, Set<SseWriter>>();
+
+/** One attached server→client stream, with the identity needed to report it on the operator dashboard. */
+interface StreamSubscriber {
+  write: SseWriter;
+  /** DCR-registered client name ("Claude"/"ChatGPT") — WHICH AI is holding the channel. */
+  clientName: string;
+  /**
+   * The User-Agent seen on the stream request. For a HOSTED connector (ChatGPT / claude.ai) this is the
+   * VENDOR'S server UA — the end user's device is invisible to us, because their backend (not the phone
+   * or browser) dials our endpoint. A LOCAL client (Claude Desktop / Claude Code) connects straight from
+   * the user's machine, so its UA is the one signal that legitimately distinguishes hosted vs desktop.
+   */
+  userAgent: string;
+  openedAt: number;
+}
+
+const toolListSubscribers = new Map<string, Set<StreamSubscriber>>();
 
 /** Attach a server→client stream for `appId`. Returns an unsubscribe fn (call on connection close). */
-export function subscribeToolListChanged(appId: string, write: SseWriter): () => void {
-  const set = toolListSubscribers.get(appId) ?? new Set<SseWriter>();
-  set.add(write);
+export function subscribeToolListChanged(
+  appId: string,
+  sub: { write: SseWriter; clientName?: string; userAgent?: string },
+): () => void {
+  const entry: StreamSubscriber = {
+    write: sub.write,
+    clientName: sub.clientName ?? 'unknown',
+    userAgent: sub.userAgent ?? '',
+    openedAt: Date.now(),
+  };
+  const set = toolListSubscribers.get(appId) ?? new Set<StreamSubscriber>();
+  set.add(entry);
   toolListSubscribers.set(appId, set);
   return () => {
     const s = toolListSubscribers.get(appId);
     if (!s) return;
-    s.delete(write);
+    s.delete(entry);
     if (s.size === 0) toolListSubscribers.delete(appId);
   };
+}
+
+/** One attached stream as reported to the operator dashboard. */
+export interface ToolListStreamInfo {
+  client_name: string;
+  user_agent: string;
+  opened_at: string;
+  held_seconds: number;
+}
+
+/**
+ * LIVE snapshot of the attached streams for an app — read straight from the in-memory registry at call
+ * time, so it can never be stale (there is no cache to invalidate; if a socket dropped, it is already
+ * gone from this map).
+ */
+export function toolListStreamSnapshot(appId: string): ToolListStreamInfo[] {
+  const now = Date.now();
+  return [...(toolListSubscribers.get(appId) ?? [])].map((s) => ({
+    client_name: s.clientName,
+    user_agent: s.userAgent,
+    opened_at: new Date(s.openedAt).toISOString(),
+    held_seconds: Math.round((now - s.openedAt) / 1000),
+  }));
 }
 
 /**
@@ -92,12 +140,12 @@ export function broadcastToolListChanged(appId: string): number {
   if (subs && attached > 0) {
     // A JSON-RPC notification (no `id`) framed as an SSE `message` event, per Streamable HTTP.
     const frame = `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' })}\n\n`;
-    for (const write of [...subs]) {
+    for (const sub of [...subs]) {
       try {
-        write(frame);
+        sub.write(frame);
         sent += 1;
       } catch {
-        subs.delete(write);
+        subs.delete(sub);
       }
     }
     if (subs.size === 0) toolListSubscribers.delete(appId);
@@ -450,12 +498,18 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     });
     res.write(': connected\n\n'); // flush headers through proxies immediately
 
-    const unsubscribe = subscribeToolListChanged(app_.id, (frame) => res.write(frame));
     // OBSERVABILITY: a stream open is the ONLY proof a client actually consumes the push channel (vs.
     // caching `tools/list` and needing a user reconnect). Client name comes from the DCR registration
-    // (e.g. "Claude"/"ChatGPT") so the log says WHICH AI is holding the channel.
+    // (e.g. "Claude"/"ChatGPT") so the log says WHICH AI is holding the channel; the UA distinguishes a
+    // hosted connector (vendor infra) from a local desktop client.
     const clientName =
       (await (await mcp()).getClient(app_.id, verified.clientId).catch(() => null))?.client_name ?? 'unknown';
+    const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '';
+    const unsubscribe = subscribeToolListChanged(app_.id, {
+      write: (frame) => res.write(frame),
+      clientName,
+      userAgent,
+    });
     const openedAt = Date.now();
     console.log(
       `[mcp] stream OPEN app=${app_.name} client=${clientName} attached=${toolListSubscriberCount(app_.id)}`,
@@ -532,6 +586,18 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     if (!app_) return reply.status(404).send(unknownApp);
     if (!(await requireServiceToken(req, reply, app_.id))) return;
     return { tools: await (await mcp()).listTools(app_.id) };
+  });
+
+  // GET /mcp/streams — LIVE snapshot of the attached tool-refresh (SSE) streams, for the operator
+  // dashboard. Read from the in-process registry at request time, so it is real-time BY CONSTRUCTION:
+  // there is no cache and no persisted copy to go stale — a dropped socket is already absent here.
+  // `count: 0` is the meaningful answer that no AI is holding the push channel.
+  app.get('/mcp/streams', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await requireServiceToken(req, reply, app_.id))) return;
+    const streams = toolListStreamSnapshot(app_.id);
+    return { count: streams.length, streams, observed_at: nowIso() };
   });
 
   app.delete('/mcp/tools/:name', async (req, reply) => {

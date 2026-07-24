@@ -149,7 +149,7 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
 
     it('REGISTERING a tool pushes list_changed to every connected stream', async () => {
       const frames: string[] = [];
-      const unsub = subscribeToolListChanged(APP_ID, (f) => frames.push(f));
+      const unsub = subscribeToolListChanged(APP_ID, { write: (f) => frames.push(f), clientName: 'Claude', userAgent: 'test-agent' });
       try {
         await registerTool();
         expect(frames).toHaveLength(1);
@@ -164,7 +164,7 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
     it('DELETING a tool (the prune path) also pushes list_changed', async () => {
       await registerTool();
       const frames: string[] = [];
-      const unsub = subscribeToolListChanged(APP_ID, (f) => frames.push(f));
+      const unsub = subscribeToolListChanged(APP_ID, { write: (f) => frames.push(f), clientName: 'Claude', userAgent: 'test-agent' });
       try {
         const del = await server.inject({
           method: 'DELETE',
@@ -182,8 +182,8 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
     it('only notifies the app whose surface changed, and unsubscribe stops delivery (no leak)', async () => {
       const mine: string[] = [];
       const other: string[] = [];
-      const unsubMine = subscribeToolListChanged(APP_ID, (f) => mine.push(f));
-      const unsubOther = subscribeToolListChanged('app_someone_else', (f) => other.push(f));
+      const unsubMine = subscribeToolListChanged(APP_ID, { write: (f) => mine.push(f) });
+      const unsubOther = subscribeToolListChanged('app_someone_else', { write: (f) => other.push(f) });
       try {
         await registerTool();
         expect(mine).toHaveLength(1);
@@ -198,8 +198,10 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
     });
 
     it('a dead client (throwing writer) is dropped and never fails the registration', async () => {
-      const unsub = subscribeToolListChanged(APP_ID, () => {
-        throw new Error('socket closed');
+      const unsub = subscribeToolListChanged(APP_ID, {
+        write: () => {
+          throw new Error('socket closed');
+        },
       });
       try {
         const res = await post('/mcp/tools', {
@@ -217,6 +219,38 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
 
     it('broadcast to an app with no streams is a no-op (returns 0)', () => {
       expect(broadcastToolListChanged('app_nobody_listening')).toBe(0);
+    });
+
+    // GET /mcp/streams — the LIVE feed behind the operator dashboard.
+    it('GET /mcp/streams reports 0 when no AI is holding the channel (the honest empty state)', async () => {
+      const res = await get('/mcp/streams');
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ count: 0, streams: [] });
+      expect(res.json().observed_at).toBeTruthy(); // stamped per read — never a cached figure
+    });
+
+    it('GET /mcp/streams reports each attached stream with its client + user agent, live', async () => {
+      const unsub = subscribeToolListChanged(APP_ID, {
+        write: () => {},
+        clientName: 'Claude',
+        userAgent: 'Claude-User/1.0',
+      });
+      try {
+        const res = await get('/mcp/streams');
+        const body = res.json();
+        expect(body.count).toBe(1);
+        expect(body.streams[0]).toMatchObject({ client_name: 'Claude', user_agent: 'Claude-User/1.0' });
+        expect(typeof body.streams[0].held_seconds).toBe('number');
+      } finally {
+        unsub();
+      }
+      // Detaching is reflected IMMEDIATELY — the snapshot is the registry, not a cached copy.
+      expect((await get('/mcp/streams')).json().count).toBe(0);
+    });
+
+    it('GET /mcp/streams is service-token gated (not public)', async () => {
+      const res = await server.inject({ method: 'GET', url: '/mcp/streams' });
+      expect(res.statusCode).toBe(401);
     });
   });
 

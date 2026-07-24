@@ -9,6 +9,21 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.70.0] - 2026-07-23
+
+### Added
+- **C23 — `GET /mcp/streams`: a LIVE feed of the attached tool-refresh channels** (service-token gated),
+  for the operator dashboard. Returns `{ count, streams: [{ client_name, user_agent, opened_at,
+  held_seconds }], observed_at }`. Read straight from the in-process registry at request time, so it is
+  **real-time by construction** — there is no cache and no persisted copy to go stale; a dropped socket is
+  already absent. `count: 0` is the meaningful answer that no AI is holding the push channel.
+- Each attached stream now records the **DCR client name** (which AI) and the **User-Agent**. Note on what
+  the UA can and cannot tell you: for a HOSTED connector (ChatGPT / claude.ai) it is the VENDOR'S server UA —
+  their backend dials us, so the end user's device (web/mobile/desktop) is **not observable**. A LOCAL client
+  (Claude Desktop / Claude Code) connects from the user's machine, so the UA is the one honest signal that
+  separates hosted from desktop.
+
+
 ## [0.69.1] - 2026-07-23
 
 ### Added
