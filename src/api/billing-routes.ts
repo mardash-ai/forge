@@ -14,6 +14,7 @@ import {
   createPortal,
   createTrialingSubscriptionAtSignup,
   setAdminLock,
+  setAdminComp,
   handleStripeWebhook,
   reconcileApp,
   deleteCustomer,
@@ -340,6 +341,33 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
     try {
       const out = await setAdminLock(app_.id, subscriber, b.locked);
       await recordC3(app_.id, b.locked ? 'billing.admin_locked' : 'billing.admin_unlocked', subscriber, {
+        status: out.status,
+        changed: out.changed,
+      });
+      return reply.status(200).send(out);
+    } catch (e) {
+      return errorReply(reply, e);
+    }
+  });
+
+  // Admin COMP — permanent full access for a subscriber (demo / reviewer / lifetime accounts). The INVERSE
+  // of the lock: forces `status: active` (full plan entitlements, never lapsing) WITHOUT touching Stripe,
+  // sticky against webhooks + the reconcile sweep so an expiring trial can never revoke it. Body:
+  // `{ subscriber, comped }` — `comped:true` comps (→ active, clears any lock), `comped:false` un-comps
+  // (restores the saved prior status + re-reconciles from Stripe). Idempotent. The consumer's admin tool
+  // calls this to graduate a trial account to permanent full access (e.g. a directory-review account).
+  app.post('/billing/admin/comp', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_.id))) return reply.status(401).send(needAuth);
+    const b = (req.body ?? {}) as { subscriber?: string; comped?: boolean };
+    const subscriber = trimmed(b.subscriber);
+    if (!subscriber || typeof b.comped !== 'boolean') {
+      return reply.status(422).send({ error: { code: 'invalid_input', message: '`subscriber` (string) and `comped` (boolean) are required.', retry: 'change-input' } });
+    }
+    try {
+      const out = await setAdminComp(app_.id, subscriber, b.comped);
+      await recordC3(app_.id, b.comped ? 'billing.admin_comped' : 'billing.admin_uncomped', subscriber, {
         status: out.status,
         changed: out.changed,
       });

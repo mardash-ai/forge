@@ -88,6 +88,15 @@ export interface SubscriptionRecord {
   // absent on a normal record (backward-compatible with existing stored records).
   admin_locked_at?: string | null;
   admin_lock_prev_status?: SubscriptionStatus | null;
+  // --- Admin COMP overlay (permanent full access — demo/reviewer/lifetime accounts). The INVERSE of the
+  // lock: `status` forced to `active` so the account's plan entitlements apply in full and NEVER lapse,
+  // regardless of the underlying subscription (an expiring trial, a paused sub, none at all) — and WITHOUT
+  // touching Stripe. While `admin_comped_at` is set, reconciliation (webhook + sweep) is SKIPPED so a
+  // trial ending / webhook can never revoke the comp behind the operator; `admin_comp_prev_status` is the
+  // status to restore on un-comp. Lock and comp are mutually exclusive — setting either clears the other
+  // (operator intent wins). Both fields absent on a normal record (backward-compatible).
+  admin_comped_at?: string | null;
+  admin_comp_prev_status?: SubscriptionStatus | null;
 }
 
 // The free/never-subscribed default record for a subscriber (status "none"). `plan_key` is the app's

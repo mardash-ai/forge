@@ -402,9 +402,10 @@ async function reconcileSubscription(
   const state = await (await backend()).read(appId);
   const existing = Object.values(state.subscriptions).find((r) => r.provider_refs.stripe_subscription_id === sub.id)
     ?? (sub.metadata.subscriber ? state.subscriptions[sub.metadata.subscriber] : undefined);
-  // Sticky admin lockout: while an operator lock is in place, a webhook / sweep re-pull must NOT overwrite
-  // the forced `paused` overlay (that would silently un-lock the account). Skip; unlock re-reconciles.
-  if (existing?.admin_locked_at) return existing;
+  // Sticky admin overlays: while an operator LOCK or COMP is in place, a webhook / sweep re-pull must NOT
+  // overwrite the forced status (that would silently un-lock — or worse, REVOKE a comped reviewer/demo
+  // account when its underlying trial ends). Skip; unlock/un-comp re-reconciles.
+  if (existing?.admin_locked_at || existing?.admin_comped_at) return existing;
   const canonical = canonicalFromStripe(appId, sub, state.catalog, existing);
   if (!canonical) return null;
   const { applied, record, previous_status } = await applyCanonicalSubscription(appId, canonical.fields, version);
@@ -547,8 +548,8 @@ export async function reconcileApp(appId: string, appName?: string): Promise<{ r
   let skipped = 0;
   for (const record of Object.values(state.subscriptions)) {
     const subId = record.provider_refs.stripe_subscription_id;
-    // Admin-locked subs are sticky (see reconcileSubscription) — skip them here too, before any Stripe call.
-    if (!subId || record.status === 'none' || record.status === 'canceled' || record.admin_locked_at) {
+    // Admin-locked/comped subs are sticky (see reconcileSubscription) — skip them here too, before any Stripe call.
+    if (!subId || record.status === 'none' || record.status === 'canceled' || record.admin_locked_at || record.admin_comped_at) {
       skipped++;
       continue;
     }
@@ -598,7 +599,12 @@ export async function setAdminLock(appId: string, subscriber: string, locked: bo
       ? {
           ...base,
           admin_locked_at: now,
-          admin_lock_prev_status: base.status, // restore target
+          // Restore target: if the record was COMPED, its visible status is the overlaid `active` — the
+          // honest restore target is what the comp itself had saved. Locking also CLEARS the comp
+          // (mutual exclusion; operator intent wins).
+          admin_lock_prev_status: base.admin_comped_at ? (base.admin_comp_prev_status ?? 'none') : base.status,
+          admin_comped_at: null,
+          admin_comp_prev_status: null,
           status: 'paused', // the exact trial-expired state
           version,
           updated_at: now,
@@ -620,6 +626,82 @@ export async function setAdminLock(appId: string, subscriber: string, locked: bo
   // On UNLOCK, best-effort refresh from Stripe so the restored status reflects the true current state.
   // Never throws — the saved-status restore above already stands if Stripe is unreachable/unconfigured.
   if (!locked && out.changed) {
+    try {
+      const cfg = await resolveBillingConfig(appId);
+      const subId = (await store.read(appId)).subscriptions[subscriber]?.provider_refs.stripe_subscription_id;
+      if (cfg.configured && cfg.secretKey && subId) {
+        const refreshed = await reconcileSubscription(appId, cfg.secretKey, subId);
+        if (refreshed) return { ...out, status: refreshed.status };
+      }
+    } catch {
+      /* best-effort; the deterministic prev-status restore already applied */
+    }
+  }
+  return out;
+}
+
+// --- administrative COMP (permanent full access — demo / reviewer / lifetime accounts) ------------
+// The INVERSE of the lock: force the record's `status` to `active` so the account's plan entitlements
+// apply in full and NEVER lapse — regardless of the underlying subscription (an expiring trial, a paused
+// sub, or none at all) — WITHOUT mutating Stripe. Sticky: while `admin_comped_at` is set, reconciliation
+// (webhook + sweep) skips the record, so a trial ending at Stripe can never revoke the comp behind the
+// operator. Un-comp restores the saved prior status, then best-effort re-reconciles from Stripe (the
+// source of truth). Lock and comp are mutually exclusive — setting either clears the other. Idempotent.
+// Built for verification/demo accounts (directory reviewers) and operator-granted lifetime access.
+export interface AdminCompResult {
+  subscriber: string;
+  comped: boolean; // the resulting comp state
+  changed: boolean; // whether this call actually changed anything
+  status: SubscriptionStatus; // the record status after the call (`active` while comped)
+  had_subscription: boolean; // whether a real subscription-of-record existed before the call
+}
+
+export async function setAdminComp(appId: string, subscriber: string, comped: boolean): Promise<AdminCompResult> {
+  const store = await backend();
+  const out = await store.mutate<AdminCompResult>(appId, (state) => {
+    const now = nowIso();
+    const version = Date.now();
+    const existing = state.subscriptions[subscriber];
+    const hadSubscription = Boolean(existing);
+    const base = existing ?? noneRecord(appId, subscriber, defaultPlan(state.catalog)?.plan_key ?? null, now);
+    const currentlyComped = Boolean(base.admin_comped_at);
+
+    if (comped === currentlyComped) {
+      // Idempotent no-op (already in the requested state).
+      return { state, result: { subscriber, comped, changed: false, status: base.status, had_subscription: hadSubscription } };
+    }
+
+    const record: SubscriptionRecord = comped
+      ? {
+          ...base,
+          admin_comped_at: now,
+          // Restore target: if the record was LOCKED, its visible status is the overlaid `paused` — the
+          // honest restore target is what the lock itself had saved. Comping also CLEARS the lock
+          // (mutual exclusion; operator intent wins).
+          admin_comp_prev_status: base.admin_locked_at ? (base.admin_lock_prev_status ?? 'none') : base.status,
+          admin_locked_at: null,
+          admin_lock_prev_status: null,
+          status: 'active', // full entitlements, permanently
+          version,
+          updated_at: now,
+        }
+      : {
+          ...base,
+          admin_comped_at: null,
+          admin_comp_prev_status: null,
+          status: base.admin_comp_prev_status ?? 'none', // restore what we saved
+          version,
+          updated_at: now,
+        };
+    return {
+      state: { ...state, subscriptions: { ...state.subscriptions, [subscriber]: record } },
+      result: { subscriber, comped, changed: true, status: record.status, had_subscription: hadSubscription },
+    };
+  });
+
+  // On UN-COMP, best-effort refresh from Stripe so the restored status reflects the true current state
+  // (e.g. the trial genuinely ended while comped → the honest status is `paused`, not the stale save).
+  if (!comped && out.changed) {
     try {
       const cfg = await resolveBillingConfig(appId);
       const subId = (await store.read(appId)).subscriptions[subscriber]?.provider_refs.stripe_subscription_id;

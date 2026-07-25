@@ -911,3 +911,123 @@ describe('C33 — admin account lockout (POST /billing/admin/lock — forge-side
     expect(res.statusCode).toBe(401);
   });
 });
+
+// ===================================================================================================
+describe('C33 — admin COMP overlay (permanent full access) + lock interplay', () => {
+  const SUBSCRIBER = 'user_comp_1';
+
+  // Seed a subscription-of-record in `trialing` (the no-card signup state) with a Stripe sub id.
+  const seedTrialingRecord = async () => {
+    await applyCanonicalSubscription(APP_ID, {
+      subscriber: SUBSCRIBER,
+      app: APP_ID,
+      plan_key: 'pro_month',
+      status: 'trialing',
+      source: 'stripe',
+      current_period_end: null,
+      cancel_at_period_end: false,
+      trial_end: new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString(),
+      currency: 'usd',
+      scope_ref: null,
+      provider_refs: { ...emptyProviderRefs(), stripe_subscription_id: 'sub_comp_1', stripe_customer_id: 'cus_comp_1' },
+    }, Date.now());
+  };
+
+  const adminComp = (comped: boolean) =>
+    server.inject({
+      method: 'POST', url: '/billing/admin/comp',
+      headers: { 'x-forge-service-token': SERVICE_TOKEN },
+      payload: { subscriber: SUBSCRIBER, comped },
+    });
+  const adminLock = (locked: boolean) =>
+    server.inject({
+      method: 'POST', url: '/billing/admin/lock',
+      headers: { 'x-forge-service-token': SERVICE_TOKEN },
+      payload: { subscriber: SUBSCRIBER, locked },
+    });
+  const readRecord = async (): Promise<SubscriptionRecord> =>
+    (await (await getBackends()).billing.read(APP_ID)).subscriptions[SUBSCRIBER];
+
+  it('comp forces status active, is sticky-flagged, and is idempotent', async () => {
+    await seedCatalog();
+    await seedTrialingRecord();
+    const res = await adminComp(true);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ subscriber: SUBSCRIBER, comped: true, changed: true, status: 'active', had_subscription: true });
+    const rec = await readRecord();
+    expect(rec.status).toBe('active');
+    expect(rec.admin_comped_at).toBeTruthy();
+    expect(rec.admin_comp_prev_status).toBe('trialing');
+    // Idempotent second call.
+    const again = await adminComp(true);
+    expect(again.json()).toMatchObject({ comped: true, changed: false, status: 'active' });
+  });
+
+  it('THE POINT: a webhook reporting the trial ended (paused) does NOT revoke a comped account', async () => {
+    await seedCatalog();
+    await configureStripe();
+    await seedTrialingRecord();
+    await adminComp(true);
+    // Stripe now says the underlying subscription is PAUSED (trial ended, no card) …
+    subs.set('sub_comp_1', stripeSub({ id: 'sub_comp_1', status: 'paused', customer_id: 'cus_comp_1',
+      metadata: { subscriber: SUBSCRIBER, app: APP_ID, plan_key: 'pro_month' } }));
+    // … and delivers the trial-end webhook.
+    const res = await deliverEvent({
+      id: 'evt_comp_paused', type: 'customer.subscription.updated',
+      data: { object: { id: 'sub_comp_1', status: 'paused' } },
+    });
+    expect(res.statusCode).toBe(200);
+    // The comp holds: still active, still flagged. Without the sticky guard this would be `paused` —
+    // the exact "reviewer account revoked after 14 days" failure this overlay exists to prevent.
+    const rec = await readRecord();
+    expect(rec.status).toBe('active');
+    expect(rec.admin_comped_at).toBeTruthy();
+  });
+
+  it('un-comp restores honestly by re-reconciling from Stripe (trial genuinely over → paused)', async () => {
+    await seedCatalog();
+    await configureStripe();
+    await seedTrialingRecord();
+    await adminComp(true);
+    subs.set('sub_comp_1', stripeSub({ id: 'sub_comp_1', status: 'paused', customer_id: 'cus_comp_1',
+      metadata: { subscriber: SUBSCRIBER, app: APP_ID, plan_key: 'pro_month' } }));
+    const res = await adminComp(false);
+    expect(res.statusCode).toBe(200);
+    // The saved prev was `trialing`, but the re-reconcile against (stub) Stripe reports the truth: paused.
+    expect(res.json()).toMatchObject({ comped: false, changed: true, status: 'paused' });
+    const rec = await readRecord();
+    expect(rec.admin_comped_at).toBeFalsy();
+    expect(rec.status).toBe('paused');
+  });
+
+  it('lock and comp are mutually exclusive, with honest prev-status restore targets', async () => {
+    await seedCatalog();
+    await seedTrialingRecord();
+    // Comp over trialing …
+    await adminComp(true);
+    // … then LOCK: clears the comp, saves the comp's own prev (trialing) — not the overlaid `active`.
+    const lockRes = await adminLock(true);
+    expect(lockRes.json()).toMatchObject({ locked: true, status: 'paused' });
+    let rec = await readRecord();
+    expect(rec.admin_comped_at).toBeFalsy();
+    expect(rec.admin_lock_prev_status).toBe('trialing');
+    // COMP again over the lock: clears the lock, saves the lock's own prev (trialing).
+    await adminComp(true);
+    rec = await readRecord();
+    expect(rec.admin_locked_at).toBeFalsy();
+    expect(rec.status).toBe('active');
+    expect(rec.admin_comp_prev_status).toBe('trialing');
+  });
+
+  it('comping a never-subscribed account works (record created; active on the default plan)', async () => {
+    await seedCatalog();
+    const res = await adminComp(true);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ comped: true, changed: true, status: 'active', had_subscription: false });
+  });
+
+  it('service token required (401 without)', async () => {
+    const res = await server.inject({ method: 'POST', url: '/billing/admin/comp', payload: { subscriber: SUBSCRIBER, comped: true } });
+    expect(res.statusCode).toBe(401);
+  });
+});

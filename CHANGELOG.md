@@ -9,6 +9,20 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.73.0] - 2026-07-25
+
+### Added
+- **C33 — `POST /billing/admin/comp`: permanent full access (the COMP overlay)** — the inverse of
+  the admin lock. Forces the subscription-of-record's `status` to `active` so the account's plan
+  entitlements apply in full and NEVER lapse — regardless of the underlying subscription (an
+  expiring no-card trial, a paused sub, or none at all) — WITHOUT mutating Stripe. Sticky:
+  reconciliation (webhook + sweep) skips a comped record, so a trial ending at Stripe can never
+  revoke the comp behind the operator (guard-proven by a webhook test). Un-comp restores the saved
+  prior status then re-reconciles from Stripe for honesty. Lock and comp are mutually exclusive —
+  setting either clears the other with honest prev-status restore targets. Built for
+  verification/demo accounts (directory reviewers) and operator-granted lifetime access.
+
+
 ## [0.72.0] - 2026-07-24
 
 ### Added
