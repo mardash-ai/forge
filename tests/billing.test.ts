@@ -945,8 +945,11 @@ describe('C33 — admin COMP overlay (permanent full access) + lock interplay', 
       headers: { 'x-forge-service-token': SERVICE_TOKEN },
       payload: { subscriber: SUBSCRIBER, locked },
     });
-  const readRecord = async (): Promise<SubscriptionRecord> =>
-    (await (await getBackends()).billing.read(APP_ID)).subscriptions[SUBSCRIBER];
+  const readRecord = async (): Promise<SubscriptionRecord> => {
+    const rec = (await (await getBackends()).billing.read(APP_ID)).subscriptions[SUBSCRIBER];
+    if (!rec) throw new Error(`no subscription record for ${SUBSCRIBER}`);
+    return rec;
+  };
 
   it('comp forces status active, is sticky-flagged, and is idempotent', async () => {
     await seedCatalog();
