@@ -164,7 +164,10 @@ export const provisionMonitoring: Capability<Input, MonitoringStack> = {
 
       const composeArgs = [...ctxArgs, 'compose', '-f', 'compose.yaml', '--env-file', input.env_file];
       await run('docker', [...composeArgs, 'pull'], { cwd: dir, timeoutMs: 10 * 60_000 });
-      const up = await run('docker', [...composeArgs, 'up', '-d'], { cwd: dir, timeoutMs: 10 * 60_000 });
+      // --force-recreate: compose does NOT hash inline `configs.content` into the service
+      // fingerprint, so a re-provision with changed dashboards/rules would silently keep the
+      // old containers serving stale configs (observed live 2026-07-26). Volumes persist.
+      const up = await run('docker', [...composeArgs, 'up', '-d', '--force-recreate'], { cwd: dir, timeoutMs: 10 * 60_000 });
       if (up.code !== 0) throw new Error(`docker compose up failed:\n${up.tail}`);
       deployed = true;
     }

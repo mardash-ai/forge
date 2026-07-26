@@ -9,6 +9,16 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.75.2] - 2026-07-26
+
+### Fixed
+- **ProvisionMonitoring re-provision applies config changes.** compose does not hash inline
+  `configs.content` into the service fingerprint, so `up -d` silently kept old containers
+  serving stale dashboards/rules; the capability now deploys with `--force-recreate` (volumes
+  persist). Background-errors panel also catches status-based failures (`status != ok`), not
+  just lines carrying an `error` field.
+
+
 ## [0.75.1] - 2026-07-26
 
 ### Fixed

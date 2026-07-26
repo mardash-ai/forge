@@ -1671,7 +1671,7 @@ export const DASHBOARD_MCP_TOOL_HEALTH = `{
 /** Dashboard: Background Plane (sweeps, gcal-sync per-owner causes) */
 export const DASHBOARD_BACKGROUND_PLANE = `{
   "uid": "forge-mon-background",
-  "title": "Background Plane (sweeps \\u00b7 sync \\u00b7 routines)",
+  "title": "Background Plane (sweeps · sync · routines)",
   "tags": [
     "dorinda",
     "background"
@@ -1731,7 +1731,7 @@ export const DASHBOARD_BACKGROUND_PLANE = `{
     {
       "id": 3,
       "type": "logs",
-      "title": "gcal-sync per-owner log (WITH error cause \\u2014 the ok=0/errors=N killer)",
+      "title": "gcal-sync per-owner log (WITH error cause — the ok=0/errors=N killer)",
       "gridPos": {
         "h": 10,
         "w": 24,
@@ -1771,7 +1771,7 @@ export const DASHBOARD_BACKGROUND_PLANE = `{
       "targets": [
         {
           "refId": "A",
-          "expr": "{service_name=~\\"forge-dorinda-api-prod-web.*\\"} | json | error != \`\` | line_format \`{{.type}} owner={{.owner}} error={{.error}}\`"
+          "expr": "{service_name=~\\"forge-dorinda-api-prod-web.*\\"} | json | (error != \`\` and error != \`null\`) or (status != \`ok\` and status != \`\`) | line_format \`{{.type}} owner={{.owner}} status={{.status}} error={{.error}}\`"
         }
       ],
       "options": {
@@ -1783,7 +1783,7 @@ export const DASHBOARD_BACKGROUND_PLANE = `{
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Domain counters (staged/approved/sent \\u00b7 sync ok/error) \\u2014 appear on first event",
+      "title": "Domain counters (staged/approved/sent · sync ok/error) — appear on first event",
       "gridPos": {
         "h": 9,
         "w": 24,
