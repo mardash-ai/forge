@@ -9,6 +9,24 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.75.0] - 2026-07-26
+
+### Added
+- **ProvisionMonitoring — the metrics+logging environment, provisioned like tracing (C37).**
+  `forge provision-monitoring` generates + deploys the canonical Grafana pane as its own compose
+  project: **otel-collector** (single OTLP ingest; fans out traces→Langfuse with the Basic auth
+  injected there, logs→Loki, metrics→a `:8889` Prometheus scrape endpoint), **Loki** (30 d
+  compactor retention; the Loki 3.x `delete_request_store` requirement baked in), **promtail**
+  (container stdout→Loki labeled `service_name`, SCOPED by a keep-regex to the forge stacks + the
+  edge — never the whole host), **Prometheus** (1 y / 20 GB caps), **Grafana** (4 provisioned
+  dashboards — Edge Overview, Log Explorer, MCP Tool Health, Background Plane — unified-alerting
+  rules + email contact point, optional Traefik fronting at a public host). The compose is fully
+  self-contained (all configs travel inline — deploys over a remote `docker --context` with zero
+  files on the target) and secret-preserving on re-provision, exactly like C37. Registers the new
+  `MonitoringStack` resource (`MonitoringConfigured` event). Producers export OTLP to
+  `http://otel-collector:4318` — never straight to Langfuse (which silently discards metrics).
+
+
 ## [0.74.0] - 2026-07-26
 
 ### Added

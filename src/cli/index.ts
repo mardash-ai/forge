@@ -1051,4 +1051,70 @@ program
     },
   );
 
+// --- provision-monitoring ----------------------------------------------------
+program
+  .command('provision-monitoring')
+  .description(
+    'Generate + deploy the canonical metrics+logging stack (collector, Loki, promtail, Prometheus, Grafana), then register it (ProvisionMonitoring)',
+  )
+  .option('--dir <dir>', 'target directory for the stack files (default <workspace>/monitoring)')
+  .option('--project-name <name>', 'compose project name', 'dorinda-monitoring')
+  .option('--public-host <host>', 'front grafana via Traefik at this host, e.g. grafana.dorinda.ai')
+  .option('--ui-port <port>', 'host port grafana is published on', '3200')
+  .option('--network <name>', 'shared external network (apps + langfuse-web)', 'observability')
+  .option('--proxy-network <name>', 'external Traefik network', 'proxy')
+  .option('--alert-email <email>', 'alert contact-point email', 'ops@forge.local')
+  .option('--log-scope-regex <re>', 'promtail keep-regex over container names')
+  .option('--langfuse-otlp-b64 <b64>', 'base64("pk:sk") Langfuse pair for the collector trace auth')
+  .option('--smtp-host <hostport>', 'SMTP host:port for Grafana alert email')
+  .option('--smtp-user <user>')
+  .option('--smtp-password <pass>')
+  .option('--smtp-from <addr>')
+  .option('--env-file <name>', 'env filename inside the stack dir', '.env')
+  .option('--context <ctx>', 'docker --context for a remote daemon')
+  .option('--skip-deploy', 'generate files only; do not pull/up', false)
+  .option('--regenerate-secrets', 'force NEW secrets even if an env file exists (rotates Grafana admin)', false)
+  .action(
+    async (opts: {
+      dir?: string;
+      projectName: string;
+      publicHost?: string;
+      uiPort: string;
+      network: string;
+      proxyNetwork: string;
+      alertEmail: string;
+      logScopeRegex?: string;
+      langfuseOtlpB64?: string;
+      smtpHost?: string;
+      smtpUser?: string;
+      smtpPassword?: string;
+      smtpFrom?: string;
+      envFile: string;
+      context?: string;
+      skipDeploy: boolean;
+      regenerateSecrets: boolean;
+    }) => {
+      const body: Record<string, unknown> = {
+        project_name: opts.projectName,
+        ui_port: Number(opts.uiPort),
+        network: opts.network,
+        proxy_network: opts.proxyNetwork,
+        alert_email: opts.alertEmail,
+        env_file: opts.envFile,
+        skip_deploy: opts.skipDeploy,
+        regenerate_secrets: opts.regenerateSecrets,
+      };
+      if (opts.dir) body.dir = opts.dir;
+      if (opts.publicHost) body.public_host = opts.publicHost;
+      if (opts.logScopeRegex) body.log_scope_regex = opts.logScopeRegex;
+      if (opts.langfuseOtlpB64) body.langfuse_otlp_b64 = opts.langfuseOtlpB64;
+      if (opts.smtpHost) body.smtp_host = opts.smtpHost;
+      if (opts.smtpUser) body.smtp_user = opts.smtpUser;
+      if (opts.smtpPassword) body.smtp_password = opts.smtpPassword;
+      if (opts.smtpFrom) body.smtp_from = opts.smtpFrom;
+      if (opts.context) body.context = opts.context;
+      await runCapability('provision-monitoring', body);
+    },
+  );
+
 program.parseAsync(process.argv).catch((err) => fail(String(err?.message ?? err)));

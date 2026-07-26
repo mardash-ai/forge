@@ -1,9 +1,9 @@
 {
   "name": "forge",
-  "version": "0.74.0",
+  "version": "0.75.0",
   "private": true,
   "type": "module",
-  "description": "Forge — the AI-native software creation platform for Builders. Docker-first, API-first.",
+  "description": "Forge \u2014 the AI-native software creation platform for Builders. Docker-first, API-first.",
   "license": "MIT",
   "engines": {
     "node": ">=22"

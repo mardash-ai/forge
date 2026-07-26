@@ -23,6 +23,7 @@ export const RESOURCE_TYPES = [
   'Artifact',
   'EmailDelivery',
   'ObservabilityStack',
+  'MonitoringStack',
   'EvalRun',
 ] as const;
 
@@ -381,6 +382,25 @@ export interface ObservabilityStack extends BaseResource {
   stack_dir?: string;
 }
 
+// A MonitoringStack — the durable record of the platform's METRICS + LOGGING environment (the
+// Grafana pane: otel-collector fan-out, Loki, promtail, Prometheus, Grafana). Sibling of
+// ObservabilityStack (the tracing pane). Platform-level; at most one. Never holds secrets.
+export interface MonitoringStack extends BaseResource {
+  type: 'MonitoringStack';
+  // The single OTLP ingest endpoint producers export to (inside the shared networks).
+  otlp_endpoint: string;
+  // Grafana URL (public when fronted, else the localhost port).
+  grafana_url: string;
+  // Whether grafana was reachable at last check.
+  status: 'configured' | 'unreachable';
+  // ISO timestamp of the last connectivity check.
+  checked_at: string;
+  // Public hostname grafana is fronted at, when deployed behind a proxy.
+  public_host?: string;
+  // Directory the generated stack files (compose + env) live in.
+  stack_dir?: string;
+}
+
 // An EvalRun — the durable summary of one `forge eval <suite>` execution (C30): which suite/app,
 // which models were driven as agents-under-test, and the per-(model,case) pass/fail + scores. The
 // full trajectories + per-dimension scores live in Langfuse (the linked dataset run); this resource
@@ -444,4 +464,5 @@ export type AnyResource =
   | Artifact
   | EmailDelivery
   | ObservabilityStack
+  | MonitoringStack
   | EvalRun;
