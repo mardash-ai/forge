@@ -11,7 +11,7 @@ import { hasValidServiceToken } from '../shared/service-auth';
 import { verifyAccessTokenDetailed, bearerFrom, type VerifiedToken } from '../mcp/verify';
 import { scopesSatisfy } from '../mcp/oauth';
 import type { ToolRegistration, ToolFamily } from '../mcp/types';
-import { startSpan, traceparent, parentFromTraceparent, capPayload, ATTR } from '../plugins/otel-langfuse/index';
+import { startSpan, traceparent, parentFromTraceparent, capPayload, ATTR, mcpLog, recordToolCallMetric, recordMcpRegistrationMetric } from '../plugins/otel-langfuse/index';
 
 // C23 — the REMOTE MCP SERVER the platform hosts for a consuming app, plus the app-facing management
 // surface. `POST /mcp` speaks JSON-RPC 2.0 over the Streamable-HTTP transport (request/response), and
@@ -153,7 +153,7 @@ export function broadcastToolListChanged(appId: string): number {
   // OBSERVABILITY (the point): `notified=0` is the loud diagnostic — the tool surface changed but NO
   // client was holding the stream, so every connected AI is still serving a stale `tools/list` and will
   // keep doing so until it reconnects. Anything >0 proves a real client is consuming the push channel.
-  console.log(`[mcp] tools/list_changed app=${appId} notified=${sent} attached=${attached}`);
+  mcpLog({ event: 'mcp.tools_list_changed', app: appId, notified: sent, attached });
   startSpan('mcp.tools_list_changed', {
     attributes: { 'mcp.app': appId, 'mcp.streams_notified': sent, 'mcp.streams_attached': attached },
   }).end('ok');
@@ -273,10 +273,12 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       // requested JSON-RPC method, adopting the edge's `traceparent` when present so it lands on the edge
       // trace. NO token material is ever recorded. The wire response stays a uniform invalid_token 401.
       const method = (req.body as { method?: unknown } | undefined)?.method;
+      const rejectReason = reason ?? 'invalid_token';
       startSpan('mcp.auth_reject', {
         parent: parentFromTraceparent(req.headers.traceparent),
         attributes: { 'mcp.app': app_.name, ...(typeof method === 'string' ? { 'mcp.method': method } : {}) },
-      }).end('error', reason ?? 'invalid_token');
+      }).end('error', rejectReason);
+      mcpLog({ event: 'mcp.auth_reject', app: app_.name, reason: rejectReason, ...(typeof method === 'string' ? { method } : {}) });
       return reply
         .status(401)
         .header('WWW-Authenticate', `Bearer resource_metadata="${resourceBase(req)}/.well-known/oauth-protected-resource/mcp"`)
@@ -361,6 +363,10 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     const args = (params?.arguments as Record<string, unknown> | undefined) ?? {};
     if (!name || typeof name !== 'string') return reply.status(200).send(rpcError(id, -32602, 'tools/call requires a string `name`.'));
 
+    // Duration tracking for the structured log + RED metrics — started before the tool lookup so
+    // every exit path (unknown tool, scope failure, app unreachable, dispatch) has an honest elapsed time.
+    const startMs = Date.now();
+
     // ── Observability (C36): the transport span of this tool call's trace, started BEFORE the tool lookup
     // so a call to a NONEXISTENT tool still produces a span (it used to fail pre-span — zero visibility).
     // When the edge proxy sent a W3C `traceparent`, this span ADOPTS it as its parent so edge + tool join
@@ -391,6 +397,9 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     const tool = await (await mcp()).getTool(app_.id, name);
     if (!tool) {
       span.end('error', 'unknown_tool');
+      const dur = Date.now() - startMs;
+      mcpLog({ event: 'mcp.tool_call', app: app_.name, tool: name, client: verified.clientId, duration_ms: dur, outcome: 'error', error_class: 'unknown_tool' });
+      recordToolCallMetric({ tool: name, app: app_.name, outcome: 'error', duration_ms: dur, error_class: 'unknown_tool' });
       return reply.status(200).send(rpcError(id, -32602, `Unknown tool: ${name}`));
     }
     span.setAttribute('mcp.tool.family', tool.family);
@@ -401,6 +410,9 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     if (tool.scope && !scopesSatisfy(verified.scopes, [tool.scope])) {
       await recordCall(app_.id, name, verified, false, 'insufficient_scope');
       span.setAttribute(ATTR.AUTHZ_DECISION, 'insufficient_scope').end('error', 'insufficient_scope');
+      const dur = Date.now() - startMs;
+      mcpLog({ event: 'mcp.tool_call', app: app_.name, tool: name, client: verified.clientId, duration_ms: dur, outcome: 'error', error_class: 'insufficient_scope' });
+      recordToolCallMetric({ tool: name, app: app_.name, outcome: 'error', duration_ms: dur, error_class: 'insufficient_scope' });
       return reply.status(200).send(rpcError(id, -32001, 'insufficient_scope', { required_scope: tool.scope }));
     }
 
@@ -409,6 +421,9 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     if (!base) {
       await recordCall(app_.id, name, verified, false, 'app_unreachable');
       span.end('error', 'app_unreachable');
+      const dur = Date.now() - startMs;
+      mcpLog({ event: 'mcp.tool_call', app: app_.name, tool: name, client: verified.clientId, duration_ms: dur, outcome: 'error', error_class: 'app_unreachable' });
+      recordToolCallMetric({ tool: name, app: app_.name, outcome: 'error', duration_ms: dur, error_class: 'app_unreachable' });
       return reply.status(200).send(rpcError(id, -32011, 'the app handler is not reachable (never provisioned?).'));
     }
     const serviceToken = await resolveServiceToken(app_.id);
@@ -436,20 +451,29 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     } catch (e) {
       payload = { error: String((e as Error)?.message ?? e) };
     }
-    await recordCall(app_.id, name, verified, ok, ok ? undefined : `handler_status_${httpStatus ?? 'error'}`);
+    const errorClass = ok ? undefined : `handler_status_${httpStatus ?? 'error'}`;
+    const duration_ms = Date.now() - startMs;
+    await recordCall(app_.id, name, verified, ok, errorClass);
     if (httpStatus !== undefined) span.setAttribute('http.response.status_code', httpStatus);
     // C36 — the returned payload is the observation OUTPUT, on SUCCESS AND FAILURE alike: an isError /
     // handler_status_* error body is exactly what you need to see on the trace to debug the bounce.
     if (tracePayloads()) span.setAttribute(ATTR.LANGFUSE_OBSERVATION_OUTPUT, capPayload(payload));
-    span.end(ok ? 'ok' : 'error', ok ? undefined : `handler_status_${httpStatus ?? 'error'}`);
+    span.end(ok ? 'ok' : 'error', errorClass);
+
+    // Structured log (one line per tool call — always on, not OTel-gated) + RED metrics (OTel-gated).
+    mcpLog({ event: 'mcp.tool_call', app: app_.name, tool: name, client: clientName ?? verified.clientId, duration_ms, outcome: ok ? 'ok' : 'error', ...(errorClass ? { error_class: errorClass } : {}) });
+    recordToolCallMetric({ tool: name, app: app_.name, outcome: ok ? 'ok' : 'error', duration_ms, ...(errorClass ? { error_class: errorClass } : {}) });
 
     // Wrap the app's JSON into an MCP tool result. A structured object rides `structuredContent`; a
     // human-readable rendering rides `content` text. A non-2xx handler → an MCP tool error (isError).
+    // `_meta.traceparent` stamps the W3C correlation id onto the result so a CHAT-VISIBLE failure is
+    // directly searchable in traces: the user sees the failure; the id links it to the backend trace.
     const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
     return reply.status(200).send(rpcResult(id, {
       content: [{ type: 'text', text }],
       ...(payload && typeof payload === 'object' ? { structuredContent: payload } : {}),
       ...(ok ? {} : { isError: true }),
+      _meta: { traceparent: traceparent(span) },
     }));
   }
 
@@ -511,9 +535,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       userAgent,
     });
     const openedAt = Date.now();
-    console.log(
-      `[mcp] stream OPEN app=${app_.name} client=${clientName} attached=${toolListSubscriberCount(app_.id)}`,
-    );
+    mcpLog({ event: 'mcp.stream_open', app: app_.name, client: clientName, attached: toolListSubscriberCount(app_.id) });
     startSpan('mcp.stream_open', {
       attributes: { 'mcp.app': app_.name, 'mcp.client_name': clientName },
     }).end('ok');
@@ -535,10 +557,8 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       unsubscribe();
       // A very SHORT-lived stream is itself a finding (a proxy or the client is dropping it), which
       // would silently defeat the whole mechanism — so record how long it actually stayed open.
-      const heldSec = Math.round((Date.now() - openedAt) / 1000);
-      console.log(
-        `[mcp] stream CLOSE app=${app_.name} client=${clientName} held=${heldSec}s attached=${toolListSubscriberCount(app_.id)}`,
-      );
+      const heldMs = Date.now() - openedAt;
+      mcpLog({ event: 'mcp.stream_close', app: app_.name, client: clientName, held_ms: heldMs, attached: toolListSubscriberCount(app_.id) });
     };
     req.raw.on('close', cleanup);
     req.raw.on('error', cleanup);
@@ -578,6 +598,10 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     // `notifications/tools/list_changed`). Without this a client keeps serving its cached tool set
     // until the USER manually reconnects the connector.
     broadcastToolListChanged(app_.id);
+    // Registration-health metric: the current registered-tool count after this change.
+    const toolsAfterPut = await (await mcp()).listTools(app_.id);
+    recordMcpRegistrationMetric({ app: app_.name, tools_count: toolsAfterPut.length });
+    mcpLog({ event: 'mcp.tool_register', app: app_.name, tool: tool.name, tools_count: toolsAfterPut.length });
     return reply.status(200).send({ tool });
   });
 
@@ -607,7 +631,12 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     const { name } = req.params as { name: string };
     const deleted = await (await mcp()).deleteTool(app_.id, name);
     // A removed tool is also a surface change (the prune path) — notify so clients drop it promptly.
-    if (deleted) broadcastToolListChanged(app_.id);
+    if (deleted) {
+      broadcastToolListChanged(app_.id);
+      const toolsAfterDel = await (await mcp()).listTools(app_.id);
+      recordMcpRegistrationMetric({ app: app_.name, tools_count: toolsAfterDel.length });
+      mcpLog({ event: 'mcp.tool_unregister', app: app_.name, tool: name, tools_count: toolsAfterDel.length });
+    }
     return { deleted };
   });
 

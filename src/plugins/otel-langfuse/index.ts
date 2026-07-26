@@ -65,18 +65,26 @@ interface OtlpSpan {
 
 // ── Module state ───────────────────────────────────────────────────────────
 let _endpoint = '';
+let _metricsEndpoint = '';
 let _authHeader = '';
 let _serviceName = 'forge';
 let _enabled = false;
+let _metricsEnabled = false;
 
 // ── Initialisation ─────────────────────────────────────────────────────────
 
 export interface OtelLangfuseConfig {
   /**
-   * OTLP endpoint. Defaults to OTEL_EXPORTER_OTLP_ENDPOINT env var, then
+   * OTLP traces endpoint. Defaults to OTEL_EXPORTER_OTLP_ENDPOINT env var, then
    * `http://langfuse-web:3000/api/public/otel`.
    */
   endpoint?: string;
+  /**
+   * OTLP metrics endpoint. Defaults to OTEL_EXPORTER_OTLP_METRICS_ENDPOINT env
+   * var, then the same base URL as `endpoint` at `/v1/metrics`. Pass explicitly
+   * in tests to separate metrics intercepts from trace intercepts.
+   */
+  metricsEndpoint?: string;
   /** Langfuse project public key. Defaults to LANGFUSE_PUBLIC_KEY env var. */
   publicKey?: string;
   /** Langfuse project secret key. Defaults to LANGFUSE_SECRET_KEY env var. */
@@ -87,7 +95,7 @@ export interface OtelLangfuseConfig {
 
 /**
  * Call once at process startup to wire up the OTLP exporter.
- * Returns `false` when keys are absent (tracing silently disabled).
+ * Returns `false` when keys are absent (tracing + metrics silently disabled).
  */
 export function initOtelLangfuse(cfg: OtelLangfuseConfig = {}): boolean {
   const ep =
@@ -98,20 +106,54 @@ export function initOtelLangfuse(cfg: OtelLangfuseConfig = {}): boolean {
   const sec = cfg.secretKey ?? process.env.LANGFUSE_SECRET_KEY ?? '';
 
   if (!pub || !sec) {
-    // Keys absent → tracing disabled; tool calls are unaffected.
+    // Keys absent → tracing + metrics disabled; tool calls are unaffected.
     _enabled = false;
+    _metricsEnabled = false;
     return false;
   }
 
-  _endpoint = ep.replace(/\/$/, '') + '/v1/traces';
+  const base = ep.replace(/\/$/, '');
+  _endpoint = base + '/v1/traces';
   _authHeader = 'Basic ' + Buffer.from(`${pub}:${sec}`).toString('base64');
   _serviceName = cfg.serviceName ?? process.env.OTEL_SERVICE_NAME ?? 'forge';
   _enabled = true;
+
+  // Metrics endpoint: explicit cfg → env var → same base as traces at /v1/metrics.
+  const metricsEp = cfg.metricsEndpoint ?? process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT;
+  _metricsEndpoint = metricsEp ? metricsEp.replace(/\/$/, '') : base + '/v1/metrics';
+  _metricsEnabled = true;
+
   return true;
 }
 
 /** Returns true when the exporter has been initialised with valid keys. */
 export function isEnabled(): boolean { return _enabled; }
+
+// ── Structured MCP log ─────────────────────────────────────────────────────
+// Emits one JSON line per significant MCP event (session lifecycle, tool call).
+// Always on — this is a platform diagnostic, not an opt-in observability feature.
+// Each line is a flat JSON object; consumers ingest it as a structured record.
+
+let _mcpLogOverride: ((fields: Record<string, unknown>) => void) | undefined;
+
+/**
+ * Test-only: redirect mcpLog output to a collector function instead of stdout.
+ * Call with `undefined` to restore the default stdout behaviour.
+ */
+export function _setMcpLogOverride(fn: ((fields: Record<string, unknown>) => void) | undefined): void {
+  _mcpLogOverride = fn;
+}
+
+/**
+ * Emit one structured JSON log line for an MCP event. Required fields:
+ *   `event` — e.g. `mcp.tool_call`, `mcp.stream_open`, `mcp.tools_list_changed`
+ *   `app`   — the app name (for multi-tenant deployments)
+ * Callers may add: `tool`, `client`, `duration_ms`, `outcome`, `error_class`.
+ */
+export function mcpLog(fields: Record<string, unknown>): void {
+  if (_mcpLogOverride) { _mcpLogOverride(fields); return; }
+  process.stdout.write(JSON.stringify(fields) + '\n');
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -165,6 +207,127 @@ function exportSpan(span: OtlpSpan): void {
     body,
     signal: AbortSignal.timeout(5000), // 5 s hard cap — never blocks a tool call
   }).catch(() => { /* silently discard collector errors */ });
+}
+
+// ── OTLP Metrics export (per-tool RED + MCP registration health) ───────────
+// Per-call DELTA data points fired-and-forgotten to /v1/metrics. A collector
+// that doesn't accept OTLP metrics silently drops them — the fire-and-forget
+// error swallow keeps tool calls unaffected.
+
+// Standard histogram buckets for tool-call duration (ms).
+const DURATION_BUCKETS = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10_000];
+
+function toAttrStr(key: string, val: string): { key: string; value: { stringValue: string } } {
+  return { key, value: { stringValue: val } };
+}
+
+function bucketCounts(durationMs: number): string[] {
+  const counts: string[] = new Array(DURATION_BUCKETS.length + 1).fill('0') as string[];
+  for (let i = 0; i < DURATION_BUCKETS.length; i++) {
+    if (durationMs <= (DURATION_BUCKETS[i] ?? Infinity)) { counts[i] = '1'; return counts; }
+  }
+  counts[DURATION_BUCKETS.length] = '1'; // overflow bucket
+  return counts;
+}
+
+function exportMetricsPayload(payload: unknown): void {
+  if (!_metricsEnabled) return;
+  fetch(_metricsEndpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': _authHeader },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(5000),
+  }).catch(() => { /* silently discard collector errors */ });
+}
+
+function metricsEnvelope(metrics: unknown[]): unknown {
+  return {
+    resourceMetrics: [{
+      resource: { attributes: [{ key: 'service.name', value: { stringValue: _serviceName } }] },
+      scopeMetrics: [{ scope: { name: '@forge/otel-langfuse', version: '1.0.0' }, metrics }],
+    }],
+  };
+}
+
+/**
+ * Export per-tool RED metrics for one tool call (fire-and-forget, delta mode):
+ *   `mcp.tool.calls`       — counter (labelled by tool, app, outcome)
+ *   `mcp.tool.errors`      — counter on error (same labels + error.class)
+ *   `mcp.tool.duration_ms` — histogram (labelled by tool, app)
+ */
+export function recordToolCallMetric(opts: {
+  tool: string;
+  app: string;
+  outcome: 'ok' | 'error';
+  duration_ms: number;
+  error_class?: string;
+}): void {
+  if (!_metricsEnabled) return;
+  const t = nowNano();
+  const callAttrs = [
+    toAttrStr('mcp.tool', opts.tool),
+    toAttrStr('mcp.app', opts.app),
+    toAttrStr('outcome', opts.outcome),
+    ...(opts.error_class ? [toAttrStr('error.class', opts.error_class)] : []),
+  ];
+  const metrics: unknown[] = [
+    {
+      name: 'mcp.tool.calls',
+      description: 'MCP tool call rate (RED Rate)',
+      sum: { dataPoints: [{ attributes: callAttrs, startTimeUnixNano: t, timeUnixNano: t, asInt: 1 }], aggregationTemporality: 2, isMonotonic: true },
+    },
+    {
+      name: 'mcp.tool.duration_ms',
+      description: 'MCP tool call duration (RED Duration)',
+      histogram: {
+        dataPoints: [{
+          attributes: [toAttrStr('mcp.tool', opts.tool), toAttrStr('mcp.app', opts.app)],
+          startTimeUnixNano: t, timeUnixNano: t,
+          count: 1, sum: opts.duration_ms,
+          bucketCounts: bucketCounts(opts.duration_ms),
+          explicitBounds: DURATION_BUCKETS,
+        }],
+        aggregationTemporality: 2,
+      },
+    },
+  ];
+  if (opts.outcome === 'error') {
+    metrics.push({
+      name: 'mcp.tool.errors',
+      description: 'MCP tool call errors (RED Errors)',
+      sum: { dataPoints: [{ attributes: callAttrs, startTimeUnixNano: t, timeUnixNano: t, asInt: 1 }], aggregationTemporality: 2, isMonotonic: true },
+    });
+  }
+  exportMetricsPayload(metricsEnvelope(metrics));
+}
+
+/**
+ * Export MCP registration-health gauges (fire-and-forget):
+ *   `mcp.tools.registered` — current tool count per app
+ *   `mcp.streams.active`   — current SSE stream count per app (optional)
+ */
+export function recordMcpRegistrationMetric(opts: {
+  app: string;
+  tools_count: number;
+  streams_count?: number;
+}): void {
+  if (!_metricsEnabled) return;
+  const t = nowNano();
+  const metrics: unknown[] = [
+    {
+      name: 'mcp.tools.registered',
+      description: 'Current number of registered MCP tools per app',
+      gauge: { dataPoints: [{ attributes: [toAttrStr('mcp.app', opts.app)], timeUnixNano: t, asInt: opts.tools_count }] },
+    },
+  ];
+  if (opts.streams_count !== undefined) {
+    metrics.push({
+      name: 'mcp.streams.active',
+      description: 'Current number of active MCP SSE streams per app',
+      gauge: { dataPoints: [{ attributes: [toAttrStr('mcp.app', opts.app)], timeUnixNano: t, asInt: opts.streams_count }] },
+    });
+  }
+  exportMetricsPayload(metricsEnvelope(metrics));
 }
 
 // ── Payload capture (tool-call arguments / results on the trace) ──────────

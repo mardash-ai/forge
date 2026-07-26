@@ -15,7 +15,7 @@ import {
 import { newToken } from '../src/plugins/auth-identity/index';
 import { expiresAtIso } from '../src/mcp/oauth';
 import { nowIso } from '../src/shared/time';
-import { initOtelLangfuse } from '../src/plugins/otel-langfuse/index';
+import { initOtelLangfuse, _setMcpLogOverride } from '../src/plugins/otel-langfuse/index';
 import type { Application } from '../src/resources/types';
 
 // C23 — the hosted remote MCP server (Streamable-HTTP JSON-RPC) + the app-facing management surface.
@@ -601,8 +601,14 @@ describe('C36 — payload tracing + failure-path spans', () => {
     exported = [];
     const realFetch = globalThis.fetch;
     vi.spyOn(globalThis, 'fetch').mockImplementation(((url: unknown, init?: RequestInit) => {
-      if (String(url).startsWith(OTLP)) {
+      const u = String(url);
+      if (u.includes('/v1/traces')) {
+        // C36 trace payloads (resourceSpans) — captured for span assertions below.
         exported.push(JSON.parse(String(init?.body)));
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      }
+      if (u.includes('/v1/metrics')) {
+        // Metrics payloads (resourceMetrics) — not needed by C36 span tests; discard silently.
         return Promise.resolve(new Response('{}', { status: 200 }));
       }
       return realFetch(url as Parameters<typeof fetch>[0], init);
@@ -819,5 +825,248 @@ describe('Tier-3 — per-host MCP resource identifier (dedicated mTLS host)', ()
       // arrives via the pinned api host → expectedResource = https://api.dorinda.ai/mcp → aud mismatch → 401
       expect((await call('api.dorinda.ai')).statusCode).toBe(401);
     });
+  });
+});
+
+// ── Structured JSON logs + OTLP metrics + _meta.traceparent on tool results ──────────────────
+//
+// This block validates the data-plane MCP observability revision:
+//   1. One structured JSON log line per tool call (tool, client, duration_ms, outcome, error_class)
+//   2. OTLP RED metrics + registration-health gauge exported to the /v1/metrics endpoint
+//   3. W3C traceparent correlation id stamped on every MCP tool-result `_meta` field
+//
+// The log override (`_setMcpLogOverride`) routes mcpLog output to an in-memory array so we can
+// assert without touching stdout. Fetch is mocked to intercept both /v1/traces and /v1/metrics.
+describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
+  const OTLP = 'http://otel-collector.test/api/public/otel';
+  let mcpLogs: Record<string, unknown>[];
+  let exportedMetrics: unknown[];
+
+  type MetricMsg = { resourceMetrics: Array<{ scopeMetrics: Array<{ metrics: Array<{ name: string; [k: string]: unknown }> }> }> };
+  const allMetrics = () =>
+    (exportedMetrics as MetricMsg[]).flatMap((b) => b.resourceMetrics.flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics)));
+  const metricNamed = (name: string) => allMetrics().find((m) => m.name === name);
+
+  beforeEach(() => {
+    mcpLogs = [];
+    exportedMetrics = [];
+    const realFetch = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(((url: unknown, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes('/v1/traces')) return Promise.resolve(new Response('{}', { status: 200 }));
+      if (u.includes('/v1/metrics')) {
+        exportedMetrics.push(JSON.parse(String(init?.body)));
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      }
+      return realFetch(url as Parameters<typeof fetch>[0], init);
+    }) as typeof fetch);
+    initOtelLangfuse({ endpoint: OTLP, publicKey: 'pk-test', secretKey: 'sk-test' });
+    _setMcpLogOverride((fields) => mcpLogs.push(fields));
+  });
+  afterEach(() => {
+    initOtelLangfuse({ publicKey: '', secretKey: '' });
+    _setMcpLogOverride(undefined);
+    vi.restoreAllMocks();
+    delete process.env.FORGE_MCP_TRACE_PAYLOADS;
+  });
+
+  // ── 1. Structured JSON log lines ──────────────────────────────────────────
+
+  it('emits a structured log line for a successful tool call with required fields', async () => {
+    await registerTool();
+    const bearer = await mintAccess(['notes:read']);
+    await rpc('tools/call', { name: 'get_note', arguments: { id: 'n1' } }, bearer);
+
+    const log = mcpLogs.find((l) => l['event'] === 'mcp.tool_call' && l['tool'] === 'get_note');
+    expect(log).toBeTruthy();
+    expect(log!['outcome']).toBe('ok');
+    expect(typeof log!['duration_ms']).toBe('number');
+    expect((log!['duration_ms'] as number)).toBeGreaterThanOrEqual(0);
+    expect(log!['app']).toBe(APP);
+    expect(log!['error_class']).toBeUndefined();
+  });
+
+  it('emits a structured log line with error_class for an unknown tool', async () => {
+    const bearer = await mintAccess([]);
+    await rpc('tools/call', { name: 'no_such_tool', arguments: {} }, bearer);
+
+    const log = mcpLogs.find((l) => l['event'] === 'mcp.tool_call' && l['tool'] === 'no_such_tool');
+    expect(log).toBeTruthy();
+    expect(log!['outcome']).toBe('error');
+    expect(log!['error_class']).toBe('unknown_tool');
+    expect(typeof log!['duration_ms']).toBe('number');
+  });
+
+  it('emits a structured log line with error_class for a scope failure', async () => {
+    await registerTool({ name: 'write_note', scope: 'notes:write', family: 'action', handler_path: '/api/mcp/tools/get_note' });
+    const bearer = await mintAccess(['notes:read']);
+    await rpc('tools/call', { name: 'write_note', arguments: {} }, bearer);
+
+    const log = mcpLogs.find((l) => l['event'] === 'mcp.tool_call' && l['tool'] === 'write_note');
+    expect(log).toBeTruthy();
+    expect(log!['outcome']).toBe('error');
+    expect(log!['error_class']).toBe('insufficient_scope');
+  });
+
+  it('emits a structured log line with error_class for a handler error', async () => {
+    await registerTool({ name: 'boom', scope: '', handler_path: '/api/mcp/tools/boom' });
+    const bearer = await mintAccess([]);
+    const res = await rpc('tools/call', { name: 'boom', arguments: {} }, bearer);
+    expect(res.json().result.isError).toBe(true);
+
+    const log = mcpLogs.find((l) => l['event'] === 'mcp.tool_call' && l['tool'] === 'boom');
+    expect(log).toBeTruthy();
+    expect(log!['outcome']).toBe('error');
+    expect(String(log!['error_class'])).toMatch(/^handler_status_/);
+  });
+
+  it('emits a structured log line for auth rejection (mcp.auth_reject)', async () => {
+    await rpc('tools/call', { name: 'get_note', arguments: {} }, 'not-a-real-token');
+
+    const log = mcpLogs.find((l) => l['event'] === 'mcp.auth_reject');
+    expect(log).toBeTruthy();
+    expect(log!['reason']).toBe('invalid_token');
+    expect(log!['app']).toBe(APP);
+  });
+
+  it('emits a structured log for tool registration (mcp.tool_register)', async () => {
+    await registerTool();
+
+    const log = mcpLogs.find((l) => l['event'] === 'mcp.tool_register');
+    expect(log).toBeTruthy();
+    expect(log!['tool']).toBe('get_note');
+    expect(log!['app']).toBe(APP);
+    expect(typeof log!['tools_count']).toBe('number');
+  });
+
+  it('emits a structured log for tool deregistration (mcp.tool_unregister)', async () => {
+    await registerTool();
+    await server.inject({ method: 'DELETE', url: '/mcp/tools/get_note', headers: { 'x-forge-service-token': SVC_TOKEN } });
+
+    const log = mcpLogs.find((l) => l['event'] === 'mcp.tool_unregister');
+    expect(log).toBeTruthy();
+    expect(log!['tool']).toBe('get_note');
+  });
+
+  it('emits a structured log for tools/list_changed push (mcp.tools_list_changed)', async () => {
+    const unsub = subscribeToolListChanged(APP_ID, { write: () => {} });
+    try {
+      await registerTool();
+    } finally {
+      unsub();
+    }
+
+    const log = mcpLogs.find((l) => l['event'] === 'mcp.tools_list_changed');
+    expect(log).toBeTruthy();
+    expect(typeof (log!['notified'] as number)).toBe('number');
+  });
+
+  // ── 2. OTLP metrics ──────────────────────────────────────────────────────
+
+  it('exports mcp.tool.calls + mcp.tool.duration_ms metrics on a successful tool call', async () => {
+    await registerTool();
+    const bearer = await mintAccess(['notes:read']);
+    await rpc('tools/call', { name: 'get_note', arguments: {} }, bearer);
+
+    expect(metricNamed('mcp.tool.calls')).toBeTruthy();
+    expect(metricNamed('mcp.tool.duration_ms')).toBeTruthy();
+    expect(metricNamed('mcp.tool.errors')).toBeUndefined();
+  });
+
+  it('exports mcp.tool.errors metric on a tool call error', async () => {
+    await registerTool({ name: 'boom', scope: '', handler_path: '/api/mcp/tools/boom' });
+    const bearer = await mintAccess([]);
+    await rpc('tools/call', { name: 'boom', arguments: {} }, bearer);
+
+    expect(metricNamed('mcp.tool.errors')).toBeTruthy();
+    expect(metricNamed('mcp.tool.calls')).toBeTruthy();
+  });
+
+  it('exports mcp.tool.calls + errors for unknown-tool call', async () => {
+    const bearer = await mintAccess([]);
+    await rpc('tools/call', { name: 'nope', arguments: {} }, bearer);
+
+    expect(metricNamed('mcp.tool.calls')).toBeTruthy();
+    expect(metricNamed('mcp.tool.errors')).toBeTruthy();
+  });
+
+  it('exports mcp.tools.registered gauge after tool registration with the correct count', async () => {
+    await registerTool();
+
+    type Gauge = { gauge?: { dataPoints: Array<{ asInt: number; attributes: Array<{ key: string; value: { stringValue: string } }> }> } };
+    const gauge = metricNamed('mcp.tools.registered') as Gauge | undefined;
+    expect(gauge).toBeTruthy();
+    expect(gauge!.gauge!.dataPoints[0]!.asInt).toBe(1);
+    const appAttr = gauge!.gauge!.dataPoints[0]!.attributes.find((a) => a.key === 'mcp.app');
+    expect(appAttr?.value.stringValue).toBe(APP);
+  });
+
+  it('exports mcp.tools.registered gauge with count 0 after the last tool is deleted', async () => {
+    await registerTool();
+    exportedMetrics = []; // reset so the delete batch is isolated
+    await server.inject({ method: 'DELETE', url: '/mcp/tools/get_note', headers: { 'x-forge-service-token': SVC_TOKEN } });
+
+    type Gauge = { gauge?: { dataPoints: Array<{ asInt: number }> } };
+    const gauge = metricNamed('mcp.tools.registered') as Gauge | undefined;
+    expect(gauge).toBeTruthy();
+    expect(gauge!.gauge!.dataPoints[0]!.asInt).toBe(0);
+  });
+
+  it('metrics include correct tool + app labels on the data points', async () => {
+    await registerTool();
+    const bearer = await mintAccess(['notes:read']);
+    await rpc('tools/call', { name: 'get_note', arguments: {} }, bearer);
+
+    type DataPoint = { attributes: Array<{ key: string; value: { stringValue: string } }> };
+    const callMetric = metricNamed('mcp.tool.calls') as { sum?: { dataPoints: DataPoint[] } } | undefined;
+    expect(callMetric).toBeTruthy();
+    const dp = callMetric!.sum!.dataPoints[0]!;
+    expect(dp.attributes.find((a) => a.key === 'mcp.tool')?.value.stringValue).toBe('get_note');
+    expect(dp.attributes.find((a) => a.key === 'mcp.app')?.value.stringValue).toBe(APP);
+  });
+
+  it('does NOT export metrics when OTLP is disabled (no keys)', async () => {
+    initOtelLangfuse({ publicKey: '', secretKey: '' });
+    exportedMetrics = [];
+    await registerTool();
+    const bearer = await mintAccess(['notes:read']);
+    await rpc('tools/call', { name: 'get_note', arguments: {} }, bearer);
+    expect(exportedMetrics).toHaveLength(0);
+  });
+
+  // ── 3. _meta.traceparent on tool-call results ─────────────────────────────
+
+  it('stamps _meta.traceparent on a SUCCESSFUL tool call result', async () => {
+    await registerTool();
+    const bearer = await mintAccess(['notes:read']);
+    const res = await rpc('tools/call', { name: 'get_note', arguments: {} }, bearer);
+    const result = res.json().result;
+
+    expect(typeof result._meta?.traceparent).toBe('string');
+    expect(result._meta.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+  });
+
+  it('stamps _meta.traceparent on an ERROR tool call result (isError)', async () => {
+    await registerTool({ name: 'boom', scope: '', handler_path: '/api/mcp/tools/boom' });
+    const bearer = await mintAccess([]);
+    const res = await rpc('tools/call', { name: 'boom', arguments: {} }, bearer);
+    const result = res.json().result;
+
+    expect(result.isError).toBe(true);
+    expect(typeof result._meta?.traceparent).toBe('string');
+    expect(result._meta.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+  });
+
+  it('_meta.traceparent carries the same trace id as the inbound edge traceparent', async () => {
+    await registerTool();
+    const bearer = await mintAccess(['notes:read']);
+    const edgeTrace = 'a1b2c3d4'.repeat(4);
+    const edgeSpan  = 'e5f60718'.repeat(2);
+    const res = await server.inject({
+      method: 'POST', url: '/mcp',
+      headers: { authorization: `Bearer ${bearer}`, traceparent: `00-${edgeTrace}-${edgeSpan}-01` },
+      payload: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_note', arguments: {} } } as object,
+    });
+    expect(res.json().result._meta?.traceparent).toMatch(new RegExp(`^00-${edgeTrace}-`));
   });
 });

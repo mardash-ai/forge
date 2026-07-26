@@ -9,6 +9,23 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.74.0] - 2026-07-26
+
+### Added
+- **Data-plane MCP observability revision — structured logs, OTLP metrics, traceparent on results.**
+  Every MCP session event and tool call now emits one structured JSON log line (`event`, `tool`,
+  `client`, `duration_ms`, `outcome`, `error_class`) to stdout so log aggregators receive structured
+  records instead of freeform text. Three new OTLP metric series are exported via `/v1/metrics`:
+  `mcp.tool.calls` + `mcp.tool.errors` (RED rate/error counters, delta, labelled by tool + app +
+  outcome/error_class) and `mcp.tool.duration_ms` (histogram). Registration-health gauges
+  `mcp.tools.registered` and `mcp.streams.active` are exported after each tool register/delete.
+  Metrics use the same OTLP credentials as the existing Langfuse traces; a separate
+  `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` env var overrides the endpoint for a dedicated metrics
+  collector. The W3C `traceparent` correlation id is now stamped onto every MCP tool-result `_meta`
+  field so a chat-visible failure can be searched directly in traces. Inbound `traceparent`
+  propagation into the app callback was already present (C36); this revision surfaces it on the wire
+  result. Langfuse remains the LLM-trace view — these metrics complement, not duplicate it.
+
 ## [0.73.0] - 2026-07-25
 
 ### Added
@@ -2647,7 +2664,8 @@ Each released version maps to a published control-plane image tag
   build, test, lint, inspect, explain failures for, and plan a Dockerized Next.js app,
   driven by a thin `./forge` CLI.
 
-[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.50.0...HEAD
+[Unreleased]: https://github.com/mardash-ai/forge/compare/v0.74.0...HEAD
+[0.74.0]: https://github.com/mardash-ai/forge/compare/v0.73.0...v0.74.0
 [0.50.0]: https://github.com/mardash-ai/forge/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/mardash-ai/forge/compare/v0.48.0...v0.49.0
 [0.48.0]: https://github.com/mardash-ai/forge/compare/v0.47.0...v0.48.0
