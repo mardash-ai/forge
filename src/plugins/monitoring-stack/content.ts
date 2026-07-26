@@ -1,6 +1,9 @@
 // Generated-once from the live-validated stack configs (2026-07-26) — now OWNED by forge.
 // Edit HERE and re-release; never hand-edit a provisioned stack dir (regen clobbers it).
 // Datasource uids are forge-loki / forge-prometheus everywhere (datasources, dashboards, alerts).
+// 0.75.1: metric names fixed to what Traefik OTLP actually emits (entrypoint/service — router-level
+// series do not exist), TLS rule ms→s, Loki alert selectors on service_name (job label never set),
+// Dead-MCP-Registration re-based on the mcp_tools_registered gauge (register lines only log at boot).
 
 /** Loki 3.x single-binary config — 30d retention via compactor (delete_request_store REQUIRED) */
 export const LOKI_CONFIG = `# Loki — single-process (monolithic) mode with filesystem storage.
@@ -107,10 +110,10 @@ scrape_configs:
   # which the collector then re-exposes here.
   #
   # Key Traefik metric names (after OTLP→Prometheus name translation, dots→underscores):
-  #   traefik_router_requests_total{router, service, method, code}
-  #   traefik_router_request_duration_seconds{router, service, method, code}   (histogram)
   #   traefik_entrypoint_requests_total{entrypoint, method, code}
+  #   traefik_entrypoint_request_duration_seconds_bucket{entrypoint, le}   (histogram)
   #   traefik_service_requests_total{service, method, code}
+  # NOTE: router-level series are NOT emitted by Traefik OTLP (verified live 2026-07-26).
   #
   # Verify actual names after first scrape:
   #   curl -s http://localhost:9090/api/v1/label/__name__/values | jq '.data[] | select(startswith("traefik"))'
@@ -130,7 +133,7 @@ scrape_configs:
           - localhost:9090
 `;
 
-/** Prometheus-native alert rules (edge error rate / outage / TLS expiry) */
+/** Prometheus-native alert rules (edge error rate / outage / TLS expiry) — entrypoint metrics */
 export const PROMETHEUS_RULES = `# Prometheus alert rules — metric-based alerts.
 #
 # The log-based alerts (silent tool-call death, sweep error streaks, dead MCP
@@ -160,9 +163,9 @@ groups:
       - record: job:traefik_error_ratio:rate5m
         expr: |
           (
-            sum(rate(traefik_router_requests_total{code=~"5.."}[5m]))
+            sum(rate(traefik_entrypoint_requests_total{code=~"5.."}[5m]))
             /
-            sum(rate(traefik_router_requests_total[5m]))
+            sum(rate(traefik_entrypoint_requests_total[5m]))
           )
 
       # ── Alert: edge 5xx spike ────────────────────────────────────────────────
@@ -179,7 +182,7 @@ groups:
         expr: |
           job:traefik_error_ratio:rate5m > 0.05
           and on()
-          sum(rate(traefik_router_requests_total[5m])) > 0.1
+          sum(rate(traefik_entrypoint_requests_total[5m])) > 0.1
         for: 2m
         labels:
           severity: critical
@@ -200,10 +203,10 @@ groups:
       # (the ratio alert above still fires, but this one fires faster at 30s).
       - alert: EdgeTotalOutage
         expr: |
-          sum(rate(traefik_router_requests_total[1m])) > 0
+          sum(rate(traefik_entrypoint_requests_total[1m])) > 0
           and on()
-          sum(rate(traefik_router_requests_total{code=~"5.."}[1m]))
-            / sum(rate(traefik_router_requests_total[1m])) >= 1.0
+          sum(rate(traefik_entrypoint_requests_total{code=~"5.."}[1m]))
+            / sum(rate(traefik_entrypoint_requests_total[1m])) >= 1.0
         for: 30s
         labels:
           severity: critical
@@ -225,7 +228,7 @@ groups:
       # of cert expiry) via OTLP. Fire when any cert expires within 14 days.
       - alert: TLSCertExpiringIn14Days
         expr: |
-          (traefik_tls_certs_not_after - time()) / 86400 < 14
+          (traefik_tls_certs_not_after_milliseconds / 1000 - time()) / 86400 < 14
         for: 1h
         labels:
           severity: warning
@@ -313,7 +316,7 @@ providers:
     folderUid: forge-mon-folder
 `;
 
-/** Grafana unified-alerting rules: Silent Tool-Call Death · Sweep Error Streak · Edge 5xx Spike · Dead MCP Registration */
+/** Grafana unified-alerting rules: MCP Dispatch Errors · Sweep Error Streak · Edge 5xx Spike · Dead MCP Registration (gauge-based) */
 export const GRAFANA_ALERT_RULES = `# Grafana unified alerting — log-based alert rules (Loki datasource).
 #
 # These four alerts cover the failure modes in the acceptance criteria:
@@ -327,7 +330,7 @@ export const GRAFANA_ALERT_RULES = `# Grafana unified alerting — log-based ale
 #
 # TUNING: The LogQL expressions below use broad patterns (|= "keyword").
 # After first deployment, inspect actual log labels and field names with Grafana Explore
-# and tighten the selectors (e.g. {service_name="dorinda-api"} instead of {job=~".+"}).
+# and tighten the selectors (e.g. {service_name="dorinda-api"} instead of {service_name=~".+"}).
 #
 # Datasource UIDs must match grafana/provisioning/datasources/datasources.yml:
 #   forge-loki
@@ -347,7 +350,7 @@ groups:
     interval: 1m
     rules:
 
-      # ── 1. Silent Tool-Call Death ──────────────────────────────────────────
+      # ── 1. MCP Dispatch Errors ──────────────────────────────────────────
       # Detects tool calls that were started but never produced a result or error.
       # The LogQL looks for lines that mention "tool_call" AND contain a timeout /
       # dead / hung keyword — indicating the call entered but never exited cleanly.
@@ -358,7 +361,7 @@ groups:
       # when started count > completed count for > 5 minutes. That requires two data
       # steps and a math expression referencing both (refId D: "$A - $B > 0").
       - uid: loki-silent-tool-call-death
-        title: Silent Tool-Call Death
+        title: MCP Dispatch Errors (burst)
         condition: B
         for: 5m
         data:
@@ -370,7 +373,7 @@ groups:
               to: 0
             datasourceUid: forge-loki
             model:
-              expr: 'sum(count_over_time({job=~".+"} |= "tool_call" |~ "timeout|hung|dead|no_result" [5m]))'
+              expr: 'sum(count_over_time({service_name=~"forge-dorinda-api-prod-web.*"} |= "mcp.dispatch" | json | outcome != \`ok\` [5m]))'
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
@@ -435,7 +438,7 @@ groups:
               to: 0
             datasourceUid: forge-loki
             model:
-              expr: 'sum(count_over_time({job=~".+"} |= "sweep" |= "error" [5m]))'
+              expr: 'sum(count_over_time({service_name=~"forge-dorinda-api-prod-web.*"} |= "gcal.sync.owner" | json | status != \`ok\` [30m]))'
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
@@ -501,7 +504,7 @@ groups:
               to: 0
             datasourceUid: forge-loki
             model:
-              expr: 'sum(count_over_time({job=~".+"} |~ "\\"DownstreamStatus\\":5" [5m]))'
+              expr: 'sum(count_over_time({service_name="traefik"} |~ \`"DownstreamStatus":5\` [5m]))'
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
@@ -549,31 +552,30 @@ groups:
             Check the Edge Overview dashboard for the failing router.
 
       # ── 4. Dead MCP Registration ───────────────────────────────────────────
-      # Fires when no MCP registration/ping log lines have been seen in 10 minutes.
-      # absent_over_time returns 1 when there are NO matching log lines in the window.
-      #
-      # TUNING: Adjust the stream selector and keyword to match your MCP server's
-      # actual log output (e.g., {service_name="dorinda-api"} |= "mcp_registered").
+      # GAUGE-based (0.75.1): registration log lines only appear at app boot, so an
+      # absence-of-lines check would fire constantly. Instead: the data-plane exports
+      # mcp_tools_registered continuously; the surface is dead when it drops below the
+      # full tool count (26) or the series disappears entirely (or-vector(0) → 0 < 26).
       - uid: loki-dead-mcp-registration
         title: Dead MCP Registration
         condition: B
         for: 10m
         data:
-          # Step A: absent_over_time returns 1 if no MCP lines in 10 min
+          # Step A: current registered-tool count (0 when the series is absent)
           - refId: A
             queryType: ''
             relativeTimeRange:
               from: 900   # 15 min window to catch the 10-min absence
               to: 0
-            datasourceUid: forge-loki
+            datasourceUid: forge-prometheus
             model:
-              expr: 'absent_over_time({job=~".+"} |= "mcp" |= "register" [10m])'
+              expr: 'min(mcp_tools_registered) or on() vector(0)'
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
               queryType: instant
               refId: A
-          # Step B: fire if absent_over_time returned 1 (i.e., no registration events)
+          # Step B: fire when the registered count is below the full surface (26)
           - refId: B
             queryType: ''
             relativeTimeRange:
@@ -584,8 +586,8 @@ groups:
               conditions:
                 - evaluator:
                     params:
-                      - 0
-                    type: gt
+                      - 26
+                    type: lt
                   operator:
                     type: and
                   query:
@@ -660,7 +662,7 @@ policies:
         repeat_interval: 1h
 `;
 
-/** Dashboard: Edge Overview (Traefik status mix, 5xx, latency) */
+/** Dashboard: Edge Overview (entrypoint/service metrics — verified live names) */
 export const DASHBOARD_EDGE_OVERVIEW = `{
   "id": null,
   "uid": "forge-mon-edge",
@@ -705,7 +707,7 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
             "type": "prometheus",
             "uid": "forge-prometheus"
           },
-          "expr": "sum(rate(traefik_router_requests_total{code=~\\"5..\\"}[5m])) / sum(rate(traefik_router_requests_total[5m]))",
+          "expr": "sum(rate(traefik_entrypoint_requests_total{code=~\\"5..\\"}[5m])) / sum(rate(traefik_entrypoint_requests_total[5m]))",
           "instant": true,
           "legendFormat": "error ratio"
         }
@@ -771,7 +773,7 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
             "type": "prometheus",
             "uid": "forge-prometheus"
           },
-          "expr": "sum(rate(traefik_router_requests_total[5m]))",
+          "expr": "sum(rate(traefik_entrypoint_requests_total[5m]))",
           "instant": true,
           "legendFormat": "req/s"
         }
@@ -828,7 +830,7 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
             "type": "prometheus",
             "uid": "forge-prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(traefik_router_request_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(traefik_entrypoint_request_duration_seconds_bucket[5m])) by (le))",
           "instant": true,
           "legendFormat": "p95"
         }
@@ -893,7 +895,7 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
             "type": "prometheus",
             "uid": "forge-prometheus"
           },
-          "expr": "sum(rate(traefik_router_requests_total[2m])) by (code)",
+          "expr": "sum(rate(traefik_entrypoint_requests_total[2m])) by (code)",
           "legendFormat": "{{code}}"
         }
       ],
@@ -989,7 +991,7 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
             "type": "prometheus",
             "uid": "forge-prometheus"
           },
-          "expr": "100 * sum(rate(traefik_router_requests_total{code=~\\"5..\\"}[5m])) / sum(rate(traefik_router_requests_total[5m]))",
+          "expr": "100 * sum(rate(traefik_entrypoint_requests_total{code=~\\"5..\\"}[5m])) / sum(rate(traefik_entrypoint_requests_total[5m]))",
           "legendFormat": "5xx %"
         }
       ],
@@ -1051,7 +1053,7 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
             "type": "prometheus",
             "uid": "forge-prometheus"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(traefik_router_request_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(traefik_entrypoint_request_duration_seconds_bucket[5m])) by (le))",
           "legendFormat": "p50"
         },
         {
@@ -1060,7 +1062,7 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
             "type": "prometheus",
             "uid": "forge-prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(traefik_router_request_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(traefik_entrypoint_request_duration_seconds_bucket[5m])) by (le))",
           "legendFormat": "p95"
         },
         {
@@ -1069,7 +1071,7 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
             "type": "prometheus",
             "uid": "forge-prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum(rate(traefik_router_request_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(traefik_entrypoint_request_duration_seconds_bucket[5m])) by (le))",
           "legendFormat": "p99"
         }
       ],
@@ -1116,7 +1118,7 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
             "type": "prometheus",
             "uid": "forge-prometheus"
           },
-          "expr": "sum(rate(traefik_router_requests_total[2m])) by (router)",
+          "expr": "sum(rate(traefik_service_requests_total[2m])) by (service)",
           "legendFormat": "{{router}}"
         }
       ],
@@ -1183,7 +1185,7 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
   ]
 }`;
 
-/** Dashboard: Log Explorer (trace-id search across services) */
+/** Dashboard: Log Explorer (trace-id search; detected_level panels) */
 export const DASHBOARD_LOG_EXPLORER = `{
   "id": null,
   "uid": "forge-mon-log-explorer",
@@ -1240,46 +1242,6 @@ export const DASHBOARD_LOG_EXPLORER = `{
         "refresh": 2,
         "sort": 1,
         "multi": false
-      },
-      {
-        "name": "log_level",
-        "label": "Level",
-        "type": "custom",
-        "query": "ALL,DEBUG,INFO,WARN,ERROR",
-        "current": {
-          "value": "ALL",
-          "text": "ALL"
-        },
-        "hide": 0,
-        "options": [
-          {
-            "text": "ALL",
-            "value": "ALL",
-            "selected": true
-          },
-          {
-            "text": "DEBUG",
-            "value": "DEBUG",
-            "selected": false
-          },
-          {
-            "text": "INFO",
-            "value": "INFO",
-            "selected": false
-          },
-          {
-            "text": "WARN",
-            "value": "WARN",
-            "selected": false
-          },
-          {
-            "text": "ERROR",
-            "value": "ERROR",
-            "selected": false
-          }
-        ],
-        "includeAll": false,
-        "multi": false
       }
     ]
   },
@@ -1296,14 +1258,14 @@ export const DASHBOARD_LOG_EXPLORER = `{
       },
       "options": {
         "mode": "markdown",
-        "content": "## Request-journey search\\n\\n1. **Paste a trace ID** from Langfuse (or a \`correlation_id\` / \`request_id\` from any log line) into **Trace / Correlation ID** above.\\n2. All log lines from all services sharing that ID appear in the timeline below \\u2014 edge \\u2192 backend, ordered by time.\\n3. Use **Service filter** to narrow to one container. Use **Level** to show only errors.\\n\\n**Where to get trace IDs:** Traefik JSON access logs include \`TraceID\` + \`SpanID\`. Click a derived-field link in the Loki datasource to jump from a Traefik log line directly to the matching Langfuse trace.\\n\\n*Langfuse remains the LLM-trace pane. This view covers the full request journey from the edge inward.*"
+        "content": "## Request-journey search\\n\\n1. **Paste a trace ID** from Langfuse (or a \`correlation_id\` / \`request_id\` from any log line) into **Trace / Correlation ID** above.\\n2. All log lines from all services sharing that ID appear in the timeline below — edge → backend, ordered by time.\\n3. Use **Service filter** to narrow to one container. Use **Level** to show only errors.\\n\\n**Where to get trace IDs:** Traefik JSON access logs include \`TraceID\` + \`SpanID\`. Click a derived-field link in the Loki datasource to jump from a Traefik log line directly to the matching Langfuse trace.\\n\\n*Langfuse remains the LLM-trace pane. This view covers the full request journey from the edge inward.*"
       },
       "datasource": null
     },
     {
       "id": 2,
       "type": "logs",
-      "title": "Request Journey \\u2014 all services for trace/correlation ID: $trace_id",
+      "title": "Request Journey — all services for trace/correlation ID: $trace_id",
       "description": "All log lines sharing the given trace_id or correlation_id, sorted ascending (oldest first) to show the request journey from entry to exit.",
       "gridPos": {
         "h": 20,
@@ -1346,7 +1308,7 @@ export const DASHBOARD_LOG_EXPLORER = `{
     {
       "id": 3,
       "type": "logs",
-      "title": "Error logs \\u2014 last 1h (all services, level filter: $log_level)",
+      "title": "Error logs — last 1h (all services, level filter: $log_level)",
       "description": "Recent error log lines across all services. Use this for triage without a known trace ID.",
       "gridPos": {
         "h": 16,
@@ -1365,7 +1327,7 @@ export const DASHBOARD_LOG_EXPLORER = `{
             "type": "loki",
             "uid": "forge-loki"
           },
-          "expr": "{service_name=~\\"$service\\"} |= \\"$log_level\\" | level=~\\"(?i)error|warn\\" | line_format \\"{{.message}}\\"",
+          "expr": "{service_name=~\\"$service\\"} | detected_level=~\\"(?i)(error|warn)\\" | line_format \\"{{__line__}}\\"",
           "legendFormat": "",
           "queryType": "range",
           "maxLines": 200
@@ -1391,7 +1353,7 @@ export const DASHBOARD_LOG_EXPLORER = `{
       "id": 4,
       "type": "timeseries",
       "title": "Log Volume by Level",
-      "description": "Log ingestion rate by level \\u2014 useful to spot error spikes at a glance.",
+      "description": "Log ingestion rate by level — useful to spot error spikes at a glance.",
       "gridPos": {
         "h": 6,
         "w": 24,
@@ -1409,7 +1371,7 @@ export const DASHBOARD_LOG_EXPLORER = `{
             "type": "loki",
             "uid": "forge-loki"
           },
-          "expr": "sum(rate({service_name=~\\"$service\\"} [2m])) by (level)",
+          "expr": "sum(rate({service_name=~\\"$service\\"} [2m])) by (detected_level)",
           "legendFormat": "{{level}}"
         }
       ],

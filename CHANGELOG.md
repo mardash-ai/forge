@@ -9,6 +9,22 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.75.1] - 2026-07-26
+
+### Fixed
+- **Monitoring stack: every dashboard panel and alert now queries signals that actually exist.**
+  Verified against the live box: Traefik OTLP emits `traefik_entrypoint_*`/`traefik_service_*`
+  series only — the Edge Overview dashboard and the Prometheus edge alerts queried the
+  non-existent `traefik_router_*`, so the HOME dashboard rendered "No data" everywhere. Also:
+  the TLS-expiry rule now uses `traefik_tls_certs_not_after_milliseconds / 1000` (ms→s); the
+  four Grafana Loki alerts selected `{job=~".+"}` — a label promtail never sets, so none could
+  ever fire — now `service_name`-based with honest semantics (dispatch-error burst, gcal-sync
+  per-owner error streak, edge-5xx log spike); Dead MCP Registration is gauge-based
+  (`mcp_tools_registered < 26`, absent→0) since registration lines only log at boot; the Log
+  Explorer level panels use Loki's `detected_level` instead of a literal `"ALL"` line filter.
+  Four regression tests pin all of it.
+
+
 ## [0.75.0] - 2026-07-26
 
 ### Added

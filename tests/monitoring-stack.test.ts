@@ -139,6 +139,30 @@ describe('generateMonitoringCompose — defaults', () => {
     expect(GRAFANA_ALERT_RULES).not.toContain('proxygen');
     expect(compose).not.toContain('-proxygen');
   });
+
+  it('queries only metrics Traefik OTLP actually emits (router-level series DO NOT exist — 0.75.1)', () => {
+    // the live box's Prometheus has traefik_entrypoint_* / traefik_service_* families ONLY;
+    // traefik_router_* was an assumption that made every Edge Overview panel show "No data".
+    expect(compose).not.toContain('traefik_router_');
+    expect(compose).toContain('traefik_entrypoint_requests_total');
+    expect(compose).toContain('traefik_entrypoint_request_duration_seconds_bucket');
+    // TLS expiry metric carries the _milliseconds unit suffix and is in ms
+    expect(compose).toContain('traefik_tls_certs_not_after_milliseconds / 1000');
+  });
+
+  it('alert rules select labels that exist and semantics that can actually fire (0.75.1)', () => {
+    // promtail sets service_name + stream ONLY — a {job=~".+"} selector matches nothing, ever
+    expect(GRAFANA_ALERT_RULES).not.toContain('{job=~');
+    expect(GRAFANA_ALERT_RULES).toContain('service_name=');
+    // registration lines only log at boot — the alert is gauge-based, not absent-line-based
+    expect(GRAFANA_ALERT_RULES).toContain('min(mcp_tools_registered) or on() vector(0)');
+    expect(GRAFANA_ALERT_RULES).not.toContain('absent_over_time');
+  });
+
+  it('log-level panels use the detected_level Loki metadata, never a literal "ALL" filter (0.75.1)', () => {
+    expect(compose).toContain('detected_level');
+    expect(compose).not.toContain('|= "$log_level"');
+  });
 });
 
 describe('generateMonitoringCompose — fronted at a public host', () => {
