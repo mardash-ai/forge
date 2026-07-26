@@ -375,7 +375,7 @@ describe('otel-langfuse plugin: RED metric attribute keys', () => {
   it('tool-call counter + histogram carry plain `tool`/`app` keys (never `mcp.tool`/`mcp.app`)', () => {
     recordToolCallMetric({ tool: 'track', app: 'dorinda-api', outcome: 'ok', duration_ms: 12 });
     expect(bodies).toHaveLength(1);
-    const keys = attrKeys(bodies[0]);
+    const keys = attrKeys(bodies[0]!);
     expect(keys).toContain('tool');
     expect(keys).toContain('app');
     expect(keys).toContain('outcome');
@@ -385,7 +385,7 @@ describe('otel-langfuse plugin: RED metric attribute keys', () => {
 
   it('error counter keeps the same schema plus error.class', () => {
     recordToolCallMetric({ tool: 'track', app: 'dorinda-api', outcome: 'error', duration_ms: 5, error_class: 'unknown_tool' });
-    const keys = attrKeys(bodies[0]);
+    const keys = attrKeys(bodies[0]!);
     expect(keys).toContain('tool');
     expect(keys).toContain('error.class');
     expect(keys).not.toContain('mcp.tool');
@@ -393,7 +393,7 @@ describe('otel-langfuse plugin: RED metric attribute keys', () => {
 
   it('registration gauges use the plain `app` key', () => {
     recordMcpRegistrationMetric({ app: 'dorinda-api', tools_count: 26, streams_count: 0 });
-    const keys = attrKeys(bodies[0]);
+    const keys = attrKeys(bodies[0]!);
     expect(keys).toContain('app');
     expect(keys).not.toContain('mcp.app');
   });
