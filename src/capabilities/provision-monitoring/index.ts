@@ -22,8 +22,8 @@ const inputSchema = z.object({
   dir: z
     .string()
     .optional()
-    .describe('Target directory for the stack files (default <workspace>/monitoring)'),
-  project_name: z.string().default('dorinda-monitoring').describe('Compose project name'),
+    .describe('Target directory for the stack files — set this to the canonical host path (prod: ~/projects/dorinda-grafana). Default <workspace>/monitoring.'),
+  project_name: z.string().default('dorinda-grafana').describe('Compose project name (convention: maps to the public domain, e.g. grafana.dorinda.ai)'),
   public_host: z
     .string()
     .optional()

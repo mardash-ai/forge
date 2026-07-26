@@ -1058,7 +1058,7 @@ program
     'Generate + deploy the canonical metrics+logging stack (collector, Loki, promtail, Prometheus, Grafana), then register it (ProvisionMonitoring)',
   )
   .option('--dir <dir>', 'target directory for the stack files (default <workspace>/monitoring)')
-  .option('--project-name <name>', 'compose project name', 'dorinda-monitoring')
+  .option('--project-name <name>', 'compose project name (maps to the public domain)', 'dorinda-grafana')
   .option('--public-host <host>', 'front grafana via Traefik at this host, e.g. grafana.dorinda.ai')
   .option('--ui-port <port>', 'host port grafana is published on', '3200')
   .option('--network <name>', 'shared external network (apps + langfuse-web)', 'observability')

@@ -9,6 +9,16 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.75.3] - 2026-07-26
+
+### Changed
+- **Standalone-component install paths are first-class.** Convention: the stack directory and
+  compose project map to the public domain (prod: `~/projects/dorinda-grafana` for
+  grafana.dorinda.ai, `~/projects/dorinda-monitor` for monitor.dorinda.ai). `provision-monitoring`
+  default project name is now `dorinda-grafana`; both provision capabilities take `--dir` so a
+  prod reprovision needs no manual moves.
+
+
 ## [0.75.2] - 2026-07-26
 
 ### Fixed

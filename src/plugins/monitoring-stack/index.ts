@@ -63,7 +63,7 @@ const IMAGES = {
 } as const;
 
 export interface MonitoringStackOptions {
-  /** Compose project name. Default 'dorinda-monitoring'. */
+  /** Compose project name. Default 'dorinda-grafana' (folder + project map to the public domain). */
   projectName?: string;
   /** Public hostname to front grafana via Traefik (e.g. 'grafana.dorinda.ai'). */
   publicHost?: string;
@@ -94,7 +94,7 @@ interface Resolved extends Required<Omit<MonitoringStackOptions, 'publicHost'>> 
 
 function resolve(opts: MonitoringStackOptions): Resolved {
   return {
-    projectName: opts.projectName ?? 'dorinda-monitoring',
+    projectName: opts.projectName ?? 'dorinda-grafana',
     publicHost: opts.publicHost,
     uiPort: opts.uiPort ?? 3200,
     network: opts.network ?? 'observability',
