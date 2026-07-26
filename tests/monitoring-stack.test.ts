@@ -96,6 +96,12 @@ describe('generateMonitoringCompose — defaults', () => {
     expect(serviceBlock(compose, 'otel-collector')).toContain('LANGFUSE_OTLP_B64:?');
   });
 
+  it('prometheus exporter keeps sparse series 1h (contrib default 5m blanks quiet per-tool panels — 0.76.0)', () => {
+    const cfg = renderCollectorConfig();
+    const promExporter = cfg.slice(cfg.indexOf('prometheus:'), cfg.indexOf('processors:'));
+    expect(promExporter).toContain('metric_expiration: 1h');
+  });
+
   it('collector joins the shared observability + proxy networks (producers reach it by name)', () => {
     const c = serviceBlock(compose, 'otel-collector');
     expect(c).toContain('- observability');
@@ -163,6 +169,19 @@ describe('generateMonitoringCompose — defaults', () => {
     expect(compose).toContain('detected_level');
     expect(compose).not.toContain('|= "$log_level"');
   });
+
+  it('MCP per-tool panels select ONE family via the app label the transport sets (0.76.0)', () => {
+    // Transport (data-plane) and consumer apps both emit into the mcp_tool_* metric names.
+    // Unscoped `sum by (tool)` would double-count every call once the label schemas unified;
+    // the `app=~".+"` matcher pins the panels to the transport family, which sees each logical
+    // call exactly once — including failures (unknown_tool, app_unreachable) that never reach
+    // the app tier.
+    for (const family of ['mcp_tool_calls(_total)?', 'mcp_tool_errors(_total)?', 'mcp_tool_duration_ms(_milliseconds)?_bucket']) {
+      const q = compose.split('\n').filter((l) => l.includes(family));
+      expect(q.length).toBeGreaterThanOrEqual(1);
+      for (const line of q) expect(line).toContain('app=~');
+    }
+  });
 });
 
 describe('generateMonitoringCompose — fronted at a public host', () => {
@@ -185,6 +204,17 @@ describe('secrets + env rendering', () => {
     expect(env).toContain(`GRAFANA_ADMIN_PASSWORD=${s.GRAFANA_ADMIN_PASSWORD}`);
     expect(env).toContain('LANGFUSE_OTLP_B64=AbCd');
     expect(env).toContain('GRAFANA_SMTP_ENABLED=true');
+  });
+
+  it('percent-decodes an SMTP user copied out of an SMTP URL (%40 → @ — the 535 BadCredentials trap)', () => {
+    const s = generateMonitoringSecrets();
+    const env = renderMonitoringEnv(s, { smtp: { host: 'smtp.gmail.com:587', user: 'no-reply%40dorinda.ai', password: 'p', from: 'no-reply@dorinda.ai' } });
+    expect(env).toContain('GRAFANA_SMTP_USER=no-reply@dorinda.ai');
+    // A plain user (no valid percent-escape) passes through untouched — even with a literal %.
+    const plain = renderMonitoringEnv(s, { smtp: { host: 'h:587', user: 'user@x.com', password: 'p', from: 'f@x' } });
+    expect(plain).toContain('GRAFANA_SMTP_USER=user@x.com');
+    const oddPct = renderMonitoringEnv(s, { smtp: { host: 'h:587', user: 'we%rd', password: 'p', from: 'f@x' } });
+    expect(oddPct).toContain('GRAFANA_SMTP_USER=we%rd');
   });
 
   it('env example documents every var and never a real value', () => {

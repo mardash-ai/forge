@@ -1590,7 +1590,7 @@ export const DASHBOARD_MCP_TOOL_HEALTH = `{
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (tool) (rate({__name__=~\\"mcp_tool_calls(_total)?\\"}[5m])) * 60",
+          "expr": "sum by (tool) (rate({__name__=~\\"mcp_tool_calls(_total)?\\", app=~\\".+\\"}[5m])) * 60",
           "legendFormat": "{{tool}}"
         }
       ]
@@ -1612,7 +1612,7 @@ export const DASHBOARD_MCP_TOOL_HEALTH = `{
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (tool, error_class) (rate({__name__=~\\"mcp_tool_errors(_total)?\\"}[5m])) * 60",
+          "expr": "sum by (tool, error_class) (rate({__name__=~\\"mcp_tool_errors(_total)?\\", app=~\\".+\\"}[5m])) * 60",
           "legendFormat": "{{tool}} \\u00b7 {{error_class}}"
         }
       ]
@@ -1634,7 +1634,7 @@ export const DASHBOARD_MCP_TOOL_HEALTH = `{
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.95, sum by (le, tool) (rate({__name__=~\\"mcp_tool_duration_ms(_milliseconds)?_bucket\\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, tool) (rate({__name__=~\\"mcp_tool_duration_ms(_milliseconds)?_bucket\\", app=~\\".+\\"}[5m])))",
           "legendFormat": "{{tool}}"
         }
       ]

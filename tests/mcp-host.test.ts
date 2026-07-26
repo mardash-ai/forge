@@ -997,7 +997,7 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
     const gauge = metricNamed('mcp.tools.registered') as Gauge | undefined;
     expect(gauge).toBeTruthy();
     expect(gauge!.gauge!.dataPoints[0]!.asInt).toBe(1);
-    const appAttr = gauge!.gauge!.dataPoints[0]!.attributes.find((a) => a.key === 'mcp.app');
+    const appAttr = gauge!.gauge!.dataPoints[0]!.attributes.find((a) => a.key === 'app');
     expect(appAttr?.value.stringValue).toBe(APP);
   });
 
@@ -1021,8 +1021,10 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
     const callMetric = metricNamed('mcp.tool.calls') as { sum?: { dataPoints: DataPoint[] } } | undefined;
     expect(callMetric).toBeTruthy();
     const dp = callMetric!.sum!.dataPoints[0]!;
-    expect(dp.attributes.find((a) => a.key === 'mcp.tool')?.value.stringValue).toBe('get_note');
-    expect(dp.attributes.find((a) => a.key === 'mcp.app')?.value.stringValue).toBe(APP);
+    // Plain `tool`/`app` keys (0.76.0) — the same label schema consumer apps emit, so the
+    // shared Prometheus metric family groups by tool instead of collapsing to an unlabeled bucket.
+    expect(dp.attributes.find((a) => a.key === 'tool')?.value.stringValue).toBe('get_note');
+    expect(dp.attributes.find((a) => a.key === 'app')?.value.stringValue).toBe(APP);
   });
 
   it('does NOT export metrics when OTLP is disabled (no keys)', async () => {

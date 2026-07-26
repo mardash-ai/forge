@@ -134,8 +134,14 @@ exporters:
     endpoint: http://loki:3100/otlp
 
   # Metrics → exposed for Prometheus to scrape at :8889.
+  # metric_expiration: how long a series stays on the scrape page after its last datapoint.
+  # The contrib default (5m) makes low-traffic per-tool counters vanish between conversations,
+  # so instant dashboard queries hit "No data" minutes after a quiet spell (0.76.0). 1h keeps
+  # sparse series queryable; kept deliberately bounded so absent()-based dead-signal alerts
+  # (e.g. Dead MCP Registration) still fire within the hour after a producer truly dies.
   prometheus:
     endpoint: "0.0.0.0:8889"
+    metric_expiration: 1h
 
 processors:
   batch: {}
@@ -478,6 +484,22 @@ export interface RenderMonitoringEnvOptions {
   smtp?: { host?: string; user?: string; password?: string; from?: string };
 }
 
+/**
+ * Normalize an SMTP username that arrived percent-encoded. Operators routinely copy the user
+ * out of an SMTP *URL* (`smtp://no-reply%40example.com:pass@host:587`) where `%40` is correct —
+ * but `GF_SMTP_USER` is a discrete value, and Grafana sends the string verbatim, so the encoded
+ * form fails auth with `535 BadCredentials` (bit prod on 2026-07-26). A literal `%` in a real
+ * SMTP username is only decoded when the whole value round-trips as a valid percent-encoding.
+ */
+export function normalizeSmtpUser(user: string): string {
+  if (!/%[0-9A-Fa-f]{2}/.test(user)) return user;
+  try {
+    return decodeURIComponent(user);
+  } catch {
+    return user;
+  }
+}
+
 /** Render the real .env (mode 0600 at write). */
 export function renderMonitoringEnv(secrets: MonitoringSecrets, opts: RenderMonitoringEnvOptions = {}): string {
   const smtpEnabled = Boolean(opts.smtp?.host);
@@ -488,7 +510,7 @@ export function renderMonitoringEnv(secrets: MonitoringSecrets, opts: RenderMoni
     `LANGFUSE_OTLP_B64=${opts.langfuseOtlpB64 ?? ''}`,
     `GRAFANA_SMTP_ENABLED=${smtpEnabled}`,
     `GRAFANA_SMTP_HOST=${opts.smtp?.host ?? ''}`,
-    `GRAFANA_SMTP_USER=${opts.smtp?.user ?? ''}`,
+    `GRAFANA_SMTP_USER=${normalizeSmtpUser(opts.smtp?.user ?? '')}`,
     `GRAFANA_SMTP_PASSWORD=${opts.smtp?.password ?? ''}`,
     `GRAFANA_SMTP_FROM=${opts.smtp?.from ?? ''}`,
     '',

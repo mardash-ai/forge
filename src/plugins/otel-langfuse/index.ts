@@ -254,6 +254,13 @@ function metricsEnvelope(metrics: unknown[]): unknown {
  *   `mcp.tool.calls`       — counter (labelled by tool, app, outcome)
  *   `mcp.tool.errors`      — counter on error (same labels + error.class)
  *   `mcp.tool.duration_ms` — histogram (labelled by tool, app)
+ *
+ * Attribute names are the PLAIN `tool` / `app` — the same label schema consumer apps use on
+ * their own `mcp.tool.calls` counters. The two families share the metric NAME, so a schema
+ * split (`mcp.tool` vs `tool`) makes every transport datapoint collapse into one unlabeled
+ * bucket under the dashboards' `sum by (tool)` — which is exactly what happened before 0.76.0.
+ * Dashboards select THIS family (each logical call once, pre-app failures included) via the
+ * `app` label only the transport sets.
  */
 export function recordToolCallMetric(opts: {
   tool: string;
@@ -265,8 +272,8 @@ export function recordToolCallMetric(opts: {
   if (!_metricsEnabled) return;
   const t = nowNano();
   const callAttrs = [
-    toAttrStr('mcp.tool', opts.tool),
-    toAttrStr('mcp.app', opts.app),
+    toAttrStr('tool', opts.tool),
+    toAttrStr('app', opts.app),
     toAttrStr('outcome', opts.outcome),
     ...(opts.error_class ? [toAttrStr('error.class', opts.error_class)] : []),
   ];
@@ -281,7 +288,7 @@ export function recordToolCallMetric(opts: {
       description: 'MCP tool call duration (RED Duration)',
       histogram: {
         dataPoints: [{
-          attributes: [toAttrStr('mcp.tool', opts.tool), toAttrStr('mcp.app', opts.app)],
+          attributes: [toAttrStr('tool', opts.tool), toAttrStr('app', opts.app)],
           startTimeUnixNano: t, timeUnixNano: t,
           count: 1, sum: opts.duration_ms,
           bucketCounts: bucketCounts(opts.duration_ms),
@@ -317,14 +324,14 @@ export function recordMcpRegistrationMetric(opts: {
     {
       name: 'mcp.tools.registered',
       description: 'Current number of registered MCP tools per app',
-      gauge: { dataPoints: [{ attributes: [toAttrStr('mcp.app', opts.app)], timeUnixNano: t, asInt: opts.tools_count }] },
+      gauge: { dataPoints: [{ attributes: [toAttrStr('app', opts.app)], timeUnixNano: t, asInt: opts.tools_count }] },
     },
   ];
   if (opts.streams_count !== undefined) {
     metrics.push({
       name: 'mcp.streams.active',
       description: 'Current number of active MCP SSE streams per app',
-      gauge: { dataPoints: [{ attributes: [toAttrStr('mcp.app', opts.app)], timeUnixNano: t, asInt: opts.streams_count }] },
+      gauge: { dataPoints: [{ attributes: [toAttrStr('app', opts.app)], timeUnixNano: t, asInt: opts.streams_count }] },
     });
   }
   exportMetricsPayload(metricsEnvelope(metrics));

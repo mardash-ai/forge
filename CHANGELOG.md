@@ -9,6 +9,27 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.76.0] - 2026-07-26
+
+### Fixed
+- **MCP metric label schema unified — the "(no-label)" series is dead.** The data-plane's RED
+  metrics (`mcp.tool.calls` / `.errors` / `.duration_ms`, registration gauges) now use plain
+  `tool` / `app` attribute keys — the same schema consumer apps emit into the shared Prometheus
+  metric names. Before, the transport family's `mcp.tool`/`mcp.app` keys collapsed every
+  datapoint into one unlabeled bucket under the dashboards' `sum by (tool)`, hiding per-tool
+  transport rates and leaving pre-app failures (unknown_tool, app_unreachable) unattributed.
+  The MCP Tool Health panels now select the transport family explicitly (`app=~".+"`) so each
+  logical call counts exactly once. **Adopting requires the new data-plane image AND a
+  monitoring reprovision** (dashboards changed with the emitter, same release).
+- **Sparse per-tool series no longer vanish between conversations.** The collector's Prometheus
+  exporter sets `metric_expiration: 1h` (contrib default 5m) — quiet per-tool counters stay
+  queryable for an hour after their last datapoint, bounded so absent()-based dead-signal
+  alerts still fire within the hour.
+- **Grafana SMTP user is percent-decoded when copied from an SMTP URL.** `no-reply%40dorinda.ai`
+  in `GF_SMTP_USER` fails Gmail auth with `535 BadCredentials` (bit prod 2026-07-26 — alert
+  email had silently never worked). `renderMonitoringEnv` now decodes a value that round-trips
+  as valid percent-encoding; plain values (including a literal stray `%`) pass through.
+
 ## [0.75.3] - 2026-07-26
 
 ### Changed

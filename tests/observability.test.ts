@@ -16,6 +16,8 @@ import {
   parentFromTraceparent,
   capPayload,
   PAYLOAD_CAP_BYTES,
+  recordToolCallMetric,
+  recordMcpRegistrationMetric,
 } from '../src/plugins/otel-langfuse/index';
 import type { ObservabilityStack } from '../src/resources/types';
 
@@ -320,5 +322,79 @@ describe('otel-langfuse plugin: capPayload (C36 payload capture)', () => {
     circ.self = circ;
     expect(() => capPayload(circ)).not.toThrow();
     expect(capPayload(circ)).toBe('[object Object]');
+  });
+});
+
+// ── Metric label schema (0.76.0) — plain `tool` / `app`, matching consumer apps ─────────────
+//
+// The data-plane and consumer apps both emit `mcp.tool.calls`-family metrics into the SAME
+// Prometheus metric names. Before 0.76.0 the plugin used `mcp.tool`/`mcp.app` attribute keys
+// while apps used plain `tool`, so every transport datapoint collapsed into one unlabeled
+// bucket under the dashboards' `sum by (tool)` (the live "(no-label)" series). These tests pin
+// the unified schema; regressing the keys breaks per-tool visibility in Grafana.
+
+describe('otel-langfuse plugin: RED metric attribute keys', () => {
+  let bodies: string[];
+  const realFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    bodies = [];
+    globalThis.fetch = ((url: unknown, init?: { body?: unknown }) => {
+      bodies.push(String(init?.body ?? ''));
+      return Promise.resolve(new Response(null, { status: 200 }));
+    }) as typeof fetch;
+    initOtelLangfuse({
+      endpoint: 'http://intercepted:3000/api/public/otel',
+      publicKey: 'pk-test',
+      secretKey: 'sk-test',
+    });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    initOtelLangfuse({ publicKey: '', secretKey: '' });
+  });
+
+  function attrKeys(body: string): Set<string> {
+    const keys = new Set<string>();
+    const payload = JSON.parse(body) as {
+      resourceMetrics: { scopeMetrics: { metrics: {
+        sum?: { dataPoints: { attributes: { key: string }[] }[] };
+        histogram?: { dataPoints: { attributes: { key: string }[] }[] };
+        gauge?: { dataPoints: { attributes: { key: string }[] }[] };
+      }[] }[] }[];
+    };
+    for (const rm of payload.resourceMetrics)
+      for (const sm of rm.scopeMetrics)
+        for (const m of sm.metrics)
+          for (const dp of (m.sum ?? m.histogram ?? m.gauge)?.dataPoints ?? [])
+            for (const a of dp.attributes) keys.add(a.key);
+    return keys;
+  }
+
+  it('tool-call counter + histogram carry plain `tool`/`app` keys (never `mcp.tool`/`mcp.app`)', () => {
+    recordToolCallMetric({ tool: 'track', app: 'dorinda-api', outcome: 'ok', duration_ms: 12 });
+    expect(bodies).toHaveLength(1);
+    const keys = attrKeys(bodies[0]);
+    expect(keys).toContain('tool');
+    expect(keys).toContain('app');
+    expect(keys).toContain('outcome');
+    expect(keys).not.toContain('mcp.tool');
+    expect(keys).not.toContain('mcp.app');
+  });
+
+  it('error counter keeps the same schema plus error.class', () => {
+    recordToolCallMetric({ tool: 'track', app: 'dorinda-api', outcome: 'error', duration_ms: 5, error_class: 'unknown_tool' });
+    const keys = attrKeys(bodies[0]);
+    expect(keys).toContain('tool');
+    expect(keys).toContain('error.class');
+    expect(keys).not.toContain('mcp.tool');
+  });
+
+  it('registration gauges use the plain `app` key', () => {
+    recordMcpRegistrationMetric({ app: 'dorinda-api', tools_count: 26, streams_count: 0 });
+    const keys = attrKeys(bodies[0]);
+    expect(keys).toContain('app');
+    expect(keys).not.toContain('mcp.app');
   });
 });
