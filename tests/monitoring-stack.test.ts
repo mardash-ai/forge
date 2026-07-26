@@ -165,6 +165,12 @@ describe('generateMonitoringCompose — defaults', () => {
     expect(GRAFANA_ALERT_RULES).not.toContain('absent_over_time');
   });
 
+  it('sweep-error-streak excludes no_calendars_selected (a skip, not an error — 0.76.1)', () => {
+    expect(GRAFANA_ALERT_RULES).toContain('status !~ `ok|no_calendars_selected`');
+    // and the old catch-all form is gone from the streak rule
+    expect(GRAFANA_ALERT_RULES).not.toContain('"gcal.sync.owner" | json | status != `ok`');
+  });
+
   it('log-level panels use the detected_level Loki metadata, never a literal "ALL" filter (0.75.1)', () => {
     expect(compose).toContain('detected_level');
     expect(compose).not.toContain('|= "$log_level"');

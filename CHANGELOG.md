@@ -9,6 +9,13 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.76.1] - 2026-07-26
+
+### Fixed
+- **Sweep Error Streak no longer counts `no_calendars_selected`.** dorinda-api 53ed52d classes it
+  as a skip (connected owner, nothing chosen to sync — a valid steady state); the Loki streak
+  rule now matches `status !~ ok|no_calendars_selected` so a skipped owner can never page.
+
 ## [0.76.0] - 2026-07-26
 
 ### Fixed

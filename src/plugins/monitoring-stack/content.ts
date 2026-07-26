@@ -438,7 +438,9 @@ groups:
               to: 0
             datasourceUid: forge-loki
             model:
-              expr: 'sum(count_over_time({service_name=~"forge-dorinda-api-prod-web.*"} |= "gcal.sync.owner" | json | status != \`ok\` [30m]))'
+              # no_calendars_selected is a SKIP (connected, nothing chosen to sync — dorinda-api
+              # 53ed52d counts it apart from errors); a streak of it must never page anyone.
+              expr: 'sum(count_over_time({service_name=~"forge-dorinda-api-prod-web.*"} |= "gcal.sync.owner" | json | status !~ \`ok|no_calendars_selected\` [30m]))'
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
