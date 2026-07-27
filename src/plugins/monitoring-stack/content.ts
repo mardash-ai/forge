@@ -242,7 +242,42 @@ groups:
 `;
 
 /** Grafana datasources — fixed uids forge-loki / forge-prometheus */
-export const GRAFANA_DATASOURCES = `# Grafana datasource provisioning.
+/** Options the datasource provisioning needs (subset of the plugin's Resolved). */
+export interface DatasourceRenderOptions {
+  /** Public Langfuse UI base (browser-reachable — NEVER an internal docker hostname). */
+  langfusePublicUrl: string;
+  /** Langfuse project id for /project/<id>/traces/<traceId> deep links. */
+  langfuseProjectId: string;
+  /** Optional read-only app-DB source — powers the by-email user picker. */
+  appDb?: { host: string; port: number; database: string; user: string };
+}
+
+/** Grafana datasource provisioning (uids fixed — alert rules reference them). */
+export function renderGrafanaDatasources(o: DatasourceRenderOptions): string {
+  const lfTrace = `${o.langfusePublicUrl}/project/${o.langfuseProjectId}/traces/$\${__value.raw}`;
+  const appDbBlock = o.appDb
+    ? `
+  # ── App DB (READ-ONLY) ─────────────────────────────────────────────────────
+  # Powers the by-email user picker on the User Experience dashboard. The role
+  # must be SELECT-only (grafana_ro); the password reaches the CONTAINER env from the
+  # stack .env, and Grafana's provisioning expands \$VAR references from that env.
+  - name: App DB (read-only)
+    uid: forge-appdb
+    type: postgres
+    access: proxy
+    url: ${o.appDb.host}:${o.appDb.port}
+    user: ${o.appDb.user}
+    editable: false
+    secureJsonData:
+      password: $GRAFANA_PG_RO_PASSWORD
+    jsonData:
+      database: ${o.appDb.database}
+      sslmode: disable
+      maxOpenConns: 2
+      postgresVersion: 1500
+`
+    : '';
+  return `# Grafana datasource provisioning.
 #
 # UIDs are fixed so the alerting rules can reference them without depending on
 # auto-assigned IDs. These UIDs must match the \`datasourceUid\` values in
@@ -273,7 +308,8 @@ datasources:
 
   # ── Loki ───────────────────────────────────────────────────────────────────
   # Receives structured logs from otel-collector via OTLP.
-  # Log labels injected by the OTel collector include: job, service_name, etc.
+  # Derived fields turn ids inside log lines into CLICKABLE deep links to the
+  # PUBLIC Langfuse UI (payload pane) — the whole two-pane bridge in one click.
   - name: Loki
     uid: forge-loki
     type: loki
@@ -284,13 +320,19 @@ datasources:
     jsonData:
       maxLines: 1000
       derivedFields:
-        # Derive a TraceID field from Traefik's JSON access log \`TraceID\` key
-        # and link it to Langfuse (external URL).
-        - matcherRegex: '"TraceID":"([a-f0-9]+)"'
-          name: TraceID
-          url: "http://langfuse-web:3000/trace/$\${__value.raw}"
+        # Traefik access-log trace id (key is \`TraceId\`; match case-insensitively).
+        - matcherRegex: '"Trace[Ii][Dd]":"([a-f0-9]+)"'
+          name: TraceId
+          url: "${lfTrace}"
           urlDisplayLabel: "Open in Langfuse"
-`;
+        # App dispatch lines carry the W3C traceparent as correlation_id
+        # (\`00-<trace_id>-<span>-01\`) — extract the trace segment.
+        - matcherRegex: '"correlation_id":"00-([a-f0-9]{32})'
+          name: trace
+          url: "${lfTrace}"
+          urlDisplayLabel: "Open in Langfuse (payloads)"
+${appDbBlock}`;
+}
 
 /** Grafana dashboard provider — loads /var/lib/grafana/dashboards */
 export const GRAFANA_DASHBOARD_PROVIDER = `# Grafana dashboard provisioning.
@@ -1806,3 +1848,205 @@ export const DASHBOARD_BACKGROUND_PLANE = `{
     }
   ]
 }`;
+
+/** Dashboard 5: MCP Tool Drilldown — pick ONE tool, see all its metrics + logs. */
+export const DASHBOARD_TOOL_DRILLDOWN = `{
+  "id": null,
+  "uid": "forge-tool-drilldown",
+  "title": "MCP Tool Drilldown",
+  "description": "Pick a tool from the dropdown: transport-family RED metrics (calls, errors, latency), app-tier gate decisions, and both log tiers (app dispatch + data-plane, with Claude/ChatGPT client attribution). Payloads: click a log line's Langfuse link.",
+  "tags": ["forge-mon", "mcp", "drilldown"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "graphTooltip": 0,
+  "templating": {
+    "list": [
+      {
+        "name": "tool",
+        "label": "MCP tool",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "forge-prometheus" },
+        "query": "label_values({__name__=~\\"mcp_tool_calls(_total)?\\", app=~\\".+\\"}, tool)",
+        "current": { "value": "whats_next", "text": "whats_next" },
+        "includeAll": false,
+        "hide": 0,
+        "refresh": 2,
+        "sort": 1,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Calls (selected range)",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "forge-prometheus" },
+      "targets": [{ "refId": "A", "instant": true, "expr": "sum(increase({__name__=~\\"mcp_tool_calls(_total)?\\", app=~\\".+\\", tool=\\"$tool\\"}[$__range])) or on() vector(0)" }]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Errors (selected range)",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "forge-prometheus" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "targets": [{ "refId": "A", "instant": true, "expr": "sum(increase({__name__=~\\"mcp_tool_errors(_total)?\\", app=~\\".+\\", tool=\\"$tool\\"}[$__range])) or on() vector(0)" }]
+    },
+    {
+      "id": 3, "type": "stat", "title": "p95 latency (15m, ms)",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "forge-prometheus" },
+      "targets": [{ "refId": "A", "instant": true, "expr": "histogram_quantile(0.95, sum by (le) (rate({__name__=~\\"mcp_tool_duration_ms(_milliseconds)?_bucket\\", app=~\\".+\\", tool=\\"$tool\\"}[15m])))" }]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Calls / min (by outcome)",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "forge-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (outcome) (rate({__name__=~\\"mcp_tool_calls(_total)?\\", app=~\\".+\\", tool=\\"$tool\\"}[5m])) * 60", "legendFormat": "{{outcome}}" }]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Errors / min (by class)",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "forge-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (error_class) (rate({__name__=~\\"mcp_tool_errors(_total)?\\", app=~\\".+\\", tool=\\"$tool\\"}[5m])) * 60", "legendFormat": "{{error_class}}" }]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Latency p50 / p95 (ms)",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "forge-prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate({__name__=~\\"mcp_tool_duration_ms(_milliseconds)?_bucket\\", app=~\\".+\\", tool=\\"$tool\\"}[5m])))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate({__name__=~\\"mcp_tool_duration_ms(_milliseconds)?_bucket\\", app=~\\".+\\", tool=\\"$tool\\"}[5m])))", "legendFormat": "p95" }
+      ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Gate decisions / min (app tier: allow · pending · deny)",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "forge-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (gate) (rate({__name__=~\\"mcp_tool_gate(_total)?\\", tool=\\"$tool\\"}[5m])) * 60", "legendFormat": "{{gate}}" }]
+    },
+    {
+      "id": 8, "type": "logs", "title": "App dispatch log — owner, gate, outcome, duration (click a line's Langfuse link for payloads)",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 22 },
+      "datasource": { "type": "loki", "uid": "forge-loki" },
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true },
+      "targets": [{ "refId": "A", "expr": "{service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | tool=\\"$tool\\"" }]
+    },
+    {
+      "id": 9, "type": "logs", "title": "Data-plane log — which AI called (client = Claude / ChatGPT), transport outcome",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 32 },
+      "datasource": { "type": "loki", "uid": "forge-loki" },
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true },
+      "targets": [{ "refId": "A", "expr": "{service_name=\\"forge-dorinda-api-prod-data-plane-1\\"} |= \\"mcp.tool_call\\" | json | tool=\\"$tool\\"" }]
+    }
+  ]
+}`;
+
+/** Dashboard 6: User Experience Drilldown — pick a user BY EMAIL, see their whole MCP experience.
+ *  Requires the read-only App DB datasource (forge-appdb) for the email picker; per-user series are
+ *  LOG-derived (per-user Prometheus labels would be a cardinality trap). Payload digging happens in
+ *  Langfuse via the header link + per-log-line derived-field links. */
+export function renderUserExperienceDashboard(o: {
+  appId: string;
+  langfusePublicUrl: string;
+  langfuseProjectId: string;
+}): string {
+  const lfUser = `${o.langfusePublicUrl}/project/${o.langfuseProjectId}/users/\${user}`;
+  return `{
+  "id": null,
+  "uid": "forge-user-experience",
+  "title": "User Experience Drilldown",
+  "description": "Pick a user by email: every MCP tool call they made, per-tool rates and latency (log-derived), which AI they used, errors and gate outcomes, and the raw dispatch feed. Requests/responses live in Langfuse — use the header link or any log line's Langfuse link.",
+  "tags": ["forge-mon", "mcp", "user", "drilldown"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "graphTooltip": 0,
+  "templating": {
+    "list": [
+      {
+        "name": "user",
+        "label": "User (by email)",
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "forge-appdb" },
+        "query": "SELECT email AS __text, id AS __value FROM forge_identity_users WHERE app_id = '${o.appId}' ORDER BY email",
+        "current": {},
+        "includeAll": false,
+        "hide": 0,
+        "refresh": 2,
+        "sort": 0,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1, "type": "text", "title": "",
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+      "options": { "mode": "markdown", "content": "### Conversation payloads live in Langfuse\\n**[Open this user in Langfuse →](${lfUser})** — every trace with full request/response payloads, grouped per user. Or click the **Langfuse link on any log line below** to jump straight to that call's trace." }
+    },
+    {
+      "id": 2, "type": "stat", "title": "Tool calls (selected range)",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 3 },
+      "datasource": { "type": "loki", "uid": "forge-loki" },
+      "targets": [{ "refId": "A", "instant": true, "queryType": "instant", "expr": "sum(count_over_time({service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | owner=\\"\${user}\\" [$__range]))" }]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Errors (selected range)",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 3 },
+      "datasource": { "type": "loki", "uid": "forge-loki" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "targets": [{ "refId": "A", "instant": true, "queryType": "instant", "expr": "sum(count_over_time({service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | owner=\\"\${user}\\" | outcome != \`ok\` [$__range]))" }]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Approval gates hit (pending)",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 3 },
+      "datasource": { "type": "loki", "uid": "forge-loki" },
+      "targets": [{ "refId": "A", "instant": true, "queryType": "instant", "expr": "sum(count_over_time({service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | owner=\\"\${user}\\" | gate=\`pending\` [$__range]))" }]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Calls / min (by tool)",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 7 },
+      "datasource": { "type": "loki", "uid": "forge-loki" },
+      "targets": [{ "refId": "A", "expr": "sum by (tool) (rate({service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | owner=\\"\${user}\\" [5m])) * 60", "legendFormat": "{{tool}}" }]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Latency p95 (ms, by tool — this user)",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 7 },
+      "datasource": { "type": "loki", "uid": "forge-loki" },
+      "targets": [{ "refId": "A", "expr": "quantile_over_time(0.95, {service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | owner=\\"\${user}\\" | unwrap duration_ms [5m]) by (tool)", "legendFormat": "{{tool}}" }]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Which AI (data-plane client attribution)",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "loki", "uid": "forge-loki" },
+      "targets": [{ "refId": "A", "expr": "sum by (client) (rate({service_name=\\"forge-dorinda-api-prod-data-plane-1\\"} |= \\"mcp.tool_call\\" | json | user=\\"\${user}\\" [5m])) * 60", "legendFormat": "{{client}}" }]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Gate outcomes / min (allow · pending · deny)",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "loki", "uid": "forge-loki" },
+      "targets": [{ "refId": "A", "expr": "sum by (gate) (rate({service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | owner=\\"\${user}\\" [5m])) * 60", "legendFormat": "{{gate}}" }]
+    },
+    {
+      "id": 9, "type": "logs", "title": "Every tool call (newest first — click a line's Langfuse link for the request/response)",
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 25 },
+      "datasource": { "type": "loki", "uid": "forge-loki" },
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true },
+      "targets": [{ "refId": "A", "expr": "{service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | owner=\\"\${user}\\"" }]
+    },
+    {
+      "id": 10, "type": "logs", "title": "Problems only — errors and denials",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 36 },
+      "datasource": { "type": "loki", "uid": "forge-loki" },
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true },
+      "targets": [{ "refId": "A", "expr": "{service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | owner=\\"\${user}\\" | outcome != \`ok\` or gate = \`deny\`" }]
+    }
+  ]
+}`;
+}

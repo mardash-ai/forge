@@ -398,7 +398,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     if (!tool) {
       span.end('error', 'unknown_tool');
       const dur = Date.now() - startMs;
-      mcpLog({ event: 'mcp.tool_call', app: app_.name, tool: name, client: verified.clientId, duration_ms: dur, outcome: 'error', error_class: 'unknown_tool' });
+      mcpLog({ event: 'mcp.tool_call', app: app_.name, tool: name, client: verified.clientId, user: verified.userId, duration_ms: dur, outcome: 'error', error_class: 'unknown_tool' });
       recordToolCallMetric({ tool: name, app: app_.name, outcome: 'error', duration_ms: dur, error_class: 'unknown_tool' });
       return reply.status(200).send(rpcError(id, -32602, `Unknown tool: ${name}`));
     }
@@ -411,7 +411,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       await recordCall(app_.id, name, verified, false, 'insufficient_scope');
       span.setAttribute(ATTR.AUTHZ_DECISION, 'insufficient_scope').end('error', 'insufficient_scope');
       const dur = Date.now() - startMs;
-      mcpLog({ event: 'mcp.tool_call', app: app_.name, tool: name, client: verified.clientId, duration_ms: dur, outcome: 'error', error_class: 'insufficient_scope' });
+      mcpLog({ event: 'mcp.tool_call', app: app_.name, tool: name, client: verified.clientId, user: verified.userId, duration_ms: dur, outcome: 'error', error_class: 'insufficient_scope' });
       recordToolCallMetric({ tool: name, app: app_.name, outcome: 'error', duration_ms: dur, error_class: 'insufficient_scope' });
       return reply.status(200).send(rpcError(id, -32001, 'insufficient_scope', { required_scope: tool.scope }));
     }
@@ -422,7 +422,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       await recordCall(app_.id, name, verified, false, 'app_unreachable');
       span.end('error', 'app_unreachable');
       const dur = Date.now() - startMs;
-      mcpLog({ event: 'mcp.tool_call', app: app_.name, tool: name, client: verified.clientId, duration_ms: dur, outcome: 'error', error_class: 'app_unreachable' });
+      mcpLog({ event: 'mcp.tool_call', app: app_.name, tool: name, client: verified.clientId, user: verified.userId, duration_ms: dur, outcome: 'error', error_class: 'app_unreachable' });
       recordToolCallMetric({ tool: name, app: app_.name, outcome: 'error', duration_ms: dur, error_class: 'app_unreachable' });
       return reply.status(200).send(rpcError(id, -32011, 'the app handler is not reachable (never provisioned?).'));
     }
@@ -461,7 +461,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     span.end(ok ? 'ok' : 'error', errorClass);
 
     // Structured log (one line per tool call — always on, not OTel-gated) + RED metrics (OTel-gated).
-    mcpLog({ event: 'mcp.tool_call', app: app_.name, tool: name, client: clientName ?? verified.clientId, duration_ms, outcome: ok ? 'ok' : 'error', ...(errorClass ? { error_class: errorClass } : {}) });
+    mcpLog({ event: 'mcp.tool_call', app: app_.name, tool: name, client: clientName ?? verified.clientId, user: verified.userId, duration_ms, outcome: ok ? 'ok' : 'error', ...(errorClass ? { error_class: errorClass } : {}) });
     recordToolCallMetric({ tool: name, app: app_.name, outcome: ok ? 'ok' : 'error', duration_ms, ...(errorClass ? { error_class: errorClass } : {}) });
 
     // Wrap the app's JSON into an MCP tool result. A structured object rides `structuredContent`; a

@@ -9,6 +9,28 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.77.0] - 2026-07-26
+
+### Added
+- **Two drilldown dashboards** (monitoring-stack): **MCP Tool Drilldown** — pick a tool from a
+  dropdown (Prometheus `label_values`) and see its RED metrics, gate decisions, and both log tiers
+  (app dispatch + data-plane with Claude/ChatGPT client attribution). **User Experience
+  Drilldown** — pick a user **by email** and see every tool call they made: per-tool rates and
+  p95 latency (log-derived — per-user metric labels would be a cardinality trap), which AI they
+  used, gate outcomes, errors/denials, and the raw dispatch feed, plus a header link to the
+  user's Langfuse page.
+- **Read-only app-DB datasource** (optional `appDb` config / `--app-db-*` flags): grafana joins
+  the app stack's network and queries `forge_identity_users` with a SELECT-only role for the
+  email picker; the password flows stack .env → container env → Grafana provisioning `$VAR`
+  expansion (never a literal in the compose).
+- **Log lines deep-link to Langfuse payloads**: Loki derived fields turn a dispatch line's
+  `correlation_id` (and Traefik's `TraceId`) into a click-through to the PUBLIC Langfuse trace —
+  the old derived field pointed at the internal `langfuse-web:3000` hostname (browser-dead) and
+  matched a key case that never occurred.
+- **Data-plane `mcp.tool_call` log lines now carry `user`** — joins transport lines (client
+  attribution) to app dispatch lines (owner) per user; mirrors the span attribute that already
+  recorded it.
+
 ## [0.76.1] - 2026-07-26
 
 ### Fixed

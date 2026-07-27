@@ -47,6 +47,24 @@ const inputSchema = z.object({
   smtp_user: z.string().optional(),
   smtp_password: z.string().optional(),
   smtp_from: z.string().optional(),
+  langfuse_public_url: z
+    .string()
+    .optional()
+    .describe('PUBLIC Langfuse UI base for browser deep links (default https://monitor.dorinda.ai)'),
+  langfuse_project_id: z.string().optional().describe('Langfuse project id for deep links (default forge-default)'),
+  app_db_network: z
+    .string()
+    .optional()
+    .describe('App stack docker network the postgres container lives on (enables the User Experience dashboard; grafana joins it)'),
+  app_db_host: z.string().optional().describe('Postgres container name/host on that network'),
+  app_db_port: z.number().int().positive().optional().describe('Postgres port (default 5432)'),
+  app_db_database: z.string().optional().describe('Database holding forge_identity_users (e.g. forge_platform)'),
+  app_db_user: z.string().optional().describe('SELECT-only role (default grafana_ro)'),
+  app_db_app_id: z.string().optional().describe('app_id scoping the user picker query (default dorinda-api)'),
+  app_db_password: z
+    .string()
+    .optional()
+    .describe('Password of the SELECT-only role. Preserved if already in the env file.'),
   env_file: z.string().default('.env').describe('Env filename inside the stack dir (compose --env-file)'),
   health_url: z.string().url().optional().describe('Override the health-probe URL (default derived from host/port)'),
   context: z.string().optional().describe('docker --context for a remote daemon'),
@@ -120,6 +138,17 @@ export const provisionMonitoring: Capability<Input, MonitoringStack> = {
     await mkdir(dir, { recursive: true });
 
     // 1. Compose (deterministic, secret-free, self-contained) + committable .env.example.
+    const appDb =
+      input.app_db_network && input.app_db_host && input.app_db_database
+        ? {
+            network: input.app_db_network,
+            host: input.app_db_host,
+            port: input.app_db_port,
+            database: input.app_db_database,
+            user: input.app_db_user,
+            appId: input.app_db_app_id,
+          }
+        : undefined;
     const compose = generateMonitoringCompose({
       projectName: input.project_name,
       publicHost: input.public_host,
@@ -128,6 +157,9 @@ export const provisionMonitoring: Capability<Input, MonitoringStack> = {
       proxyNetwork: input.proxy_network,
       alertEmail: input.alert_email,
       logScopeRegex: input.log_scope_regex,
+      langfusePublicUrl: input.langfuse_public_url,
+      langfuseProjectId: input.langfuse_project_id,
+      appDb,
     });
     await writeFile(join(dir, 'compose.yaml'), compose, 'utf8');
     await writeFile(join(dir, '.env.example'), renderMonitoringEnvExample(), 'utf8');
@@ -138,9 +170,14 @@ export const provisionMonitoring: Capability<Input, MonitoringStack> = {
     let secretsMode: 'preserved' | 'generated';
     if (existingEnv && !input.regenerate_secrets) {
       secretsMode = 'preserved';
-      if (input.langfuse_otlp_b64 && !parseEnvValue(existingEnv, 'LANGFUSE_OTLP_B64')) {
-        await writeFile(envPath, `${existingEnv}\nLANGFUSE_OTLP_B64=${input.langfuse_otlp_b64}\n`, { mode: 0o600 });
+      let appended = existingEnv;
+      if (input.langfuse_otlp_b64 && !parseEnvValue(appended, 'LANGFUSE_OTLP_B64')) {
+        appended = `${appended}\nLANGFUSE_OTLP_B64=${input.langfuse_otlp_b64}\n`;
       }
+      if (input.app_db_password && !parseEnvValue(appended, 'GRAFANA_PG_RO_PASSWORD')) {
+        appended = `${appended}\nGRAFANA_PG_RO_PASSWORD=${input.app_db_password}\n`;
+      }
+      if (appended !== existingEnv) await writeFile(envPath, appended, { mode: 0o600 });
     } else {
       secretsMode = 'generated';
       const env = renderMonitoringEnv(generateMonitoringSecrets(), {
@@ -152,6 +189,7 @@ export const provisionMonitoring: Capability<Input, MonitoringStack> = {
           password: input.smtp_password,
           from: input.smtp_from,
         },
+        appDbPassword: input.app_db_password,
       });
       await writeFile(envPath, env, { mode: 0o600 });
     }

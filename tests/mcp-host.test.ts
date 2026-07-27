@@ -884,6 +884,10 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
     expect((log!['duration_ms'] as number)).toBeGreaterThanOrEqual(0);
     expect(log!['app']).toBe(APP);
     expect(log!['error_class']).toBeUndefined();
+    // 0.77.0: the transport line carries the user id — the per-user dashboard joins dp lines
+    // (client attribution) to app dispatch lines (owner) on it.
+    expect(typeof log!['user']).toBe('string');
+    expect((log!['user'] as string).length).toBeGreaterThan(0);
   });
 
   it('emits a structured log line with error_class for an unknown tool', async () => {

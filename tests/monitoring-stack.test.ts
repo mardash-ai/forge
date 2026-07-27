@@ -11,8 +11,10 @@ import {
 } from '../src/plugins/monitoring-stack/index';
 import {
   LOKI_CONFIG,
-  GRAFANA_DATASOURCES,
+  renderGrafanaDatasources,
   GRAFANA_ALERT_RULES,
+  DASHBOARD_TOOL_DRILLDOWN,
+  renderUserExperienceDashboard,
 } from '../src/plugins/monitoring-stack/content';
 
 // ProvisionMonitoring — the metrics+logging sibling of C37. Pure string generation; the point is
@@ -51,8 +53,8 @@ describe('generateMonitoringCompose — defaults', () => {
     const configNames = lines.slice(configsStart, servicesStart).filter((l) => /^  [a-z-]+:$/.test(l));
     // exactly 4-space indent = a top-level config's own content key (deeper = embedded in a payload)
     const inline = lines.filter((l) => /^    content: \|$/.test(l));
-    expect(inline.length).toBe(13);
-    expect(configNames.length).toBe(13);
+    expect(inline.length).toBe(configNames.length);
+    expect(configNames.length).toBe(14); // 15 with appDb (user-experience dashboard)
     expect(compose).not.toMatch(/^\s+file:/m);
     // the ONLY host bind is promtail's read-only docker socket
     const binds = compose.split('\n').filter((l) => l.includes(':/') && l.trim().startsWith('- /'));
@@ -140,6 +142,7 @@ describe('generateMonitoringCompose — defaults', () => {
   });
 
   it('datasource uids are forge-neutral and consistent between datasources and alert rules', () => {
+    const GRAFANA_DATASOURCES = renderGrafanaDatasources({ langfusePublicUrl: 'https://monitor.dorinda.ai', langfuseProjectId: 'forge-default' });
     expect(GRAFANA_DATASOURCES).toContain('uid: forge-loki');
     expect(GRAFANA_DATASOURCES).toContain('uid: forge-prometheus');
     expect(GRAFANA_ALERT_RULES).not.toContain('proxygen');
@@ -174,6 +177,29 @@ describe('generateMonitoringCompose — defaults', () => {
   it('log-level panels use the detected_level Loki metadata, never a literal "ALL" filter (0.75.1)', () => {
     expect(compose).toContain('detected_level');
     expect(compose).not.toContain('|= "$log_level"');
+  });
+
+  it('ships the Tool Drilldown dashboard by default; both drilldown dashboards parse as valid JSON (0.77.0)', () => {
+    expect(compose).toContain('dash-tool-drilldown');
+    const tool = JSON.parse(DASHBOARD_TOOL_DRILLDOWN);
+    expect(tool.uid).toBe('forge-tool-drilldown');
+    expect(JSON.stringify(tool)).toContain('label_values');
+    const user = JSON.parse(renderUserExperienceDashboard({ appId: 'dorinda-api', langfusePublicUrl: 'https://monitor.dorinda.ai', langfuseProjectId: 'forge-default' }));
+    expect(user.uid).toBe('forge-user-experience');
+    // the email picker queries the identity table scoped to the app, via the RO datasource
+    const pickerQ = JSON.stringify(user.templating);
+    expect(pickerQ).toContain('forge_identity_users');
+    expect(pickerQ).toContain("app_id = 'dorinda-api'");
+    expect(pickerQ).toContain('forge-appdb');
+  });
+
+  it('derived fields deep-link to the PUBLIC Langfuse (never an internal hostname) incl. correlation_id (0.77.0)', () => {
+    const ds = renderGrafanaDatasources({ langfusePublicUrl: 'https://monitor.dorinda.ai', langfuseProjectId: 'forge-default' });
+    expect(ds).toContain('https://monitor.dorinda.ai/project/forge-default/traces/');
+    expect(ds).not.toContain('langfuse-web:3000');
+    expect(ds).toContain('"correlation_id":"00-');
+    // no appDb → no postgres datasource
+    expect(ds).not.toContain('type: postgres');
   });
 
   it('MCP per-tool panels select ONE family via the app label the transport sets (0.76.0)', () => {
@@ -232,5 +258,32 @@ describe('secrets + env rendering', () => {
 
   it('exports the consumer-facing OTLP endpoint contract', () => {
     expect(MONITORING_OTLP_ENDPOINT).toBe('http://otel-collector:4318');
+  });
+});
+
+describe('generateMonitoringCompose — appDb (User Experience dashboard)', () => {
+  const appDb = { network: 'forge-dorinda-api-prod_internal', host: 'forge-dorinda-api-prod-postgres-1', database: 'forge_platform' };
+  const compose = generateMonitoringCompose({ appDb });
+
+  it('adds the RO postgres datasource, joins the app network, and ships the user dashboard', () => {
+    expect(compose).toContain('uid: forge-appdb');
+    expect(compose).toContain('url: forge-dorinda-api-prod-postgres-1:5432');
+    expect(compose).toContain('user: grafana_ro');
+    expect(compose).toContain('database: forge_platform');
+    expect(compose).toContain('dash-user-experience');
+    // grafana (and only via declaration) joins the external app network
+    const g = compose.slice(compose.indexOf('  grafana:'));
+    expect(g).toContain('- forge-dorinda-api-prod_internal');
+    expect(compose).toMatch(/forge-dorinda-api-prod_internal:\n    external: true/);
+    // the password flows .env -> grafana container env -> Grafana provisioning $VAR expansion;
+    // embed() $-doubles the config content so compose passes the literal through to Grafana
+    expect(compose).toContain('password: $$GRAFANA_PG_RO_PASSWORD');
+    expect(g).toContain('GRAFANA_PG_RO_PASSWORD: ${GRAFANA_PG_RO_PASSWORD:-}');
+  });
+
+  it('env render carries the RO password line (and example documents it)', () => {
+    const env = renderMonitoringEnv(generateMonitoringSecrets(), { appDbPassword: 'x-ro-pass' });
+    expect(env).toContain('GRAFANA_PG_RO_PASSWORD=x-ro-pass');
+    expect(renderMonitoringEnvExample()).toContain('GRAFANA_PG_RO_PASSWORD=');
   });
 });
