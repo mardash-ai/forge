@@ -153,6 +153,26 @@ describe('C23 — authorize + consent (requires a C10 login)', () => {
     }
   });
 
+  // 2026-07-27: the consent screen binds the grant to whichever identity the browser's session
+  // cookie holds, and the ONLY signal of which one that is, is the email in its sentence. With no
+  // way out of a stale session, a user reconnecting a connector silently rebinds their AI to the
+  // wrong account — observed live, where a test session left a connector pointed at the test
+  // account and the owner's own AI kept reading it. There must be an escape hatch, and it must
+  // return to the SAME authorize request rather than restarting the flow.
+  it('offers a switch-account escape hatch that returns to this same authorize request', async () => {
+    const clientId = await registerClient();
+    const challenge = pkceChallenge('the-pkce-code-verifier-0123456789abcdef');
+    const { cookie } = await loginCookie();
+    const consent = await get(authorizeUrl(clientId, challenge), { cookie });
+    expect(consent.statusCode).toBe(200);
+    expect(consent.body).toContain('Use a different account');
+    expect(consent.body).toContain('/auth/logout?next=');
+    expect(consent.body).toContain(encodeURIComponent('/oauth/authorize?'));
+    // carries the client + PKCE through, so the flow resumes instead of starting over
+    expect(consent.body).toContain(encodeURIComponent(`client_id=${clientId}`));
+    expect(consent.body).toContain(encodeURIComponent('code_challenge='));
+  });
+
   it('rejects an unregistered redirect_uri and a missing PKCE challenge', async () => {
     const clientId = await registerClient();
     const { cookie } = await loginCookie();

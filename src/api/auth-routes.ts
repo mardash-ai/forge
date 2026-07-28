@@ -750,10 +750,18 @@ export function registerAuthRoutes(
         await emit(app_.id, 'SessionRevoked', userId ?? sessionId, email);
       }
     }
+    // Honor a same-origin `?next=` so a flow that needs the user to CHANGE identity can resume
+    // where it left off — notably the OAuth consent screen's "Use a different account", which
+    // sends the user here and straight back to the same authorize request. Without a way out of a
+    // stale session, reconnecting a connector silently rebinds it to whatever account the cookie
+    // happened to hold (observed live 2026-07-27). `safeLogoutNext` accepts ONLY a same-origin
+    // absolute path (it rejects `//` and `/\`), so this can never become an open redirect.
+    const rawNext = (req.query as Record<string, unknown> | undefined)?.next;
+    const next = typeof rawNext === 'string' && rawNext ? safeNext(rawNext) : '';
     reply
       .header('set-cookie', [clearSessionCookie({ secure }), clearRefreshCookie({ secure })])
       .code(303)
-      .header('location', '/auth/login?notice=' + encodeURIComponent('Signed out.'))
+      .header('location', next || '/auth/login?notice=' + encodeURIComponent('Signed out.'))
       .send();
   };
   app.post('/auth/logout', logout);

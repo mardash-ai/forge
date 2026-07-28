@@ -502,6 +502,18 @@ function consentPage(theme: Theme, o: { appName: string; clientName: string; ema
     ? `<ul class="scopes">${o.scopes.map((s) => `<li><code>${escapeHtml(s)}</code></li>`).join('')}</ul>`
     : `<p class="muted">No specific scopes requested.</p>`;
   const hidden = Object.entries(o.fields).map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`).join('');
+  // SWITCH-ACCOUNT affordance. This screen binds the grant to whichever identity the browser's
+  // session cookie happens to hold, and the ONLY signal of which account that is, is the email in
+  // the sentence above. So a returning user reconnecting a connector silently rebinds their AI to
+  // the wrong account whenever a stale session is present — observed live 2026-07-27: a test
+  // session left a connector pointed at the wrong account, and the owner's own AI kept reading
+  // that account's data. "Read the fine print" is not a fix; there has to be a way OUT of the
+  // wrong identity. Log out, then come straight back to this same authorize request (rebuilt from
+  // the fields consent already carries).
+  const authorizeUrl = `/oauth/authorize?${new URLSearchParams({ response_type: 'code', ...o.fields }).toString()}`;
+  const switchAccount =
+    `<p class="muted">Not ${escapeHtml(o.email)}? ` +
+    `<a href="/auth/logout?next=${encodeURIComponent(authorizeUrl)}">Use a different account</a>.</p>`;
   return pageShell(theme, 'Authorize', (
     `<h1>Authorize ${escapeHtml(o.clientName)}</h1>` +
     `<p class="muted"><b>${escapeHtml(o.clientName)}</b> wants to connect to <b>${escapeHtml(o.appName)}</b> as <b>${escapeHtml(o.email)}</b> and use:</p>` +
@@ -510,7 +522,8 @@ function consentPage(theme: Theme, o: { appName: string; clientName: string; ema
     `<div class="row">` +
     `<button class="deny" type="submit" name="decision" value="deny">Deny</button>` +
     `<button class="approve" type="submit" name="decision" value="approve">Allow</button>` +
-    `</div></form>`
+    `</div></form>` +
+    switchAccount
   ));
 }
 

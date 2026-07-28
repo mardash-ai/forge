@@ -9,6 +9,26 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.78.0] - 2026-07-28
+
+### Fixed
+
+- **C23 consent: a way OUT of the wrong identity ("Use a different account").** The OAuth consent
+  screen binds a connector grant to whichever identity the browser's session cookie happens to hold,
+  and the only signal of WHICH account that is, is the email in its sentence. So a returning user
+  reconnecting a connector silently rebinds their AI to the wrong account whenever a stale session
+  is present — observed live 2026-07-27, where an acceptance-test session left a connector pointed
+  at the test account and the owner's own AI kept reading that account's data for hours. Expecting
+  the user to catch it in fine print is not a fix. The consent page now offers "Not <email>? Use a
+  different account", which signs the stale session out and returns to the SAME authorize request
+  (params rebuilt from the fields consent already carries, so the flow resumes rather than
+  restarting). Guarded in `tests/mcp-oauth.test.ts`.
+- **`GET|POST /auth/logout` honors a same-origin `?next=`.** Required by the above (logout
+  previously always dumped the user on the login page, losing the pending authorize request).
+  Reuses the existing `safeNext` guard, so an absolute or protocol-relative target can never turn
+  this into an open redirect. Guarded in `tests/auth-routes.test.ts` (both the honored case and
+  three open-redirect attempts). Both tests proven RED against the previous behavior.
+
 ## [0.77.1] - 2026-07-27
 
 ### Fixed

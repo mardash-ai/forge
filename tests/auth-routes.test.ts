@@ -163,6 +163,33 @@ describe('email/password: signup → verify → login → session (cross-request
     expect(afterOut.statusCode).toBe(401);
   });
 
+  // 2026-07-27: the OAuth consent screen binds a connector grant to whichever identity the
+  // browser's session cookie holds. With no way to sign OUT and come back to the same authorize
+  // request, a user reconnecting a connector silently rebound their AI to the wrong account
+  // (observed live). Logout therefore honors a same-origin `next` — and only a same-origin one.
+  it('logout honors a same-origin `next` (the consent screen\'s switch-account escape hatch)', async () => {
+    await configureSessionAndEmail();
+    const back = await server.inject({
+      method: 'GET',
+      url: '/auth/logout?next=' + encodeURIComponent('/oauth/authorize?response_type=code&client_id=abc'),
+      headers: HDR,
+    });
+    expect(back.statusCode).toBe(303);
+    expect(back.headers.location).toBe('/oauth/authorize?response_type=code&client_id=abc');
+    expect(setCookie(back, 'forge_session')).toContain('Max-Age=0'); // still really signs out
+  });
+
+  it('logout `next` cannot be turned into an open redirect', async () => {
+    await configureSessionAndEmail();
+    for (const evil of ['https://evil.test/steal', '//evil.test/steal', '/\\evil.test']) {
+      const out = await server.inject({ method: 'GET', url: '/auth/logout?next=' + encodeURIComponent(evil), headers: HDR });
+      expect(out.headers.location).not.toContain('evil.test');
+    }
+    // No `next` at all keeps the historical destination.
+    const plain = await server.inject({ method: 'GET', url: '/auth/logout', headers: HDR });
+    expect(plain.headers.location).toContain('/auth/login');
+  });
+
   it('sanitizes the post-login `next` target (no open redirect)', async () => {
     await configureSessionAndEmail();
     // A protocol-relative / backslash target is neutralized to "/".
