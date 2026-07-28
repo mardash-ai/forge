@@ -296,6 +296,32 @@ describe('email-smtp plugin', () => {
     expect(sanitizeError('timeout')).toBe('timeout');
   });
 
+  // 2026-07-27, caught by a dorinda-api acceptance run reading the REAL email: the reset template
+  // said "reset your ${product} password" while `product` defaults to "your account" — so every
+  // reset email a caller sent without a product name read "reset your your account password".
+  // The copy must read correctly BOTH with the default and with a real product name.
+  it('reset-password copy never doubles the possessive — default AND named product', () => {
+    for (const body of ['text', 'html'] as const) {
+      const dflt = renderTemplate('reset-password', { url: 'https://x/y' })[body];
+      expect(dflt).not.toContain('your your');
+      expect(dflt).toContain('your account');
+
+      const named = renderTemplate('reset-password', { url: 'https://x/y', product: 'Dorinda' })[body];
+      expect(named).not.toContain('your your');
+      expect(named).toContain('Dorinda');
+    }
+  });
+
+  it('no built-in template doubles a word from the product default', () => {
+    for (const name of ['verify-email', 'reset-password', 'twofa-code'] as const) {
+      const out = renderTemplate(name, { url: 'https://x/y', code: '123456' });
+      for (const body of [out.text, out.html]) {
+        expect(body).not.toMatch(/\byour your\b/);
+        expect(body).not.toMatch(/\baccount account\b/);
+      }
+    }
+  });
+
   it('renderTemplate escapes HTML in interpolated data (no injection)', () => {
     const out = renderTemplate('verify-email', { url: 'https://x/y?a=1&b=2', product: '<script>evil</script>' });
     expect(out.html).not.toContain('<script>evil</script>');

@@ -185,14 +185,18 @@ export function renderTemplate(
     };
   }
   // reset-password
+  // NOTE the phrasing: "the password for ${product}", never "your ${product} password" — `product`
+  // defaults to "your account", so the possessive form rendered "reset your your account password"
+  // in every email sent without a product name (caught reading a real reset email, 2026-07-27).
+  // This wording reads correctly both ways: "…for your account." / "…for Dorinda."
   return {
     subject: 'Reset your password',
     text:
-      `${greetText}We received a request to reset your ${product} password.\n\n` +
+      `${greetText}We received a request to reset the password for ${product}.\n\n` +
       `Reset your password:\n${url}\n\n` +
       `If you didn't request this, you can safely ignore this email — your password won't change.`,
     html: htmlLayout(
-      `${greetHtml}<p>We received a request to reset your ${eproduct} password.</p>` +
+      `${greetHtml}<p>We received a request to reset the password for ${eproduct}.</p>` +
         htmlButton(eurl, 'Reset password') +
         paste +
         `<p style="color:#6b7280;font-size:13px;">If you didn't request this, you can safely ignore this email — your password won't change.</p>`,

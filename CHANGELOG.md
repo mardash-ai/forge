@@ -9,6 +9,20 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.77.1] - 2026-07-27
+
+### Fixed
+
+- **C12 reset-password email: the doubled possessive.** The built-in `reset-password` template read
+  `"reset your ${product} password"` while `product` defaults to `"your account"` — so every reset
+  email sent without an explicit product name told the user to "reset your **your account**
+  password". Caught by reading a REAL reset email during a dorinda-api acceptance run (2026-07-27).
+  Reworded to `"reset the password for ${product}"`, which reads correctly both with the default
+  ("…for your account.") and with a real name ("…for Dorinda."). Guarded by two cases in
+  `tests/send-email.test.ts` — a reset-copy check across text+HTML with and without a product name,
+  and a sweep asserting NO built-in template doubles a word from the product default (proven RED
+  against the exact live string before the fix). Text + HTML bodies only; no schema/API change.
+
 ## [0.77.0] - 2026-07-26
 
 ### Added
