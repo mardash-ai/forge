@@ -43,8 +43,12 @@ variable "host_backends" {
 }
 variable "mcp_trust_anchor_pem" {
   type        = string
-  description = "PEM of the CA that issues the connector client certs (OpenAI's connector CA)."
-  sensitive   = false
+  description = "PEM of the ROOT CA (self-signed) anchoring connector client certs. ONE block — a bundle here fails with 'unexpected data after the PEM block' (hit live, 2026-07-29)."
+}
+variable "mcp_intermediate_pems" {
+  type        = list(string)
+  default     = []
+  description = "Intermediate CA PEMs (e.g. OpenAI-Connectors-mTLS-CA), one block each — GCP builds the chain from these."
 }
 
 locals {
@@ -141,6 +145,12 @@ resource "google_certificate_manager_trust_config" "mcp" {
   description = "Trust anchor for connector client certificates (we trust their CA; we issue nothing)."
   trust_stores {
     trust_anchors { pem_certificate = var.mcp_trust_anchor_pem }
+    dynamic "intermediate_cas" {
+      for_each = var.mcp_intermediate_pems
+      content {
+        pem_certificate = intermediate_cas.value
+      }
+    }
   }
 }
 

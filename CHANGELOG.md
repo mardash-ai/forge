@@ -9,6 +9,16 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.1] - 2026-07-29
+
+### Fixed
+
+- **edge module: a CA *bundle* is not a trust anchor.** `trust_anchors[].pem_certificate` takes ONE
+  PEM block; the OpenAI artifact is root+intermediate concatenated, and the first live apply failed
+  with "unexpected data after the PEM block". The module now takes the self-signed ROOT as
+  `mcp_trust_anchor_pem` and intermediates as `mcp_intermediate_pems` — chain semantics modeled
+  honestly instead of hoping the API tolerates a bundle.
+
 ## [0.79.0] - 2026-07-29
 
 ### Added

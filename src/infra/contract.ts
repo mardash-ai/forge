@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { run } from '../shared/exec';
+import { capture } from './exec';
 import type { RepoStack } from './config';
 
 export interface PlatformContract {
@@ -30,8 +31,9 @@ export function hashObjectPath(stateBucket: string, stackName: string, env: stri
 }
 
 async function gsutilCat(gsUrl: string): Promise<string | null> {
-  const r = await run('gcloud', ['storage', 'cat', gsUrl], { timeoutMs: 60_000, tailLines: 50 });
-  return (r.code ?? 1) === 0 ? r.combined : null;
+  // STDOUT ONLY — merged streams turn a gcloud stderr notice into JSON-parse garbage.
+  const r = await capture('gcloud', ['storage', 'cat', gsUrl], { timeoutMs: 60_000 });
+  return r.code === 0 ? r.stdout : null;
 }
 
 async function gsutilWrite(gsUrl: string, content: string): Promise<void> {

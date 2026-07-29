@@ -12,6 +12,7 @@
  * in CI the deployer SA is assumed via WIF with short-lived tokens.
  */
 import { run } from '../shared/exec';
+import { capture } from './exec';
 import { requireEnv, type RepoStack } from './config';
 
 export interface BootstrapStep {
@@ -20,12 +21,22 @@ export interface BootstrapStep {
   detail?: string;
 }
 
+/** Side-effect gcloud call — merged output is fine for error reporting. */
 async function gcloud(args: string[], opts: { allowFail?: boolean } = {}): Promise<{ code: number; output: string }> {
   const r = await run('gcloud', [...args, '--quiet'], { timeoutMs: 5 * 60 * 1000, tailLines: 100 });
   if ((r.code ?? 1) !== 0 && !opts.allowFail) {
     throw new Error(`gcloud ${args.slice(0, 4).join(' ')}… failed (exit ${r.code}):\n${r.combined.slice(-1500)}`);
   }
   return { code: r.code ?? 1, output: r.combined };
+}
+
+/**
+ * Machine-READ gcloud call — STDOUT ONLY. The first live bootstrap parsed a stderr WARNING as a
+ * folder id and handed it to `projects create --folder=…`; never parse merged streams.
+ */
+async function gcloudRead(args: string[]): Promise<{ code: number; stdout: string }> {
+  const r = await capture('gcloud', [...args, '--quiet'], { timeoutMs: 5 * 60 * 1000 });
+  return { code: r.code, stdout: r.stdout };
 }
 
 /** APIs every stack needs before terraform can manage resources in the project. */
@@ -63,7 +74,7 @@ export const DEPLOYER_ROLES = [
   'roles/secretmanager.admin',
   'roles/storage.admin',
   'roles/certificatemanager.owner',
-  'roles/networksecurity.mtlsAdmin',
+  'roles/networksecurity.admin', // ServerTlsPolicy / mTLS — verified live: mtlsAdmin is NOT a real role
   'roles/servicenetworking.networksAdmin',
   'roles/iam.serviceAccountAdmin',
   'roles/iam.serviceAccountUser',
@@ -90,23 +101,36 @@ export async function bootstrap(stack: RepoStack, env: string): Promise<Bootstra
   // ── 1. Folder (foundation-only, and only if declared) ──────────────────────────────
   let folderId: string | undefined;
   if (cfg.kind === 'foundation' && cfg.folder && cfg.org_id) {
-    const list = await gcloud([
+    const list = await gcloudRead([
       'resource-manager', 'folders', 'list',
       `--organization=${cfg.org_id}`,
       `--filter=displayName=${cfg.folder}`,
       '--format=value(name)',
     ]);
-    folderId = list.output.trim().split('\n').filter(Boolean)[0]?.replace('folders/', '');
+    folderId = list.stdout.trim().split('\n').filter(Boolean)[0]?.replace('folders/', '');
+    if (folderId && !/^\d+$/.test(folderId)) {
+      throw new Error(`folder lookup returned a non-numeric id "${folderId}" — refusing to use it as a parent`);
+    }
     if (folderId) {
       step(`folder "${cfg.folder}"`, 'exists', `folders/${folderId}`);
     } else {
-      const created = await gcloud([
+      await gcloud([
         'resource-manager', 'folders', 'create',
         `--display-name=${cfg.folder}`,
         `--organization=${cfg.org_id}`,
+      ]);
+      // §3.7 in miniature: do NOT parse create's output (async operation + progress lines make it
+      // junk) — re-READ the actual state. The first live bootstrap failed exactly here.
+      const reread = await gcloudRead([
+        'resource-manager', 'folders', 'list',
+        `--organization=${cfg.org_id}`,
+        `--filter=displayName=${cfg.folder}`,
         '--format=value(name)',
       ]);
-      folderId = created.output.trim().replace('folders/', '');
+      folderId = reread.stdout.trim().split('\n').filter(Boolean)[0]?.replace('folders/', '');
+      if (!folderId || !/^\d+$/.test(folderId)) {
+        throw new Error(`folder "${cfg.folder}" was created but could not be re-read — got "${folderId}"`);
+      }
       step(`folder "${cfg.folder}"`, 'created', `folders/${folderId}`);
     }
   }
@@ -129,10 +153,8 @@ export async function bootstrap(stack: RepoStack, env: string): Promise<Bootstra
 
   // ── 3. Billing ─────────────────────────────────────────────────────────────────────
   if (cfg.kind === 'foundation' && cfg.billing_account) {
-    const b = await gcloud(['billing', 'projects', 'describe', e.project_id, '--format=value(billingAccountName)'], {
-      allowFail: true,
-    });
-    if (b.output.includes(cfg.billing_account)) {
+    const b = await gcloudRead(['billing', 'projects', 'describe', e.project_id, '--format=value(billingAccountName)']);
+    if (b.stdout.includes(cfg.billing_account)) {
       step('billing link', 'exists', cfg.billing_account);
     } else {
       await gcloud(['billing', 'projects', 'link', e.project_id, `--billing-account=${cfg.billing_account}`]);
@@ -212,7 +234,9 @@ export async function bootstrap(stack: RepoStack, env: string): Promise<Bootstra
     }
     step(`deployer roles (${DEPLOYER_ROLES.length})`, 'updated', 'curated list in bootstrap.ts — NOT roles/editor');
 
-    const projNum = (await gcloud(['projects', 'describe', proj, '--format=value(projectNumber)'])).output.trim();
+    const projNumRead = await gcloudRead(['projects', 'describe', proj, '--format=value(projectNumber)']);
+    const projNum = projNumRead.stdout.trim();
+    if (!/^\d+$/.test(projNum)) throw new Error(`project number read failed — got "${projNum}"`);
     for (const repo of cfg.github.repos) {
       await gcloud([
         'iam', 'service-accounts', 'add-iam-policy-binding', sa, `--project=${proj}`,
