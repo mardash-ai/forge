@@ -9,6 +9,15 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.2] - 2026-07-29
+
+### Fixed
+
+- **edge module: the mTLS entry's placeholder must be a backend SERVICE.** A ServerTlsPolicy will
+  not attach to a target proxy whose URL map defaults to a backend bucket ("ambiguous UrlMap",
+  hit live). The mcp map now defaults to an empty backend service — 502 with a completed TLS
+  handshake is the correct "nothing behind it" state for that entry.
+
 ## [0.79.1] - 2026-07-29
 
 ### Fixed

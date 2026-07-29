@@ -210,10 +210,21 @@ resource "google_compute_url_map" "main" {
   }
 }
 
+# The mcp map's placeholder must be a backend SERVICE, not a bucket: a ServerTlsPolicy refuses to
+# attach to a proxy whose URL map defaults to a bucket ("ambiguous UrlMap" — hit live, 2026-07-29).
+# Zero backends ⇒ 502, and 502-with-a-completed-TLS-handshake IS the correct "nothing behind it"
+# state for the mTLS entry.
+resource "google_compute_backend_service" "mcp_placeholder" {
+  project               = var.project_id
+  name                  = "${var.name}-mcp-placeholder"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  protocol              = "HTTPS"
+}
+
 resource "google_compute_url_map" "mcp" {
   project         = var.project_id
   name            = "${var.name}-mcp"
-  default_service = lookup(var.host_backends, var.mcp_host, google_compute_backend_bucket.placeholder.id)
+  default_service = lookup(var.host_backends, var.mcp_host, google_compute_backend_service.mcp_placeholder.id)
 }
 
 resource "google_compute_target_https_proxy" "main" {
