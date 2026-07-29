@@ -137,6 +137,10 @@ resource "google_certificate_manager_certificate_map_entry" "mcp" {
   certificates = [google_certificate_manager_certificate.cert[var.mcp_host].id]
 }
 
+data "google_project" "this" {
+  project_id = var.project_id
+}
+
 # ── mTLS trust: TrustConfig + ServerTlsPolicy (§9.4 — CAS is NOT needed; we issue no certs) ───────
 resource "google_certificate_manager_trust_config" "mcp" {
   project     = var.project_id
@@ -161,7 +165,9 @@ resource "google_network_security_server_tls_policy" "mcp" {
   description = "ALLOW_INVALID_OR_MISSING_CLIENT_CERT: certless discovery must pass (§5f MTLS-2); the app fails closed."
   mtls_policy {
     client_validation_mode         = "ALLOW_INVALID_OR_MISSING_CLIENT_CERT"
-    client_validation_trust_config = "projects/${var.project_id}/locations/global/trustConfigs/${google_certificate_manager_trust_config.mcp.name}"
+    # PROJECT NUMBER, not id: the API canonicalizes to the numeric form, and declaring the id form
+    # creates a perma-diff the §3.7 read-back refuses (caught live on the first converge check).
+    client_validation_trust_config = "projects/${data.google_project.this.number}/locations/global/trustConfigs/${google_certificate_manager_trust_config.mcp.name}"
   }
 }
 

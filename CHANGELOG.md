@@ -9,6 +9,15 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.3] - 2026-07-29
+
+### Fixed
+
+- **edge module: ServerTlsPolicy trust-config ref uses the project NUMBER.** The API canonicalizes
+  `client_validation_trust_config` to the numeric-project form; declaring the id form is a
+  perma-diff — which the §3.7 apply read-back correctly REFUSED ("apply completed but the stack did
+  NOT converge"). First live proof the read-back guard earns its keep.
+
 ## [0.79.2] - 2026-07-29
 
 ### Fixed
