@@ -9,6 +9,31 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.0] - 2026-07-29
+
+### Added
+
+- **I1 `forge infra` — provision a product's cloud stack** (`docs/INFRA.md`; design in
+  dorinda-orchestrator `PRODUCTIONALIZATION_PLAN.md` §2–§3). The repo you stand in is the stack
+  selector (`forge.infra.json`); verbs: `bootstrap · lint · plan · apply · status · outputs ·
+  verify · destroy`. Deliberate divergence: executes **locally** (operator ADC / CI WIF), not in the
+  control plane — its inputs are the invoking repo + credentials that must never become a
+  service-account key. Guards are properties of the tool, not conventions: `apply` is **CI-only**
+  (`--local --allow-local-apply` = the two-use bootstrap hatch), `apply` re-plans after applying and
+  fails unless the diff is empty (§3.7 — a zero exit code is not evidence), consumer stacks refuse
+  to plan/apply on a platform-contract major mismatch (§3.5), `destroy` never runs in CI and
+  prod-named envs demand `--i-know-this-is-prod`.
+- **Terraform module set** (`terraform/modules/`): `network` (VPC + PSA, Direct VPC egress),
+  `edge` (DNS, pre-cutover DNS-authorization certs, **dual LB entries** — the mTLS host gets its own
+  IP/proxy with `ALLOW_INVALID_OR_MISSING_CLIENT_CERT` + TrustConfig so certless discovery survives,
+  and the main proxy never requests a client cert), `database` (Cloud SQL PG16, zonal + backups +
+  PITR, private-IP-only, generated password → Secret Manager), `service` (Cloud Run v2 behind the
+  LB, least-privilege SA, secret containers, optional `client_cert_*` mTLS headers), `runner`
+  (Spot self-hosted GitHub Actions pool). Consumers pin modules by git ref (`?ref=v0.79.0`) — module
+  adoption is a reviewed bump, like adopting a released image.
+- 11 offline tests including subprocess guard proofs (the CI-only apply refusal, the prod destroy
+  refusal, the never-in-CI destroy refusal).
+
 ## [0.78.0] - 2026-07-28
 
 ### Fixed

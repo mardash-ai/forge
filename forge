@@ -3,6 +3,16 @@
 # then calls the Forge HTTP API. The local machine only ever invokes Docker.
 set -euo pipefail
 
+# `forge infra` is the ONE noun that executes LOCALLY (see src/infra/config.ts for why: its inputs
+# are the repo you are standing in and your ADC/WIF credentials — neither exists inside the platform
+# container). Intercept it BEFORE the docker path, preserving the caller's cwd as the stack selector.
+if [[ "${1:-}" == "infra" ]]; then
+  FORGE_INFRA_INVOKE_DIR="$(pwd)"
+  export FORGE_INFRA_INVOKE_DIR
+  cd "$(dirname "$0")"
+  exec npx tsx src/infra/cli.ts "${@:2}"
+fi
+
 cd "$(dirname "$0")"
 
 # Ensure the platform is running.
