@@ -94,7 +94,10 @@ resource "google_compute_instance_template" "runner" {
     provisioning_model          = "SPOT"
     preemptible                 = true
     automatic_restart           = false
-    instance_termination_action = "DELETE" # the MIG recreates it — self-healing by construction
+    # STOP, not DELETE: "Spot VMs with termination action DELETE cannot be used with Managed
+    # Instance Groups" (live API error, 2026-07-29). The MIG restarts a STOPPED instance to hold
+    # target_size — same self-healing, the spelling the API accepts.
+    instance_termination_action = "STOP"
   }
 
   disk {

@@ -9,6 +9,15 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.4] - 2026-07-29
+
+### Fixed
+
+- **runner module: Spot termination action must be STOP inside a MIG** (live API rejection). The MIG
+  restarts a stopped instance to hold target_size — same self-healing, the accepted spelling.
+- **docs: consumer contract variable is `type = any`** — `map(string)`/`map(any)` both fail on the
+  heterogeneous contract values (hit live in dorinda-ci-runners).
+
 ## [0.79.3] - 2026-07-29
 
 ### Fixed

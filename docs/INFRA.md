@@ -59,6 +59,15 @@ a reviewed config change. Consumers get the values materialized into
 `infra/contract.auto.tfvars.json` (gitignored, regenerated each run) as the `platform` variable —
 they never read foundation state.
 
+## The canonical consumer variable
+
+```hcl
+variable "platform" {
+  type        = any   # NOT map(string)/map(any) — the contract carries lists + objects (hit live)
+  description = "the §3.5 platform contract, materialized by forge infra"
+}
+```
+
 ## Modules (`terraform/modules/`)
 
 | Module | Owns | Notable |
