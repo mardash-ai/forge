@@ -174,15 +174,12 @@ resource "google_compute_backend_service" "backend" {
 
   # §9.4b: the mcp backend forwards the edge's mTLS verdict to the app. The app REQUIRES the
   # chain-verified header ("missing verdict = failure"), so mis-wiring here fails closed, not open.
-  dynamic "custom_request_headers" {
-    for_each = var.mtls_headers ? [1] : []
-    content {
-      headers = [
-        "X-Client-Cert-Leaf:{client_cert_leaf}",
-        "X-Client-Cert-Chain-Verified:{client_cert_chain_verified}",
-      ]
-    }
-  }
+  # NOTE: a list ATTRIBUTE, not a block — `dynamic "custom_request_headers"` fails terraform
+  # validate (caught by lint before any CI run).
+  custom_request_headers = var.mtls_headers ? [
+    "X-Client-Cert-Leaf:{client_cert_leaf}",
+    "X-Client-Cert-Chain-Verified:{client_cert_chain_verified}",
+  ] : null
 }
 
 output "service_name" { value = google_cloud_run_v2_service.svc.name }

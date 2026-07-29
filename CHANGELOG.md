@@ -9,6 +9,14 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.5] - 2026-07-29
+
+### Fixed
+
+- **service module: `custom_request_headers` is a list attribute, not a block** — `terraform
+  validate` rejects the dynamic-block form (caught by `forge infra lint` in the first service-stack
+  authoring pass, before any CI run).
+
 ## [0.79.4] - 2026-07-29
 
 ### Fixed
