@@ -51,9 +51,13 @@ locals {
   startup = <<-EOT
     #!/usr/bin/env bash
     set -euo pipefail
-    # docker for container builds
-    if ! command -v docker >/dev/null; then
-      apt-get update -y && apt-get install -y docker.io jq curl
+    # The CI TOOLCHAIN, not just docker. Found live (2026-07-29): setup-terraform dies without
+    # unzip; `npm ci` needs system node (the runner bundles node for ACTIONS only). Node 22 via
+    # nodesource — Debian 12's packaged node is too old for the forge CLI.
+    if ! command -v node >/dev/null || ! command -v unzip >/dev/null; then
+      apt-get update -y && apt-get install -y docker.io jq curl unzip git ca-certificates
+      curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+      apt-get install -y nodejs
       systemctl enable --now docker
     fi
     useradd -m runner 2>/dev/null || true

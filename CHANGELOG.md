@@ -9,6 +9,14 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.6] - 2026-07-29
+
+### Fixed
+
+- **runner module: install the CI toolchain** (unzip, git, Node 22 via nodesource) — the first
+  live job died in setup-terraform for lack of unzip, and `npm ci` needs system node (the runner
+  bundles node for actions only).
+
 ## [0.79.5] - 2026-07-29
 
 ### Fixed
