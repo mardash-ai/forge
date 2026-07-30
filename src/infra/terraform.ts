@@ -83,6 +83,11 @@ export async function tfDestroy(stack: RepoStack, env: string): Promise<TfResult
   return tf(stack, ['destroy', '-input=false', '-no-color', '-auto-approve', ...varArgs(stack, env)]);
 }
 
+/** State bookkeeping only — clears the taint flag; no provider calls, nothing changes in the cloud. */
+export async function tfUntaint(stack: RepoStack, address: string): Promise<TfResult> {
+  return tf(stack, ['untaint', address]);
+}
+
 export async function tfOutputs(stack: RepoStack): Promise<Record<string, unknown>> {
   const r = await tf(stack, ['output', '-json', '-no-color']);
   if (r.code !== 0) throw new Error(`terraform output failed:\n${r.output}`);

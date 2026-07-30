@@ -19,7 +19,7 @@ import { Command } from 'commander';
 import { loadRepoStack, requireEnv } from './config';
 import { declaredConfigHash } from './hash';
 import { bootstrap } from './bootstrap';
-import { tfInit, tfValidate, tfFmtCheck, tfPlan, tfApply, tfDestroy, tfOutputs, readBackConverged } from './terraform';
+import { tfInit, tfValidate, tfFmtCheck, tfPlan, tfApply, tfDestroy, tfOutputs, tfUntaint, readBackConverged } from './terraform';
 import { materializeContract, publishContract, publishDeclaredHash, fetchDeclaredHash } from './contract';
 import { runVerify } from './verify';
 
@@ -184,6 +184,21 @@ program
     if (results.length === 0) say('  (no verify checks declared — declare what "working" means for this stack)');
     say(`verify: ${results.length - failed}/${results.length} passed`);
     process.exit(failed === 0 ? 0 : 1);
+  });
+
+program
+  .command('untaint')
+  .description('Clear the tainted flag on ONE resource address. STATE bookkeeping only — touches nothing in the cloud. Exists because a partially-failed apply (e.g. a rejected IAM member AFTER service creation) leaves a healthy resource marked for pointless replacement.')
+  .requiredOption('--env <env>')
+  .requiredOption('--address <address>', 'exact terraform resource address to untaint')
+  .action(async (opts) => {
+    const stack = await stackFor(opts.env);
+    const init = await tfInit(stack, opts.env);
+    if (init.code !== 0) fail(`terraform init failed:\n${init.output.slice(-1000)}`);
+    const r = await tfUntaint(stack, opts.address);
+    process.stdout.write(r.output);
+    if (r.code !== 0) fail(`untaint failed (exit ${r.code})`);
+    say(`untaint: ${opts.address} — run plan to confirm the replacement is gone.`);
   });
 
 program

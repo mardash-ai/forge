@@ -9,6 +9,15 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.11] - 2026-07-29
+
+### Added
+
+- **`forge infra untaint --env E --address <addr>`** — state bookkeeping for a healthy resource a
+  partially-failed apply left marked for replacement (hit live: dorinda-web's service was created,
+  then the same apply's IAM member was rejected by org policy, leaving the service tainted and its
+  replacement blocked by deletion protection). Touches nothing in the cloud.
+
 ## [0.79.10] - 2026-07-29
 
 ### Fixed
