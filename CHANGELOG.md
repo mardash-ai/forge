@@ -9,6 +9,12 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.16] - 2026-07-30
+
+### Fixed
+
+- `release-image`: the read-back now waits for the REVISION to go Ready — a bad manifest fails at container import with the config already 'updated' (hit live with buildx attestation manifest lists).
+
 ## [0.79.15] - 2026-07-30
 
 ### Fixed

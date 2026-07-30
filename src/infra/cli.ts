@@ -210,7 +210,18 @@ program
       '--format=value(spec.template.spec.containers[0].image)'], { timeoutMs: 60_000 });
     const live = check.stdout.trim();
     if (live !== opts.image) fail(`read-back mismatch: serving "${live}", expected "${opts.image}"`);
-    say(`release: ${opts.service} → ${opts.image} (read-back ✓)`);
+    // The configured image is not the proof — the REVISION must go Ready (a bad manifest fails at
+    // import with the config already updated; hit live: "Container import failed").
+    for (let i = 0; i < 30; i++) {
+      const ready = await capture('gcloud', ['run', 'services', 'describe', opts.service,
+        `--project=${e.project_id}`, `--region=${e.region}`,
+        '--format=value(status.conditions[0].status,status.conditions[0].message)'], { timeoutMs: 60_000 });
+      const line = ready.stdout.trim();
+      if (line.startsWith('True')) { say(`release: ${opts.service} → ${opts.image} (revision Ready ✓)`); return; }
+      if (/failed|error/i.test(line)) fail(`revision NOT ready: ${line}`);
+      await new Promise((r) => setTimeout(r, 10_000));
+    }
+    fail('revision did not become Ready within 5 minutes');
   });
 
 program
