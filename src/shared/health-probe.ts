@@ -21,6 +21,8 @@ export function resolveAppBase(manifest: Record<string, unknown>): string {
   const envPort = process.env.FORGE_APP_CALLBACK_PORT;
   const webPort = (manifest.infra as { ports?: { web?: unknown } } | undefined)?.ports?.web;
   const manifestPort = typeof webPort === 'number' ? webPort : typeof manifest.port === 'number' ? manifest.port : 3000;
+  const url = process.env.FORGE_APP_CALLBACK_URL;
+  if (url) return url.replace(/\/$/, '');
   return `http://${host}:${envPort ?? manifestPort}`;
 }
 

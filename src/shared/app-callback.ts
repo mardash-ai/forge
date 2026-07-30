@@ -13,6 +13,14 @@ import { SERVICE_TOKEN_HEADER } from './session';
 // Dev mode: resolve the app's web host port from its provisioned manifest; the host is host.docker.internal
 // (overridable for Linux/CI via FORGE_APP_CALLBACK_HOST).
 export async function appCallbackBase(store: Store, appId?: string): Promise<string | null> {
+  // SERVERLESS (Cloud Run et al): a full base URL, scheme included. The host+port form below is a
+  // compose-ism — it hardcodes http:// and a port, neither of which fits a managed HTTPS endpoint.
+  // Without this, a serverless deploy dispatches every MCP tool call to http://host.docker.internal
+  // and fails with handler_status_error AFTER a perfectly good OAuth handshake (hit live on
+  // Dorinda's GCP cutover, 2026-07-30).
+  const url = process.env.FORGE_APP_CALLBACK_URL;
+  if (url) return url.replace(/\/$/, '');
+
   const host = process.env.FORGE_APP_CALLBACK_HOST ?? 'host.docker.internal';
   const envPort = process.env.FORGE_APP_CALLBACK_PORT;
   if (process.env.FORGE_APP_CALLBACK_HOST && envPort) {

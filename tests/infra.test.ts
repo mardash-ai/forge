@@ -162,3 +162,26 @@ describe('§3.6 guard — apply is CI-only (subprocess, the real thing)', () => 
     expect(r.out).toMatch(/never runs in CI/);
   }, 60_000);
 });
+
+describe('serverless app-callback (I1 cutover fix)', () => {
+  const KEYS = ['FORGE_APP_CALLBACK_URL', 'FORGE_APP_CALLBACK_HOST', 'FORGE_APP_CALLBACK_PORT'];
+  const saved: Record<string, string | undefined> = {};
+  beforeAll(() => KEYS.forEach((k) => (saved[k] = process.env[k])));
+  afterAll(() => KEYS.forEach((k) => (saved[k] === undefined ? delete process.env[k] : (process.env[k] = saved[k]!))));
+
+  it('prefers a full FORGE_APP_CALLBACK_URL over the compose host+port form', async () => {
+    const { appCallbackBase } = await import('../src/shared/app-callback');
+    process.env.FORGE_APP_CALLBACK_URL = 'https://dorinda-api-123.us-east1.run.app/';
+    process.env.FORGE_APP_CALLBACK_HOST = 'web';
+    process.env.FORGE_APP_CALLBACK_PORT = '3000';
+    expect(await appCallbackBase({} as never)).toBe('https://dorinda-api-123.us-east1.run.app');
+  });
+
+  it('falls back to http host:port when no URL is set (compose deploys unchanged)', async () => {
+    const { appCallbackBase } = await import('../src/shared/app-callback');
+    delete process.env.FORGE_APP_CALLBACK_URL;
+    process.env.FORGE_APP_CALLBACK_HOST = 'web';
+    process.env.FORGE_APP_CALLBACK_PORT = '3000';
+    expect(await appCallbackBase({} as never)).toBe('http://web:3000');
+  });
+});

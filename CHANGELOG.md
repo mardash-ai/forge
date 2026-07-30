@@ -9,6 +9,17 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.19] - 2026-07-30
+
+### Fixed
+
+- **`FORGE_APP_CALLBACK_URL` — the sidecar→app callback works on serverless.** `appCallbackBase`
+  only understood the compose form (`FORGE_APP_CALLBACK_HOST`+`PORT` → hardcoded `http://host:port`,
+  defaulting to `host.docker.internal`). On Cloud Run that address does not exist, so the C23 MCP
+  host dispatched every `tools/call` into the void and returned `handler_status_error` AFTER a
+  perfect OAuth handshake — the AI reported a vague connector failure. A full base URL now wins when
+  set; compose deploys are untouched. Same fix in the C6 health probe. Guard-tested both ways.
+
 ## [0.79.18] - 2026-07-30
 
 ### Added
