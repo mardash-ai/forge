@@ -46,6 +46,16 @@ variable "port" {
   type    = number
   default = 3000
 }
+variable "invoker_iam_disabled" {
+  type        = bool
+  default     = true
+  description = <<-EOT
+    Normally true (Domain Restricted Sharing rejects allUsers; LB-only ingress is the boundary).
+    CONFIGURABLE for one reason: the field forces REPLACEMENT on services created before it existed,
+    and the provider requires deletion_protection=false to be applied IN-PLACE first. The two-phase
+    dance: pin false (apply #1 = in-place, unlocks protection) → flip true (apply #2 = replacement).
+  EOT
+}
 variable "mtls_headers" {
   type        = bool
   default     = false
@@ -94,7 +104,7 @@ resource "google_cloud_run_v2_service" "svc" {
   name     = var.name
   ingress  = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
   # See the note below: replaces the allUsers invoker grant that Domain Restricted Sharing rejects.
-  invoker_iam_disabled = true
+  invoker_iam_disabled = var.invoker_iam_disabled
   # STATELESS by design — all state is in Cloud SQL (which keeps ITS deletion protection) and
   # Secret Manager. The provider default (true) blocked a legitimate field-change replacement live;
   # protecting a stateless service only protects downtime.

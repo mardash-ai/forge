@@ -9,6 +9,15 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.10] - 2026-07-29
+
+### Fixed
+
+- **service module: `invoker_iam_disabled` is a variable (default true)** to make the provider's
+  two-phase replacement dance expressible: deletion_protection=false must be applied IN-PLACE
+  before a replacing change is permitted, so a service created before the field existed needs
+  pin-false → apply → flip-true → apply. Hit live on dorinda-web.
+
 ## [0.79.9] - 2026-07-29
 
 ### Fixed
