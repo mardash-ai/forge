@@ -235,6 +235,10 @@ resource "google_cloud_run_v2_service" "svc" {
       # the API back-fills a SERVICE-level scaling{} block with zeros that we never declare (we
       # scale per-revision in template.scaling) — a perma-diff the §3.7 read-back refused, live.
       scaling,
+      # release-image (gcloud) stamps its client fingerprint on every roll; the code plane is
+      # SUPPOSED to touch the service, so infra ignores its telemetry (first nightly drift catch).
+      client,
+      client_version,
     ]
   }
 }

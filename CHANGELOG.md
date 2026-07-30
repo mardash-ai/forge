@@ -9,6 +9,12 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.17] - 2026-07-30
+
+### Fixed
+
+- service module: ignore `client`/`client_version` — release-image's gcloud fingerprint tripped the FIRST nightly drift check. The code plane legitimately touches the service; infra ignores its telemetry.
+
 ## [0.79.16] - 2026-07-30
 
 ### Fixed
