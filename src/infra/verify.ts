@@ -160,3 +160,22 @@ export function isBehaviourCheck(check: VerifyCheck): boolean {
 export function behaviourChecks(stack: RepoStack): VerifyCheck[] {
   return stack.config.verify.filter(isBehaviourCheck);
 }
+
+/**
+ * Does any declared check need terraform OUTPUTS to run? Only the pre-DNS-cutover forms do:
+ * `resolve_to_output` (connect to an IP while sending the URL's Host/SNI) and `expect_output`.
+ * Everything else resolves through public DNS like a real client.
+ *
+ * This exists so the CODE plane never needs terraform. `release-image` runs on the release runner,
+ * which has docker + gcloud but no terraform binary — and requiring one there would couple shipping
+ * code to the infrastructure toolchain for no gain: once DNS points at the load balancer, resolving
+ * normally is the STRONGER check, because it exercises the path a user actually takes.
+ */
+export function checksNeedOutputs(stack: RepoStack): boolean {
+  return stack.config.verify.some(
+    (c) =>
+      (c.kind === 'http' && Boolean(c.resolve_to_output)) ||
+      (c.kind === 'certless_discovery' && Boolean(c.resolve_to_output)) ||
+      (c.kind === 'dns_resolves' && Boolean(c.expect_output)),
+  );
+}

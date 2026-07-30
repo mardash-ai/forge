@@ -219,6 +219,26 @@ describe('§3.3 code-plane behaviour gate — Ready is not working', () => {
     expect(isBehaviourCheck(parse({ kind: 'command', run: ':' }))).toBe(false);
   });
 
+  it('needs terraform outputs ONLY for the pre-DNS-cutover check forms', async () => {
+    const { checksNeedOutputs } = await import('../src/infra/verify');
+    const mk = (verify: unknown[]) => ({
+      root: dir, tfDir: dir, config: infraConfigSchema.parse({ ...FOUNDATION, verify }),
+    });
+    // the shape the code plane ships with: plain public-DNS checks, no terraform required
+    expect(checksNeedOutputs(mk([
+      { kind: 'http', url: 'https://api.dorinda.ai/api/health/deep' },
+      { kind: 'command', run: './scripts/verify-mcp-edge.sh' },
+      { kind: 'cloud_run_ready', service: 'dorinda-api' },
+    ]))).toBe(false);
+    // pinned-IP forms genuinely need an output
+    expect(checksNeedOutputs(mk([
+      { kind: 'http', url: 'https://api.dorinda.ai/api/health', resolve_to_output: 'main_ip_from_contract' },
+    ]))).toBe(true);
+    expect(checksNeedOutputs(mk([
+      { kind: 'certless_discovery', url: 'https://mcp.dorinda.ai/.well-known/x', resolve_to_output: 'mcp_ip' },
+    ]))).toBe(true);
+  });
+
   it('runs a command check from the REPO ROOT, not the process cwd', async () => {
     const { runVerify } = await import('../src/infra/verify');
     const repo = join(dir, 'cwd-repo');

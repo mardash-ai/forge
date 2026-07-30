@@ -22,7 +22,7 @@ import { modulePins } from './pins';
 import { bootstrap } from './bootstrap';
 import { tfInit, tfValidate, tfFmtCheck, tfPlan, tfApply, tfDestroy, tfOutputs, tfUntaint, readBackConverged } from './terraform';
 import { materializeContract, publishContract, publishDeclaredHash, fetchDeclaredHash } from './contract';
-import { runVerify, behaviourChecks } from './verify';
+import { runVerify, behaviourChecks, checksNeedOutputs } from './verify';
 
 const program = new Command();
 
@@ -262,9 +262,20 @@ program
       say('release: behaviour gate SKIPPED (--allow-unverified-release) — this release proved only that it booted.');
       return;
     }
-    const init = await tfInit(stack, opts.env);
-    if (init.code !== 0) fail(`terraform init failed (needed for verify outputs):\n${init.output.slice(-800)}`);
-    const outputs = await tfOutputs(stack).catch(() => ({}) as Record<string, unknown>);
+    // Deliberately WITHOUT terraform unless a check truly needs an output. The release runner has
+    // gcloud and docker, not terraform; and post-DNS-cutover, resolving normally is the stronger
+    // check anyway — it takes the path a real client takes.
+    let outputs: Record<string, unknown> = {};
+    if (checksNeedOutputs(stack)) {
+      // run() REJECTS when the binary is absent (spawn ENOENT) rather than returning a code — the
+      // exact shape that turned a missing terraform into an unexplained release failure.
+      const init = await tfInit(stack, opts.env).catch((e: unknown) => ({ code: 1, output: String(e) }));
+      if (init.code === 0) {
+        outputs = await tfOutputs(stack).catch(() => ({}) as Record<string, unknown>);
+      } else {
+        say('release: terraform unavailable — resolving verify targets through public DNS instead of pinned outputs.');
+      }
+    }
     const results = await runVerify(stack, opts.env, outputs);
     let failed = 0;
     for (const r of results) {
