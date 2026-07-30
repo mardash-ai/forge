@@ -5,6 +5,7 @@
  * revision serving) — never mere resource existence; that's `status`'s job.
  */
 import { lookup } from 'node:dns/promises';
+import { resolve } from 'node:path';
 import { connect } from 'node:tls';
 import { run } from '../shared/exec';
 import type { RepoStack, VerifyCheck } from './config';
@@ -117,7 +118,15 @@ async function runOne(
         : { title: t, status: 'fail', detail: r.combined.slice(-400) || 'describe failed' };
     }
     case 'command': {
-      const r = await run('bash', ['-lc', check.run], { timeoutMs: 10 * 60_000, tailLines: 60 });
+      // cwd is relative to the REPO ROOT, not to wherever the CLI happens to be running. In CI the
+      // forge checkout is a sibling directory (`.forge`) and the workflow cd's into it, so a
+      // declared `./scripts/…` resolved against process.cwd() would simply not exist — a check
+      // that fails for a reason having nothing to do with the service.
+      const r = await run('bash', ['-lc', check.run], {
+        cwd: resolve(stack.root, check.cwd),
+        timeoutMs: 10 * 60_000,
+        tailLines: 60,
+      });
       return (r.code ?? 1) === 0
         ? { title: t, status: 'pass', detail: `exit 0` }
         : { title: t, status: 'fail', detail: `exit ${r.code}: ${r.tail.slice(-5).join(' | ')}` };

@@ -218,6 +218,23 @@ describe('§3.3 code-plane behaviour gate — Ready is not working', () => {
     expect(isBehaviourCheck(parse({ kind: 'command', run: 'true # TODO at cutover: promote verify-mcp-edge.sh' }))).toBe(false);
     expect(isBehaviourCheck(parse({ kind: 'command', run: ':' }))).toBe(false);
   });
+
+  it('runs a command check from the REPO ROOT, not the process cwd', async () => {
+    const { runVerify } = await import('../src/infra/verify');
+    const repo = join(dir, 'cwd-repo');
+    await mkdir(join(repo, 'scripts'), { recursive: true });
+    await writeFile(join(repo, 'scripts', 'probe.sh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const cfg = infraConfigSchema.parse({
+      ...FOUNDATION,
+      verify: [{ kind: 'command', run: './scripts/probe.sh', cwd: '.' }],
+    });
+    const stack = { root: repo, tfDir: join(repo, 'infra'), config: cfg };
+
+    // process.cwd() is the forge repo — the script only resolves if cwd is the DECLARING repo,
+    // which is exactly the CI layout (the CLI runs from a sibling .forge checkout).
+    const [r] = await runVerify(stack, 'prod-a', {});
+    expect(r!.status).toBe('pass');
+  }, 30_000);
 });
 
 describe('mixed module pins — the guard for the axis nothing else watches', () => {
