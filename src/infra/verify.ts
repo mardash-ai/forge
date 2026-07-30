@@ -124,3 +124,30 @@ async function runOne(
     }
   }
 }
+
+/**
+ * Which declared checks actually prove the SERVICE ANSWERS, as opposed to proving it exists or
+ * booted. The distinction is load-bearing for the code plane (§3.3): `release-image` already reads
+ * back that the revision went Ready, so gating a release on `cloud_run_ready` re-proves what we
+ * know and calls it verification.
+ *
+ * This is not theoretical. The cutover's worst bug shipped through an all-green pipeline: a missing
+ * FORGE_APP_CALLBACK_URL produced a revision that was perfectly Ready while every MCP tool call
+ * died with handler_status_error. Ready is not working. Only a check that makes a REQUEST can tell
+ * the difference.
+ *
+ * A `command` check that runs a no-op (`true`, `:`, possibly with a TODO comment) is counted as
+ * absent — a placeholder must not satisfy the gate it was left standing in for.
+ */
+const BEHAVIOUR_KINDS = new Set(['http', 'certless_discovery', 'command']);
+const NO_OP_COMMAND = /^\s*(true|:)\s*(#.*)?$/;
+
+export function isBehaviourCheck(check: VerifyCheck): boolean {
+  if (!BEHAVIOUR_KINDS.has(check.kind)) return false;
+  if (check.kind === 'command' && NO_OP_COMMAND.test(check.run)) return false;
+  return true;
+}
+
+export function behaviourChecks(stack: RepoStack): VerifyCheck[] {
+  return stack.config.verify.filter(isBehaviourCheck);
+}

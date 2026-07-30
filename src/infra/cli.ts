@@ -22,7 +22,7 @@ import { modulePins } from './pins';
 import { bootstrap } from './bootstrap';
 import { tfInit, tfValidate, tfFmtCheck, tfPlan, tfApply, tfDestroy, tfOutputs, tfUntaint, readBackConverged } from './terraform';
 import { materializeContract, publishContract, publishDeclaredHash, fetchDeclaredHash } from './contract';
-import { runVerify } from './verify';
+import { runVerify, behaviourChecks } from './verify';
 
 const program = new Command();
 
@@ -205,16 +205,32 @@ program
 
 program
   .command('release-image')
-  .description('CODE plane (§3.3): roll ONE Cloud Run service to a new image by digest. This is the I1-era forge-release primitive — infra owns the stack (and ignores image changes); THIS moves the code. The 2a pipeline wraps it.')
+  .description('CODE plane (§3.3): roll ONE Cloud Run service to a new image by digest, then PROVE IT WORKS. Infra owns the stack (and ignores image changes); THIS moves the code. Refuses before rolling unless the stack declares a behaviour check, and after the revision goes Ready runs the stack\'s verify checks — a Ready revision can still be broken (the FORGE_APP_CALLBACK_URL cutover bug). The 2a pipeline wraps it.')
   .requiredOption('--env <env>')
   .requiredOption('--service <name>', 'Cloud Run service name')
   .requiredOption('--image <ref>', 'image ref — digest-pinned (R1): repo@sha256:…')
+  .option('--allow-unverified-release', 'roll WITHOUT a behaviour gate. Escape hatch only: it ships code whose only proof is that the container booted.')
   .action(async (opts) => {
     if (!/@sha256:[0-9a-f]{64}$/.test(opts.image)) {
       fail(`image must be DIGEST-pinned (R1): got "${opts.image}"`);
     }
     const stack = await stackFor(opts.env);
     const e = stack.config.envs[opts.env]!;
+
+    // Gate BEFORE the roll, not after: refusing once the traffic has already moved is a complaint,
+    // not a guard. A stack whose only checks are cloud_run_ready/dns_resolves cannot tell a working
+    // release from a broken one, and must say so at declaration time.
+    const behaviour = behaviourChecks(stack);
+    if (behaviour.length === 0 && !opts.allowUnverifiedRelease) {
+      fail(
+        `stack "${stack.config.stack}" declares no BEHAVIOUR check, so a release here can only prove the ` +
+          `container booted — never that it works (§3.2).\n` +
+          `  Add an http / certless_discovery / command check to forge.infra.json "verify".\n` +
+          `  cloud_run_ready and dns_resolves do not count: release-image already reads back revision-Ready, ` +
+          `and a Ready revision serving 500s passes both.\n` +
+          `  Deliberate exception: --allow-unverified-release`,
+      );
+    }
     const { run } = await import('../shared/exec');
     const r = await run('gcloud', ['run', 'services', 'update', opts.service,
       `--project=${e.project_id}`, `--region=${e.region}`, `--image=${opts.image}`, '--quiet'],
@@ -229,16 +245,39 @@ program
     if (live !== opts.image) fail(`read-back mismatch: serving "${live}", expected "${opts.image}"`);
     // The configured image is not the proof — the REVISION must go Ready (a bad manifest fails at
     // import with the config already updated; hit live: "Container import failed").
+    let ready_ok = false;
     for (let i = 0; i < 30; i++) {
       const ready = await capture('gcloud', ['run', 'services', 'describe', opts.service,
         `--project=${e.project_id}`, `--region=${e.region}`,
         '--format=value(status.conditions[0].status,status.conditions[0].message)'], { timeoutMs: 60_000 });
       const line = ready.stdout.trim();
-      if (line.startsWith('True')) { say(`release: ${opts.service} → ${opts.image} (revision Ready ✓)`); return; }
+      if (line.startsWith('True')) { say(`release: ${opts.service} → ${opts.image} (revision Ready ✓)`); ready_ok = true; break; }
       if (/failed|error/i.test(line)) fail(`revision NOT ready: ${line}`);
       await new Promise((r) => setTimeout(r, 10_000));
     }
-    fail('revision did not become Ready within 5 minutes');
+    if (!ready_ok) fail('revision did not become Ready within 5 minutes');
+
+    // Ready ≠ working. Now make a real request.
+    if (opts.allowUnverifiedRelease) {
+      say('release: behaviour gate SKIPPED (--allow-unverified-release) — this release proved only that it booted.');
+      return;
+    }
+    const init = await tfInit(stack, opts.env);
+    if (init.code !== 0) fail(`terraform init failed (needed for verify outputs):\n${init.output.slice(-800)}`);
+    const outputs = await tfOutputs(stack).catch(() => ({}) as Record<string, unknown>);
+    const results = await runVerify(stack, opts.env, outputs);
+    let failed = 0;
+    for (const r of results) {
+      say(`  ${r.status === 'pass' ? 'PASS' : 'FAIL'}  ${r.title} — ${r.detail}`);
+      if (r.status === 'fail') failed++;
+    }
+    if (failed > 0) {
+      fail(
+        `release rolled ${opts.service} to a revision that is Ready but DOES NOT WORK: ${failed}/${results.length} ` +
+          `verify checks failed (above). The new revision is serving — roll back with the previous digest.`,
+      );
+    }
+    say(`release: ${opts.service} verified — ${results.length}/${results.length} behaviour checks passed ✓`);
   });
 
 program

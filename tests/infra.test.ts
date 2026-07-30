@@ -148,6 +148,20 @@ describe('§3.6 guard — apply is CI-only (subprocess, the real thing)', () => 
     expect(half.out).toMatch(/CI-only/);
   }, 60_000);
 
+  it('refuses `release-image` BEFORE rolling when the stack declares no behaviour check', async () => {
+    const repo = join(dir, 'gate-repo');
+    await mkdir(join(repo, 'infra'), { recursive: true });
+    // FOUNDATION declares only dns_resolves — existence, not behaviour
+    await writeFile(join(repo, 'forge.infra.json'), JSON.stringify(FOUNDATION));
+
+    const img = 'us-east1-docker.pkg.dev/p/r/app@sha256:' + 'a'.repeat(64);
+    const r = await runInfra(['release-image', '--env', 'prod-a', '--service', 'x', '--image', img], repo);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toMatch(/no BEHAVIOUR check/);
+    // and it must refuse BEFORE touching the cloud — no roll attempted
+    expect(r.out).not.toMatch(/services update|revision Ready/);
+  }, 60_000);
+
   it('refuses `destroy` on a prod-named env without the explicit override', async () => {
     const repo = join(dir, 'guard-repo'); // reuse
     const r = await runInfra(['destroy', '--env', 'prod-a'], repo);
@@ -183,6 +197,26 @@ describe('serverless app-callback (I1 cutover fix)', () => {
     process.env.FORGE_APP_CALLBACK_HOST = 'web';
     process.env.FORGE_APP_CALLBACK_PORT = '3000';
     expect(await appCallbackBase({} as never)).toBe('http://web:3000');
+  });
+});
+
+describe('§3.3 code-plane behaviour gate — Ready is not working', () => {
+  it('classifies only request-making checks as behaviour, and treats a no-op command as absent', async () => {
+    const { isBehaviourCheck } = await import('../src/infra/verify');
+    const parse = (c: unknown) => infraConfigSchema.parse({ ...FOUNDATION, verify: [c] }).verify[0]!;
+
+    // these prove the container exists / booted — release-image already reads back revision-Ready
+    expect(isBehaviourCheck(parse({ kind: 'cloud_run_ready', service: 'dorinda-api' }))).toBe(false);
+    expect(isBehaviourCheck(parse({ kind: 'dns_resolves', host: 'api.dorinda.ai' }))).toBe(false);
+
+    // these make a real request
+    expect(isBehaviourCheck(parse({ kind: 'http', url: 'https://api.dorinda.ai/api/health' }))).toBe(true);
+    expect(isBehaviourCheck(parse({ kind: 'certless_discovery', url: 'https://mcp.dorinda.ai/.well-known/x' }))).toBe(true);
+    expect(isBehaviourCheck(parse({ kind: 'command', run: './scripts/verify-mcp-edge.sh' }))).toBe(true);
+
+    // a placeholder must not satisfy the gate it stands in for — this exact stub was live in dorinda-api
+    expect(isBehaviourCheck(parse({ kind: 'command', run: 'true # TODO at cutover: promote verify-mcp-edge.sh' }))).toBe(false);
+    expect(isBehaviourCheck(parse({ kind: 'command', run: ':' }))).toBe(false);
   });
 });
 

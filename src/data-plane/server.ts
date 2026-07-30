@@ -7,6 +7,7 @@ import { capabilities } from '../capabilities/index';
 import { startScheduler } from '../plugins/scheduler-node/index';
 import { startHealthSampler } from '../plugins/scheduler-node/health-sampler';
 import { ForgeError } from '../shared/errors';
+import { appCallbackBase } from '../shared/app-callback';
 import { SYSTEM_ACTOR, type Actor } from '../shared/domain';
 import { RESOURCE_TYPES, type ResourceType, type Application } from '../resources/types';
 import { newResourceId } from '../shared/ids';
@@ -54,7 +55,16 @@ app.setErrorHandler((err, _req, reply) => {
   return reply.status(500).send({ error: { code: 'internal_error', message: err.message, retry: 'no' } });
 });
 
-app.get('/health', async () => ({ status: 'ok', service: 'forge-data-plane', state_dir: store.stateDir() }));
+app.get('/health', async () => ({
+  status: 'ok',
+  service: 'forge-data-plane',
+  state_dir: store.stateDir(),
+  // The data-plane is the only party that knows where it will call the app BACK, so it is the only
+  // party that can report it. Surfaced because its absence is invisible until a tool call fails:
+  // on the GCP cutover a serverless deploy inherited the compose default (host.docker.internal),
+  // every handler died with handler_status_error, and both /health probes stayed green.
+  app_callback: await appCallbackBase(store).catch(() => null),
+}));
 
 // Discovery — only the data-plane capabilities.
 app.get('/capabilities', async () => ({
