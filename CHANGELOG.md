@@ -9,6 +9,12 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.18] - 2026-07-30
+
+### Added
+
+- service module: `container_args` — needed by the GMP frontend proxy (Grafana's auth path to Managed Prometheus; the core Prometheus DS has no native GCP auth, verified live with a 401).
+
 ## [0.79.17] - 2026-07-30
 
 ### Fixed

@@ -56,6 +56,11 @@ variable "invoker_iam_disabled" {
     dance: pin false (apply #1 = in-place, unlocks protection) → flip true (apply #2 = replacement).
   EOT
 }
+variable "container_args" {
+  type        = list(string)
+  default     = []
+  description = "container args (e.g. the GMP frontend's --query.project-id flags)"
+}
 variable "vpc_egress" {
   type        = string
   default     = "PRIVATE_RANGES_ONLY"
@@ -180,6 +185,7 @@ resource "google_cloud_run_v2_service" "svc" {
 
     containers {
       image = var.image
+      args  = var.container_args
       ports {
         container_port = var.port
       }
