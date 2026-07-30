@@ -9,6 +9,75 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.24] - 2026-07-30
+
+### Changed
+
+- **`database`: `disk_gb` default 50 → 10.** `disk_autoresize` is on, so the initial size is a
+  FLOOR, not a capacity plan — and Cloud SQL bills provisioned GB, not used GB. `dorinda-pg` was
+  created at 50 GB and measures **0.11 GB in use**: ~$8.50/mo of SSD to store 110 MB. Cloud SQL
+  disks cannot shrink, so that instance is sunk until a rebuild; this stops the next one being born
+  the same way.
+- **`service`: Artifact Registry cleanup policies.** Every release pushed an image and nothing ever
+  removed one — a single day of doc edits put 11 versions in one repo. KEEP the 10 most recent
+  versions (KEEP is evaluated before DELETE, so rollback to any recent digest still works), DELETE
+  anything older than 30 days.
+
+### Fixed
+
+- **`database`: `ignore_changes` on `settings[0].disk_size`.** A latent bug, not tidying: with
+  autoresize on, the real disk grows without terraform's involvement, so the first autoresize would
+  make every later plan try to *shrink* it back — which Cloud SQL rejects. A healthy growing
+  database would have become a permanently failing apply.
+- **A version can no longer ship without a CHANGELOG entry.** Releases 0.79.21–0.79.23 were tagged
+  with none: the edits targeted `## <version>` while this file uses `## [<version>] - <date>`, so
+  each replace silently matched nothing and wrote the file back unchanged. A test now asserts the
+  entry for `package.json`'s version exists.
+
+## [0.79.23] - 2026-07-30
+
+### Fixed
+
+- **The code plane no longer needs terraform.** The 0.79.21 gate called `tfInit`/`tfOutputs`
+  unconditionally to resolve `resolve_to_output`, and the release runner has gcloud and docker but
+  no terraform — so the first real release under the new gate died with a bare
+  `spawn terraform ENOENT`, *after* the roll. Outputs are now fetched only when a check needs them
+  (`checksNeedOutputs`); once DNS points at the load balancer, resolving normally is the stronger
+  check anyway because it takes the path a real client takes.
+- **`run()` rejects on spawn ENOENT** rather than returning a non-zero code, so the missing-binary
+  case bypassed the error handling entirely and surfaced unexplained. Now caught, reported in one
+  line, and degraded to public-DNS resolution instead of failing the release.
+
+## [0.79.22] - 2026-07-30
+
+### Fixed
+
+- **`command` verify checks run from the REPO ROOT.** The schema has always carried a `cwd`
+  (default `.`, the declaring repo) and `runVerify` never passed it, so the script ran from the
+  process cwd. In CI that is the sibling `.forge` checkout the workflow cd's into, so a perfectly
+  correct `./scripts/verify-mcp-edge.sh` fails as "not found" — a check going red for a reason
+  having nothing to do with the service. A declared field that is silently ignored is worse than an
+  absent one.
+
+## [0.79.21] - 2026-07-30
+
+### Added
+
+- **The code plane must prove it WORKS, not that it booted.** `release-image` already read back
+  that the revision went Ready (0.79.16). Ready is not working: the GCP cutover's worst bug — an
+  unset `FORGE_APP_CALLBACK_URL` — produced a perfectly Ready revision while every MCP tool call
+  died with `handler_status_error`. Green build, green push, green read-back, broken product.
+  `release-image` now runs the stack's declared verify checks after Ready and fails on a service
+  that does not answer.
+- **It refuses BEFORE rolling** when a stack declares no *behaviour* check — a guard that fires
+  after traffic has moved is a complaint, not a guard. `cloud_run_ready` and `dns_resolves` do not
+  count (they re-prove the read-back), and a `command` running a no-op (`true`, `:`) counts as
+  absent: a placeholder must not satisfy the gate it was left standing in for. Deliberate hatch:
+  `--allow-unverified-release`.
+- **The data-plane `/health` reports `app_callback`** — the resolved URL it will call the app back
+  on. The data-plane is the only party that knows this, so it is the only one that can report it;
+  its absence was invisible to every probe until a tool call failed.
+
 ## [0.79.20] - 2026-07-30
 
 ### Added

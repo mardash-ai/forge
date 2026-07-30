@@ -16,12 +16,17 @@ variable "network_id" {
   description = "VPC self-link from the network module (private IP only; no public address)."
 }
 variable "tier" {
-  type        = string
-  default     = "db-custom-1-3840" # 1 vCPU / 3.75GB — §9.9 right-sizing; resizable in minutes
+  type    = string
+  default = "db-custom-1-3840" # 1 vCPU / 3.75GB — §9.9 right-sizing; resizable in minutes
 }
 variable "disk_gb" {
   type    = number
-  default = 50
+  default = 10
+  # Deliberately small. disk_autoresize grows the disk on demand, so the initial size is a FLOOR,
+  # not a capacity plan — and Cloud SQL bills provisioned GB, not used GB. dorinda-pg was created
+  # at 50 GB and measured 0.11 GB in use: ~$8.50/mo of provisioned SSD to store 110 MB. Cloud SQL
+  # disks cannot shrink, so that one is sunk until a rebuild; this stops the next one being born
+  # the same way.
 }
 variable "databases" {
   type        = list(string)
@@ -67,6 +72,13 @@ resource "google_sql_database_instance" "pg" {
       day  = 7 # Sunday
       hour = 8 # 08:00 UTC ≈ 3–4am US Eastern
     }
+  }
+
+  lifecycle {
+    # disk_autoresize means the REAL size grows without terraform's involvement. Without this,
+    # every plan after the first autoresize would try to shrink the disk back to var.disk_gb —
+    # which Cloud SQL rejects, turning a healthy growing database into a permanently red plan.
+    ignore_changes = [settings[0].disk_size]
   }
 }
 

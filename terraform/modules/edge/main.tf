@@ -164,7 +164,7 @@ resource "google_network_security_server_tls_policy" "mcp" {
   location    = "global"
   description = "ALLOW_INVALID_OR_MISSING_CLIENT_CERT: certless discovery must pass (§5f MTLS-2); the app fails closed."
   mtls_policy {
-    client_validation_mode         = "ALLOW_INVALID_OR_MISSING_CLIENT_CERT"
+    client_validation_mode = "ALLOW_INVALID_OR_MISSING_CLIENT_CERT"
     # PROJECT NUMBER, not id: the API canonicalizes to the numeric form, and declaring the id form
     # creates a perma-diff the §3.7 read-back refuses (caught live on the first converge check).
     client_validation_trust_config = "projects/${data.google_project.this.number}/locations/global/trustConfigs/${google_certificate_manager_trust_config.mcp.name}"
@@ -241,10 +241,10 @@ resource "google_compute_target_https_proxy" "main" {
 }
 
 resource "google_compute_target_https_proxy" "mcp" {
-  project         = var.project_id
-  name            = "${var.name}-mcp"
-  url_map         = google_compute_url_map.mcp.id
-  certificate_map = "//certificatemanager.googleapis.com/${google_certificate_manager_certificate_map.mcp.id}"
+  project           = var.project_id
+  name              = "${var.name}-mcp"
+  url_map           = google_compute_url_map.mcp.id
+  certificate_map   = "//certificatemanager.googleapis.com/${google_certificate_manager_certificate_map.mcp.id}"
   server_tls_policy = google_network_security_server_tls_policy.mcp.id
 }
 

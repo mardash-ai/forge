@@ -200,6 +200,20 @@ describe('serverless app-callback (I1 cutover fix)', () => {
   });
 });
 
+describe('release hygiene', () => {
+  it('CHANGELOG has an entry for the version in package.json', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const root = join(__dirname, '..');
+    const { version } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as { version: string };
+    const changelog = await readFile(join(root, 'CHANGELOG.md'), 'utf8');
+
+    // 0.79.21–0.79.23 all shipped with no entry: the edits targeted "## <version>" while the file
+    // uses "## [<version>] - <date>", so every replace silently matched nothing and rewrote the
+    // file unchanged. Nothing failed, so nothing was noticed. Assert the real format.
+    expect(changelog).toMatch(new RegExp(`^## \\[${version.replace(/\./g, '\\.')}\\]`, 'm'));
+  });
+});
+
 describe('§3.3 code-plane behaviour gate — Ready is not working', () => {
   it('classifies only request-making checks as behaviour, and treats a no-op command as absent', async () => {
     const { isBehaviourCheck } = await import('../src/infra/verify');

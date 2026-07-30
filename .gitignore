@@ -10,3 +10,6 @@ dist/
 docs/SETUP_MARDASH_AI.md
 forge-agent-context.md
 FORGE_SAMPLE_PROJECT_IDEAS.md
+# terraform working dirs — `terraform init` drops 100MB+ provider binaries here
+terraform/**/.terraform/
+terraform/**/.terraform.lock.hcl

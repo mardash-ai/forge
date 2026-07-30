@@ -92,6 +92,28 @@ resource "google_artifact_registry_repository" "repo" {
   location      = var.region
   repository_id = var.name
   format        = "DOCKER"
+
+  # Every release pushes a new image and nothing ever removed the old one, so storage grew without
+  # a ceiling — one repo reached 11 versions in a single day of doc edits. KEEP is evaluated before
+  # DELETE, so the most recent versions survive regardless of age: rollback to any recent digest
+  # keeps working, and only genuinely stale images age out.
+  cleanup_policy_dry_run = false
+
+  cleanup_policies {
+    id     = "keep-recent-versions"
+    action = "KEEP"
+    most_recent_versions {
+      keep_count = 10
+    }
+  }
+
+  cleanup_policies {
+    id     = "delete-stale"
+    action = "DELETE"
+    condition {
+      older_than = "2592000s" # 30 days
+    }
+  }
 }
 
 resource "google_service_account" "svc" {
