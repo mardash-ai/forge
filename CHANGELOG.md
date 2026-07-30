@@ -9,6 +9,14 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.9] - 2026-07-29
+
+### Fixed
+
+- **service module: `deletion_protection = false` on the (stateless) Cloud Run service** — the
+  provider default blocked a legitimate destroy-recreate when `invoker_iam_disabled` changed on an
+  existing service. State lives in Cloud SQL, which keeps its own protection.
+
 ## [0.79.8] - 2026-07-29
 
 ### Fixed

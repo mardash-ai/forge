@@ -95,6 +95,10 @@ resource "google_cloud_run_v2_service" "svc" {
   ingress  = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
   # See the note below: replaces the allUsers invoker grant that Domain Restricted Sharing rejects.
   invoker_iam_disabled = true
+  # STATELESS by design — all state is in Cloud SQL (which keeps ITS deletion protection) and
+  # Secret Manager. The provider default (true) blocked a legitimate field-change replacement live;
+  # protecting a stateless service only protects downtime.
+  deletion_protection = false
 
   template {
     service_account = google_service_account.svc.email
