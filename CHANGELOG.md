@@ -9,6 +9,12 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.15] - 2026-07-30
+
+### Fixed
+
+- database: `edition = ENTERPRISE` explicitly — the provider defaults to ENTERPRISE_PLUS, the +$90 tier §9.9 declined, which also rejects db-custom tiers.
+
 ## [0.79.14] - 2026-07-30
 
 ### Added

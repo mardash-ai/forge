@@ -40,6 +40,9 @@ resource "google_sql_database_instance" "pg" {
   deletion_protection = true # a terraform destroy must not be able to take the data with it
 
   settings {
+    # ENTERPRISE explicitly: the provider defaults to ENTERPRISE_PLUS (the +$90 tier §9.9 declined),
+    # which also rejects db-custom-* tiers ("Invalid Tier for ENTERPRISE_PLUS Edition", hit live).
+    edition           = "ENTERPRISE"
     tier              = var.tier
     availability_type = "ZONAL" # §9.9: regional HA is a later in-place upgrade, not architecture
     disk_type         = "PD_SSD"
