@@ -9,6 +9,14 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.8] - 2026-07-29
+
+### Fixed
+
+- **service module: ignore the API-back-filled service-level `scaling{}` block** — the provider
+  returns zeros for a block we never declare (revision scaling lives in template.scaling), creating
+  a perma-diff the §3.7 read-back correctly refused. Second live save for the read-back.
+
 ## [0.79.7] - 2026-07-29
 
 ### Fixed

@@ -140,8 +140,13 @@ resource "google_cloud_run_v2_service" "svc" {
   }
 
   lifecycle {
-    # forge release moves the image; forge infra must not fight it (§3.3 — infra vs code).
-    ignore_changes = [template[0].containers[0].image]
+    ignore_changes = [
+      # forge release moves the image; forge infra must not fight it (§3.3 — infra vs code).
+      template[0].containers[0].image,
+      # the API back-fills a SERVICE-level scaling{} block with zeros that we never declare (we
+      # scale per-revision in template.scaling) — a perma-diff the §3.7 read-back refused, live.
+      scaling,
+    ]
   }
 }
 
