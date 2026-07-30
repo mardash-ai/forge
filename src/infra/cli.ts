@@ -18,6 +18,7 @@
 import { Command } from 'commander';
 import { loadRepoStack, requireEnv } from './config';
 import { declaredConfigHash } from './hash';
+import { modulePins } from './pins';
 import { bootstrap } from './bootstrap';
 import { tfInit, tfValidate, tfFmtCheck, tfPlan, tfApply, tfDestroy, tfOutputs, tfUntaint, readBackConverged } from './terraform';
 import { materializeContract, publishContract, publishDeclaredHash, fetchDeclaredHash } from './contract';
@@ -74,10 +75,26 @@ program
   .action(async () => {
     const stack = await stackFor();
     say(`stack: ${stack.config.stack} (${stack.config.kind}) at ${stack.root}`);
+    // MIXED MODULE PINS — the third axis no other guard watches. CI apply proves
+    // declaration→cloud; drift proves cloud→declaration. Both stay GREEN while the DECLARATION
+    // rots. Dorinda's foundation ran six releases behind on `network` (no Cloud NAT ⇒ every
+    // non-Google outbound call hung) while every check was green, because a fresh module block
+    // was written at the then-current ref and the older blocks were never bumped alongside it.
+    const pins = await modulePins(stack);
+    const distinct = [...new Set(pins.map((p) => p.ref))];
+    if (distinct.length > 1) {
+      const detail = pins.map((p) => `  ${p.ref}  ${p.module}  (${p.file})`).join('\n');
+      fail(
+        `MIXED module pins in one stack — adopt is all-or-nothing:\n${detail}\n` +
+          `Bump every module in this stack to the same forge release, then re-run.`,
+      );
+    }
+    if (distinct.length === 1) say(`module pins: all at ${distinct[0]} ✓`);
     const fmt = await tfFmtCheck(stack);
     if (fmt.code !== 0) fail(`terraform fmt -check failed — run terraform fmt:\n${fmt.output.slice(-800)}`);
     const val = await tfValidate(stack);
     if (val.code !== 0) fail(`terraform validate failed:\n${val.output.slice(-1500)}`);
+
     say('lint: OK');
   });
 

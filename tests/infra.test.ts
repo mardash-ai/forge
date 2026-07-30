@@ -185,3 +185,34 @@ describe('serverless app-callback (I1 cutover fix)', () => {
     expect(await appCallbackBase({} as never)).toBe('http://web:3000');
   });
 });
+
+describe('mixed module pins — the guard for the axis nothing else watches', () => {
+  it('reports one ref when a stack is consistent, and ALL refs when it is not', async () => {
+    const { modulePins } = await import('../src/infra/pins');
+    const repo = join(dir, 'pins-repo');
+    await mkdir(join(repo, 'infra'), { recursive: true });
+    await writeFile(join(repo, 'forge.infra.json'), JSON.stringify(FOUNDATION));
+    const stack = { root: repo, tfDir: join(repo, 'infra'), config: infraConfigSchema.parse(FOUNDATION) };
+
+    await writeFile(
+      join(repo, 'infra', 'main.tf'),
+      `module "network" { source = "github.com/mardash-ai/forge//terraform/modules/network?ref=v0.79.19" }
+       module "edge"    { source = "github.com/mardash-ai/forge//terraform/modules/edge?ref=v0.79.19" }`,
+    );
+    let pins = await modulePins(stack);
+    expect(pins).toHaveLength(2);
+    expect(new Set(pins.map((p) => p.ref)).size).toBe(1);
+
+    // the real Dorinda shape: a fresh block at the current release beside a stale one
+    await writeFile(
+      join(repo, 'infra', 'main.tf'),
+      `module "network"   { source = "github.com/mardash-ai/forge//terraform/modules/network?ref=v0.79.3" }
+       module "collector" { source = "github.com/mardash-ai/forge//terraform/modules/service?ref=v0.79.17" }`,
+    );
+    pins = await modulePins(stack);
+    const refs = new Set(pins.map((p) => p.ref));
+    expect(refs.size).toBe(2);
+    expect(refs).toContain('v0.79.3');
+    expect(refs).toContain('v0.79.17');
+  });
+});

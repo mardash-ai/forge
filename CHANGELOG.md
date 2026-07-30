@@ -9,6 +9,24 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.20] - 2026-07-30
+
+### Added
+
+- **`forge infra lint` fails on MIXED module pins.** Consumers pin modules by git ref and adopt
+  manually (correct — a prod stack must not mutate because another repo tagged). The hazard is pins
+  drifting APART: a new module block written at the current release beside blocks still on the ref
+  they were born with. Dorinda's foundation ran SIX releases behind on `network` (no Cloud NAT ⇒
+  every non-Google outbound call hung) while apply and drift both stayed green, because the stack
+  matched its own stale declaration. Lint now runs this check FIRST — before fmt/validate — so it
+  fires even in a repo with other problems.
+
+### Fixed
+
+- **Publishes are gated on tests.** `publish-image` and `publish-data-plane` had NO dependency on
+  the suite: a tag — or for the data-plane ANY push to main — published regardless of red tests.
+  Both now run the suite + typecheck in the same workflow and `needs: [test]` before publishing.
+
 ## [0.79.19] - 2026-07-30
 
 ### Fixed
