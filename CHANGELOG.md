@@ -9,6 +9,14 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.7] - 2026-07-29
+
+### Fixed
+
+- **service module: `invoker_iam_disabled` instead of an `allUsers` invoker grant** — Workspace
+  orgs enforce Domain Restricted Sharing and reject `allUsers` IAM members (hit live on the first
+  service apply). LB-only ingress remains the boundary; no org-policy weakening needed.
+
 ## [0.79.6] - 2026-07-29
 
 ### Fixed

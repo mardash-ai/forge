@@ -93,6 +93,8 @@ resource "google_cloud_run_v2_service" "svc" {
   location = var.region
   name     = var.name
   ingress  = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  # See the note below: replaces the allUsers invoker grant that Domain Restricted Sharing rejects.
+  invoker_iam_disabled = true
 
   template {
     service_account = google_service_account.svc.email
@@ -143,14 +145,10 @@ resource "google_cloud_run_v2_service" "svc" {
   }
 }
 
-# Public behind the LB: the LB needs to invoke it; ingress already restricts the path in.
-resource "google_cloud_run_v2_service_iam_member" "invoker" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.svc.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
+# NO allUsers invoker grant — Workspace orgs enforce Domain Restricted Sharing by default and
+# REJECT allUsers in IAM policies ("users named in the policy do not belong to a permitted
+# customer" — hit live, first service apply). `invoker_iam_disabled` on the service (below) is the
+# cleaner boundary anyway: ingress INTERNAL_AND_GCLB means only the LB can reach it regardless.
 
 resource "google_compute_region_network_endpoint_group" "neg" {
   project               = var.project_id
