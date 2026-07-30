@@ -61,6 +61,11 @@ variable "vpc_egress" {
   default     = "PRIVATE_RANGES_ONLY"
   description = "ALL_TRAFFIC when this service must CALL an internal-ingress Cloud Run service (requests then traverse the VPC and count as internal; non-Google outbound rides Cloud NAT)."
 }
+variable "external_secret_env" {
+  type        = map(string)
+  default     = {}
+  description = "ENV → EXISTING secret_id, referenced not created — for secrets whose container is declared elsewhere in the consuming stack (e.g. a TF-composed DATABASE_URL). Creating it here too would 409 (hit live)."
+}
 variable "secret_files" {
   type        = map(string)
   default     = {}
@@ -103,6 +108,14 @@ resource "google_secret_manager_secret_iam_member" "file_access" {
   for_each  = var.secret_files
   project   = var.project_id
   secret_id = google_secret_manager_secret.file_secrets[each.key].secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.svc.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "external_access" {
+  for_each  = var.external_secret_env
+  project   = var.project_id
+  secret_id = each.value
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.svc.email}"
 }
@@ -194,6 +207,19 @@ resource "google_cloud_run_v2_service" "svc" {
           value_source {
             secret_key_ref {
               secret  = google_secret_manager_secret.secrets[env.key].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+
+      dynamic "env" {
+        for_each = var.external_secret_env
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = env.value
               version = "latest"
             }
           }

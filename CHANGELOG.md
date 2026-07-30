@@ -9,6 +9,12 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.14] - 2026-07-30
+
+### Added
+
+- service module: `external_secret_env` — reference an existing secret container instead of creating it (double-declaration 409, hit live on the composed DATABASE_URL).
+
 ## [0.79.13] - 2026-07-29
 
 ### Added
