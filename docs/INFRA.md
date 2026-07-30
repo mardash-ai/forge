@@ -37,6 +37,7 @@ noun before the docker-exec path. **No key files, ever** — locally `gcloud aut
 | `status --env E` | declared vs applied hash + drift plan | exit 2 on drift — the nightly drift-detection job is this verb on a schedule |
 | `outputs --env E` | `terraform output -json` | |
 | `verify --env E` | the repo-DECLARED behaviour checks (§3.2) | CI post-deploy gate; red verify = rollback |
+| `release-image --env E --service S --image REF` | CODE plane (§3.3): roll ONE Cloud Run service by digest → wait for revision **Ready** → run the declared **behaviour** checks | refuses a non-digest ref (R1); refuses **before rolling** if the stack declares no behaviour check; `--allow-unverified-release` is the deliberate hatch |
 | `destroy --env E` | teardown | never in CI; prod-named envs need `--i-know-this-is-prod` |
 
 ## `forge.infra.json`
@@ -48,7 +49,24 @@ Schema: `src/infra/config.ts` (zod — the rules live in the schema, not in docs
 Verify checks: `dns_resolves` · `http` (with `resolve_to_output` for pre-cutover checks against the
 LB IP) · `certless_discovery` (ACCEPTANCE §5f MTLS-2 — discovery must answer 200 with NO client
 cert) · `cloud_run_ready` · `command` (keeps existing proof scripts like `verify-mcp-edge.sh`
-first-class).
+first-class; `cwd` is relative to the REPO ROOT, not the process cwd — in CI the CLI runs from a
+sibling `.forge` checkout).
+
+### Behaviour checks vs existence checks (0.79.21)
+
+`release-image` already reads back that the revision went **Ready**. Ready is not working: the GCP
+cutover's worst bug was an unset `FORGE_APP_CALLBACK_URL` that produced a perfectly Ready revision
+while every MCP tool call died. So only checks that make a **request** satisfy the release gate:
+
+| Kind | Gate? | Why |
+|---|---|---|
+| `cloud_run_ready`, `dns_resolves` | ❌ | re-prove what the read-back already proved |
+| `command` running `true` / `:` | ❌ | a placeholder must not satisfy the gate it stands in for |
+| `http`, `certless_discovery`, real `command` | ✅ | something actually answers |
+
+Only the pre-cutover forms (`resolve_to_output`, `expect_output`) need terraform outputs, so the
+code plane never needs a terraform binary — and once DNS points at the LB, resolving normally is the
+stronger check anyway: it takes the path a real client takes.
 
 ## The contract (§3.5)
 
