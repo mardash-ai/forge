@@ -9,6 +9,12 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.13] - 2026-07-29
+
+### Added
+
+- database module: sensitive `db_password` output for composing connection-string secrets.
+
 ## [0.79.12] - 2026-07-29
 
 ### Added

@@ -104,3 +104,9 @@ output "connection_name" { value = google_sql_database_instance.pg.connection_na
 output "private_ip" { value = google_sql_database_instance.pg.private_ip_address }
 output "db_user" { value = google_sql_user.app.name }
 output "db_password_secret" { value = google_secret_manager_secret.db_password.secret_id }
+output "db_password" {
+  value     = random_password.app.result
+  sensitive = true
+  # For composing connection-string secret VERSIONS in the consuming stack (DATABASE_URL /
+  # FORGE_DB_URL) — the value already lives in this state via random_password; no new exposure.
+}
