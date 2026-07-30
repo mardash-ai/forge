@@ -52,6 +52,25 @@ resource "google_service_networking_connection" "psa" {
   reserved_peering_ranges = [google_compute_global_address.psa.name]
 }
 
+# Cloud NAT — required the moment a Cloud Run service uses ALL_TRAFFIC VPC egress (which it must,
+# to reach another internal-ingress Cloud Run service): non-Google outbound (Stripe, SMTP) then
+# needs a NAT path. Google APIs ride Private Google Access on the subnet instead.
+resource "google_compute_router" "nat" {
+  project = var.project_id
+  name    = "${var.name}-nat"
+  region  = var.region
+  network = google_compute_network.vpc.id
+}
+
+resource "google_compute_router_nat" "nat" {
+  project                            = var.project_id
+  name                               = "${var.name}-nat"
+  router                             = google_compute_router.nat.name
+  region                             = var.region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+}
+
 output "network_id" { value = google_compute_network.vpc.id }
 output "network_name" { value = google_compute_network.vpc.name }
 output "subnet_id" { value = google_compute_subnetwork.primary.id }

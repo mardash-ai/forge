@@ -56,6 +56,16 @@ variable "invoker_iam_disabled" {
     dance: pin false (apply #1 = in-place, unlocks protection) → flip true (apply #2 = replacement).
   EOT
 }
+variable "vpc_egress" {
+  type        = string
+  default     = "PRIVATE_RANGES_ONLY"
+  description = "ALL_TRAFFIC when this service must CALL an internal-ingress Cloud Run service (requests then traverse the VPC and count as internal; non-Google outbound rides Cloud NAT)."
+}
+variable "secret_files" {
+  type        = map(string)
+  default     = {}
+  description = "mount path -> secret_id. For config files the box bind-mounted (forge.jobs.json etc.); value = file content, added out-of-band like any secret."
+}
 variable "mtls_headers" {
   type        = bool
   default     = false
@@ -78,6 +88,23 @@ resource "google_service_account" "svc" {
   project      = var.project_id
   account_id   = "run-${var.name}"
   display_name = "Cloud Run · ${var.name}"
+}
+
+resource "google_secret_manager_secret" "file_secrets" {
+  for_each  = var.secret_files
+  project   = var.project_id
+  secret_id = each.value
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_iam_member" "file_access" {
+  for_each  = var.secret_files
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.file_secrets[each.key].secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.svc.email}"
 }
 
 resource "google_secret_manager_secret" "secrets" {
@@ -118,9 +145,23 @@ resource "google_cloud_run_v2_service" "svc" {
     }
 
     vpc_access {
-      egress = "PRIVATE_RANGES_ONLY"
+      egress = var.vpc_egress
       network_interfaces {
         subnetwork = var.subnet_id
+      }
+    }
+
+    dynamic "volumes" {
+      for_each = var.secret_files
+      content {
+        name = replace(basename(volumes.key), ".", "-")
+        secret {
+          secret = volumes.value
+          items {
+            version = "latest"
+            path    = basename(volumes.key)
+          }
+        }
       }
     }
 
@@ -135,6 +176,14 @@ resource "google_cloud_run_v2_service" "svc" {
         content {
           name  = env.key
           value = env.value
+        }
+      }
+
+      dynamic "volume_mounts" {
+        for_each = var.secret_files
+        content {
+          name       = replace(basename(volume_mounts.key), ".", "-")
+          mount_path = dirname(volume_mounts.key)
         }
       }
 

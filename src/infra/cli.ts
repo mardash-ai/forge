@@ -187,6 +187,33 @@ program
   });
 
 program
+  .command('release-image')
+  .description('CODE plane (§3.3): roll ONE Cloud Run service to a new image by digest. This is the I1-era forge-release primitive — infra owns the stack (and ignores image changes); THIS moves the code. The 2a pipeline wraps it.')
+  .requiredOption('--env <env>')
+  .requiredOption('--service <name>', 'Cloud Run service name')
+  .requiredOption('--image <ref>', 'image ref — digest-pinned (R1): repo@sha256:…')
+  .action(async (opts) => {
+    if (!/@sha256:[0-9a-f]{64}$/.test(opts.image)) {
+      fail(`image must be DIGEST-pinned (R1): got "${opts.image}"`);
+    }
+    const stack = await stackFor(opts.env);
+    const e = stack.config.envs[opts.env]!;
+    const { run } = await import('../shared/exec');
+    const r = await run('gcloud', ['run', 'services', 'update', opts.service,
+      `--project=${e.project_id}`, `--region=${e.region}`, `--image=${opts.image}`, '--quiet'],
+      { timeoutMs: 10 * 60_000, tailLines: 50 });
+    if ((r.code ?? 1) !== 0) fail(`release failed:\n${r.combined.slice(-1200)}`);
+    // §3.7 discipline, code-plane edition: read back the serving revision's image.
+    const { capture } = await import('./exec');
+    const check = await capture('gcloud', ['run', 'services', 'describe', opts.service,
+      `--project=${e.project_id}`, `--region=${e.region}`,
+      '--format=value(spec.template.spec.containers[0].image)'], { timeoutMs: 60_000 });
+    const live = check.stdout.trim();
+    if (live !== opts.image) fail(`read-back mismatch: serving "${live}", expected "${opts.image}"`);
+    say(`release: ${opts.service} → ${opts.image} (read-back ✓)`);
+  });
+
+program
   .command('untaint')
   .description('Clear the tainted flag on ONE resource address. STATE bookkeeping only — touches nothing in the cloud. Exists because a partially-failed apply (e.g. a rejected IAM member AFTER service creation) leaves a healthy resource marked for pointless replacement.')
   .requiredOption('--env <env>')

@@ -9,6 +9,18 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.12] - 2026-07-29
+
+### Added
+
+- **`backend` module** — a second LB backend over an EXISTING Cloud Run service (the api/mcp
+  two-hosts-one-app topology; the mcp one carries the §9.4b mTLS headers).
+- **`forge infra release-image`** — the code-plane primitive (§3.3): roll one Cloud Run service to
+  a DIGEST-pinned image, with a §3.7-style read-back of the serving image. The 2a pipeline wraps it.
+- **network module: Cloud Router + NAT**; **service module: `vpc_egress`** (ALL_TRAFFIC for
+  services that call internal-ingress Cloud Run siblings) and **`secret_files`** (secret-volume
+  mounts for the config files the box bind-mounted: forge.jobs.json, forge.theme.json).
+
 ## [0.79.11] - 2026-07-29
 
 ### Added
