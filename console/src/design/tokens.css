@@ -1,0 +1,123 @@
+/*
+ * forge console — design tokens.
+ *
+ * The bar: this is a tool used every day, and it should not look like the open-source portals it
+ * replaces. Three rules do most of that work, and they are cheap:
+ *
+ *  1. COLOUR IS INFORMATION, NEVER DECORATION. A screen where nothing is wrong is nearly
+ *     monochrome — ink on navy. The only saturated pixels are status, series identity, and the
+ *     current selection. Grafana and Backstage paint chrome in brand colour; we do not.
+ *  2. ONE TYPEFACE, THREE WEIGHTS, ONE ACCENT. No 700 anywhere — "bold soup" is a large part of
+ *     why those tools read as unfinished.
+ *  3. EVERYTHING ON A 4px GRID, ALL DIGITS TABULAR. Timestamps, digests, durations and costs align
+ *     down every column. This is most of the "expensive" feeling and costs one CSS property.
+ *
+ * Dark-first on purpose: this is opened at 6am when something is broken.
+ */
+
+:root {
+  /* ── Surfaces: an elevation LADDER, not shadows. In dark UI shadows barely read; layered
+     surfaces plus a hairline plus an inner top highlight is what actually reads as depth. ── */
+  --bg-canvas: #090e18;
+  --bg-surface: #0f1626;
+  --bg-raised: #141d30;
+  --bg-overlay: #1a2439;
+  --bg-inset: #0b1220;
+  --bg-selected: #15234a;
+
+  /* ── Ink. There is deliberately no fifth, dimmer grey: ops tools go grey-on-grey because they
+     keep inventing one. The floor here is 4.5:1 for anything containing a word. ── */
+  --text-primary: #e6edf7;   /* 15.3:1 */
+  --text-secondary: #b4c0d4; /*  9.8:1 */
+  --text-muted: #8b98ad;     /*  6.2:1 */
+  --text-faint: #7a88a0;     /*  5.0:1 — still legal for real text */
+
+  --line: #1e2a45;
+  --line-strong: #2b3a5c;
+  --line-faint: #16203a;
+
+  --accent: #4c8dff;
+  --accent-hover: #6ba1ff;
+  /* Text ON the accent fill is DARK: white on this blue is only 3.2:1. */
+  --accent-ink: #08111f;
+  --accent-wash: #101f3d;
+  --focus: #7db0ff;
+
+  /* ── Status. Always shipped as dot-shape + colour + word, never colour alone. ── */
+  --ok: #2fbf71;        --ok-text: #4ade80;      --ok-wash: #0e2a1e;
+  --warn: #f0b429;      --warn-text: #f5c451;    --warn-wash: #2e240c;
+  --crit: #ef5350;      --crit-text: #ff7b78;    --crit-wash: #2e1416;
+  --info: #4c8dff;      --info-text: #8ab4ff;    --info-wash: #101f3d;
+  --neutral: #8b98ad;   --neutral-text: #b4c0d4; --neutral-wash: #151d2e;
+
+  /* ── Chart series. Fixed slots assigned by entity identity so a service keeps its colour across
+     filters — never cycled by rank. Slot 4 is a dark gold rather than a bright amber precisely so
+     it cannot be mistaken for status-warn. ── */
+  --s1: #4c8dff; --s2: #e06d00; --s3: #cb3586; --s4: #bb8900;
+  --s5: #06a4ba; --s6: #f4514f; --s7: #9b72ff; --s8: #01ae61;
+
+  /* ── Type ── */
+  --font: ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* ── Space: 4px base ── */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px;
+
+  --r-sm: 4px; --r-md: 6px; --r-lg: 10px; --r-xl: 14px;
+
+  --shadow-pop: 0 8px 24px -8px rgba(0, 0, 0, 0.7), 0 2px 6px -2px rgba(0, 0, 0, 0.5);
+
+  /* ── Density: exactly four values change. FONT SIZE NEVER DOES — scaling type on density is
+     what makes an app look like two different apps. ── */
+  --row-h: 36px;
+  --cell-py: 8px;
+  --control-h: 32px;
+  --section-gap: 24px;
+
+  --rail-w: 232px;
+  --topbar-h: 48px;
+}
+
+:root[data-density='compact'] {
+  --row-h: 28px;
+  --cell-py: 4px;
+  --control-h: 28px;
+  --section-gap: 16px;
+}
+
+/* ── Reset ── */
+* { box-sizing: border-box; margin: 0; }
+
+html, body, #root { height: 100%; }
+
+body {
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font: 400 13px/20px var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Every number in a table, tile, axis tick or timestamp. */
+table, .num, .mono, time, .metric { font-variant-numeric: tabular-nums; }
+
+.mono { font-family: var(--mono); font-size: 12.5px; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--accent-hover); }
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

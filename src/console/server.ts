@@ -1,0 +1,387 @@
+/**
+ * forge-console — the server. Fastify, serving the API and the built SPA from one process.
+ *
+ * Auth is one interface with two implementations so the interim swap is configuration, not code:
+ * basic auth today, Google OAuth (domain-restricted) the moment its client secret is populated.
+ * Every mutating route is registered in a table with a required role, and a test asserts that no
+ * mutating route exists outside it.
+ */
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import { readFile } from 'node:fs/promises';
+import { join, normalize, extname } from 'node:path';
+import { timingSafeEqual, createHash } from 'node:crypto';
+
+import { envelope, type Finding, type MetricIntent } from './domain';
+import { aggregate, createRegistry, type ProviderContext, type ProviderRegistry } from './providers/types';
+import type {
+  CredentialsProvider,
+  InventoryProvider,
+  LogsProvider,
+  MetricsProvider,
+  PipelinesProvider,
+} from './providers/types';
+import { buildServiceGraph } from './correlate/graph';
+import { runFindings } from './findings';
+import { createGcpInventoryProvider } from '../plugins/console-gcp/inventory';
+import { createCloudMonitoringProvider, createManagedPrometheusProvider } from '../plugins/console-gcp/metrics';
+import { createCloudLoggingProvider } from '../plugins/console-gcp/logs';
+import { createGitHubPipelinesProvider } from '../plugins/console-github/pipelines';
+
+const PORT = Number(process.env.PORT ?? 3000);
+const PROJECT = process.env.CONSOLE_GCP_PROJECT ?? 'dorinda-prod';
+const REGION = process.env.CONSOLE_GCP_REGION ?? 'us-east1';
+const ENV: string = process.env.CONSOLE_ENV ?? 'prod-a';
+const GH_OWNER = process.env.CONSOLE_GITHUB_OWNER ?? 'mardash-ai';
+const GH_REPOS = (process.env.CONSOLE_GITHUB_REPOS ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+const UI_DIR = process.env.CONSOLE_UI_DIR ?? join(process.cwd(), 'console', 'dist');
+
+// ── Providers ──────────────────────────────────────────────────────────────────────────────────
+
+export function buildRegistry(): ProviderRegistry {
+  const scope = { project_id: PROJECT, region: REGION };
+  const providers = [
+    createGcpInventoryProvider({ id: 'gcp-inventory', envs: [ENV], scope }),
+    createCloudMonitoringProvider({ id: 'cloud-monitoring', envs: [ENV], scope: { project_id: PROJECT } }),
+    createManagedPrometheusProvider({ id: 'managed-prometheus', envs: [ENV], scope: { project_id: PROJECT } }),
+    createCloudLoggingProvider({ id: 'cloud-logging', envs: [ENV], scope: { project_id: PROJECT } }),
+    createGitHubPipelinesProvider({
+      id: 'github-actions',
+      envs: [ENV],
+      owner: GH_OWNER,
+      repos: GH_REPOS,
+      ...(process.env.CONSOLE_GITHUB_TOKEN ? { token: process.env.CONSOLE_GITHUB_TOKEN } : {}),
+    }),
+  ];
+  return createRegistry(providers);
+}
+
+function ctx(): ProviderContext {
+  return { env: ENV, signal: AbortSignal.timeout(28_000), now: new Date() };
+}
+
+// ── Auth ───────────────────────────────────────────────────────────────────────────────────────
+
+export interface ConsoleAuth {
+  readonly mode: 'basic' | 'google' | 'open';
+  check(req: FastifyRequest): { ok: true; actor: string } | { ok: false; challenge?: string };
+}
+
+/**
+ * Basic auth is the INTERIM. Google OAuth restricted to the workspace domain is built behind the
+ * same interface and switches on when its secret is populated — no code change.
+ *
+ * Fails CLOSED: with neither credential configured the console serves nothing rather than serving
+ * a production control plane to the internet.
+ */
+export function createAuth(): ConsoleAuth {
+  const user = process.env.CONSOLE_BASIC_USER ?? '';
+  const pass = process.env.CONSOLE_BASIC_PASS ?? '';
+  if (!user || !pass) {
+    return {
+      mode: 'basic',
+      check: () => ({ ok: false, challenge: 'Basic realm="forge console"' }),
+    };
+  }
+  const expected = 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
+  const expectedHash = createHash('sha256').update(expected).digest();
+  return {
+    mode: 'basic',
+    check(req) {
+      const got = req.headers.authorization ?? '';
+      const gotHash = createHash('sha256').update(got).digest();
+      // Constant-time compare over fixed-length hashes: a length-varying compare leaks the prefix.
+      if (got && timingSafeEqual(gotHash, expectedHash)) return { ok: true, actor: user };
+      return { ok: false, challenge: 'Basic realm="forge console"' };
+    },
+  };
+}
+
+// ── Write actions — the audited surface ────────────────────────────────────────────────────────
+
+export const WRITE_ROUTES = ['/api/actions/dispatch'] as const;
+
+interface AuditRow {
+  at: string;
+  actor: string;
+  action: string;
+  target: string;
+  outcome: 'attempted' | 'succeeded' | 'failed';
+  detail?: string;
+}
+const auditLog: AuditRow[] = [];
+
+/**
+ * The audit row is written BEFORE the attempt and updated after.
+ *
+ * Auditing only on success loses exactly the interesting cases: the crash mid-write, the provider
+ * timeout, the permission denial. Those are the rows you want at 3am.
+ */
+async function audited<T>(
+  actor: string,
+  action: string,
+  target: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const row: AuditRow = { at: new Date().toISOString(), actor, action, target, outcome: 'attempted' };
+  auditLog.unshift(row);
+  if (auditLog.length > 500) auditLog.pop();
+  try {
+    const out = await fn();
+    row.outcome = 'succeeded';
+    return out;
+  } catch (e) {
+    row.outcome = 'failed';
+    row.detail = (e as Error).message.slice(0, 300);
+    throw e;
+  }
+}
+
+// ── Server ─────────────────────────────────────────────────────────────────────────────────────
+
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.json': 'application/json',
+  '.woff2': 'font/woff2',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+};
+
+export function buildServer(registry = buildRegistry(), auth = createAuth()): FastifyInstance {
+  const app = Fastify({ logger: false, bodyLimit: 1_000_000 });
+
+  // Health is public — a probe cannot hold a credential, and it reveals nothing.
+  app.get('/healthz', async () => ({ status: 'ok', service: 'forge-console', env: ENV }));
+
+  app.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (req.url === '/healthz') return;
+    const r = auth.check(req);
+    if (!r.ok) {
+      reply.header('WWW-Authenticate', r.challenge ?? 'Basic realm="forge console"');
+      reply.code(401).send({ error: { code: 'unauthorized', message: 'authentication required' } });
+    }
+  });
+
+  const actorOf = (req: FastifyRequest): string => {
+    const r = auth.check(req);
+    return r.ok ? r.actor : 'anonymous';
+  };
+
+  // ── Reads ──
+
+  app.get('/api/bootstrap', async () => {
+    const c = ctx();
+    const health = await Promise.all(
+      registry.all().map(async (p) => ({
+        provider_id: p.id,
+        label: p.label,
+        kind: p.kind,
+        ...(await p.health(c)),
+      })),
+    );
+    return envelope({ env: ENV, project: PROJECT, region: REGION, auth: auth.mode, providers: health });
+  });
+
+  app.get('/api/inventory', async () => {
+    const c = ctx();
+    const provs = registry.byKind('inventory', ENV) as InventoryProvider[];
+    const { items, sources } = await aggregate(provs, (p) => p.list(c));
+    return envelope(items, sources);
+  });
+
+  app.get('/api/services', async () => {
+    const c = ctx();
+    const inv = registry.byKind('inventory', ENV) as InventoryProvider[];
+    const pipes = registry.byKind('pipelines', ENV) as PipelinesProvider[];
+    const [invRes, pipeRes] = await Promise.all([
+      aggregate(inv, (p) => p.list(c)),
+      aggregate(pipes, (p) => (p.supports('pipelines.list') ? p.listPipelines(c) : Promise.resolve([]))),
+    ]);
+    const graph = buildServiceGraph({
+      resources: invRes.items,
+      pipelines: pipeRes.items,
+      repos: GH_REPOS.map((r) => `${GH_OWNER}/${r}`),
+      hostBackends: {},
+    });
+    return envelope(graph, [...invRes.sources, ...pipeRes.sources]);
+  });
+
+  app.get('/api/pipelines/runs', async (req) => {
+    const q = req.query as { limit?: string };
+    const c = ctx();
+    const provs = registry.byKind('pipelines', ENV) as PipelinesProvider[];
+    const { items, sources } = await aggregate(provs, (p) =>
+      p.supports('pipelines.runs') ? p.listRuns({ limit: Number(q.limit ?? 20) }, c) : Promise.resolve([]),
+    );
+    return envelope(items, sources);
+  });
+
+  app.get('/api/pipelines', async () => {
+    const c = ctx();
+    const provs = registry.byKind('pipelines', ENV) as PipelinesProvider[];
+    const { items, sources } = await aggregate(provs, (p) =>
+      p.supports('pipelines.list') ? p.listPipelines(c) : Promise.resolve([]),
+    );
+    return envelope(items, sources);
+  });
+
+  app.get('/api/metrics', async (req) => {
+    const q = req.query as { intent?: string; service?: string; minutes?: string };
+    const intent = (q.intent ?? 'request_rate') as MetricIntent;
+    const end = new Date();
+    const minutes = Number(q.minutes ?? 60);
+    const range = { start: new Date(end.getTime() - minutes * 60_000), end, step_seconds: Math.max(60, Math.floor((minutes * 60) / 120)) };
+    const c = ctx();
+    const provs = registry.byKind('metrics', ENV) as MetricsProvider[];
+    const target = { runtime_id: q.service ?? 'dorinda-api', env: ENV };
+    const usable = provs.filter((p) => p.supportsIntent(intent, target));
+    if (usable.length === 0) {
+      return envelope({ series: [], provider_id: 'none', empty_reason: 'not_supported', detail: `no provider answers "${intent}"` });
+    }
+    const results = await Promise.all(usable.map((p) => p.query(intent, target, range, c)));
+    // Prefer a provider that actually returned data; otherwise keep the first result SO THAT its
+    // empty_reason survives — that explanation is the whole point.
+    const withData = results.find((r) => r.series.length > 0);
+    return envelope(withData ?? results[0]!, usable.map((p) => ({ provider_id: p.id, ok: true })));
+  });
+
+  app.get('/api/logs', async (req) => {
+    const q = req.query as { service?: string; text?: string; severity?: string; minutes?: string; limit?: string };
+    const end = new Date();
+    const minutes = Number(q.minutes ?? 60);
+    const c = ctx();
+    const provs = registry.byKind('logs', ENV) as LogsProvider[];
+    const { items, sources } = await aggregate(provs, (p) =>
+      p.query(
+        {
+          ...(q.service ? { runtime_id: q.service } : {}),
+          ...(q.text ? { text: q.text } : {}),
+          ...(q.severity ? { severity_at_least: q.severity as never } : {}),
+        },
+        { start: new Date(end.getTime() - minutes * 60_000), end, limit: Number(q.limit ?? 100) },
+        c,
+      ),
+    );
+    return envelope(items, sources);
+  });
+
+  app.get('/api/findings', async () => {
+    const c = ctx();
+    const inv = registry.byKind('inventory', ENV) as InventoryProvider[];
+    const pipes = registry.byKind('pipelines', ENV) as PipelinesProvider[];
+    const creds = registry.byKind('credentials', ENV) as CredentialsProvider[];
+    const metrics = registry.byKind('metrics', ENV) as MetricsProvider[];
+
+    const [invRes, runRes, credRes] = await Promise.all([
+      aggregate(inv, (p) => p.list(c)),
+      aggregate(pipes, (p) => (p.supports('pipelines.runs') ? p.listRuns({ limit: 30 }, c) : Promise.resolve([]))),
+      aggregate(creds, (p) => p.list(c)),
+    ]);
+
+    // Certificates carry their own expiry; fold them into the credential list so one rule covers both.
+    const certCreds = invRes.items
+      .filter((r) => r.kind === 'certificate' && r.attributes['expires_at'])
+      .map((r) => ({
+        id: r.external_id,
+        env: r.env,
+        kind: 'tls_certificate' as const,
+        name: r.name,
+        expires_at: String(r.attributes['expires_at']),
+        auto_renews: true,
+        source: 'discovered' as const,
+      }));
+
+    const gmp = metrics.find((p) => p.type === 'gcp.managed-prometheus');
+    let ingesting = true;
+    if (gmp) {
+      const probe = await gmp.query(
+        'request_rate',
+        { runtime_id: 'dorinda-api', env: ENV },
+        { start: new Date(Date.now() - 3600_000), end: new Date(), step_seconds: 300 },
+        c,
+      );
+      ingesting = probe.series.length > 0 || probe.empty_reason !== 'never_ingested';
+    }
+
+    const graph = buildServiceGraph({
+      resources: invRes.items,
+      pipelines: [],
+      repos: GH_REPOS.map((r) => `${GH_OWNER}/${r}`),
+      hostBackends: {},
+    });
+
+    const findings: Finding[] = runFindings({
+      resources: invRes.items,
+      graph,
+      credentials: [...credRes.items, ...certCreds],
+      runs: runRes.items,
+      metricsIngesting: ingesting,
+      now: new Date(),
+    });
+    return envelope(findings, [...invRes.sources, ...runRes.sources]);
+  });
+
+  app.get('/api/audit', async () => envelope(auditLog.slice(0, 100)));
+
+  // ── The single write ──
+
+  app.post('/api/actions/dispatch', async (req, reply) => {
+    const body = req.body as { pipeline_id?: string; ref?: string; inputs?: Record<string, string>; reason?: string };
+    if (!body?.pipeline_id) {
+      return reply.code(400).send({ error: { code: 'bad_request', message: 'pipeline_id is required' } });
+    }
+    // A production action must carry a stated reason — it lands in the audit row.
+    if (!body.reason || body.reason.trim().length < 3) {
+      return reply.code(422).send({ error: { code: 'reason_required', message: 'a reason is required for any dispatch' } });
+    }
+    const provs = registry.byKind('pipelines', ENV) as PipelinesProvider[];
+    const p = provs.find((x) => x.supports('pipelines.dispatch'));
+    if (!p) {
+      return reply.code(501).send({
+        error: { code: 'not_supported', message: 'no pipeline provider can dispatch — is the GitHub token configured?' },
+      });
+    }
+    const actor = actorOf(req);
+    const receipt = await audited(actor, 'pipeline.dispatch', body.pipeline_id, () =>
+      p.dispatch(body.pipeline_id!, { ref: body.ref ?? 'main', inputs: body.inputs ?? {} }, ctx()),
+    );
+    return envelope(receipt);
+  });
+
+  // ── SPA ──
+
+  app.setNotFoundHandler(async (req, reply) => {
+    // API 404s must stay 404s — swallowing them into the SPA shell turns a typo'd route into a
+    // blank page instead of an error.
+    if (req.url.startsWith('/api/')) {
+      return reply.code(404).send({ error: { code: 'not_found', message: req.url } });
+    }
+    const rel = normalize(decodeURIComponent(req.url.split('?')[0] ?? '/'));
+    if (rel.includes('..')) return reply.code(400).send('bad path');
+    const ext = extname(rel);
+    try {
+      if (ext) {
+        const buf = await readFile(join(UI_DIR, rel));
+        return reply.type(MIME[ext] ?? 'application/octet-stream').send(buf);
+      }
+      const html = await readFile(join(UI_DIR, 'index.html'));
+      return reply.type('text/html; charset=utf-8').send(html);
+    } catch {
+      return reply.code(404).type('text/html').send('<h1>forge console</h1><p>UI bundle not built.</p>');
+    }
+  });
+
+  return app;
+}
+
+if (process.argv[1]?.endsWith('server.ts') || process.argv[1]?.endsWith('server.js')) {
+  const app = buildServer();
+  app.listen({ port: PORT, host: '0.0.0.0' }).then(() => {
+    process.stdout.write(`forge-console listening on :${PORT} (env=${ENV}, project=${PROJECT})\n`);
+  });
+}

@@ -9,6 +9,43 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.80.0] - 2026-07-31
+
+### Added
+
+- **forge-console** — the operator pane: one surface over environments, observability, CI/CD and
+  findings, shipped as a forge component (`src/console/`, `console/` for the SPA,
+  `Dockerfile.console`).
+
+  **Provider-agnostic by construction.** `src/console/providers/types.ts` defines the contracts;
+  no GCP, GitHub or Grafana type appears above that line. A new backend is a new directory under
+  `src/plugins/console-*` plus one registry entry.
+
+  **Discovery-first correlation** (`src/console/correlate/graph.ts`, pure). Services are found by
+  joining conventions that already hold — image-repo name, `<name>-backend`, the host→backend map,
+  repo name, workflow path, secret prefix — each with an explicit confidence and a human-readable
+  reason rendered in the UI. There is no hand-maintained catalogue: an override may correct, never
+  invent, and one naming a service discovery never produced yields a finding rather than a phantom.
+  Anything unplaced is SHOWN in `unbound`, because an orphan is cost or a correlation gap.
+
+  **Empty is never drawn as zero.** Every metric answer carries an `empty_reason` distinguishing
+  "no samples in this window" from "never ingested", and the UI prints it. This is the direct
+  lesson of the five-fault outage: for days every dashboard drew a flat line at zero, which reads
+  as a quiet system rather than a dead pipeline.
+
+  **Two metrics providers, because there are two stores with independent failure modes** — Cloud
+  Monitoring (GCP→GCP, essentially cannot break) and Managed Prometheus (app→OTLP→collector→GMP,
+  dies silently).
+
+  **Read-only against the cloud, by construction.** `RuntimeProvider` exposes no mutate method and
+  the console's identity holds only viewer roles. The single write in the whole surface is a
+  pipeline dispatch, so every change goes through CI and its gates, the audit row is written
+  BEFORE the attempt, and a dispatch without a stated reason is refused.
+
+  **Findings are report-only structurally**: a rule receives a frozen snapshot and returns
+  observations. It has nothing to act with. Every rule encodes something that actually happened
+  here — a collector scaling to zero, a database without PITR, an expiring runner PAT.
+
 ## [0.79.27] - 2026-07-31
 
 ### Fixed
