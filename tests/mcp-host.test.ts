@@ -15,7 +15,8 @@ import {
 import { newToken } from '../src/plugins/auth-identity/index';
 import { expiresAtIso } from '../src/mcp/oauth';
 import { nowIso } from '../src/shared/time';
-import { initOtelLangfuse, _setMcpLogOverride } from '../src/plugins/otel-langfuse/index';
+import {
+  _resetRegistrationDebounce, initOtelLangfuse, _setMcpLogOverride } from '../src/plugins/otel-langfuse/index';
 import type { Application } from '../src/resources/types';
 
 // C23 — the hosted remote MCP server (Streamable-HTTP JSON-RPC) + the app-facing management surface.
@@ -995,6 +996,10 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
   });
 
   it('exports mcp.tools.registered gauge after tool registration with the correct count', async () => {
+    // The registration gauge is debounced (0.79.27) so a 31-tool surface cannot emit 31 identical
+    // points into one batch — which Managed Prometheus rejects wholesale. Clear the window so this
+    // test's emit is not collapsed into an identical one from an earlier test in this file.
+    _resetRegistrationDebounce();
     await registerTool();
 
     type Gauge = { gauge?: { dataPoints: Array<{ asInt: number; attributes: Array<{ key: string; value: { stringValue: string } }> }> } };

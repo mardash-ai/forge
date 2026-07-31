@@ -377,12 +377,44 @@ export function recordToolCallMetric(opts: {
  *   `mcp.tools.registered` — current tool count per app
  *   `mcp.streams.active`   — current SSE stream count per app (optional)
  */
+// A GAUGE is a CURRENT VALUE, so emitting it once per registered tool is both wasteful and
+// invalid: registering a 31-tool surface fired 31 identically-labelled points, the collector
+// batched them into one request, and Managed Prometheus rejected the WHOLE batch —
+//   "Duplicate TimeSeries encountered. Only one point can be written per TimeSeries per request."
+// Every other metric in that batch died with it, which is how the store stayed empty while the
+// collector happily returned 200 to the app. Collapse repeats: the last value inside a short
+// window wins, which is exactly gauge semantics.
+const REGISTRATION_GAUGE_DEBOUNCE_MS = 2000;
+const _lastRegistrationEmit = new Map<string, { at: number; tools: number; streams?: number }>();
+
+/**
+ * Test-only: forget the debounce window so a test can assert an emit without being collapsed into
+ * an identical one from an earlier test. Same seam convention as `_setMcpLogOverride`.
+ */
+export function _resetRegistrationDebounce(): void {
+  _lastRegistrationEmit.clear();
+}
+
 export function recordMcpRegistrationMetric(opts: {
   app: string;
   tools_count: number;
   streams_count?: number;
 }): void {
   if (!_metricsEnabled) return;
+
+  const key = opts.app;
+  const prev = _lastRegistrationEmit.get(key);
+  const nowMs = Date.now();
+  if (
+    prev &&
+    nowMs - prev.at < REGISTRATION_GAUGE_DEBOUNCE_MS &&
+    prev.tools === opts.tools_count &&
+    prev.streams === opts.streams_count
+  ) {
+    return; // identical gauge inside the window — emitting it again can only invalidate the batch
+  }
+  _lastRegistrationEmit.set(key, { at: nowMs, tools: opts.tools_count, streams: opts.streams_count });
+
   const t = nowNano();
   const metrics: unknown[] = [
     {

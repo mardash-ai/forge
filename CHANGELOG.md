@@ -9,6 +9,24 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.27] - 2026-07-31
+
+### Fixed
+
+- **The registration gauge no longer invalidates the whole metrics batch.** A gauge is a CURRENT
+  VALUE, but `recordMcpRegistrationMetric` fired once per registered tool — a 31-tool surface
+  emitted 31 identically-labelled points. The collector batched them into one request and Managed
+  Prometheus rejected **the entire batch**:
+
+      InvalidArgument: Duplicate TimeSeries encountered.
+      Only one point can be written per TimeSeries per request.
+
+  Every other metric in that batch died with it. This is the last link in the chain that left
+  Managed Prometheus empty for days while the collector cheerfully returned **200** to the app —
+  the failure was one hop further on, and nothing surfaced it. Repeats inside a 2s window are now
+  collapsed (last value wins, which is exactly gauge semantics); a changed value always emits.
+  `_resetRegistrationDebounce()` is exported as a test seam.
+
 ## [0.79.26] - 2026-07-31
 
 ### Fixed

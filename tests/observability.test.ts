@@ -473,7 +473,9 @@ describe('metrics export sends no empty Authorization — 0.79.26', () => {
   it('omits Authorization entirely when there are no Langfuse keys', async () => {
     const { initOtelLangfuse, recordMcpRegistrationMetric } = await import('../src/plugins/otel-langfuse/index');
     initOtelLangfuse({ endpoint: 'https://collector.example' });
-    recordMcpRegistrationMetric({ app: 'dorinda-api', tools_count: 31 });
+    // Distinct app per test: the registration gauge is debounced (0.79.27), so reusing one app
+    // name across tests would collapse a later emit into an earlier identical one.
+    recordMcpRegistrationMetric({ app: 'auth-absent-app', tools_count: 31 });
     await new Promise((r) => setTimeout(r, 10));
 
     expect(calls.length).toBe(1);
@@ -485,7 +487,7 @@ describe('metrics export sends no empty Authorization — 0.79.26', () => {
   it('still sends Authorization when Langfuse keys ARE present', async () => {
     const { initOtelLangfuse, recordMcpRegistrationMetric } = await import('../src/plugins/otel-langfuse/index');
     initOtelLangfuse({ endpoint: 'https://collector.example', publicKey: 'pk', secretKey: 'sk' });
-    recordMcpRegistrationMetric({ app: 'dorinda-api', tools_count: 31 });
+    recordMcpRegistrationMetric({ app: 'auth-present-app', tools_count: 31 });
     await new Promise((r) => setTimeout(r, 10));
     expect(calls[0]!.headers['Authorization']).toMatch(/^Basic /);
   });
@@ -495,8 +497,45 @@ describe('metrics export sends no empty Authorization — 0.79.26', () => {
       await import('../src/plugins/otel-langfuse/index');
     initOtelLangfuse({ endpoint: 'https://collector.example' });
     const before = metricExportStats().ok;
-    recordMcpRegistrationMetric({ app: 'dorinda-api', tools_count: 31 });
+    recordMcpRegistrationMetric({ app: 'export-count-app', tools_count: 31 });
     await new Promise((r) => setTimeout(r, 20));
     expect(metricExportStats().ok).toBeGreaterThan(before);
+  });
+});
+
+// Managed Prometheus rejects a request containing two points for the same TimeSeries, and rejects
+// the WHOLE batch — so one over-eager gauge takes every other metric down with it. Registering a
+// 31-tool surface emitted 31 identical gauges and left the store permanently empty while the
+// collector returned 200 to the app.
+describe('registration gauge does not duplicate itself in one batch — 0.79.27', () => {
+  const KEYS = ['OTEL_EXPORTER_OTLP_ENDPOINT', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY'];
+  const saved: Record<string, string | undefined> = {};
+  let posts = 0;
+  const realFetch = globalThis.fetch;
+  beforeEach(() => {
+    KEYS.forEach((k) => { saved[k] = process.env[k]; delete process.env[k]; });
+    posts = 0;
+    globalThis.fetch = (async () => { posts += 1; return new Response('{}', { status: 200 }); }) as typeof fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    KEYS.forEach((k) => (saved[k] === undefined ? delete process.env[k] : (process.env[k] = saved[k]!)));
+  });
+
+  it('collapses 31 identical registration gauges into ONE export', async () => {
+    const { initOtelLangfuse, recordMcpRegistrationMetric } = await import('../src/plugins/otel-langfuse/index');
+    initOtelLangfuse({ endpoint: 'https://collector.example' });
+    for (let i = 0; i < 31; i++) recordMcpRegistrationMetric({ app: 'dedupe-app', tools_count: 31 });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(posts).toBe(1);
+  });
+
+  it('still emits when the VALUE changes — a real change must never be swallowed', async () => {
+    const { initOtelLangfuse, recordMcpRegistrationMetric } = await import('../src/plugins/otel-langfuse/index');
+    initOtelLangfuse({ endpoint: 'https://collector.example' });
+    recordMcpRegistrationMetric({ app: 'changing-app', tools_count: 30 });
+    recordMcpRegistrationMetric({ app: 'changing-app', tools_count: 31 });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(posts).toBe(2);
   });
 });
