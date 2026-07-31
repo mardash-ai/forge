@@ -9,6 +9,15 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.84.3] - 2026-07-31
+
+### Changed
+
+- **Budget thresholds are configurable and now include 150% by default.** The hand-made budget being
+  consolidated into this module carried a 150% rule; "you are 50% OVER" is a materially different
+  alarm from "you hit 100%", so replacing one with the other would have been a silent loss of
+  coverage rather than a tidy-up.
+
 ## [0.84.2] - 2026-07-31
 
 ### Fixed

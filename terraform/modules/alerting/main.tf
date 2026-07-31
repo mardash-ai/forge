@@ -56,6 +56,11 @@ variable "budget_amount_usd" {
   type    = number
   default = 150
 }
+variable "budget_thresholds" {
+  type        = list(number)
+  default     = [0.5, 0.9, 1.0, 1.5]
+  description = "Fractions of the budget that raise an alert. 1.5 = 50% over."
+}
 
 # ── Delivery ────────────────────────────────────────────────────────────────────────────────────
 resource "google_monitoring_notification_channel" "email" {
@@ -282,8 +287,11 @@ resource "google_billing_budget" "monthly" {
       units         = tostring(var.budget_amount_usd)
     }
   }
+  # 1.5 included deliberately: the hand-made budget this replaces had it, and "you are 50% OVER"
+  # is a materially different alarm from "you hit 100%" — dropping it while consolidating would
+  # have been a silent loss of coverage rather than a tidy-up.
   dynamic "threshold_rules" {
-    for_each = [0.5, 0.9, 1.0]
+    for_each = var.budget_thresholds
     content {
       threshold_percent = threshold_rules.value
       spend_basis       = "CURRENT_SPEND" # also API-defaulted; declared so the plan stays empty
