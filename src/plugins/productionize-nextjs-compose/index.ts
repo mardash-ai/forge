@@ -102,6 +102,12 @@ RUN groupadd --system --gid 1001 nodejs \\
 COPY --from=build /app/public ./public
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
+# The COPYs above land as root. Without this, the non-root runtime user cannot create
+# /app/.next/cache and Next's prerender cache fails on EVERY cacheable response with
+# \`EACCES: permission denied, mkdir '/app/.next/cache'\`. Nothing goes red — the request still
+# returns 200 — it just re-renders every time and emits a ~15-line stack trace per occurrence, at
+# INFO severity, where no severity-based alert will ever see it.
+RUN mkdir -p /app/.next/cache && chown -R nextjs:nodejs /app/.next
 USER nextjs
 EXPOSE ${port}
 CMD ["node", "server.js"]

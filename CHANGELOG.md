@@ -9,6 +9,20 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.89.0] - 2026-07-31
+
+### Fixed
+
+- **The generated production Dockerfile left `/app/.next` owned by root**, so the non-root runtime
+  user could not create `/app/.next/cache`. Next's prerender cache then failed on **every** cacheable
+  response with `EACCES: permission denied, mkdir '/app/.next/cache'`. Nothing went red — the request
+  still returned 200 — the app simply re-rendered every time and emitted a ~15-line stack trace per
+  occurrence at **INFO** severity, where no severity-based alert would ever see it and where it
+  buried the log pane. Found on dorinda-api by the 2026-07-31 acceptance run, minutes after the
+  console's log pane became readable. The generator now creates and chowns the cache directory
+  **before** dropping privileges; a chown after `USER` would run unprivileged and fail silently, so
+  the test asserts the ordering rather than just the presence of the line.
+
 ## [0.88.0] - 2026-07-31
 
 ### Fixed

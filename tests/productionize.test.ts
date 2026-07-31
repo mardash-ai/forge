@@ -835,3 +835,19 @@ describe('deploy ⇄ productionize env-file agree by default (P10)', () => {
     expect(env).toContain('--env-file .env.prod');
   });
 });
+
+describe('generateProdDockerfile — the runtime user must own .next (acceptance finding F-10)', () => {
+  it('creates and chowns /app/.next/cache BEFORE dropping to the non-root user', () => {
+    // Live symptom this prevents: `EACCES: permission denied, mkdir '/app/.next/cache'` on every
+    // cacheable response. The request still returns 200, so nothing goes red — Next just re-renders
+    // every time and emits a ~15-line stack trace per occurrence at INFO severity, invisible to any
+    // severity-based alert and loud enough to bury the log pane.
+    const df = generateProdDockerfile({ appName: 'acme', port: 3000 });
+    const chown = df.indexOf('chown -R nextjs:nodejs /app/.next');
+    const user = df.indexOf('USER nextjs');
+    expect(chown).toBeGreaterThan(-1);
+    expect(df).toContain('mkdir -p /app/.next/cache');
+    // Order is the whole fix: a chown after USER would run unprivileged and silently fail.
+    expect(chown).toBeLessThan(user);
+  });
+});
