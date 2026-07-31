@@ -1976,8 +1976,10 @@ interface Stack {
   mixed_pins: boolean;
 }
 
+interface PinDrift { repo: string; file: string; pinned: string; latest: string; behind: number }
+
 function Drift() {
-  const q = useApi<{ stacks: Stack[]; latest_release: string | null }>('/api/drift');
+  const q = useApi<{ stacks: Stack[]; latest_release: string | null; pin_drift: PinDrift[] }>('/api/drift');
   const stale = (iso?: string): number | null =>
     iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : null;
 

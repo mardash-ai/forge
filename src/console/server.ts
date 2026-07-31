@@ -100,6 +100,8 @@ export function buildRegistry(): ProviderRegistry {
       envs: [ENV],
       scope: { bucket: STATE_BUCKET },
       ...(process.env.CONSOLE_GITHUB_TOKEN ? { githubToken: process.env.CONSOLE_GITHUB_TOKEN } : {}),
+      owner: GH_OWNER,
+      repos: GH_REPOS,
     }),
     createGcpCostProvider({
       id: 'gcp-billing',
@@ -436,7 +438,12 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     const provs = registry.byKind('drift', ENV) as DriftProvider[];
     const { items, sources } = await aggregate(provs, (p) => p.listStacks(c));
     const latest = await Promise.all(provs.map((p) => p.latestRelease(c).catch(() => null)));
-    return envelope({ stacks: items, latest_release: latest.find(Boolean) ?? null }, sources);
+    // CI pin drift: the axis that let a shipped fix sit unadopted in twelve of fourteen workflows.
+    const pins = (await Promise.all(provs.map((p) => p.listPinDrift(c).catch(() => [])))).flat();
+    return envelope(
+      { stacks: items, latest_release: latest.find(Boolean) ?? null, pin_drift: pins },
+      sources,
+    );
   });
 
   // ── Cost ──

@@ -9,6 +9,20 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.94.0] - 2026-07-31
+
+### Added
+
+- **The Drift screen now watches CI pin adoption** — the axis nothing watched, and the reason a fix
+  could ship, be released, and never reach the repo that needed it. Consumer workflows check forge
+  out at a hand-edited `ref:`, one pin per file. On 2026-07-31 **twelve of fourteen pins across the
+  estate were still `v0.79.24`**, fourteen releases behind: a release-gate fix shipped that evening
+  could not apply, because the consumer's CI had never adopted it.
+  Terraform module pins were already covered; CI pins were not, so the one mechanism built to catch
+  adoption drift had a blind spot exactly where this failure lives. "Behind" is a **count of
+  releases**, and a pin so old it has fallen off the tag page reads as maximally behind rather than
+  silently zero — which is precisely the case that mattered.
+
 ## [0.93.0] - 2026-07-31
 
 ### Fixed

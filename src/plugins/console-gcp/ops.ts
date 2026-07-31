@@ -103,11 +103,22 @@ export interface StackDrift {
   mixed_pins: boolean;
 }
 
+export interface PinDrift {
+  repo: string;
+  file: string;
+  pinned: string;
+  latest: string;
+  /** How many releases behind. 0 = current. */
+  behind: number;
+}
+
 export interface DriftProvider extends Provider {
   kind: 'drift';
   listStacks(ctx: ProviderContext): Promise<StackDrift[]>;
   /** The newest forge release available, for the staleness axis. */
   latestRelease(ctx: ProviderContext): Promise<string | null>;
+  /** CI workflow pins vs the newest release — the axis nothing watched. */
+  listPinDrift(ctx: ProviderContext): Promise<PinDrift[]>;
 }
 
 /**
@@ -126,6 +137,9 @@ export function createGcsDriftProvider(opts: {
   envs: EnvKey[];
   scope: { bucket: string };
   githubToken?: string;
+  owner?: string;
+  /** Consumer repos whose CI pins are checked for adoption drift. */
+  repos?: string[];
 }): DriftProvider {
   const bucket = opts.scope.bucket;
   const supported = new Set<Feature>(['drift.stacks']);
@@ -172,6 +186,55 @@ export function createGcsDriftProvider(opts: {
       return out.sort((a, b) => a.stack.localeCompare(b.stack));
     },
 
+    /**
+     * ⛔ THE AXIS THAT WAS MISSING, and it cost a whole evening.
+     *
+     * Consumer repos check forge out at a hard-coded `ref:` in their CI workflows, one pin per
+     * file, bumped by hand. On 2026-07-31 **twelve of fourteen pins across the estate were still
+     * v0.79.24** — fourteen forge releases behind. A gate fix shipped that evening could not
+     * possibly apply, because the consumer's CI had never adopted it: the release was green, the
+     * fix was live in forge, and nothing reached the repo that needed it.
+     *
+     * Terraform module pins were already watched. CI pins were not, so the one mechanism built to
+     * catch adoption drift had a blind spot exactly where this failure lives.
+     */
+    async listPinDrift(ctx): Promise<PinDrift[]> {
+      const latest = await this.latestRelease(ctx);
+      if (!latest || !opts.repos?.length) return [];
+      const rank = await releaseRank(opts.githubToken, ctx.signal);
+      const out: PinDrift[] = [];
+      for (const repo of opts.repos) {
+        for (const file of ['release.yml', 'infra.yml', 'release-data-plane.yml']) {
+          try {
+            const r = await fetch(
+              `https://api.github.com/repos/${opts.owner ?? 'mardash-ai'}/${repo}/contents/.github/workflows/${file}`,
+              {
+                headers: {
+                  accept: 'application/vnd.github.raw',
+                  ...(opts.githubToken ? { authorization: `Bearer ${opts.githubToken}` } : {}),
+                },
+                signal: ctx.signal,
+              },
+            );
+            if (!r.ok) continue; // a repo without that workflow is not drift, it is absence
+            const body = await r.text();
+            // Only pins that check OUT forge — not unrelated action refs.
+            const m = /mardash-ai\/forge[\s\S]{0,120}?ref:\s*(v[0-9][0-9.]*)/.exec(body);
+            if (!m) continue;
+            const pinned = m[1]!;
+            if (pinned === latest) continue;
+            const behind = rank.length
+              ? Math.max(0, rank.indexOf(pinned) < 0 ? rank.length : rank.indexOf(pinned))
+              : 0;
+            out.push({ repo, file, pinned, latest, behind });
+          } catch {
+            /* a single unreadable repo must not blank the screen */
+          }
+        }
+      }
+      return out.sort((a, b) => b.behind - a.behind);
+    },
+
     async latestRelease(ctx): Promise<string | null> {
       // Unauthenticated works for a public repo and keeps this useful even without a token.
       try {
@@ -202,6 +265,23 @@ export function createGcsDriftProvider(opts: {
       }
     },
   };
+}
+
+/** Release tags newest-first, so "how many behind" is a real number rather than a vibe. */
+async function releaseRank(token: string | undefined, signal: AbortSignal): Promise<string[]> {
+  try {
+    const r = await fetch('https://api.github.com/repos/mardash-ai/forge/tags?per_page=100', {
+      headers: {
+        accept: 'application/vnd.github+json',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      signal,
+    });
+    if (!r.ok) return [];
+    return ((await r.json()) as Array<{ name: string }>).map((t) => t.name);
+  } catch {
+    return [];
+  }
 }
 
 // ── Cost ───────────────────────────────────────────────────────────────────────────────────────

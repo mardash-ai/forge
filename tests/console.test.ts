@@ -551,3 +551,33 @@ describe('log truncation — a narrower answer than the question must say so', (
     expect(envelope([1], []).note).toBeUndefined();
   });
 });
+
+describe('CI pin adoption — a shipped fix nobody pins is a fix nobody has (F-15)', () => {
+  it('ranks how many releases behind a pin is, so "old" is a number not a vibe', () => {
+    const rank = ['v0.93.0', 'v0.92.0', 'v0.91.0', 'v0.90.0', 'v0.89.0'];
+    const behind = (pinned: string) => (rank.indexOf(pinned) < 0 ? rank.length : rank.indexOf(pinned));
+    expect(behind('v0.93.0')).toBe(0);
+    expect(behind('v0.90.0')).toBe(3);
+    // A pin so old it has fallen off the tag page is MAXIMALLY behind, never silently 0 — which is
+    // the exact case that mattered: v0.79.24 was fourteen releases back and off the first page.
+    expect(behind('v0.79.24')).toBe(rank.length);
+  });
+
+  it('matches a forge checkout ref, not unrelated action pins', () => {
+    // A workflow pins many things. Only the forge checkout is adoption drift; treating every
+    // `ref:` as forge would flood the screen and train the operator to ignore it.
+    const wf = `
+      - uses: actions/checkout@v4
+        with:
+          repository: mardash-ai/forge
+          ref: v0.79.24
+          path: .forge
+      - uses: google-github-actions/auth@v2
+        with:
+          ref: v9.9.9
+    `;
+    const m = /mardash-ai\/forge[\s\S]{0,120}?ref:\s*(v[0-9][0-9.]*)/.exec(wf);
+    expect(m?.[1]).toBe('v0.79.24');
+    expect(m?.[1]).not.toBe('v9.9.9');
+  });
+});
