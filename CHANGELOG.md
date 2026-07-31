@@ -9,6 +9,25 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.82.0] - 2026-07-31
+
+### Added
+
+- **`forge infra bootstrap --component <project|state|identity|all> [--repo <repo>]`.** Bootstrap
+  was all-or-nothing: registering ONE new repo for Workload Identity meant re-asserting the entire
+  foundation — folder, project, billing, 17 APIs, state bucket, pool, deployer roles and every
+  existing binding. Idempotent, so safe; but a verb whose blast radius says "stand up everything" is
+  the wrong instrument for "register one component", and running it that way teaches you to stop
+  reading what it did.
+
+  `--component identity --repo dorinda-forge-console` now does **6 steps instead of 10** and touches
+  **one** binding instead of eight.
+
+  **`--repo` narrows the WORK, never the trust boundary**: a repo absent from `github.repos` is
+  refused outright, so this can never become a way to grant deploy access to something nobody
+  declared. Guard-tested, along with rejecting an unknown `--component` rather than silently doing
+  everything.
+
 ## [0.81.1] - 2026-07-31
 
 ### Fixed

@@ -111,6 +111,48 @@ describe('§3.5 contract publication', () => {
   });
 });
 
+  async function runInfra(args: string[], cwd: string, env: Record<string, string | undefined> = {}) {
+  return new Promise<{ code: number; out: string }>((resolve) => {
+    const p = spawn('npx', ['tsx', join(__dirname, '..', 'src', 'infra', 'cli.ts'), ...args], {
+      cwd,
+      env: { ...process.env, GITHUB_ACTIONS: '', CI: '', FORGE_INFRA_INVOKE_DIR: cwd, ...env },
+    });
+    let out = '';
+    p.stdout.on('data', (d) => (out += d));
+    p.stderr.on('data', (d) => (out += d));
+    p.on('close', (code) => resolve({ code: code ?? 1, out }));
+  });
+}
+
+describe('bootstrap scoping — --component / --repo (0.82.0)', () => {
+  it('exposes exactly the components the CLI advertises', async () => {
+    const { BOOTSTRAP_COMPONENTS } = await import('../src/infra/bootstrap');
+    expect([...BOOTSTRAP_COMPONENTS]).toEqual(['project', 'state', 'identity', 'all']);
+  });
+
+  it('refuses to register a repo that is not DECLARED — scoping narrows work, never trust', async () => {
+    // The load-bearing guard. `--repo` must be a convenience over the declaration, never a way to
+    // grant deploy access to a repository nobody put in forge.infra.json.
+    const repo = join(dir, 'scope-repo');
+    await mkdir(join(repo, 'infra'), { recursive: true });
+    await writeFile(join(repo, 'forge.infra.json'), JSON.stringify(FOUNDATION));
+
+    const r = await runInfra(
+      ['bootstrap', '--env', 'prod-a', '--component', 'identity', '--repo', 'some-other-org-repo'],
+      repo,
+    );
+    expect(r.code).not.toBe(0);
+    expect(r.out).toMatch(/not in github\.repos|never widens the trust boundary/);
+  }, 60_000);
+
+  it('rejects an unknown --component instead of silently doing everything', async () => {
+    const repo = join(dir, 'scope-repo');
+    const r = await runInfra(['bootstrap', '--env', 'prod-a', '--component', 'everything'], repo);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toMatch(/unknown --component/);
+  }, 60_000);
+});
+
 describe('bootstrap role curation', () => {
   it('deployer roles are a curated list and never roles/editor or owner', () => {
     expect(DEPLOYER_ROLES.length).toBeGreaterThan(5);
@@ -121,18 +163,6 @@ describe('bootstrap role curation', () => {
 });
 
 describe('§3.6 guard — apply is CI-only (subprocess, the real thing)', () => {
-  async function runInfra(args: string[], cwd: string, env: Record<string, string | undefined> = {}) {
-    return new Promise<{ code: number; out: string }>((resolve) => {
-      const p = spawn('npx', ['tsx', join(__dirname, '..', 'src', 'infra', 'cli.ts'), ...args], {
-        cwd,
-        env: { ...process.env, GITHUB_ACTIONS: '', CI: '', FORGE_INFRA_INVOKE_DIR: cwd, ...env },
-      });
-      let out = '';
-      p.stdout.on('data', (d) => (out += d));
-      p.stderr.on('data', (d) => (out += d));
-      p.on('close', (code) => resolve({ code: code ?? 1, out }));
-    });
-  }
 
   it('refuses `apply` locally without BOTH --local and --allow-local-apply, and never half of it', async () => {
     const repo = join(dir, 'guard-repo');

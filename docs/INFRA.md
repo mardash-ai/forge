@@ -30,7 +30,7 @@ noun before the docker-exec path. **No key files, ever** — locally `gcloud aut
 
 | Verb | What | Guards |
 |---|---|---|
-| `bootstrap --env E` | folder · project · billing · core APIs · state bucket · WIF pool + deployer SA | idempotent; the ONE verb allowed to create resources outside TF state (the backend cannot store itself) |
+| `bootstrap --env E [--component C] [--repo R]` | folder · project · billing · core APIs · state bucket · WIF pool + deployer SA | idempotent; the ONE verb allowed to create resources outside TF state. **Scope it**: `--component project\|state\|identity\|all`, and `--repo` registers ONE declared repo instead of all. A repo absent from `github.repos` is refused — scoping narrows work, never the trust boundary |
 | `lint` | schema + `terraform fmt -check` + `validate` | no provider calls |
 | `plan --env E` | contract gate → init → plan | read-only |
 | `apply --env E` | plan-preflight → apply → **§3.7 read-back (re-plan must be empty)** → publish hash (+ contract) | CI-only; `--local --allow-local-apply` = the §3.8 hatch |

@@ -19,7 +19,7 @@ import { Command } from 'commander';
 import { loadRepoStack, requireEnv } from './config';
 import { declaredConfigHash } from './hash';
 import { modulePins } from './pins';
-import { bootstrap } from './bootstrap';
+import { bootstrap, BOOTSTRAP_COMPONENTS } from './bootstrap';
 import { tfInit, tfValidate, tfFmtCheck, tfPlan, tfApply, tfDestroy, tfOutputs, tfUntaint, readBackConverged } from './terraform';
 import { materializeContract, publishContract, publishDeclaredHash, fetchDeclaredHash } from './contract';
 import { runVerify, behaviourChecks, checksNeedOutputs } from './verify';
@@ -60,11 +60,22 @@ program
 
 program
   .command('bootstrap')
-  .description('ONCE per env: folder, project, billing, core APIs, state bucket, WIF pool (§3.8). Idempotent — the only verb allowed to create resources outside Terraform state, because the state backend cannot store itself.')
+  .description('Create what Terraform cannot hold: folder, project, billing, core APIs, state bucket, WIF pool (§3.8). Idempotent. SCOPE IT with --component — a full run re-asserts the entire foundation, which is the wrong instrument for registering one repo.')
   .requiredOption('--env <env>')
+  .option(
+    '--component <component>',
+    `what to bootstrap: ${BOOTSTRAP_COMPONENTS.join(' | ')} (default: all)`,
+  )
+  .option('--repo <repo>', 'register ONE declared repo for Workload Identity instead of every repo')
   .action(async (opts) => {
+    if (opts.component && !BOOTSTRAP_COMPONENTS.includes(opts.component)) {
+      fail(`unknown --component "${opts.component}". Valid: ${BOOTSTRAP_COMPONENTS.join(', ')}`);
+    }
     const stack = await stackFor(opts.env);
-    const steps = await bootstrap(stack, opts.env);
+    const steps = await bootstrap(stack, opts.env, {
+      ...(opts.component ? { component: opts.component } : {}),
+      ...(opts.repo ? { repo: opts.repo } : {}),
+    });
     for (const s of steps) say(`  ${s.status.toUpperCase().padEnd(7)} ${s.name}${s.detail ? ` — ${s.detail}` : ''}`);
     say(`bootstrap: ${steps.length} steps converged (re-running is safe and expected).`);
   });

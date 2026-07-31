@@ -90,7 +90,37 @@ export function deployerSaEmail(projectId: string): string {
   return `forge-deployer@${projectId}.iam.gserviceaccount.com`;
 }
 
-export async function bootstrap(stack: RepoStack, env: string): Promise<BootstrapStep[]> {
+/**
+ * Which parts of the foundation a bootstrap run is allowed to touch.
+ *
+ * `bootstrap` used to be all-or-nothing: the only way to add one WIF binding for a new repo was to
+ * re-assert the entire foundation — folder, project, billing, APIs, bucket, pool, deployer roles
+ * and every existing binding. Idempotent, so safe; but a verb whose name and blast radius say
+ * "stand up everything" is the wrong instrument for "register one component", and running it that
+ * way teaches you to stop reading what it did.
+ */
+export type BootstrapComponent = 'project' | 'state' | 'identity' | 'all';
+
+export const BOOTSTRAP_COMPONENTS: readonly BootstrapComponent[] = ['project', 'state', 'identity', 'all'];
+
+export interface BootstrapOptions {
+  /** Restrict to one area. Default `all` preserves the historical behaviour exactly. */
+  component?: BootstrapComponent;
+  /**
+   * Register ONE repo for Workload Identity instead of re-asserting every repo in the declaration.
+   * Must already be present in `github.repos` — this scopes the work, it does not widen the trust
+   * boundary, and a repo that is not declared is refused.
+   */
+  repo?: string;
+}
+
+export async function bootstrap(
+  stack: RepoStack,
+  env: string,
+  options: BootstrapOptions = {},
+): Promise<BootstrapStep[]> {
+  const component: BootstrapComponent = options.component ?? 'all';
+  const wants = (c: Exclude<BootstrapComponent, 'all'>): boolean => component === 'all' || component === c;
   const cfg = stack.config;
   const e = requireEnv(cfg, env);
   const steps: BootstrapStep[] = [];
@@ -100,7 +130,7 @@ export async function bootstrap(stack: RepoStack, env: string): Promise<Bootstra
 
   // ── 1. Folder (foundation-only, and only if declared) ──────────────────────────────
   let folderId: string | undefined;
-  if (cfg.kind === 'foundation' && cfg.folder && cfg.org_id) {
+  if (wants('project') && cfg.kind === 'foundation' && cfg.folder && cfg.org_id) {
     const list = await gcloudRead([
       'resource-manager', 'folders', 'list',
       `--organization=${cfg.org_id}`,
@@ -135,6 +165,9 @@ export async function bootstrap(stack: RepoStack, env: string): Promise<Bootstra
     }
   }
 
+  // ── 2-4. Project, billing, core APIs (component: project) ──────────────────────────
+  // The project must EXIST for anything else to work, so it is verified even when scoped away —
+  // but it is only created, billed and API-enabled when this component is in scope.
   // ── 2. Project ─────────────────────────────────────────────────────────────────────
   const exists = await gcloud(['projects', 'describe', e.project_id, '--format=value(projectId)'], { allowFail: true });
   if (exists.code === 0) {
@@ -146,13 +179,19 @@ export async function bootstrap(stack: RepoStack, env: string): Promise<Bootstra
           `run \`forge infra bootstrap --env ${env}\` in the foundation repo first.`,
       );
     }
+    if (!wants('project')) {
+      throw new Error(
+        `project ${e.project_id} does not exist, but --component ${component} excludes creating it. ` +
+          `Run --component project (or omit --component) first.`,
+      );
+    }
     const parent = folderId ? [`--folder=${folderId}`] : cfg.org_id ? [`--organization=${cfg.org_id}`] : [];
     await gcloud(['projects', 'create', e.project_id, `--name=${e.project_id}`, ...parent]);
     step(`project ${e.project_id}`, 'created', folderId ? `under folders/${folderId}` : undefined);
   }
 
   // ── 3. Billing ─────────────────────────────────────────────────────────────────────
-  if (cfg.kind === 'foundation' && cfg.billing_account) {
+  if (wants('project') && cfg.kind === 'foundation' && cfg.billing_account) {
     const b = await gcloudRead(['billing', 'projects', 'describe', e.project_id, '--format=value(billingAccountName)']);
     if (b.stdout.includes(cfg.billing_account)) {
       step('billing link', 'exists', cfg.billing_account);
@@ -163,11 +202,14 @@ export async function bootstrap(stack: RepoStack, env: string): Promise<Bootstra
   }
 
   // ── 4. Core APIs (batch enable is idempotent) ──────────────────────────────────────
-  await gcloud(['services', 'enable', ...CORE_APIS, `--project=${e.project_id}`]);
-  step(`core APIs (${CORE_APIS.length})`, 'updated', 'services enable is idempotent');
+  if (wants('project')) {
+    await gcloud(['services', 'enable', ...CORE_APIS, `--project=${e.project_id}`]);
+    step(`core APIs (${CORE_APIS.length})`, 'updated', 'services enable is idempotent');
+  }
 
   // ── 5. State bucket — versioned, uniform access, in the foundation project ─────────
-  if (cfg.kind === 'foundation') {
+  //   (component: state)
+  if (wants('state') && cfg.kind === 'foundation') {
     const bkt = await gcloud(['storage', 'buckets', 'describe', `gs://${cfg.state_bucket}`, '--format=value(name)'], {
       allowFail: true,
     });
@@ -186,7 +228,8 @@ export async function bootstrap(stack: RepoStack, env: string): Promise<Bootstra
   }
 
   // ── 6. WIF pool + provider + deployer SA (foundation with a github block) ──────────
-  if (cfg.kind === 'foundation' && cfg.github) {
+  //   (component: identity)
+  if (wants('identity') && cfg.kind === 'foundation' && cfg.github) {
     const proj = e.project_id;
     const pool = await gcloud(
       ['iam', 'workload-identity-pools', 'describe', WIF_POOL_ID, `--project=${proj}`, '--location=global', '--format=value(name)'],
@@ -237,14 +280,23 @@ export async function bootstrap(stack: RepoStack, env: string): Promise<Bootstra
     const projNumRead = await gcloudRead(['projects', 'describe', proj, '--format=value(projectNumber)']);
     const projNum = projNumRead.stdout.trim();
     if (!/^\d+$/.test(projNum)) throw new Error(`project number read failed — got "${projNum}"`);
-    for (const repo of cfg.github.repos) {
+    // Scope to one repo when asked. Refused if it is not declared: this narrows the WORK, never
+    // the trust boundary — registering an undeclared repo would silently widen who can deploy.
+    const repos = options.repo ? [options.repo] : cfg.github.repos;
+    if (options.repo && !cfg.github.repos.includes(options.repo)) {
+      throw new Error(
+        `repo "${options.repo}" is not in github.repos for this stack — add it to forge.infra.json first. ` +
+          `Bootstrap scopes work; it never widens the trust boundary.`,
+      );
+    }
+    for (const repo of repos) {
       await gcloud([
         'iam', 'service-accounts', 'add-iam-policy-binding', sa, `--project=${proj}`,
         '--role=roles/iam.workloadIdentityUser',
         `--member=principalSet://iam.googleapis.com/projects/${projNum}/locations/global/workloadIdentityPools/${WIF_POOL_ID}/attribute.repository/${cfg.github.owner}/${repo}`,
       ]);
     }
-    step(`WIF bindings (${cfg.github.repos.length} repos)`, 'updated', cfg.github.repos.join(', '));
+    step(`WIF bindings (${repos.length} repo${repos.length === 1 ? '' : 's'})`, 'updated', repos.join(', '));
   }
 
   return steps;
