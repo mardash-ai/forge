@@ -12,6 +12,7 @@ import {
   DASHBOARD_MCP_TOOL_HEALTH,
   DASHBOARD_BACKGROUND_PLANE,
   DASHBOARD_TOOL_DRILLDOWN,
+  DASHBOARD_SERVICE_HTTP,
   renderUserExperienceDashboard,
 } from './content';
 
@@ -67,6 +68,12 @@ const IMAGES = {
 export interface MonitoringStackOptions {
   /** Compose project name. Default 'dorinda-grafana' (folder + project map to the public domain). */
   projectName?: string;
+  /**
+   * The CLOUD project whose Cloud Monitoring metrics the HTTP dashboard reads. Distinct from
+   * `projectName`, which is the compose project — conflating them would point the dashboard at a
+   * project that does not exist and render four empty panels that look like missing traffic.
+   */
+  gcpProject?: string;
   /** Public hostname to front grafana via Traefik (e.g. 'grafana.dorinda.ai'). */
   publicHost?: string;
   /** Host port grafana is published on for operator/local access. Default 3200. */
@@ -111,6 +118,7 @@ interface Resolved extends Required<Omit<MonitoringStackOptions, 'publicHost' | 
 function resolve(opts: MonitoringStackOptions): Resolved {
   return {
     projectName: opts.projectName ?? 'dorinda-grafana',
+    gcpProject: opts.gcpProject ?? '',
     publicHost: opts.publicHost,
     uiPort: opts.uiPort ?? 3200,
     network: opts.network ?? 'observability',
@@ -328,7 +336,10 @@ ${embed(DASHBOARD_MCP_TOOL_HEALTH, 6)}
 ${embed(DASHBOARD_BACKGROUND_PLANE, 6)}
   dash-tool-drilldown:
     content: |
-${embed(DASHBOARD_TOOL_DRILLDOWN, 6)}${r.appDb ? `
+${embed(DASHBOARD_TOOL_DRILLDOWN, 6)}
+  dash-service-http:
+    content: |
+${embed(DASHBOARD_SERVICE_HTTP.replace(/PROJECT_ID/g, r.gcpProject), 6)}${r.appDb ? `
   dash-user-experience:
     content: |
 ${embed(renderUserExperienceDashboard({ appId: r.appDb.appId, langfusePublicUrl: r.langfusePublicUrl, langfuseProjectId: r.langfuseProjectId }), 6)}` : ''}

@@ -9,6 +9,24 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.91.0] - 2026-07-31
+
+### Added
+
+- **`Service Health (HTTP · RED)` dashboard** — request rate, 5xx rate, p95 latency and instance
+  count per Cloud Run service, from Cloud Monitoring via the `stackdriver` datasource. Grafana
+  previously had **no panel for any HTTP surface**: its datasources were Managed Prometheus (MCP
+  tool metrics) and Cloud Logging, so signup, email verification, login, trial start and every admin
+  operation were invisible in Grafana *by construction*. An acceptance check asking "is this flow
+  visible in both UIs?" could only ever answer "console yes, Grafana no" for most of the product's
+  traffic.
+  Cloud Run publishes these metrics itself, so the panel needs no app instrumentation and cannot be
+  taken out by an app-side telemetry regression — the same independent-failure-mode reasoning that
+  made this platform read two metric sources in the first place.
+- `gcpProject` option, kept **separate from `projectName`**: one is the cloud project, the other the
+  compose project. Conflating them would point the dashboard at a project that does not exist and
+  render four empty panels — on screen, indistinguishable from a service receiving no traffic.
+
 ## [0.90.0] - 2026-07-31
 
 ### Fixed

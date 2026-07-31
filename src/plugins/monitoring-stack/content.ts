@@ -1849,6 +1849,127 @@ export const DASHBOARD_BACKGROUND_PLANE = `{
   ]
 }`;
 
+
+/**
+ * Dashboard 6: Service Health (HTTP) — the RED metrics for every Cloud Run service.
+ *
+ * ⛔ WHY THIS EXISTS: until 2026-07-31 Grafana had NO panel for any HTTP surface. Its datasources
+ * were Managed Prometheus (MCP tool metrics) and Cloud Logging, so every non-MCP flow — signup,
+ * email verification, login, trial start, admin operations — was invisible in Grafana **by
+ * construction**. An acceptance run checking "is this flow visible in both UIs?" could only ever
+ * answer "console yes, Grafana no", for the majority of the product's traffic.
+ *
+ * Cloud Run publishes request_count and request_latencies to Cloud Monitoring, which needs no
+ * instrumentation in the app and cannot be broken by an app-side telemetry regression — the
+ * independent-failure-mode argument that made this platform run two metric sources in the first
+ * place. Queried through the `stackdriver` datasource with workload-identity auth (`gce`), the same
+ * way the Cloud Logging datasource already authenticates.
+ */
+export const DASHBOARD_SERVICE_HTTP = `{
+  "id": null,
+  "uid": "forge-mon-service-http",
+  "title": "Service Health (HTTP · RED)",
+  "tags": ["forge", "http"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Requests / s (by service)",
+      "description": "Every HTTP surface: the app, the data plane, the web BFF. Answers 'did my flow reach the server at all', which no other dashboard here can.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
+          "queryType": "timeSeriesList",
+          "timeSeriesList": {
+            "projectName": "PROJECT_ID",
+            "filters": ["metric.type", "=", "run.googleapis.com/request_count"],
+            "crossSeriesReducer": "REDUCE_SUM",
+            "perSeriesAligner": "ALIGN_RATE",
+            "alignmentPeriod": "60s",
+            "groupBys": ["resource.label.service_name"]
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "5xx / s (by service)",
+      "description": "Server errors only. A flat line here during a flow that LOOKED fine is the reassurance; a spike is the first place to look.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
+          "queryType": "timeSeriesList",
+          "timeSeriesList": {
+            "projectName": "PROJECT_ID",
+            "filters": ["metric.type", "=", "run.googleapis.com/request_count", "AND", "metric.label.response_code_class", "=", "5xx"],
+            "crossSeriesReducer": "REDUCE_SUM",
+            "perSeriesAligner": "ALIGN_RATE",
+            "alignmentPeriod": "60s",
+            "groupBys": ["resource.label.service_name"]
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Latency p95 (ms, by service)",
+      "description": "Cloud Run measures this at the edge, so it includes cold starts — which is what the user actually waits through.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
+          "queryType": "timeSeriesList",
+          "timeSeriesList": {
+            "projectName": "PROJECT_ID",
+            "filters": ["metric.type", "=", "run.googleapis.com/request_latencies"],
+            "crossSeriesReducer": "REDUCE_PERCENTILE_95",
+            "perSeriesAligner": "ALIGN_DELTA",
+            "alignmentPeriod": "60s",
+            "groupBys": ["resource.label.service_name"]
+          }
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Container instances (by service)",
+      "description": "Reads against max_instances, a ceiling nobody watches. A collector or app pinned at zero is why pushed telemetry silently disappears.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
+          "queryType": "timeSeriesList",
+          "timeSeriesList": {
+            "projectName": "PROJECT_ID",
+            "filters": ["metric.type", "=", "run.googleapis.com/container/instance_count"],
+            "crossSeriesReducer": "REDUCE_SUM",
+            "perSeriesAligner": "ALIGN_MEAN",
+            "alignmentPeriod": "60s",
+            "groupBys": ["resource.label.service_name"]
+          }
+        }
+      ]
+    }
+  ]
+}`;
+
 /** Dashboard 5: MCP Tool Drilldown — pick ONE tool, see all its metrics + logs. */
 export const DASHBOARD_TOOL_DRILLDOWN = `{
   "id": null,

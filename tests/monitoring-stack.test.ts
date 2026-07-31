@@ -54,7 +54,7 @@ describe('generateMonitoringCompose — defaults', () => {
     // exactly 4-space indent = a top-level config's own content key (deeper = embedded in a payload)
     const inline = lines.filter((l) => /^    content: \|$/.test(l));
     expect(inline.length).toBe(configNames.length);
-    expect(configNames.length).toBe(14); // 15 with appDb (user-experience dashboard)
+    expect(configNames.length).toBe(15); // 16 with appDb (user-experience dashboard); +1 for the HTTP RED dashboard, 2026-07-31
     expect(compose).not.toMatch(/^\s+file:/m);
     // the ONLY host bind is promtail's read-only docker socket
     const binds = compose.split('\n').filter((l) => l.includes(':/') && l.trim().startsWith('- /'));
@@ -288,7 +288,7 @@ describe('generateMonitoringCompose — appDb (User Experience dashboard)', () =
   });
 });
 
-import { DASHBOARD_BACKGROUND_PLANE } from '../src/plugins/monitoring-stack/content';
+import { DASHBOARD_BACKGROUND_PLANE, DASHBOARD_SERVICE_HTTP } from '../src/plugins/monitoring-stack/content';
 
 describe('Background Plane — a metric nobody displays does not exist (acceptance F-5/F-11)', () => {
   it('covers account-lifecycle counters, not only the sync/message ones', () => {
@@ -302,5 +302,29 @@ describe('Background Plane — a metric nobody displays does not exist (acceptan
     for (const m of ['gcal_sync', 'message_staged', 'message_sent', 'approval', 'reminders_fired', 'routines_ran']) {
       expect(dash).toContain(m);
     }
+  });
+});
+
+describe('Service Health (HTTP) dashboard — closes the non-MCP blind spot (acceptance F-8)', () => {
+  it('queries Cloud Monitoring for the RED metrics every HTTP surface emits', () => {
+    // Before this, Grafana had NO panel for any HTTP surface: its datasources were Managed
+    // Prometheus (MCP tool metrics) and Cloud Logging. Signup, verification, login, trial start and
+    // every admin operation were invisible in Grafana BY CONSTRUCTION, so "is it visible in both
+    // UIs?" could only ever answer "console yes, Grafana no" for most of the product's traffic.
+    const d = DASHBOARD_SERVICE_HTTP;
+    expect(d).toContain('run.googleapis.com/request_count');
+    expect(d).toContain('run.googleapis.com/request_latencies');
+    expect(d).toContain('"5xx"');
+    expect(d).toContain('stackdriver');
+  });
+
+  it('substitutes the CLOUD project, not the compose project', () => {
+    // These are different things. Pointing the dashboard at the compose project name would query a
+    // GCP project that does not exist and render four empty panels — indistinguishable, on screen,
+    // from a service receiving no traffic at all.
+    const out = generateMonitoringCompose({ projectName: 'dorinda-grafana', gcpProject: 'dorinda-prod' });
+    expect(out).toContain('"projectName": "dorinda-prod"');
+    // the compose project name must not leak into the dashboard's GCP project field
+    expect(out).not.toContain('"projectName": "dorinda-grafana"');
   });
 });
