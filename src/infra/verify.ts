@@ -87,14 +87,34 @@ async function runOne(
       return { title: t, status: 'pass', detail: `resolves to ${addr.address}` };
     }
     case 'http': {
-      const res = await fetchVia(check.url, out(check.resolve_to_output));
-      if (res.status !== check.expect_status) {
-        return { title: t, status: 'fail', detail: `got ${res.status}, expected ${check.expect_status}` };
+      // Retry until the warm-up deadline. A revision reports Ready as soon as its port is open, but
+      // /api/health/deep also proves the database pool, the data plane and external egress — all of
+      // which take a few more seconds on a cold container. A single-shot probe therefore fails good
+      // deploys, and a gate that cries wolf is one you learn to re-run without reading.
+      // This does not weaken the gate: a genuinely broken endpoint still fails, at the deadline.
+      const deadline = Date.now() + (check.warmup_seconds ?? 60) * 1000;
+      let attempts = 0;
+      let last = '';
+      for (;;) {
+        attempts++;
+        const res = _fetchViaOverride
+          ? await _fetchViaOverride(check.url, out(check.resolve_to_output))
+          : await fetchVia(check.url, out(check.resolve_to_output));
+        if (res.status !== check.expect_status) {
+          last = `got ${res.status}, expected ${check.expect_status}`;
+        } else if (check.expect_body && !res.body.includes(check.expect_body)) {
+          last = `status ok but body lacks "${check.expect_body}"`;
+        } else {
+          // Say how long it took to come good — a deploy that needed 40s of warm-up is healthy but
+          // worth noticing, and silence would hide a creeping start-up regression.
+          const detail = attempts === 1 ? `HTTP ${res.status}` : `HTTP ${res.status} after ${attempts} attempts`;
+          return { title: t, status: 'pass', detail };
+        }
+        if (Date.now() >= deadline) {
+          return { title: t, status: 'fail', detail: `${last} (${attempts} attempts over ${check.warmup_seconds ?? 60}s)` };
+        }
+        await new Promise((r) => setTimeout(r, _fetchViaOverride ? 5 : 3000));
       }
-      if (check.expect_body && !res.body.includes(check.expect_body)) {
-        return { title: t, status: 'fail', detail: `status ok but body lacks "${check.expect_body}"` };
-      }
-      return { title: t, status: 'pass', detail: `HTTP ${res.status}` };
     }
     case 'certless_discovery': {
       // ACCEPTANCE §5f MTLS-2: discovery MUST complete certless with a 200 — a hard TLS requirement
@@ -150,6 +170,21 @@ async function runOne(
  */
 const BEHAVIOUR_KINDS = new Set(['http', 'certless_discovery', 'command']);
 const NO_OP_COMMAND = /^\s*(true|:)\s*(#.*)?$/;
+
+/**
+ * Test seams for the warm-up retry loop.
+ *
+ * The retry path is where a gate silently turns lenient, so it needs a real test — and testing it
+ * against the network would be slow, flaky, and unable to reproduce "503 then 200". These two
+ * exports exist only for that; production code never touches them.
+ */
+let _fetchViaOverride: ((url: string, ip?: string) => Promise<{ status: number; body: string }>) | null = null;
+export function __setFetchViaForTest(fn: typeof _fetchViaOverride): void {
+  _fetchViaOverride = fn;
+}
+export async function runVerifyCheckForTest(check: VerifyCheck): Promise<VerifyResult> {
+  return runOne({ config: { envs: {} } } as unknown as RepoStack, 'test', check, () => undefined);
+}
 
 export function isBehaviourCheck(check: VerifyCheck): boolean {
   if (!BEHAVIOUR_KINDS.has(check.kind)) return false;

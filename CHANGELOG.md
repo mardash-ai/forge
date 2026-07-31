@@ -9,6 +9,20 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.88.0] - 2026-07-31
+
+### Fixed
+
+- **The `http` verify check now tolerates cold-start warm-up (`warmup_seconds`, default 60).** It
+  probed exactly once, so a revision that reported Ready before its database pool, data-plane
+  connection and external egress were up failed the behaviour gate — dorinda-api's
+  `/api/health/deep` returned 503 at 19:46:40 and a clean 200 two minutes later, on the same
+  revision. The gate declared a healthy deploy broken. A gate that cries wolf is one you learn to
+  re-run without reading, which costs you the gate itself.
+  **This is tolerance, not leniency:** an endpoint that never comes good still fails, at the
+  deadline, and a check that needed several attempts says so in its detail — a creeping start-up
+  regression should be visible, not silently absorbed.
+
 ## [0.87.0] - 2026-07-31
 
 ### Fixed

@@ -44,6 +44,14 @@ const verifyCheckSchema = z.discriminatedUnion('kind', [
     expect_body: z.string().optional(),
     /** For pre-DNS checks: connect to this IP (or the named tf output) while sending the URL's Host/SNI. */
     resolve_to_output: z.string().optional(),
+    /**
+     * Seconds to keep retrying before calling it a failure. Cold-start tolerance, NOT leniency: a
+     * deep-health endpoint that touches the database, the data plane and external egress legitimately
+     * 503s for a few seconds after a revision reports Ready, and a single-shot probe turns that into
+     * a red deploy of a perfectly good build. An endpoint that is genuinely broken still fails —
+     * just after the deadline instead of before the app has opened its pool.
+     */
+    warmup_seconds: z.number().int().min(0).max(300).default(60),
   }),
   z.object({
     /** The mcp.dorinda.ai contract: discovery must be reachable WITHOUT a client cert (ACCEPTANCE §5f MTLS-2). */

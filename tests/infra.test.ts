@@ -331,3 +331,32 @@ describe('mixed module pins — the guard for the axis nothing else watches', ()
     expect(refs).toContain('v0.79.17');
   });
 });
+
+describe('verify http — warm-up tolerance (2026-07-31 acceptance finding F-7)', () => {
+  it('accepts an endpoint that is 503 on the first probe and 200 shortly after', async () => {
+    // The exact live failure: dorinda-api's revision went Ready, the gate probed /api/health/deep
+    // immediately, got 503 while the pool and data-plane connection were still warming, and failed
+    // a deploy that was healthy two minutes later. A gate that cries wolf gets re-run unread.
+    const { __setFetchViaForTest, runVerifyCheckForTest } = await import('../src/infra/verify');
+    let n = 0;
+    __setFetchViaForTest(async () => (++n < 3 ? { status: 503, body: '' } : { status: 200, body: '"ok":true' }));
+    const r = await runVerifyCheckForTest({
+      kind: 'http', url: 'https://x/api/health/deep', expect_status: 200,
+      expect_body: '"ok":true', warmup_seconds: 30,
+    });
+    expect(r.status).toBe('pass');
+    expect(r.detail).toContain('attempts');
+    __setFetchViaForTest(null);
+  });
+
+  it('still FAILS an endpoint that never comes good — tolerance is not leniency', async () => {
+    const { __setFetchViaForTest, runVerifyCheckForTest } = await import('../src/infra/verify');
+    __setFetchViaForTest(async () => ({ status: 500, body: '' }));
+    const r = await runVerifyCheckForTest({
+      kind: 'http', url: 'https://x/api/health/deep', expect_status: 200, warmup_seconds: 0,
+    });
+    expect(r.status).toBe('fail');
+    expect(r.detail).toContain('got 500');
+    __setFetchViaForTest(null);
+  });
+});
