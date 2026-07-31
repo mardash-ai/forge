@@ -1,88 +1,141 @@
 /*
  * forge console — design tokens.
  *
- * The bar: this is a tool used every day, and it should not look like the open-source portals it
- * replaces. Three rules do most of that work, and they are cheap:
+ * DIRECTION: the instrument, not the dashboard.
  *
- *  1. COLOUR IS INFORMATION, NEVER DECORATION. A screen where nothing is wrong is nearly
- *     monochrome — ink on navy. The only saturated pixels are status, series identity, and the
- *     current selection. Grafana and Backstage paint chrome in brand colour; we do not.
- *  2. ONE TYPEFACE, THREE WEIGHTS, ONE ACCENT. No 700 anywhere — "bold soup" is a large part of
- *     why those tools read as unfinished.
- *  3. EVERYTHING ON A 4px GRID, ALL DIGITS TABULAR. Timestamps, digests, durations and costs align
- *     down every column. This is most of the "expensive" feeling and costs one CSS property.
+ * This is a measuring instrument for a territory nobody can see directly. Its whole claim is that
+ * it tells you what it does NOT know, so the visual system is built around that claim rather than
+ * decorated over it. Four rules do the work:
+ *
+ *  1. HUE IS FACT. Saturated colour appears ONLY where it carries an observation — a status, a
+ *     chart series. The furniture — rail, cards, buttons, links, headings — is achromatic. A screen
+ *     with nothing wrong is genuinely monochrome, so the first coloured pixel of the morning is the
+ *     thing that is wrong. The previous palette claimed this rule and broke it: the brand blue and
+ *     the `info` status were the same value, so chrome and fact were indistinguishable.
+ *
+ *  2. THE EMBER IS IDENTITY, NEVER STATUS. One warm gradient, drawn from the colour a smith reads
+ *     temperature by. It is allowed in exactly three places: the logo, the ≤3px filament marking
+ *     what is live or selected, and the focus ring. It never fills a labelled chip, so it can never
+ *     be misread as a severity. Selection is carried by LIGHT (luminance + filament), not by a brand
+ *     hue — which is what keeps this from being another near-black-plus-one-accent theme.
+ *
+ *  3. THE UNKNOWN IS DRAWN. `--unknown` is a first-class status tone with its own texture: a 45°
+ *     hatch, the notation an engineering drawing uses for a region that was not surveyed. Absence
+ *     of data gets marks on the page, because a blank cell reads as a rendering failure and a zero
+ *     reads as a quiet system. Both lies are the reason this product exists.
+ *
+ *  4. EVERYTHING ON A 4px GRID, ALL DIGITS TABULAR. Timestamps, digests, durations and costs align
+ *     down every column. Most of the "expensive" feeling for one CSS property.
  *
  * Dark-first on purpose: this is opened at 6am when something is broken.
  */
 
 :root {
-  /* ── Surfaces: an elevation LADDER, not shadows. In dark UI shadows barely read; layered
-     surfaces plus a hairline plus an inner top highlight is what actually reads as depth. ── */
-  --bg-canvas: #090e18;
-  --bg-surface: #0f1626;
-  --bg-raised: #141d30;
-  --bg-overlay: #1a2439;
-  --bg-inset: #0b1220;
-  --bg-selected: #15234a;
+  /* ── Surfaces: machined graphite. An elevation LADDER, not shadows — in dark UI a drop shadow
+     reads as nothing, while a layered surface + hairline + inner top highlight reads as depth.
+     Deliberately NOT the blue-black (#0f172a slate) every ops tool ships: this is a cool neutral
+     with a trace of green, the colour of unheated forged steel. ── */
+  --bg-canvas: #0f1211;
+  --bg-surface: #161a19;
+  --bg-raised: #1d2220;
+  --bg-overlay: #262b29;
+  --bg-inset: #0a0d0c;
+  --bg-selected: #212927;
 
-  /* ── Ink. There is deliberately no fifth, dimmer grey: ops tools go grey-on-grey because they
-     keep inventing one. The floor here is 4.5:1 for anything containing a word. ── */
-  --text-primary: #e6edf7;   /* 15.3:1 */
-  --text-secondary: #b4c0d4; /*  9.8:1 */
-  --text-muted: #8b98ad;     /*  6.2:1 */
-  --text-faint: #7a88a0;     /*  5.0:1 — still legal for real text */
+  /* ── Ink. No fifth dimmer grey: ops tools go grey-on-grey because they keep inventing one. The
+     floor is 4.5:1 for anything containing a word, measured against --bg-canvas. ── */
+  --text-primary: #e8eae7;   /* 15.6:1 */
+  --text-secondary: #b6bcb8; /*  9.8:1 */
+  --text-muted: #8b928e;     /*  5.9:1 */
+  --text-faint: #78807c;     /*  4.6:1 — still legal for real text */
 
-  --line: #1e2a45;
-  --line-strong: #2b3a5c;
-  --line-faint: #16203a;
+  --line: #262c2a;
+  --line-strong: #363e3b;
+  --line-faint: #1c2120;
 
-  --accent: #4c8dff;
-  --accent-hover: #6ba1ff;
-  /* Text ON the accent fill is DARK: white on this blue is only 3.2:1. */
-  --accent-ink: #08111f;
-  --accent-wash: #101f3d;
-  --focus: #7db0ff;
+  /* ── The ember. Identity only: logo, live/selected filament, focus ring. Never a status fill.
+     These are the colours steel actually passes through on the way to forging heat. ── */
+  --ember-core: #ff8a3c;
+  --ember-glow: #ffc48a;
+  --ember-deep: #c2410c;
+  --ember-wash: #2a1a10;
+  --filament: linear-gradient(180deg, var(--ember-glow), var(--ember-core) 55%, var(--ember-deep));
+  --focus: #ffa96b;
 
-  /* ── Status. Always shipped as dot-shape + colour + word, never colour alone. ── */
-  --ok: #2fbf71;        --ok-text: #4ade80;      --ok-wash: #0e2a1e;
-  --warn: #f0b429;      --warn-text: #f5c451;    --warn-wash: #2e240c;
-  --crit: #ef5350;      --crit-text: #ff7b78;    --crit-wash: #2e1416;
-  --info: #4c8dff;      --info-text: #8ab4ff;    --info-wash: #101f3d;
-  --neutral: #8b98ad;   --neutral-text: #b4c0d4; --neutral-wash: #151d2e;
+  /* Interactive text carries NO hue — brighter ink plus an underline. In a dense table a field of
+     blue links competes with the status column for the eye, which is exactly backwards. */
+  --link: #e8eae7;
+  --link-rule: #4a534f;
+
+  /* ── Status. Always shipped as shape + colour + word, never colour alone. `crit` is pulled
+     cool/rose and `warn` pushed yellow so neither can be confused with the ember. ── */
+  --ok: #3dd68c;        --ok-text: #6ee7ae;      --ok-wash: #0d2a1e;
+  --warn: #e9b949;      --warn-text: #f5ce6d;    --warn-wash: #2a2109;
+  --crit: #f2555a;      --crit-text: #ff8a8d;    --crit-wash: #2e1215;
+  --info: #5aa9f0;      --info-text: #93c6f7;    --info-wash: #0e2133;
+  --neutral: #8b928e;   --neutral-text: #b6bcb8; --neutral-wash: #1c2120;
+
+  /* ── UNKNOWN: the signature tone. Not neutral — "nothing notable" and "we cannot see this" are
+     different statements, and collapsing them is the failure this console exists to prevent.
+     Violet-grey appears nowhere else in the system, so the colour alone is unambiguous, and the
+     hatch carries the same meaning with no colour at all. ── */
+  --unknown: #9a8fb8;
+  --unknown-text: #b5accb;
+  --unknown-wash: #1a1822;
+  --unknown-line: #3a3450;
 
   /* ── Chart series. Fixed slots assigned by entity identity so a service keeps its colour across
      filters — never cycled by rank. Slot 4 is a dark gold rather than a bright amber precisely so
      it cannot be mistaken for status-warn. ── */
-  --s1: #4c8dff; --s2: #e06d00; --s3: #cb3586; --s4: #bb8900;
-  --s5: #06a4ba; --s6: #f4514f; --s7: #9b72ff; --s8: #01ae61;
+  --s1: #5aa9f0; --s2: #e8833a; --s3: #d95c9a; --s4: #b9a13e;
+  --s5: #3fb6c4; --s6: #8b7be8; --s7: #5fbf6a; --s8: #7e93b8;
 
-  /* ── Type ── */
-  --font: ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  /* ── Type. Two faces, and the split MEANS something: prose a human wrote is set in the grotesque,
+     every machine-observed identifier is set in the mono. You can see which is which across a table
+     without reading a badge.
+
+     Archivo is a signage grotesque — American gothic lineage, large x-height, open apertures, holds
+     up at 13px in a dense table. IBM Plex Mono's engineered slab terminals read as instrument rather
+     than code-editor, and its 0/O and 1/l/I are unmistakable, which matters when the text is a
+     digest you are comparing by eye at 6am.
+
+     Both are BUNDLED and served same-origin. An ops console that needs fonts.googleapis.com to
+     render fails at exactly the moment the network is the thing that is broken. ── */
+  --font: 'Archivo Variable', ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Type scale — six roles, and nothing outside them. */
+  --t-display: 26px;   --lh-display: 30px;
+  --t-title: 15px;     --lh-title: 20px;
+  --t-body: 13px;      --lh-body: 20px;
+  --t-data: 12.5px;    --lh-data: 18px;
+  --t-micro: 10.5px;   --lh-micro: 14px;
+  --t-metric: 30px;    --lh-metric: 34px;
 
   /* ── Space: 4px base ── */
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
   --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px;
 
-  --r-sm: 4px; --r-md: 6px; --r-lg: 10px; --r-xl: 14px;
+  --r-sm: 3px; --r-md: 5px; --r-lg: 8px; --r-xl: 12px;
 
-  --shadow-pop: 0 8px 24px -8px rgba(0, 0, 0, 0.7), 0 2px 6px -2px rgba(0, 0, 0, 0.5);
+  --shadow-pop: 0 8px 24px -8px rgba(0, 0, 0, 0.8), 0 2px 6px -2px rgba(0, 0, 0, 0.6);
+  --inner-lip: inset 0 1px 0 rgba(255, 255, 255, 0.045);
 
-  /* ── Density: exactly four values change. FONT SIZE NEVER DOES — scaling type on density is
-     what makes an app look like two different apps. ── */
+  /* ── Density: exactly four values change. FONT SIZE NEVER DOES — scaling type on density is what
+     makes an app look like two different apps. ── */
   --row-h: 36px;
   --cell-py: 8px;
-  --control-h: 32px;
+  --control-h: 30px;
   --section-gap: 24px;
 
-  --rail-w: 232px;
+  --rail-w: 236px;
   --topbar-h: 48px;
 }
 
 :root[data-density='compact'] {
   --row-h: 28px;
   --cell-py: 4px;
-  --control-h: 28px;
+  --control-h: 26px;
   --section-gap: 16px;
 }
 
@@ -94,17 +147,35 @@ html, body, #root { height: 100%; }
 body {
   background: var(--bg-canvas);
   color: var(--text-primary);
-  font: 400 13px/20px var(--font);
+  font: 400 var(--t-body)/var(--lh-body) var(--font);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-synthesis-weight: none;
 }
 
 /* Every number in a table, tile, axis tick or timestamp. */
 table, .num, .mono, time, .metric { font-variant-numeric: tabular-nums; }
 
-.mono { font-family: var(--mono); font-size: 12.5px; }
+.mono { font-family: var(--mono); font-size: var(--t-data); letter-spacing: -0.01em; }
 
-a { color: var(--accent); text-decoration: none; }
-a:hover { color: var(--accent-hover); }
+/* The micro label — eyebrows, column heads, tile labels. One definition, used everywhere. */
+.micro {
+  font-size: var(--t-micro);
+  line-height: var(--lh-micro);
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+a {
+  color: var(--link);
+  text-decoration: underline;
+  text-decoration-color: var(--link-rule);
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+a:hover { text-decoration-color: var(--ember-core); }
 
 :focus-visible {
   outline: 2px solid var(--focus);
@@ -113,10 +184,57 @@ a:hover { color: var(--accent-hover); }
 }
 
 button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+input, select { font: inherit; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #454f4b; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ── THE HATCH ─────────────────────────────────────────────────────────────────────────────────
+   The signature. 45° ruling is how an engineering drawing marks a region that was not surveyed and
+   how a chart marks a gap in coverage. Here it means exactly one thing: THIS IS NOT KNOWN.
+
+   It is never decoration. It appears only where a value is genuinely unavailable, so it stays
+   readable as a statement. It also survives greyscale, forced-colors and colour-blindness, because
+   the meaning is carried by texture rather than by hue. */
+.hatch {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--unknown-line) 0 1px,
+    transparent 1px 6px
+  );
+}
+
+/* Denser variant for small inline cells, so the texture still reads below ~20px tall. */
+.hatch-tight {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--unknown-line) 0 1px,
+    transparent 1px 4px
+  );
+}
+
+/* A value that is not known, inline. Reads as considered, not as a missing render. */
+.unknown-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 7px 1px 5px;
+  border: 1px dashed var(--unknown-line);
+  border-radius: var(--r-sm);
+  color: var(--unknown-text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pulse { animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 0.72; }
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
@@ -126,25 +244,59 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
    The developer-portal pages arrive as semantic HTML with NO stylesheet of their own (see
    src/console/docs.ts — we take the <main>, not the page). Styling them here rather than importing
    the portal's CSS means the docs look like the console instead of a foreign page embedded in it,
-   and the portal cannot restyle this app by editing its own <head>. */
-.doc h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin: 20px 0 8px; }
-.doc h2 { font-size: 16px; font-weight: 600; margin: 28px 0 10px; padding-top: 14px; border-top: 1px solid var(--line-faint); }
-.doc h3 { font-size: 13.5px; font-weight: 600; margin: 0 0 6px; }
-.doc p { color: var(--text-secondary); margin: 8px 0; max-width: 78ch; }
+   and the portal cannot restyle this app by editing its own <head>.
+
+   The rule that matters: docs are PROSE, so they get the grotesque, a real measure (72ch) and a
+   vertical rhythm — not the dense table treatment the operating screens use. */
+.doc { font-size: 13.5px; line-height: 21px; }
+
+.doc h1 {
+  font-size: 24px; line-height: 28px; font-weight: 600; letter-spacing: -0.02em;
+  margin: 4px 0 10px; color: var(--text-primary);
+}
+.doc h2 {
+  font-size: 16px; line-height: 22px; font-weight: 600; letter-spacing: -0.01em;
+  margin: 30px 0 10px; padding-top: 16px; border-top: 1px solid var(--line);
+  color: var(--text-primary);
+}
+/* No ember tick here, deliberately. An h2 marker on every heading would make the ember common, and
+   the ember only means something while it stays rare: live, selected, focused. Docs get rhythm from
+   the rule and the space instead. */
+.doc h3 { font-size: 13.5px; font-weight: 600; margin: 18px 0 6px; color: var(--text-primary); }
+.doc p { color: var(--text-secondary); margin: 9px 0; max-width: 72ch; }
 .doc p.sub { color: var(--text-muted); }
-.doc ul, .doc ol { color: var(--text-secondary); margin: 8px 0 8px 20px; }
-.doc li { margin: 4px 0; }
-.doc code { font-family: var(--mono); font-size: 12px; background: var(--bg-inset); padding: 1px 5px; border-radius: var(--r-sm); color: var(--text-primary); }
-.doc pre { background: var(--bg-inset); border: 1px solid var(--line); border-radius: var(--r-md); padding: 12px 14px; overflow-x: auto; margin: 12px 0; }
-.doc pre code { background: none; padding: 0; }
-.doc table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
-.doc th { text-align: left; padding: 8px 10px; color: var(--text-muted); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; border-bottom: 1px solid var(--line); }
+.doc ul, .doc ol { color: var(--text-secondary); margin: 9px 0 9px 20px; max-width: 72ch; }
+.doc li { margin: 5px 0; }
+.doc li::marker { color: var(--text-faint); }
+.doc strong { color: var(--text-primary); font-weight: 600; }
+.doc code {
+  font-family: var(--mono); font-size: 12px; background: var(--bg-inset);
+  padding: 1.5px 5px; border-radius: var(--r-sm); color: var(--text-primary);
+  border: 1px solid var(--line-faint);
+}
+.doc pre {
+  background: var(--bg-inset); border: 1px solid var(--line); border-radius: var(--r-md);
+  padding: 13px 15px; overflow-x: auto; margin: 13px 0; line-height: 19px;
+}
+.doc pre code { background: none; padding: 0; border: none; font-size: 12px; }
+.doc table { width: 100%; border-collapse: collapse; margin: 13px 0; font-size: 13px; }
+.doc th {
+  text-align: left; padding: 8px 10px; color: var(--text-muted);
+  font-size: var(--t-micro); font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase;
+  border-bottom: 1px solid var(--line);
+}
 .doc td { padding: 7px 10px; border-bottom: 1px solid var(--line-faint); color: var(--text-secondary); vertical-align: top; }
+.doc tr:last-child td { border-bottom: none; }
 .doc img, .doc svg { max-width: 100%; height: auto; }
 .doc .svgwrap { background: var(--bg-inset); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 14px; margin: 14px 0; overflow-x: auto; }
-.doc .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 12px 0; }
-.doc .card { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 14px 16px; }
+.doc .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 13px 0; }
+.doc .card { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 14px 16px; box-shadow: var(--inner-lip); }
 .doc .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin: 14px 0; }
-.doc .kpi { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 12px 14px; }
-.doc .kpi .n { font-size: 24px; font-weight: 600; line-height: 30px; }
-.doc .kpi .l { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.doc .kpi { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 12px 14px; box-shadow: var(--inner-lip); }
+.doc .kpi .n { font-size: 24px; font-weight: 500; line-height: 30px; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.doc .kpi .l { font-size: var(--t-micro); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.09em; font-weight: 600; }
+.doc blockquote {
+  margin: 13px 0; padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--line-strong); color: var(--text-muted);
+}
+.doc hr { border: none; border-top: 1px solid var(--line-faint); margin: 22px 0; }

@@ -9,6 +9,41 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.86.0] - 2026-07-31
+
+### Changed
+
+- **forge-console redesigned around one rule: hue is fact.** Saturated colour now appears only where
+  it carries an observation — a status or a chart series — and all chrome is achromatic. The previous
+  build claimed this in its own comments and broke it: the brand blue and the `info` status were the
+  same value, so furniture and fact were indistinguishable. A healthy screen is now genuinely
+  monochrome, which makes the first coloured pixel of the morning the thing that is wrong.
+- **The unknown is drawn.** A 45° hatch — the notation an engineering drawing uses for ground that was
+  not surveyed — is a first-class status tone beside ok/warn/crit/info/neutral. It marks a metric with
+  no ceiling to measure against, a gap in a series, and a source that did not answer, so "we cannot
+  see this" reads as deliberate rather than as a rendering failure.
+- **Type carries provenance**: a signage grotesque for anything a human wrote, mono for every
+  machine-side identifier, so you can tell them apart across a table without reading a badge. Both
+  faces are bundled and served same-origin — an ops console that needs a font CDN to render fails
+  exactly when the network is the broken thing.
+- **An authored logo and icon set.** The mark is a billet split by a diagonal: heat above for what the
+  console observed, hatch below for what it cannot see. 25 inline SVG icons, each drawing the question
+  its screen answers — no icon-library dependency and no runtime fetch.
+
+### Fixed
+
+- **`Spark` interpolated null samples to zero** (`p.v ?? 0`) — the flat-line-over-a-dead-pipeline sin,
+  present in the codebase of the product built to prevent it. The replacement breaks the stroke at a
+  hole and counts it in a footnote.
+- **Overview reported "Recent runs: 0" while the CI source was unreachable** — a zero standing in for
+  an unknown. It now says no CI source answered.
+- **The Docs screen rendered "not configured" as a red critical error**; only `index.error` was
+  checked, never `doc.error`.
+- Surfaced payload the API already returned and the UI silently dropped: correlation `conflicts` (two
+  services claiming one resource), `mixed_pins`, finding `rule`/`subject`, and each binding's
+  `evidence.rule` — which makes the documented promise that every binding shows the rule that produced
+  it literally true.
+
 ## [0.85.1] - 2026-07-31
 
 ### Fixed
