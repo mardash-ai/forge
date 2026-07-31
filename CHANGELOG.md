@@ -9,6 +9,24 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.80.1] - 2026-07-31
+
+### Fixed
+
+Both found by running the console against the live estate rather than by reading the code — the
+same class of over-claiming the console exists to eliminate, committed by the console itself.
+
+- **An empty metric no longer diagnoses the whole pipeline.** `never_ingested` reported "the metrics
+  pipeline may be down" whenever ONE metric had no samples in 7 days. `mcp_tool_calls_total` being
+  empty means nobody called a tool — a perfectly healthy Sunday. The claim is now scoped to the
+  metric; pipeline health is a separate question answered across all metrics by the
+  `metrics-pipeline-dead` finding.
+- **Service confidence reflects IDENTITY bindings, not the weakest peripheral guess.** It was
+  `min()` across every binding, so a 0.6 name-prefix secret match reported `dorinda-api` at 0.6
+  while its runtime, backend and host were all certain. Every service read as uncertain, which
+  teaches you to ignore the number. Confidence is now the weakest of runtime/repo/backend/host/
+  image_repo; peripheral bindings still carry their own honest confidence individually.
+
 ## [0.80.0] - 2026-07-31
 
 ### Added

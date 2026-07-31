@@ -209,9 +209,15 @@ export function buildServiceGraph(input: CorrelateInput): ServiceGraph {
     }
   }
 
-  // Confidence of a service is its weakest link — the honest summary.
+  // Confidence describes how sure we are this service IS this service — so it is the weakest of
+  // its IDENTITY bindings (what runs, where the code is, what routes to it). A peripheral guess,
+  // like a secret matched on a name prefix, carries its own confidence on the binding and must not
+  // drag the service down: reporting dorinda-api at 0.6 when its runtime, backend and host are all
+  // certain would make every service look uncertain and teach you to ignore the number.
+  const IDENTITY: ReadonlySet<BindingKind> = new Set<BindingKind>(['runtime', 'repo', 'backend', 'host', 'image_repo']);
   for (const s of services.values()) {
-    s.confidence = s.bindings.reduce((m, b) => Math.min(m, b.confidence), 1);
+    const identity = s.bindings.filter((b) => IDENTITY.has(b.kind));
+    s.confidence = (identity.length ? identity : s.bindings).reduce((m, b) => Math.min(m, b.confidence), 1);
   }
 
   const boundIds = new Set(claimed.keys());

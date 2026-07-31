@@ -167,9 +167,13 @@ export function createManagedPrometheusProvider(opts: {
         signal,
       });
       const any = (body.data?.result ?? []).length > 0;
+      // Scope the claim to THIS metric. "No data for mcp_tool_calls_total" means nobody called a
+      // tool, which is a perfectly healthy Sunday — it does NOT mean the pipeline is down, and
+      // saying so would be the same over-claiming this console exists to stop. Pipeline health is
+      // a separate question, answered by the metrics-pipeline-dead finding across ALL metrics.
       return any
-        ? { reason: 'no_data_in_window', detail: 'no samples in this window, but this metric has data in the last 7 days' }
-        : { reason: 'never_ingested', detail: 'no samples in 7 days — the metrics pipeline may be down' };
+        ? { reason: 'no_data_in_window', detail: 'no samples in this window; this metric has data within the last 7 days' }
+        : { reason: 'never_ingested', detail: 'this metric has no samples in the last 7 days' };
     } catch {
       return { reason: 'no_data_in_window', detail: 'no samples in this window' };
     }

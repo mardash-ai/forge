@@ -91,6 +91,25 @@ describe('correlation — discovery-first, never a declared catalogue', () => {
     expect(g.services.find((s) => s.key === 'dorinda')!.bindings.some((b) => b.kind === 'secret')).toBe(false);
   });
 
+  it('a peripheral secret guess does not drag the service confidence down', () => {
+    // dorinda-api's runtime/backend/host are all certain; a 0.6 name-prefix secret match must not
+    // make the whole service read as uncertain, or the number stops meaning anything.
+    const g = buildServiceGraph({
+      resources: [
+        r({ name: 'dorinda-api', kind: 'compute.service' }),
+        r({ name: 'dorinda-api-backend', kind: 'net.backend', scope: 'global' }),
+        r({ name: 'dorinda-api-some-secret', kind: 'secret', scope: 'global' }),
+      ],
+      pipelines: [],
+      repos: [],
+      hostBackends: {},
+    });
+    const svc = g.services.find((s) => s.key === 'dorinda-api')!;
+    expect(svc.confidence).toBe(1);
+    // …but the weak binding still reports its OWN confidence honestly.
+    expect(svc.bindings.find((b) => b.kind === 'secret')!.confidence).toBe(0.6);
+  });
+
   it('reports what it could not place instead of hiding it', () => {
     const g = buildServiceGraph({
       resources: [
