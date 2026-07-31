@@ -9,6 +9,14 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.81.1] - 2026-07-31
+
+### Fixed
+
+- **The no-ingestion policy now applies.** Cloud Monitoring rejects an absence condition without a
+  `resource.type` restriction; OTLP metrics arriving through Managed Prometheus land on
+  `prometheus_target`, not the metric type alone.
+
 ## [0.81.0] - 2026-07-31
 
 ### Added

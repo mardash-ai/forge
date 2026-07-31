@@ -92,7 +92,9 @@ resource "google_monitoring_alert_policy" "no_metric_ingestion" {
   conditions {
     display_name = "no samples in 30m"
     condition_absent {
-      filter   = "metric.type=\"prometheus.googleapis.com/mcp_registration_health_ratio/gauge\""
+      # The resource.type restriction is REQUIRED by the API for an absence condition, and for
+      # OTLP metrics arriving via Managed Prometheus the monitored resource is `prometheus_target`.
+      filter   = "metric.type=\"prometheus.googleapis.com/mcp_registration_health_ratio/gauge\" AND resource.type=\"prometheus_target\""
       duration = "1800s"
       aggregations {
         alignment_period   = "300s"
