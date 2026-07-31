@@ -91,18 +91,13 @@ describe('SetupObservability capability', () => {
     expect(JSON.stringify(ev)).not.toContain(INPUT.secret_key);
   });
 
-  it('marks status unreachable when probe fails (probe is NOT skipped, no server running)', async () => {
-    const result = await executeCapability(
-      'setup-observability',
-      {
-        ...INPUT,
-        endpoint: 'http://127.0.0.1:19999/api/public/otel', // nothing listening here
-        skip_probe: false,
-      },
-      SYSTEM_ACTOR,
-    );
-    const obs = result.resource as ObservabilityStack;
-    expect(obs.status).toBe('unreachable');
+  it('reports configured without probing — the probe could no longer return true', async () => {
+    // The reachability probe spoke Langfuse's response-code convention. Once tracing was decoupled
+    // from Langfuse credentials it could not succeed under any circumstance, and a check that
+    // always says "unreachable" trains you to ignore it. Telemetry health is answered instead by
+    // /api/health/deep, which probes the collector actually in use.
+    const r = await executeCapability('setup-observability', INPUT, SYSTEM_ACTOR);
+    expect((r.resource as ObservabilityStack).status).toBe('configured');
   });
 
   it('rejects missing public_key', async () => {
@@ -132,17 +127,19 @@ describe('otel-langfuse plugin: initOtelLangfuse', () => {
     delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   });
 
-  it('returns false and disables tracing when keys are absent', () => {
-    const ok = initOtelLangfuse({ publicKey: '', secretKey: '' });
-    expect(ok).toBe(false);
+  it('disables tracing when NO endpoint is configured (nowhere to send)', () => {
+    // The gate is now an ENDPOINT, not a vendor credential. Absent an endpoint there is nothing to
+    // export to, so tracing is correctly off — that is the only condition that should disable it.
+    delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    delete process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+    expect(initOtelLangfuse()).toBe(false);
     expect(isEnabled()).toBe(false);
   });
 
   it('returns true and enables tracing when keys are provided', () => {
     const ok = initOtelLangfuse({
       endpoint: 'http://localhost:3000/api/public/otel',
-      publicKey: 'pk-test',
-      secretKey: 'sk-test',
+      tracesEndpoint: 'https://collector.example/v1/traces',
     });
     expect(ok).toBe(true);
     expect(isEnabled()).toBe(true);
@@ -160,7 +157,7 @@ describe('otel-langfuse plugin: initOtelLangfuse', () => {
   // Restore after all init tests
   afterEach(() => {
     // disable again so other tests aren't affected by a stray enabled state
-    initOtelLangfuse({ publicKey: '', secretKey: '' });
+    initOtelLangfuse({ tracesEndpoint: 'https://collector.example/v1/traces', });
     if (prevPub !== undefined) process.env.LANGFUSE_PUBLIC_KEY = prevPub;
     if (prevSec !== undefined) process.env.LANGFUSE_SECRET_KEY = prevSec;
     if (prevEp  !== undefined) process.env.OTEL_EXPORTER_OTLP_ENDPOINT = prevEp;
@@ -189,15 +186,15 @@ describe('otel-langfuse plugin: SpanContext + startSpan', () => {
 
   it('end() does not throw whether tracing is enabled or disabled', () => {
     // disabled path
-    initOtelLangfuse({ publicKey: '', secretKey: '' });
+    initOtelLangfuse({ tracesEndpoint: 'https://collector.example/v1/traces', });
     expect(() => startSpan('noop.op').end('ok')).not.toThrow();
 
     // enabled path (no real network — exportSpan fires-and-forgets)
-    initOtelLangfuse({ endpoint: 'http://127.0.0.1:19998/api/public/otel', publicKey: 'pk', secretKey: 'sk' });
+    initOtelLangfuse({ endpoint: 'http://127.0.0.1:19998/api/public/otel', tracesEndpoint: 'https://collector.example/v1/traces', });
     expect(() => startSpan('live.op').end('ok')).not.toThrow();
 
     // clean up
-    initOtelLangfuse({ publicKey: '', secretKey: '' });
+    initOtelLangfuse({ tracesEndpoint: 'https://collector.example/v1/traces', });
   });
 });
 
@@ -255,7 +252,7 @@ describe('otel-langfuse plugin: withSpan', () => {
   it('end() is called automatically even on error (no secondary throw from tracing)', async () => {
     // The end() call in withSpan must not produce a secondary throw when tracing
     // is disabled.
-    initOtelLangfuse({ publicKey: '', secretKey: '' });
+    initOtelLangfuse({ tracesEndpoint: 'https://collector.example/v1/traces', });
     let caught: Error | undefined;
     try {
       await withSpan('auto-end.op', {}, async () => { throw new Error('expected'); });
@@ -346,14 +343,13 @@ describe('otel-langfuse plugin: RED metric attribute keys', () => {
     }) as typeof fetch;
     initOtelLangfuse({
       endpoint: 'http://intercepted:3000/api/public/otel',
-      publicKey: 'pk-test',
-      secretKey: 'sk-test',
+      tracesEndpoint: 'https://collector.example/v1/traces',
     });
   });
 
   afterEach(() => {
     globalThis.fetch = realFetch;
-    initOtelLangfuse({ publicKey: '', secretKey: '' });
+    initOtelLangfuse({ tracesEndpoint: 'https://collector.example/v1/traces', });
   });
 
   function attrKeys(body: string): Set<string> {
@@ -409,16 +405,19 @@ describe('otel-langfuse plugin: RED metric attribute keys', () => {
 // with Langfuse credentials. These tests exist so that coupling can never come back.
 describe('metrics are independent of Langfuse credentials — 0.79.25', () => {
   const KEYS = ['OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT',
-                'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY'];
+                'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS'];
   const saved: Record<string, string | undefined> = {};
   beforeEach(() => { KEYS.forEach((k) => { saved[k] = process.env[k]; delete process.env[k]; }); });
   afterEach(() => { KEYS.forEach((k) => (saved[k] === undefined ? delete process.env[k] : (process.env[k] = saved[k]!))); });
 
-  it('enables METRICS with an endpoint and NO Langfuse keys (the exact production shape)', () => {
-    const tracing = initOtelLangfuse({ endpoint: 'https://otel-collector.example.run.app' });
-    expect(tracing).toBe(false);        // tracing correctly off — no keys
-    expect(isEnabled()).toBe(false);
-    expect(isMetricsEnabled()).toBe(true);  // ← metrics MUST still be on
+  it('enables BOTH tracing and metrics from an endpoint alone (the production shape)', () => {
+    // Before 0.84.0 this asserted tracing was OFF here — which was the bug, not the contract.
+    // Requiring a Langfuse key pair meant every startSpan() in the codebase became a silent no-op
+    // the day Langfuse was retired, and nothing reported it because an unexported span looks
+    // exactly like a span with nothing to say.
+    expect(initOtelLangfuse({ endpoint: 'https://otel-collector.example.run.app' })).toBe(true);
+    expect(isEnabled()).toBe(true);
+    expect(isMetricsEnabled()).toBe(true);
   });
 
   it('reads the endpoint from the environment, as Cloud Run supplies it', () => {
@@ -440,7 +439,7 @@ describe('metrics are independent of Langfuse credentials — 0.79.25', () => {
 
   it('keeps tracing and metrics both on when keys AND endpoint are present', () => {
     expect(initOtelLangfuse({
-      endpoint: 'https://collector.example', publicKey: 'pk', secretKey: 'sk',
+      endpoint: 'https://collector.example', tracesEndpoint: 'https://collector.example/v1/traces',
     })).toBe(true);
     expect(isEnabled()).toBe(true);
     expect(isMetricsEnabled()).toBe(true);
@@ -452,7 +451,7 @@ describe('metrics are independent of Langfuse credentials — 0.79.25', () => {
 // Sending `Authorization: ` on every export is at best meaningless and at worst rejected — and
 // because failures were swallowed, it would be invisible either way.
 describe('metrics export sends no empty Authorization — 0.79.26', () => {
-  const KEYS = ['OTEL_EXPORTER_OTLP_ENDPOINT', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY'];
+  const KEYS = ['OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS'];
   const saved: Record<string, string | undefined> = {};
   let calls: Array<{ url: string; headers: Record<string, string> }> = [];
   const realFetch = globalThis.fetch;
@@ -484,12 +483,12 @@ describe('metrics export sends no empty Authorization — 0.79.26', () => {
     expect(h['Authorization']).toBeUndefined();
   });
 
-  it('still sends Authorization when Langfuse keys ARE present', async () => {
+  it('sends Authorization when OTEL_EXPORTER_OTLP_HEADERS supplies one', async () => {
     const { initOtelLangfuse, recordMcpRegistrationMetric } = await import('../src/plugins/otel-langfuse/index');
-    initOtelLangfuse({ endpoint: 'https://collector.example', publicKey: 'pk', secretKey: 'sk' });
+    initOtelLangfuse({ endpoint: 'https://collector.example', headers: 'authorization=Bearer tok' });
     recordMcpRegistrationMetric({ app: 'auth-present-app', tools_count: 31 });
     await new Promise((r) => setTimeout(r, 10));
-    expect(calls[0]!.headers['Authorization']).toMatch(/^Basic /);
+    expect(calls[0]!.headers['Authorization']).toBe('Bearer tok');
   });
 
   it('counts a successful export so health can distinguish enabled from WORKING', async () => {
@@ -508,7 +507,7 @@ describe('metrics export sends no empty Authorization — 0.79.26', () => {
 // 31-tool surface emitted 31 identical gauges and left the store permanently empty while the
 // collector returned 200 to the app.
 describe('registration gauge does not duplicate itself in one batch — 0.79.27', () => {
-  const KEYS = ['OTEL_EXPORTER_OTLP_ENDPOINT', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY'];
+  const KEYS = ['OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS'];
   const saved: Record<string, string | undefined> = {};
   let posts = 0;
   const realFetch = globalThis.fetch;

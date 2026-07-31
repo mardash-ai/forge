@@ -9,6 +9,34 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.84.0] - 2026-07-31
+
+### Fixed
+
+- **The entire trace tier was dead code, and nothing said so.** `initOtelLangfuse()` enabled tracing
+  only when a Langfuse key PAIR was present. Langfuse was retired on 2026-07-28, so from that moment
+  **every `startSpan()` in the codebase became a silent no-op** — an unexported span is
+  indistinguishable from a span with nothing to report, so the failure was invisible. Spans go to
+  the OTLP collector like everything else and never needed a vendor credential. Tracing is now
+  gated on an **endpoint**, exactly as metrics already were.
+- **OTLP int64 encoding.** Counters and gauges emitted `asInt` as a JSON **number**; OTLP/JSON
+  requires a string, and the app tier was already sending strings — so one metric name arrived in
+  two encodings.
+- **`aggregationTemporality` mismatch.** This tier emitted `2` (CUMULATIVE) while its own docstring
+  said delta *and* the app tier emitted `1` (DELTA). Two temporalities under one metric name makes
+  aggregation across them meaningless, and nothing surfaces it. Both are now DELTA.
+- **Ten MCP log lines gained `trace_id`.** At the most important of them the span object was two
+  lines above; the id was in scope and unused, so the platform's core log lines could not be joined
+  to anything.
+
+### Removed
+
+- `probeEndpoint()` and its caller. It spoke Langfuse's response-code convention and, once tracing
+  stopped requiring Langfuse credentials, could not return true under any circumstance. A health
+  check that always reports "unreachable" trains you to ignore it; telemetry health is answered by
+  `/api/health/deep` against the collector actually in use.
+- The `publicKey`/`secretKey` config, replaced by generic `OTEL_EXPORTER_OTLP_HEADERS`.
+
 ## [0.83.0] - 2026-07-31
 
 ### Added

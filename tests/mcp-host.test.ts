@@ -614,10 +614,10 @@ describe('C36 — payload tracing + failure-path spans', () => {
       }
       return realFetch(url as Parameters<typeof fetch>[0], init);
     }) as typeof fetch);
-    initOtelLangfuse({ endpoint: OTLP, publicKey: 'pk-test', secretKey: 'sk-test' });
+    initOtelLangfuse({ endpoint: OTLP, tracesEndpoint: 'https://collector.example/v1/traces', });
   });
   afterEach(() => {
-    initOtelLangfuse({ publicKey: '', secretKey: '' }); // disable again so other tests are unaffected
+    initOtelLangfuse({ tracesEndpoint: 'https://collector.example/v1/traces', }); // disable again so other tests are unaffected
     vi.restoreAllMocks();
     delete process.env.FORGE_MCP_TRACE_PAYLOADS;
   });
@@ -861,11 +861,11 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
       }
       return realFetch(url as Parameters<typeof fetch>[0], init);
     }) as typeof fetch);
-    initOtelLangfuse({ endpoint: OTLP, publicKey: 'pk-test', secretKey: 'sk-test' });
+    initOtelLangfuse({ endpoint: OTLP, tracesEndpoint: 'https://collector.example/v1/traces', });
     _setMcpLogOverride((fields) => mcpLogs.push(fields));
   });
   afterEach(() => {
-    initOtelLangfuse({ publicKey: '', secretKey: '' });
+    initOtelLangfuse({ tracesEndpoint: 'https://collector.example/v1/traces', });
     _setMcpLogOverride(undefined);
     vi.restoreAllMocks();
     delete process.env.FORGE_MCP_TRACE_PAYLOADS;
@@ -1002,10 +1002,12 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
     _resetRegistrationDebounce();
     await registerTool();
 
-    type Gauge = { gauge?: { dataPoints: Array<{ asInt: number; attributes: Array<{ key: string; value: { stringValue: string } }> }> } };
+    type Gauge = { gauge?: { dataPoints: Array<{ asInt: string; attributes: Array<{ key: string; value: { stringValue: string } }> }> } };
     const gauge = metricNamed('mcp.tools.registered') as Gauge | undefined;
     expect(gauge).toBeTruthy();
-    expect(gauge!.gauge!.dataPoints[0]!.asInt).toBe(1);
+    // OTLP/JSON encodes int64 as a STRING (0.84.0). A JSON number was the bug: the app tier already
+    // sent strings, so one metric name arrived in two encodings.
+    expect(gauge!.gauge!.dataPoints[0]!.asInt).toBe('1');
     const appAttr = gauge!.gauge!.dataPoints[0]!.attributes.find((a) => a.key === 'app');
     expect(appAttr?.value.stringValue).toBe(APP);
   });
@@ -1018,7 +1020,7 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
     type Gauge = { gauge?: { dataPoints: Array<{ asInt: number }> } };
     const gauge = metricNamed('mcp.tools.registered') as Gauge | undefined;
     expect(gauge).toBeTruthy();
-    expect(gauge!.gauge!.dataPoints[0]!.asInt).toBe(0);
+    expect(gauge!.gauge!.dataPoints[0]!.asInt).toBe('0');
   });
 
   it('metrics include correct tool + app labels on the data points', async () => {
@@ -1037,7 +1039,7 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
   });
 
   it('does NOT export metrics when OTLP is disabled (no keys)', async () => {
-    initOtelLangfuse({ publicKey: '', secretKey: '' });
+    initOtelLangfuse({ tracesEndpoint: 'https://collector.example/v1/traces', });
     exportedMetrics = [];
     await registerTool();
     const bearer = await mintAccess(['notes:read']);

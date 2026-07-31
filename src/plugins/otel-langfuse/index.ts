@@ -85,10 +85,14 @@ export interface OtelLangfuseConfig {
    * in tests to separate metrics intercepts from trace intercepts.
    */
   metricsEndpoint?: string;
-  /** Langfuse project public key. Defaults to LANGFUSE_PUBLIC_KEY env var. */
-  publicKey?: string;
-  /** Langfuse project secret key. Defaults to LANGFUSE_SECRET_KEY env var. */
-  secretKey?: string;
+  /** OTLP traces endpoint. Defaults to OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, then `<endpoint>/v1/traces`. */
+  tracesEndpoint?: string;
+  /**
+   * Generic OTLP headers, "k=v,k2=v2" (OTEL_EXPORTER_OTLP_HEADERS). Only `authorization` is read.
+   * Replaces the Langfuse key pair: a collector needs no vendor credential, and requiring one is
+   * what silently killed the trace tier.
+   */
+  headers?: string;
   /** OTel `service.name` resource attribute. Default: "forge". */
   serviceName?: string;
 }
@@ -109,19 +113,24 @@ export interface OtelLangfuseConfig {
  * So: metrics need an ENDPOINT, nothing more. Never gate them on trace credentials again.
  */
 export function initOtelLangfuse(cfg: OtelLangfuseConfig = {}): boolean {
-  const ep =
-    cfg.endpoint ??
-    process.env.OTEL_EXPORTER_OTLP_ENDPOINT ??
-    'http://langfuse-web:3000/api/public/otel';
-  const pub = cfg.publicKey ?? process.env.LANGFUSE_PUBLIC_KEY ?? '';
-  const sec = cfg.secretKey ?? process.env.LANGFUSE_SECRET_KEY ?? '';
-
-  const base = ep.replace(/\/$/, '');
   _serviceName = cfg.serviceName ?? process.env.OTEL_SERVICE_NAME ?? 'forge';
 
-  // ── Metrics: an explicitly configured endpoint is the ONLY requirement ──
-  const metricsEp = cfg.metricsEndpoint ?? process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT;
+  // ── Generic OTLP auth, if the collector wants any. Most do not. ──
+  // Replaces the Langfuse Basic credential. `OTEL_EXPORTER_OTLP_HEADERS` is the standard
+  // "k=v,k2=v2" form; the collector in this estate takes unauthenticated writes, so this is
+  // normally empty and no Authorization header is sent at all.
+  const headerSpec = cfg.headers ?? process.env.OTEL_EXPORTER_OTLP_HEADERS ?? '';
+  _authHeader =
+    headerSpec
+      .split(',')
+      .map((kv) => kv.split('='))
+      .find(([k]) => (k ?? '').trim().toLowerCase() === 'authorization')?.[1]
+      ?.trim() ?? '';
+
   const explicitBase = cfg.endpoint ?? process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+
+  // ── Metrics: an endpoint is the ONLY requirement ──
+  const metricsEp = cfg.metricsEndpoint ?? process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT;
   if (metricsEp) {
     _metricsEndpoint = metricsEp.replace(/\/$/, '');
     _metricsEnabled = true;
@@ -129,26 +138,32 @@ export function initOtelLangfuse(cfg: OtelLangfuseConfig = {}): boolean {
     _metricsEndpoint = explicitBase.replace(/\/$/, '') + '/v1/metrics';
     _metricsEnabled = true;
   } else {
-    // No endpoint was configured at all — only the compose-era Langfuse default. Nothing to send to.
+    _metricsEndpoint = '';
     _metricsEnabled = false;
   }
 
-  // ── Tracing: needs the Langfuse key pair ──
-  if (!pub || !sec) {
+  // ── Traces: an endpoint is the ONLY requirement, exactly like metrics ──
+  //
+  // ⚠️ This used to require a Langfuse key PAIR. Langfuse was retired 2026-07-28, so from that
+  // moment EVERY startSpan() in this codebase became a silent no-op — the entire trace tier was
+  // dead code and nothing said so, because a span that is never exported looks identical to a span
+  // that had nothing to report. Spans go to the OTLP collector like everything else; they never
+  // needed a vendor credential.
+  const tracesEp = cfg.tracesEndpoint ?? process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+  if (tracesEp) {
+    _endpoint = tracesEp.replace(/\/$/, '');
+    _enabled = true;
+  } else if (explicitBase) {
+    _endpoint = explicitBase.replace(/\/$/, '') + '/v1/traces';
+    _enabled = true;
+  } else {
+    _endpoint = '';
     _enabled = false;
-    // Clear the credential too. Leaving a stale `_authHeader` from an earlier init means a later
-    // metrics POST still carries an Authorization the caller has explicitly stopped supplying —
-    // init must fully describe the resulting state, never partially amend it.
-    _authHeader = '';
-    return false;
   }
 
-  _endpoint = base + '/v1/traces';
-  _authHeader = 'Basic ' + Buffer.from(`${pub}:${sec}`).toString('base64');
-  _enabled = true;
-
-  return true;
+  return _enabled;
 }
+
 
 /** Returns true when the exporter has been initialised with valid keys. */
 export function isEnabled(): boolean { return _enabled; }
@@ -240,6 +255,14 @@ function exportSpan(span: OtlpSpan): void {
 }
 
 // ── OTLP Metrics export (per-tool RED + MCP registration health) ───────────
+//
+// TWO encoding rules that were wrong and are load-bearing:
+//
+//  1. int64 travels as a STRING in OTLP/JSON. It was emitted as a JSON number here while the app
+//     tier emitted a string — the same metric name arriving in two encodings.
+//  2. aggregationTemporality 1 = DELTA. This file emitted 2 (CUMULATIVE) while its own docstring
+//     said delta AND the app tier emitted delta. Two temporalities under one metric name makes
+//     any aggregation across them meaningless, and nothing surfaces the mismatch.
 // Per-call DELTA data points fired-and-forgotten to /v1/metrics. A collector
 // that doesn't accept OTLP metrics silently drops them — the fire-and-forget
 // error swallow keeps tool calls unaffected.
@@ -345,7 +368,7 @@ export function recordToolCallMetric(opts: {
     {
       name: 'mcp.tool.calls',
       description: 'MCP tool call rate (RED Rate)',
-      sum: { dataPoints: [{ attributes: callAttrs, startTimeUnixNano: t, timeUnixNano: t, asInt: 1 }], aggregationTemporality: 2, isMonotonic: true },
+      sum: { dataPoints: [{ attributes: callAttrs, startTimeUnixNano: t, timeUnixNano: t, asInt: '1' }], aggregationTemporality: 1, isMonotonic: true },
     },
     {
       name: 'mcp.tool.duration_ms',
@@ -358,7 +381,7 @@ export function recordToolCallMetric(opts: {
           bucketCounts: bucketCounts(opts.duration_ms),
           explicitBounds: DURATION_BUCKETS,
         }],
-        aggregationTemporality: 2,
+        aggregationTemporality: 1,
       },
     },
   ];
@@ -366,7 +389,7 @@ export function recordToolCallMetric(opts: {
     metrics.push({
       name: 'mcp.tool.errors',
       description: 'MCP tool call errors (RED Errors)',
-      sum: { dataPoints: [{ attributes: callAttrs, startTimeUnixNano: t, timeUnixNano: t, asInt: 1 }], aggregationTemporality: 2, isMonotonic: true },
+      sum: { dataPoints: [{ attributes: callAttrs, startTimeUnixNano: t, timeUnixNano: t, asInt: '1' }], aggregationTemporality: 1, isMonotonic: true },
     });
   }
   exportMetricsPayload(metricsEnvelope(metrics));
@@ -420,14 +443,14 @@ export function recordMcpRegistrationMetric(opts: {
     {
       name: 'mcp.tools.registered',
       description: 'Current number of registered MCP tools per app',
-      gauge: { dataPoints: [{ attributes: [toAttrStr('app', opts.app)], timeUnixNano: t, asInt: opts.tools_count }] },
+      gauge: { dataPoints: [{ attributes: [toAttrStr('app', opts.app)], timeUnixNano: t, asInt: String(opts.tools_count) }] },
     },
   ];
   if (opts.streams_count !== undefined) {
     metrics.push({
       name: 'mcp.streams.active',
       description: 'Current number of active MCP SSE streams per app',
-      gauge: { dataPoints: [{ attributes: [toAttrStr('app', opts.app)], timeUnixNano: t, asInt: opts.streams_count }] },
+      gauge: { dataPoints: [{ attributes: [toAttrStr('app', opts.app)], timeUnixNano: t, asInt: String(opts.streams_count) }] },
     });
   }
   exportMetricsPayload(metricsEnvelope(metrics));
@@ -604,28 +627,3 @@ export function parentFromTraceparent(header: string | string[] | undefined | nu
   return { traceId, spanId };
 }
 
-/**
- * Probe the configured OTLP endpoint (GET /health or a HEAD to the traces
- * endpoint) to verify Langfuse is reachable. Returns true if reachable,
- * false otherwise. Never throws.
- */
-export async function probeEndpoint(cfg?: OtelLangfuseConfig): Promise<boolean> {
-  const ep =
-    (cfg?.endpoint ?? process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? 'http://langfuse-web:3000/api/public/otel')
-      .replace(/\/$/, '');
-  const pub = cfg?.publicKey ?? process.env.LANGFUSE_PUBLIC_KEY ?? '';
-  const sec = cfg?.secretKey ?? process.env.LANGFUSE_SECRET_KEY ?? '';
-  if (!pub || !sec) return false;
-  try {
-    const res = await fetch(`${ep}/v1/traces`, {
-      method: 'HEAD',
-      headers: { 'Authorization': 'Basic ' + Buffer.from(`${pub}:${sec}`).toString('base64') },
-      signal: AbortSignal.timeout(4000),
-    });
-    // Langfuse returns 405 Method Not Allowed or 200 for HEAD — both mean the
-    // service is up and the credentials were parsed (auth failures → 401).
-    return res.status !== 401 && res.status !== 0;
-  } catch {
-    return false;
-  }
-}

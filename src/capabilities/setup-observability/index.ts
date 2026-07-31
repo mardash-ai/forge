@@ -3,7 +3,6 @@ import type { Capability } from '../../core/types';
 import type { ObservabilityStack } from '../../resources/types';
 import { baseResource } from '../_shared';
 import { nowIso } from '../../shared/time';
-import { probeEndpoint } from '../../plugins/otel-langfuse/index';
 
 const inputSchema = z.object({
   // OTLP endpoint. Defaults to the platform default (langfuse-web internal address).
@@ -53,16 +52,12 @@ export const setupObservability: Capability<Input, ObservabilityStack> = {
   async execute(input, ctx) {
     const checked_at = nowIso();
 
-    // Probe the endpoint for reachability unless the caller opted out.
-    let reachable = true;
-    if (!input.skip_probe) {
-      reachable = await probeEndpoint({
-        endpoint: input.endpoint,
-        publicKey: input.public_key,
-        secretKey: input.secret_key,
-      });
-    }
-    const status: ObservabilityStack['status'] = reachable ? 'configured' : 'unreachable';
+    // The reachability probe is GONE (0.84.0). It spoke Langfuse's response-code convention and,
+    // once tracing was decoupled from Langfuse credentials, could not return true under any
+    // circumstance — a health check that always says "unreachable" is worse than none, because it
+    // trains you to ignore it. Real telemetry health is answered by /api/health/deep's
+    // metrics_export + span_export checks, which probe the collector actually in use.
+    const status: ObservabilityStack['status'] = 'configured';
 
     // Upsert: there is at most ONE platform ObservabilityStack.
     const existing = (
