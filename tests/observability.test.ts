@@ -18,6 +18,7 @@ import {
   PAYLOAD_CAP_BYTES,
   recordToolCallMetric,
   recordMcpRegistrationMetric,
+  isMetricsEnabled,
 } from '../src/plugins/otel-langfuse/index';
 import type { ObservabilityStack } from '../src/resources/types';
 
@@ -396,5 +397,52 @@ describe('otel-langfuse plugin: RED metric attribute keys', () => {
     const keys = attrKeys(bodies[0]!);
     expect(keys).toContain('app');
     expect(keys).not.toContain('mcp.app');
+  });
+});
+
+// ── Metrics must SURVIVE the retirement of tracing ────────────────────────────────────────────
+//
+// Langfuse was retired 2026-07-28 (§5.1) and its keys went away. Because initOtelLangfuse() used
+// to clear _metricsEnabled whenever the key pair was missing, EVERY metric export silently
+// no-opped: Managed Prometheus held ZERO series for days while every health check stayed green.
+// Metrics go to a plain OTLP collector that takes unauthenticated writes; they have nothing to do
+// with Langfuse credentials. These tests exist so that coupling can never come back.
+describe('metrics are independent of Langfuse credentials — 0.79.25', () => {
+  const KEYS = ['OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT',
+                'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY'];
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => { KEYS.forEach((k) => { saved[k] = process.env[k]; delete process.env[k]; }); });
+  afterEach(() => { KEYS.forEach((k) => (saved[k] === undefined ? delete process.env[k] : (process.env[k] = saved[k]!))); });
+
+  it('enables METRICS with an endpoint and NO Langfuse keys (the exact production shape)', () => {
+    const tracing = initOtelLangfuse({ endpoint: 'https://otel-collector.example.run.app' });
+    expect(tracing).toBe(false);        // tracing correctly off — no keys
+    expect(isEnabled()).toBe(false);
+    expect(isMetricsEnabled()).toBe(true);  // ← metrics MUST still be on
+  });
+
+  it('reads the endpoint from the environment, as Cloud Run supplies it', () => {
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'https://otel-collector.example.run.app';
+    initOtelLangfuse({ serviceName: 'dorinda-api' });
+    expect(isMetricsEnabled()).toBe(true);
+  });
+
+  it('honours a metrics-only endpoint', () => {
+    process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = 'https://collector.example/v1/metrics';
+    initOtelLangfuse();
+    expect(isMetricsEnabled()).toBe(true);
+  });
+
+  it('stays OFF when no endpoint is configured at all — there is nowhere to send', () => {
+    initOtelLangfuse();
+    expect(isMetricsEnabled()).toBe(false);
+  });
+
+  it('keeps tracing and metrics both on when keys AND endpoint are present', () => {
+    expect(initOtelLangfuse({
+      endpoint: 'https://collector.example', publicKey: 'pk', secretKey: 'sk',
+    })).toBe(true);
+    expect(isEnabled()).toBe(true);
+    expect(isMetricsEnabled()).toBe(true);
   });
 });

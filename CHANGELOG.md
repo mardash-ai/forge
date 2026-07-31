@@ -9,6 +9,18 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.25] - 2026-07-31
+
+### Fixed
+
+- **Metrics no longer die with tracing.** `initOtelLangfuse()` cleared `_metricsEnabled` whenever
+  the Langfuse key pair was absent. Langfuse was retired on 2026-07-28 (§5.1), so from that moment
+  **every metric export silently no-opped** — Managed Prometheus held **zero series** while every
+  health check stayed green and the dashboards rendered empty charts rather than errors.
+  Tracing posts to Langfuse and needs its credentials; metrics post to a plain OTLP collector that
+  accepts unauthenticated writes. They are now independent: metrics require an **endpoint** and
+  nothing else. `isMetricsEnabled()` is exported so callers can tell the two apart.
+
 ## [0.79.24] - 2026-07-30
 
 ### Changed

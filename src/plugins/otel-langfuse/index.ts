@@ -95,7 +95,18 @@ export interface OtelLangfuseConfig {
 
 /**
  * Call once at process startup to wire up the OTLP exporter.
- * Returns `false` when keys are absent (tracing + metrics silently disabled).
+ *
+ * Returns `true` when TRACING is on. Metrics are independent — check
+ * {@link isMetricsEnabled}.
+ *
+ * ⚠️ TRACING and METRICS have SEPARATE requirements, and conflating them darkened the entire
+ * metrics pipeline for days. Tracing posts to Langfuse and needs its key pair. Metrics post to a
+ * plain OTLP collector, which takes unauthenticated writes and has nothing to do with Langfuse.
+ * When Langfuse was retired (§5.1, 2026-07-28) its keys went away, and because this function
+ * cleared `_metricsEnabled` on missing keys, every metric export silently no-opped — Managed
+ * Prometheus held ZERO series while every health check stayed green.
+ *
+ * So: metrics need an ENDPOINT, nothing more. Never gate them on trace credentials again.
  */
 export function initOtelLangfuse(cfg: OtelLangfuseConfig = {}): boolean {
   const ep =
@@ -105,29 +116,44 @@ export function initOtelLangfuse(cfg: OtelLangfuseConfig = {}): boolean {
   const pub = cfg.publicKey ?? process.env.LANGFUSE_PUBLIC_KEY ?? '';
   const sec = cfg.secretKey ?? process.env.LANGFUSE_SECRET_KEY ?? '';
 
-  if (!pub || !sec) {
-    // Keys absent → tracing + metrics disabled; tool calls are unaffected.
-    _enabled = false;
+  const base = ep.replace(/\/$/, '');
+  _serviceName = cfg.serviceName ?? process.env.OTEL_SERVICE_NAME ?? 'forge';
+
+  // ── Metrics: an explicitly configured endpoint is the ONLY requirement ──
+  const metricsEp = cfg.metricsEndpoint ?? process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT;
+  const explicitBase = cfg.endpoint ?? process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  if (metricsEp) {
+    _metricsEndpoint = metricsEp.replace(/\/$/, '');
+    _metricsEnabled = true;
+  } else if (explicitBase) {
+    _metricsEndpoint = explicitBase.replace(/\/$/, '') + '/v1/metrics';
+    _metricsEnabled = true;
+  } else {
+    // No endpoint was configured at all — only the compose-era Langfuse default. Nothing to send to.
     _metricsEnabled = false;
+  }
+
+  // ── Tracing: needs the Langfuse key pair ──
+  if (!pub || !sec) {
+    _enabled = false;
     return false;
   }
 
-  const base = ep.replace(/\/$/, '');
   _endpoint = base + '/v1/traces';
   _authHeader = 'Basic ' + Buffer.from(`${pub}:${sec}`).toString('base64');
-  _serviceName = cfg.serviceName ?? process.env.OTEL_SERVICE_NAME ?? 'forge';
   _enabled = true;
-
-  // Metrics endpoint: explicit cfg → env var → same base as traces at /v1/metrics.
-  const metricsEp = cfg.metricsEndpoint ?? process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT;
-  _metricsEndpoint = metricsEp ? metricsEp.replace(/\/$/, '') : base + '/v1/metrics';
-  _metricsEnabled = true;
 
   return true;
 }
 
 /** Returns true when the exporter has been initialised with valid keys. */
 export function isEnabled(): boolean { return _enabled; }
+
+/**
+ * Returns true when METRIC export is active. Deliberately separate from {@link isEnabled}:
+ * metrics survive the absence of Langfuse credentials, tracing does not.
+ */
+export function isMetricsEnabled(): boolean { return _metricsEnabled; }
 
 // ── Structured MCP log ─────────────────────────────────────────────────────
 // Emits one JSON line per significant MCP event (session lifecycle, tool call).
