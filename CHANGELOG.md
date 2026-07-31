@@ -9,6 +9,16 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.84.2] - 2026-07-31
+
+### Fixed
+
+- **The budget never converged.** The billing API canonicalises `projects/<id>` to
+  `projects/<number>` and back-fills `calendarPeriod`, `creditTypesTreatment` and `spendBasis` when
+  they are omitted — so every re-plan showed a diff and the §3.7 read-back correctly refused to call
+  the apply converged. Same class as the trust-config project-number bug (0.79.3) and the
+  `scaling{}` back-fill (0.79.8): **the API's canonical form is the one that must be declared.**
+
 ## [0.84.1] - 2026-07-31
 
 ### Added

@@ -255,6 +255,14 @@ resource "google_monitoring_alert_policy" "sql_disk" {
 }
 
 # ── 5. Budget (opt-in; see the variable) ────────────────────────────────────────────────────────
+# The project NUMBER, not its id: the budget API canonicalises `projects/<id>` to
+# `projects/<number>` on write, so declaring the id leaves a permanent diff and the §3.7 read-back
+# correctly refuses to call the apply converged. Same class as the trust-config bug (0.79.3).
+data "google_project" "budget_scope" {
+  count      = var.create_budget && var.billing_account != "" ? 1 : 0
+  project_id = var.project_id
+}
+
 resource "google_billing_budget" "monthly" {
   count = var.create_budget && var.billing_account != "" ? 1 : 0
 
@@ -262,7 +270,11 @@ resource "google_billing_budget" "monthly" {
   display_name    = "Dorinda monthly"
 
   budget_filter {
-    projects = ["projects/${var.project_id}"]
+    projects = ["projects/${data.google_project.budget_scope[0].number}"]
+    # Both of these are back-filled by the API when omitted, which is another perma-diff. Declaring
+    # them explicitly makes the intent visible AND makes the read-back converge.
+    calendar_period        = "MONTH"
+    credit_types_treatment = "INCLUDE_ALL_CREDITS"
   }
   amount {
     specified_amount {
@@ -274,6 +286,7 @@ resource "google_billing_budget" "monthly" {
     for_each = [0.5, 0.9, 1.0]
     content {
       threshold_percent = threshold_rules.value
+      spend_basis       = "CURRENT_SPEND" # also API-defaulted; declared so the plan stays empty
     }
   }
   all_updates_rule {
