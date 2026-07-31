@@ -1881,6 +1881,7 @@ export const DASHBOARD_SERVICE_HTTP = `{
       "title": "Requests / s (by service)",
       "description": "Every HTTP surface: the app, the data plane, the web BFF. Answers 'did my flow reach the server at all', which no other dashboard here can.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
       "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
       "targets": [
         {
@@ -1904,6 +1905,7 @@ export const DASHBOARD_SERVICE_HTTP = `{
       "title": "5xx / s (by service)",
       "description": "Server errors only. A flat line here during a flow that LOOKED fine is the reassurance; a spike is the first place to look.",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
       "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
       "targets": [
         {
@@ -1927,6 +1929,7 @@ export const DASHBOARD_SERVICE_HTTP = `{
       "title": "Latency p95 (ms, by service)",
       "description": "Cloud Run measures this at the edge, so it includes cold starts — which is what the user actually waits through.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
       "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
       "targets": [
         {

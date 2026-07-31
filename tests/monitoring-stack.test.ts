@@ -328,3 +328,15 @@ describe('Service Health (HTTP) dashboard — closes the non-MCP blind spot (acc
     expect(out).not.toContain('"projectName": "dorinda-grafana"');
   });
 });
+
+describe('Service Health units — an unlabeled axis invites a wrong conclusion', () => {
+  it('declares ms on latency, so 350ms is not drawn as "5.83 mins"', () => {
+    // Observed live on the first render: Cloud Run reports request_latencies in milliseconds, and
+    // with no unit declared Grafana guessed seconds — a perfectly healthy p95 appeared as nearly six
+    // minutes. A misleading panel is worse than an empty one: empty prompts a question, wrong
+    // prompts an action.
+    const d = DASHBOARD_SERVICE_HTTP;
+    const latency = d.slice(d.indexOf('Latency p95'));
+    expect(latency.slice(0, 400)).toContain('"unit": "ms"');
+  });
+});

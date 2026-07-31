@@ -1112,7 +1112,26 @@ function Explore() {
             ['1440', '24h'],
           ]}
         />
-        {signal === 'metrics' ? (
+        {/* A result narrower than the question must say so, loudly. Reading "no errors" off a pane that
+          quietly covered 20 minutes of the 3 hours you asked for is how a false all-clear happens —
+          it happened during the acceptance run that produced this code. */}
+      {signal === 'logs' && logs.note && (
+        <div
+          style={{
+            border: '1px solid var(--warn)',
+            background: 'var(--warn-wash)',
+            color: 'var(--warn-text)',
+            padding: '10px 13px',
+            borderRadius: 'var(--r-lg)',
+            fontSize: 12.5,
+            marginBottom: 12,
+          }}
+        >
+          {logs.note}
+        </div>
+      )}
+
+      {signal === 'metrics' ? (
           <Segmented
             ariaLabel="Metric"
             value={intent}

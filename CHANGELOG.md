@@ -9,6 +9,21 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.92.0] - 2026-07-31
+
+### Fixed
+
+- **The log pane silently returned a narrower window than requested.** Logs come back newest-first,
+  so hitting the row limit means the result covers less time than was asked for — and nothing said
+  so. During the acceptance run a **190-minute query returned 400 rows spanning 20 minutes**, and
+  "no 5xx in the last 190 minutes" was about to be recorded as a pass from data that never reached
+  back that far. The envelope now carries a `note`, and the pane renders it prominently. An
+  all-clear derived from an unstated truncation is exactly the false green this console exists to
+  end.
+- **Latency panel units.** Cloud Run reports `request_latencies` in milliseconds; with no unit
+  declared Grafana guessed seconds, so a healthy 350ms p95 rendered as **"5.83 mins"**. A misleading
+  panel is worse than an empty one — empty prompts a question, wrong prompts an action.
+
 ## [0.91.0] - 2026-07-31
 
 ### Added

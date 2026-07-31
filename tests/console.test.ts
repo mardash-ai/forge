@@ -535,3 +535,19 @@ describe('cloud logging — a request log must not render as a blank row', () =>
       .toBe('google.cloud.run.v2.Services.UpdateService projects/p/services/dorinda-api');
   });
 });
+
+describe('log truncation — a narrower answer than the question must say so', () => {
+  it('flags when the row limit made the result cover less time than requested', async () => {
+    // Live during the acceptance run: a 190-minute query returned 400 rows covering 20 minutes, and
+    // "no 5xx in the last 190 minutes" was about to be recorded as a pass from data that never
+    // reached back that far. Silence here manufactures confident all-clears.
+    const { envelope } = await import('../src/console/domain');
+    const env = envelope([1, 2, 3], [], { note: 'showing the newest 3 lines — they cover back to X, NOT the full 190m requested.' });
+    expect(env.note).toContain('NOT the full');
+  });
+
+  it('carries no note when the result actually spans the window', async () => {
+    const { envelope } = await import('../src/console/domain');
+    expect(envelope([1], []).note).toBeUndefined();
+  });
+});

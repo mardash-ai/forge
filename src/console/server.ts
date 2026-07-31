@@ -308,6 +308,7 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     const minutes = Number(q.minutes ?? 60);
     const c = ctx();
     const provs = registry.byKind('logs', ENV) as LogsProvider[];
+    const limit = Number(q.limit ?? 100);
     const { items, sources } = await aggregate(provs, (p) =>
       p.query(
         {
@@ -315,11 +316,30 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
           ...(q.text ? { text: q.text } : {}),
           ...(q.severity ? { severity_at_least: q.severity as never } : {}),
         },
-        { start: new Date(end.getTime() - minutes * 60_000), end, limit: Number(q.limit ?? 100) },
+        { start: new Date(end.getTime() - minutes * 60_000), end, limit },
         c,
       ),
     );
-    return envelope(items, sources);
+    /*
+     * ⛔ SAY WHEN THE ANSWER IS SHORTER THAN THE QUESTION.
+     *
+     * Logs come back newest-first, so hitting the row limit means the response covers a WINDOW
+     * SMALLER than the one asked for — and silently so. During the 2026-07-31 acceptance run a
+     * 190-minute query returned 400 rows spanning 20 minutes, and "no 5xx in the last 190 minutes"
+     * was about to be recorded as a pass from data that never reached back that far. An all-clear
+     * derived from an unstated truncation is exactly the false green this console exists to end.
+     */
+    const oldest = items.length ? items[items.length - 1]!.timestamp : null;
+    const truncated = items.length >= limit;
+    return envelope(items, sources, {
+      ...(truncated && oldest
+        ? {
+            note:
+              `showing the newest ${items.length} lines — they cover back to ${oldest}, ` +
+              `NOT the full ${minutes}m requested. Narrow the filter or raise the limit to see further back.`,
+          }
+        : {}),
+    });
   });
 
   app.get('/api/findings', async () => {

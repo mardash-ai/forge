@@ -304,12 +304,18 @@ export interface Envelope<T> {
   data: T;
   freshness: { as_of: string; source: 'live' | 'cache'; stale: boolean };
   sources: Array<{ provider_id: string; ok: boolean; error?: string }>;
+  /**
+   * Set when the answer is NARROWER than the question — e.g. a log query that hit its row limit and
+   * therefore covers less time than was asked for. Rendered prominently, because a result silently
+   * scoped to a fraction of the requested window produces confident, wrong all-clears.
+   */
+  note?: string;
 }
 
 export function envelope<T>(
   data: T,
   sources: Array<{ provider_id: string; ok: boolean; error?: string }> = [],
-  opts: { as_of?: string; source?: 'live' | 'cache'; stale?: boolean } = {},
+  opts: { as_of?: string; source?: 'live' | 'cache'; stale?: boolean; note?: string } = {},
 ): Envelope<T> {
   return {
     data,
@@ -319,5 +325,6 @@ export function envelope<T>(
       stale: opts.stale ?? false,
     },
     sources,
+    ...(opts.note ? { note: opts.note } : {}),
   };
 }

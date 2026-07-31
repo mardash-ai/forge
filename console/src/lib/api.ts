@@ -11,6 +11,8 @@ export interface Envelope<T> {
   data: T;
   freshness: { as_of: string; source: 'live' | 'cache'; stale: boolean };
   sources: Array<{ provider_id: string; ok: boolean; error?: string }>;
+  /** Set when the answer is narrower than the question — surfaced, never swallowed. */
+  note?: string;
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<Envelope<T>> {
@@ -34,6 +36,8 @@ export interface Query<T> {
   /** Which providers answered, and which did not — rendered, never swallowed. */
   sources: Array<{ provider_id: string; ok: boolean; error?: string }>;
   asOf: string | null;
+  /** A caveat about the result itself (e.g. "these lines cover less time than you asked for"). */
+  note: string | null;
   reload: () => void;
 }
 
@@ -43,6 +47,7 @@ export function useApi<T>(path: string | null, deps: unknown[] = []): Query<T> {
   const [loading, setLoading] = useState(Boolean(path));
   const [sources, setSources] = useState<Query<T>['sources']>([]);
   const [asOf, setAsOf] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   // Guards against a slow earlier request resolving after a newer one and overwriting it.
   const latest = useRef(0);
@@ -60,6 +65,7 @@ export function useApi<T>(path: string | null, deps: unknown[] = []): Query<T> {
         setData(env.data);
         setSources(env.sources ?? []);
         setAsOf(env.freshness?.as_of ?? null);
+        setNote(env.note ?? null);
       })
       .catch((e: Error) => {
         if (id !== latest.current) return;
@@ -71,7 +77,7 @@ export function useApi<T>(path: string | null, deps: unknown[] = []): Query<T> {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, nonce, ...deps]);
 
-  return { data, error, loading, sources, asOf, reload };
+  return { data, error, loading, sources, asOf, note, reload };
 }
 
 export function relative(iso: string | undefined | null): string {
