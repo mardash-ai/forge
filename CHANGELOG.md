@@ -9,6 +9,17 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.84.4] - 2026-07-31
+
+### Fixed
+
+- **`--repo` is validated against the declaration BEFORE any provider call.** Pure input validation
+  was happening after `gcloud projects describe`, so the error a caller saw depended on whether
+  gcloud happened to be authenticated. In CI — which has no credentials at that point — the project
+  lookup failed first and raised an unrelated error, so the guard test passed locally and failed in
+  CI. **Every publish since 0.82.0 was red because of it**, and nothing surfaced that until
+  forge-console showed the failing workflows on its first look at the CI plane.
+
 ## [0.84.3] - 2026-07-31
 
 ### Changed

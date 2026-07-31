@@ -121,7 +121,19 @@ export async function bootstrap(
 ): Promise<BootstrapStep[]> {
   const component: BootstrapComponent = options.component ?? 'all';
   const wants = (c: Exclude<BootstrapComponent, 'all'>): boolean => component === 'all' || component === c;
+
   const cfg = stack.config;
+
+  // Validate the request against the DECLARATION first, before any provider call. This is pure
+  // input validation and must not require credentials — checking it later meant the failure a
+  // caller saw depended on whether gcloud happened to be authenticated, and it made the guard test
+  // pass locally while failing in CI for a completely unrelated reason.
+  if (options.repo && !(cfg.kind === 'foundation' && cfg.github?.repos.includes(options.repo))) {
+    throw new Error(
+      `repo "${options.repo}" is not in github.repos for this stack — add it to forge.infra.json first. ` +
+        `Bootstrap scopes work; it never widens the trust boundary.`,
+    );
+  }
   const e = requireEnv(cfg, env);
   const steps: BootstrapStep[] = [];
   const step = (name: string, status: BootstrapStep['status'], detail?: string) => {
@@ -280,15 +292,8 @@ export async function bootstrap(
     const projNumRead = await gcloudRead(['projects', 'describe', proj, '--format=value(projectNumber)']);
     const projNum = projNumRead.stdout.trim();
     if (!/^\d+$/.test(projNum)) throw new Error(`project number read failed — got "${projNum}"`);
-    // Scope to one repo when asked. Refused if it is not declared: this narrows the WORK, never
-    // the trust boundary — registering an undeclared repo would silently widen who can deploy.
+    // Already validated against the declaration at the top of this function.
     const repos = options.repo ? [options.repo] : cfg.github.repos;
-    if (options.repo && !cfg.github.repos.includes(options.repo)) {
-      throw new Error(
-        `repo "${options.repo}" is not in github.repos for this stack — add it to forge.infra.json first. ` +
-          `Bootstrap scopes work; it never widens the trust boundary.`,
-      );
-    }
     for (const repo of repos) {
       await gcloud([
         'iam', 'service-accounts', 'add-iam-policy-binding', sa, `--project=${proj}`,
