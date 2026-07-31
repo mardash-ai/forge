@@ -77,6 +77,7 @@ const NAV = [
   ['services', 'Services'],
   ['pipelines', 'Pipelines'],
   ['explore', 'Explore'],
+  ['credentials', 'Credentials'],
   ['audit', 'Audit'],
 ] as const;
 type Screen = (typeof NAV)[number][0];
@@ -105,7 +106,7 @@ export default function App() {
         const el = document.documentElement;
         el.dataset['density'] = el.dataset['density'] === 'compact' ? 'comfortable' : 'compact';
       }
-      const idx = ['1', '2', '3', '4', '5', '6', '7'].indexOf(e.key);
+      const idx = ['1', '2', '3', '4', '5', '6', '7', '8'].indexOf(e.key);
       if (idx >= 0 && NAV[idx]) setScreen(NAV[idx][0]);
     };
     addEventListener('keydown', onKey);
@@ -163,6 +164,7 @@ export default function App() {
         {screen === 'services' && <Services />}
         {screen === 'pipelines' && <Pipelines />}
         {screen === 'explore' && <Explore />}
+        {screen === 'credentials' && <Credentials />}
         {screen === 'audit' && <Audit />}
       </main>
     </div>
@@ -636,6 +638,71 @@ function Spark({ series }: { series: Array<{ t: number; v: number | null }> }) {
         max {max.toFixed(2)}
       </text>
     </svg>
+  );
+}
+
+// ── Credentials & expiry ──────────────────────────────────────────────────────────────────────
+
+interface Cred {
+  id: string;
+  kind: string;
+  name: string;
+  created_at?: string;
+  expires_at?: string;
+  auto_renews: boolean;
+  source: 'discovered' | 'declared';
+  detail?: string;
+}
+
+function Credentials() {
+  const q = useApi<Cred[]>('/api/credentials');
+  const daysLeft = (iso?: string): number | null =>
+    iso ? Math.floor((new Date(iso).getTime() - Date.now()) / 86400000) : null;
+
+  return (
+    <>
+      <Head
+        title="Credentials & certificates"
+        sub="Everything that expires, soonest first. The failure this prevents has no error message — a token simply stops working one morning."
+      />
+      {q.error ? (
+        <Err msg={q.error} />
+      ) : q.loading ? (
+        <Skeleton rows={8} />
+      ) : (q.data?.length ?? 0) === 0 ? (
+        <Empty kind="no-results" title="Nothing found" />
+      ) : (
+        <Card pad={false}>
+          <Table head={['Name', 'Kind', 'Expires', 'Left', 'Renews', 'Source', 'Detail']}>
+            {q.data!.map((c) => {
+              const d = daysLeft(c.expires_at);
+              const tone: StatusTone =
+                d === null ? 'neutral' : d <= 0 ? 'crit' : d <= 7 ? 'crit' : d <= 30 ? 'warn' : 'ok';
+              return (
+                <tr key={c.id}>
+                  <Td mono>{c.name}</Td>
+                  <Td>{c.kind.replace(/_/g, ' ')}</Td>
+                  <Td>{c.expires_at ? c.expires_at.slice(0, 10) : '—'}</Td>
+                  <Td right>
+                    {d === null ? (
+                      <span style={{ color: 'var(--text-faint)' }}>—</span>
+                    ) : (
+                      <Status tone={tone} label={d <= 0 ? 'expired' : `${d}d`} />
+                    )}
+                  </Td>
+                  <Td>{c.auto_renews ? 'auto' : 'manual'}</Td>
+                  <Td>
+                    {/* A declared date is hand-supplied. Never let it read as an observed fact. */}
+                    {c.source === 'declared' ? <Pill tone="warn">declared</Pill> : 'discovered'}
+                  </Td>
+                  <Td>{c.detail ?? ''}</Td>
+                </tr>
+              );
+            })}
+          </Table>
+        </Card>
+      )}
+    </>
   );
 }
 

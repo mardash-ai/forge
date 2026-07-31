@@ -340,6 +340,20 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     return envelope(findings, [...invRes.sources, ...runRes.sources]);
   });
 
+  app.get('/api/credentials', async () => {
+    const c = ctx();
+    const provs = registry.byKind('credentials', ENV) as CredentialsProvider[];
+    const { items, sources } = await aggregate(provs, (p) => p.list(c));
+    // Soonest expiry first: the whole point of this view is "what bites me next".
+    const sorted = items.slice().sort((a, b) => {
+      if (a.expires_at && b.expires_at) return a.expires_at.localeCompare(b.expires_at);
+      if (a.expires_at) return -1;
+      if (b.expires_at) return 1;
+      return a.name.localeCompare(b.name);
+    });
+    return envelope(sorted, sources);
+  });
+
   app.get('/api/audit', async () => envelope(auditLog.slice(0, 100)));
 
   // ── The single write ──

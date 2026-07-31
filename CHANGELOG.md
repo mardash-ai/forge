@@ -9,6 +9,14 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.84.1] - 2026-07-31
+
+### Added
+
+- **forge-console: a Credentials screen**, soonest expiry first. The provider existed with nothing
+  showing it. Declared expiries are badged as such so a hand-typed date never reads as an observed
+  fact, and days-remaining is colour- AND word-coded rather than colour alone.
+
 ## [0.84.0] - 2026-07-31
 
 ### Fixed
