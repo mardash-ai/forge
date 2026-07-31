@@ -123,6 +123,40 @@ export function createGitHubPipelinesProvider(opts: GhOpts): PipelinesProvider {
       }
     },
 
+    /**
+     * The API budget, read from the horse's mouth rather than counted locally.
+     *
+     * A console that polls CI is itself a consumer of this quota, so exhausting it would blind the
+     * very screen you would use to notice. Actions *minutes* are deliberately absent: that figure
+     * lives behind a billing endpoint this token is not scoped for, and a fabricated minutes number
+     * is exactly the confident-but-wrong reading this console exists to eliminate.
+     */
+    async quotas(ctx: ProviderContext) {
+      if (!opts.token) return [];
+      try {
+        const body = await gh<{ resources?: { core?: { limit?: number; remaining?: number } } }>(
+          '/rate_limit',
+          {},
+          ctx.signal,
+        );
+        const core = body.resources?.core;
+        if (!core || core.limit === undefined || core.remaining === undefined) return [];
+        return [
+          {
+            name: 'GitHub API requests',
+            scope: 'github',
+            used: core.limit - core.remaining,
+            limit: core.limit,
+            unit: 'requests/hour',
+            detail: `${core.remaining} remaining this hour · conditional 304s cost nothing`,
+            headroom_percent: Math.round((core.remaining / core.limit) * 100),
+          },
+        ];
+      } catch {
+        return [];
+      }
+    },
+
     async listPipelines(ctx: ProviderContext): Promise<Pipeline[]> {
       const out: Pipeline[] = [];
       const settled = await Promise.allSettled(

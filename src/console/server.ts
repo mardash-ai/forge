@@ -11,7 +11,7 @@ import { readFile } from 'node:fs/promises';
 import { join, normalize, extname } from 'node:path';
 import { timingSafeEqual, createHash } from 'node:crypto';
 
-import { envelope, type Finding, type MetricIntent } from './domain';
+import { envelope, type Finding, type MetricIntent, type QuotaGauge, type Revision } from './domain';
 import { aggregate, createRegistry, type ProviderContext, type ProviderRegistry } from './providers/types';
 import type {
   CredentialsProvider,
@@ -19,13 +19,26 @@ import type {
   LogsProvider,
   MetricsProvider,
   PipelinesProvider,
+  RuntimeProvider,
 } from './providers/types';
 import { buildServiceGraph } from './correlate/graph';
 import { runFindings } from './findings';
+import { buildTimeline } from './timeline';
+import { computeQuotas } from './quota';
+import { docsConfigured, fetchDocAsset, fetchDocIndex, fetchDocPage } from './docs';
 import { createGcpInventoryProvider } from '../plugins/console-gcp/inventory';
 import { createCloudMonitoringProvider, createManagedPrometheusProvider } from '../plugins/console-gcp/metrics';
 import { createCloudLoggingProvider } from '../plugins/console-gcp/logs';
 import { createGcpCredentialsProvider } from '../plugins/console-gcp/credentials';
+import { createCloudRunRuntimeProvider } from '../plugins/console-gcp/runtime';
+import {
+  createGcpAlertsProvider,
+  createGcpCostProvider,
+  createGcsDriftProvider,
+  type AlertsProvider,
+  type CostProvider,
+  type DriftProvider,
+} from '../plugins/console-gcp/ops';
 import { createGitHubPipelinesProvider } from '../plugins/console-github/pipelines';
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -38,6 +51,10 @@ const GH_REPOS = (process.env.CONSOLE_GITHUB_REPOS ?? '')
   .map((s) => s.trim())
   .filter(Boolean);
 const UI_DIR = process.env.CONSOLE_UI_DIR ?? join(process.cwd(), 'console', 'dist');
+const STATE_BUCKET = process.env.CONSOLE_STATE_BUCKET ?? 'dorinda-tf-state';
+const BILLING_ACCOUNT = process.env.CONSOLE_BILLING_ACCOUNT ?? '';
+/** Which Cloud Run services carry the deploy axis. Discovered from inventory, capped for latency. */
+const DEPLOY_SAMPLE = 8;
 
 // ── Providers ──────────────────────────────────────────────────────────────────────────────────
 
@@ -75,6 +92,19 @@ export function buildRegistry(): ProviderRegistry {
       owner: GH_OWNER,
       repos: GH_REPOS,
       ...(process.env.CONSOLE_GITHUB_TOKEN ? { token: process.env.CONSOLE_GITHUB_TOKEN } : {}),
+    }),
+    createCloudRunRuntimeProvider({ id: 'cloud-run', envs: [ENV], scope }),
+    createGcpAlertsProvider({ id: 'gcp-alerts', envs: [ENV], scope: { project_id: PROJECT } }),
+    createGcsDriftProvider({
+      id: 'gcs-drift',
+      envs: [ENV],
+      scope: { bucket: STATE_BUCKET },
+      ...(process.env.CONSOLE_GITHUB_TOKEN ? { githubToken: process.env.CONSOLE_GITHUB_TOKEN } : {}),
+    }),
+    createGcpCostProvider({
+      id: 'gcp-billing',
+      envs: [ENV],
+      scope: { billing_account: BILLING_ACCOUNT, project_id: PROJECT },
     }),
   ];
   return createRegistry(providers);
@@ -355,6 +385,178 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
   });
 
   app.get('/api/audit', async () => envelope(auditLog.slice(0, 100)));
+
+  // ── Runtime: what is serving, and what you could roll back to ──
+
+  app.get('/api/runtime/revisions', async (req) => {
+    const q = req.query as { service?: string };
+    if (!q.service) return envelope([] as Revision[], [], {});
+    const c = ctx();
+    const provs = registry.byKind('runtime', ENV) as RuntimeProvider[];
+    const { items, sources } = await aggregate(provs, (p) => p.listRevisions(q.service!, c));
+    return envelope(items, sources);
+  });
+
+  // ── Alerts: is anything watching, and does it reach a human? ──
+
+  app.get('/api/alerts', async () => {
+    const c = ctx();
+    const provs = registry.byKind('alerts', ENV) as AlertsProvider[];
+    const [pol, inc] = await Promise.all([
+      aggregate(provs, (p) => p.listPolicies(c)),
+      aggregate(provs, (p) => p.listFiring(c)),
+    ]);
+    return envelope({ policies: pol.items, firing: inc.items }, pol.sources);
+  });
+
+  // ── Drift: all three axes ──
+
+  app.get('/api/drift', async () => {
+    const c = ctx();
+    const provs = registry.byKind('drift', ENV) as DriftProvider[];
+    const { items, sources } = await aggregate(provs, (p) => p.listStacks(c));
+    const latest = await Promise.all(provs.map((p) => p.latestRelease(c).catch(() => null)));
+    return envelope({ stacks: items, latest_release: latest.find(Boolean) ?? null }, sources);
+  });
+
+  // ── Cost ──
+
+  app.get('/api/cost', async () => {
+    const c = ctx();
+    const provs = registry.byKind('cost', ENV) as CostProvider[];
+    const { items, sources } = await aggregate(provs, (p) => p.listBudgets(c));
+    const inv = registry.byKind('inventory', ENV) as InventoryProvider[];
+    const invRes = await aggregate(inv, (p) => p.list(c));
+    // No BigQuery billing export exists, so there are no actuals to show. Saying that plainly beats
+    // an empty chart, which reads as "you spent nothing".
+    return envelope(
+      {
+        budgets: items,
+        actuals: null as null,
+        actuals_detail:
+          'Actual spend needs a BigQuery billing export, which is not configured. Budgets and the ' +
+          'billable-resource inventory below are what the console can prove.',
+        billable: invRes.items.filter((r) => r.billable),
+      },
+      [...sources, ...invRes.sources],
+    );
+  });
+
+  // ── Quota headroom ──
+
+  app.get('/api/quota', async () => {
+    const c = ctx();
+    const inv = registry.byKind('inventory', ENV) as InventoryProvider[];
+    const metrics = registry.byKind('metrics', ENV) as MetricsProvider[];
+    const invRes = await aggregate(inv, (p) => p.list(c));
+
+    const end = new Date();
+    const range = { start: new Date(end.getTime() - 24 * 3600_000), end, step_seconds: 300 };
+    const cm = metrics.find((p) => p.type === 'gcp.cloud-monitoring');
+
+    const peakInstances = new Map<string, number>();
+    let peakDb: number | null = null;
+    if (cm) {
+      const services = invRes.items.filter((r) => r.kind === 'compute.service').slice(0, DEPLOY_SAMPLE);
+      await Promise.all(
+        services.map(async (s) => {
+          const r = await cm.query('instance_count', { runtime_id: s.name, env: ENV }, range, c);
+          const peak = Math.max(0, ...r.series.flatMap((x) => x.points.map((p) => p.v ?? 0)));
+          if (r.series.length > 0) peakInstances.set(s.name, peak);
+        }),
+      );
+      const db = await cm.query('db_connections', { runtime_id: '', env: ENV }, range, c);
+      if (db.series.length > 0) peakDb = Math.max(0, ...db.series.flatMap((x) => x.points.map((p) => p.v ?? 0)));
+    }
+
+    const providerGauges: QuotaGauge[] = (
+      await Promise.all(registry.all().map((p) => (p.quotas ? p.quotas(c).catch(() => []) : Promise.resolve([]))))
+    ).flat();
+
+    return envelope(computeQuotas({ resources: invRes.items, peakInstances, peakDbConnections: peakDb, providerGauges }), invRes.sources);
+  });
+
+  // ── The unified "what changed" timeline ──
+
+  app.get('/api/timeline', async (req) => {
+    const q = req.query as { hours?: string };
+    const hours = Math.min(720, Math.max(1, Number(q.hours ?? 48)));
+    const since = new Date(Date.now() - hours * 3600_000);
+    const c = ctx();
+
+    const pipes = registry.byKind('pipelines', ENV) as PipelinesProvider[];
+    const inv = registry.byKind('inventory', ENV) as InventoryProvider[];
+    const runtime = registry.byKind('runtime', ENV) as RuntimeProvider[];
+
+    const [runRes, invRes] = await Promise.all([
+      aggregate(pipes, (p) => (p.supports('pipelines.runs') ? p.listRuns({ limit: 50 }, c) : Promise.resolve([]))),
+      aggregate(inv, (p) => p.list(c)),
+    ]);
+
+    const services = invRes.items.filter((r) => r.kind === 'compute.service').slice(0, DEPLOY_SAMPLE);
+    const revisions = await Promise.all(
+      services.map(async (s) => ({
+        service: s.name,
+        revisions: await Promise.all(runtime.map((p) => p.listRevisions(s.name, c).catch(() => [])))
+          .then((all) => all.flat()),
+      })),
+    );
+
+    const events = buildTimeline({
+      runs: runRes.items,
+      revisions,
+      // Findings carry `first_seen_at = now` on every sweep (they are recomputed, not stored), so
+      // including them here would stamp every finding onto this second and drown the real changes.
+      findings: [],
+      audit: auditLog,
+      since,
+    });
+    return envelope(events, [...runRes.sources, ...invRes.sources]);
+  });
+
+  // ── Docs, proxied from the developer portal (see docs.ts for why it is not copied) ──
+
+  const docsSource = {
+    origin: process.env.CONSOLE_DOCS_ORIGIN ?? 'https://devs.dorinda.ai',
+    user: process.env.CONSOLE_DOCS_USER ?? '',
+    pass: process.env.CONSOLE_DOCS_PASS ?? '',
+  };
+
+  app.get('/api/docs', async (_req, reply) => {
+    if (!docsConfigured(docsSource)) {
+      return reply.code(501).send({
+        error: {
+          code: 'not_configured',
+          message: 'no developer-portal credentials configured, so docs cannot be fetched',
+        },
+      });
+    }
+    const pages = await fetchDocIndex(docsSource, AbortSignal.timeout(15_000));
+    return envelope({ pages, origin: docsSource.origin });
+  });
+
+  app.get('/api/docs/page', async (req, reply) => {
+    const q = req.query as { p?: string };
+    if (!docsConfigured(docsSource)) {
+      return reply.code(501).send({ error: { code: 'not_configured', message: 'docs source not configured' } });
+    }
+    try {
+      return envelope(await fetchDocPage(docsSource, q.p ?? 'index', AbortSignal.timeout(15_000)));
+    } catch (e) {
+      return reply.code(502).send({ error: { code: 'docs_unavailable', message: (e as Error).message } });
+    }
+  });
+
+  app.get('/docs/asset/*', async (req, reply) => {
+    if (!docsConfigured(docsSource)) return reply.code(501).send('docs source not configured');
+    const path = (req.params as Record<string, string>)['*'] ?? '';
+    try {
+      const a = await fetchDocAsset(docsSource, path, AbortSignal.timeout(15_000));
+      return reply.type(a.contentType).header('cache-control', 'private, max-age=300').send(a.body);
+    } catch (e) {
+      return reply.code(502).send((e as Error).message);
+    }
+  });
 
   // ── The single write ──
 

@@ -113,6 +113,12 @@ export interface GcpRequest {
   method?: 'GET' | 'POST';
   body?: unknown;
   signal?: AbortSignal;
+  /**
+   * Billing-account APIs are not scoped to a project, so they demand an explicit quota project.
+   * Without it an authenticated call fails 403 with a message about ADC — which reads exactly like
+   * a missing permission and sends you to grant roles that were never the problem.
+   */
+  quotaProject?: string;
 }
 
 export async function gcpJson<T>(req: GcpRequest): Promise<T> {
@@ -121,6 +127,7 @@ export async function gcpJson<T>(req: GcpRequest): Promise<T> {
     method: req.method ?? 'GET',
     headers: {
       Authorization: `Bearer ${token}`,
+      ...(req.quotaProject ? { 'x-goog-user-project': req.quotaProject } : {}),
       ...(req.body ? { 'Content-Type': 'application/json' } : {}),
     },
     ...(req.body ? { body: JSON.stringify(req.body) } : {}),

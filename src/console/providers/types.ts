@@ -18,6 +18,7 @@ import type {
   MetricResult,
   Pipeline,
   PipelineRun,
+  QuotaGauge,
   Revision,
   Severity,
 } from '../domain';
@@ -29,7 +30,9 @@ export type ProviderKind =
   | 'logs'
   | 'pipelines'
   | 'credentials'
-  | 'cost';
+  | 'cost'
+  | 'alerts'
+  | 'drift';
 
 export type Feature =
   | 'inventory.list'
@@ -42,7 +45,11 @@ export type Feature =
   | 'pipelines.runs'
   | 'pipelines.dispatch'
   | 'credentials.list'
-  | 'cost.actuals';
+  | 'cost.actuals'
+  | 'cost.budgets'
+  | 'alerts.policies'
+  | 'alerts.incidents'
+  | 'drift.stacks';
 
 export interface ProviderContext {
   env: EnvKey;
@@ -65,6 +72,12 @@ export interface Provider {
   readonly envs: EnvKey[];
   supports(f: Feature): boolean;
   health(ctx: ProviderContext): Promise<ProviderHealth>;
+  /**
+   * Ceilings this provider knows about its own plane (API rate budget, CI minutes). Optional
+   * because most providers have none — a provider volunteers only what it can measure, so the
+   * quota screen never has to guess a limit on a provider's behalf.
+   */
+  quotas?(ctx: ProviderContext): Promise<QuotaGauge[]>;
 }
 
 /** Providers throw this so the aggregator can degrade one source without blanking the page. */

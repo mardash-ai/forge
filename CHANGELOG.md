@@ -9,6 +9,44 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.85.0] - 2026-07-31
+
+### Added
+
+- **forge-console completes its planned scope: Alerts, Drift, Cost, Headroom, Deploys, a unified
+  "what changed" timeline, absorbed Docs, and a ⌘K palette.** Four new read-only providers
+  (`gcp.alerts`, `gcs.drift`, `gcp.billing`, `gcp.cloud-run`), three new provider kinds, and an
+  optional `Provider.quotas()` hook so a provider volunteers only the ceilings it can actually
+  measure.
+- **The unified timeline** (`src/console/timeline.ts`, pure) puts deploys, CI runs and console
+  actions on one axis. Every incident this estate has had was diagnosed by eventually noticing that
+  something deployed minutes before the symptom; until now that meant three browser tabs and
+  comparing timestamps by eye.
+- **Quota headroom** (`src/console/quota.ts`, pure). forge's own service module hardcodes Cloud Run
+  `max_instances = 10` — a traffic cliff nobody chose for Dorinda and no dashboard mentions. A
+  ceiling is **never invented**: Cloud SQL does not publish `max_connections`, so that row reports an
+  absolute peak and an explicit "unknown" rather than a percentage against a guessed limit.
+- **Docs absorbed by reference, not by copy** (`src/console/docs.ts`). The developer portal's pages
+  are fetched live, stripped to their `<main>`, sanitised, link-rewritten and rendered in the
+  console's own styling, with credentialed assets proxied through `/docs/asset/*`. Copying 100 KB of
+  HTML into this repo would have created a second copy of every platform fact — the failure mode
+  that produced the login-host firefight.
+
+### Fixed
+
+- **A Cloud Run `..._LATEST` traffic target resolves to `latestReadyRevision`.** Such a target
+  carries no revision name, and **every** service in this estate routes by latest, so reading
+  `trafficStatuses[].revision` alone produced an empty map and a Deploys screen that reported
+  production was serving *nothing*. A confidently wrong answer about production is strictly worse
+  than no answer.
+- **Billing-account reads send `x-goog-user-project`.** Budget APIs are not project-scoped and
+  demand an explicit quota project; without it an authenticated call fails 403 with a message about
+  ADC, which reads exactly like a missing permission and sends you granting roles that were never
+  the problem.
+- **Vite resolves `.tsx` before `.js`.** A stray `App.js` left by a direct `tsc <file>` (which
+  ignores `noEmit` in the tsconfig) silently became the bundled module: the build reported success
+  and shipped a stale UI whose only symptom was ignoring every edit.
+
 ## [0.84.4] - 2026-07-31
 
 ### Fixed

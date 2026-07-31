@@ -313,3 +313,182 @@ describe('server — auth and the write surface', () => {
     await app.close();
   });
 });
+
+// ── The unified timeline ───────────────────────────────────────────────────────────────────────
+
+import { buildTimeline } from '../src/console/timeline';
+import { computeQuotas } from '../src/console/quota';
+import { extractDoc, parseDocIndex } from '../src/console/docs';
+import type { PipelineRun, Revision } from '../src/console/domain';
+
+const run = (p: Partial<PipelineRun> & { id: string }): PipelineRun => ({
+  pipeline_id: 'wf1',
+  pipeline_name: 'release',
+  repo: 'mardash-ai/dorinda-api',
+  number: 1,
+  status: 'completed',
+  conclusion: 'success',
+  event: 'push',
+  branch: 'main',
+  commit_sha: 'abc',
+  actor: 'mark',
+  url: 'https://github.com/x',
+  ...p,
+});
+
+const rev = (p: Partial<Revision> & { id: string }): Revision => ({
+  image_digest: 'sha256:' + 'a'.repeat(64),
+  image_ref: 'repo/img@sha256:' + 'a'.repeat(64),
+  created_at: '2026-07-31T10:00:00Z',
+  traffic_percent: 100,
+  ready: true,
+  ...p,
+});
+
+describe('timeline — the "what changed" axis', () => {
+  const since = new Date('2026-07-31T00:00:00Z');
+
+  it('interleaves deploys and CI runs on one axis, newest first', () => {
+    const events = buildTimeline({
+      runs: [run({ id: 'r1', started_at: '2026-07-31T09:00:00Z' })],
+      revisions: [{ service: 'dorinda-api', revisions: [rev({ id: 'rev-2', created_at: '2026-07-31T11:00:00Z' })] }],
+      findings: [],
+      audit: [{ at: '2026-07-31T10:00:00Z', actor: 'mark', action: 'pipeline.dispatch', target: 'wf1', outcome: 'succeeded' }],
+      since,
+    });
+    expect(events.map((e) => e.kind)).toEqual(['deploy', 'action', 'pipeline']);
+  });
+
+  it('drops everything older than the window, so a backlog cannot bury today', () => {
+    const events = buildTimeline({
+      runs: [run({ id: 'old', started_at: '2026-07-01T09:00:00Z' })],
+      revisions: [{ service: 'api', revisions: [rev({ id: 'old-rev', created_at: '2026-06-01T09:00:00Z' })] }],
+      findings: [],
+      audit: [],
+      since,
+    });
+    expect(events).toEqual([]);
+  });
+
+  it('marks a revision that never became ready as failed, not as a normal deploy', () => {
+    // A revision that exists but is not Ready is the single most misleading state in Cloud Run: the
+    // deploy "happened", and traffic is still on the old one.
+    const [e] = buildTimeline({
+      runs: [],
+      revisions: [{ service: 'api', revisions: [rev({ id: 'bad', ready: false, traffic_percent: 0, created_at: '2026-07-31T12:00:00Z' })] }],
+      findings: [],
+      audit: [],
+      since,
+    });
+    expect(e?.outcome).toBe('failed');
+  });
+});
+
+describe('quota headroom — a limit is never invented', () => {
+  const svc = (name: string, max: number | null) =>
+    r({ name, kind: 'compute.service', attributes: { max_instances: max } });
+
+  it('computes headroom only when both the peak and the ceiling are known', () => {
+    const gauges = computeQuotas({
+      resources: [svc('api', 10)],
+      peakInstances: new Map([['api', 3]]),
+      peakDbConnections: null,
+      providerGauges: [],
+    });
+    expect(gauges[0]?.headroom_percent).toBe(70);
+  });
+
+  it('reports unknown headroom rather than a confident wrong number', () => {
+    // Cloud SQL does not publish max_connections, and the tier formula is a guess. A percentage
+    // computed against a guessed ceiling looks precise, which is worse than saying "unknown".
+    const gauges = computeQuotas({
+      resources: [r({ name: 'pg', kind: 'db.instance' })],
+      peakInstances: new Map(),
+      peakDbConnections: 12,
+      providerGauges: [],
+    });
+    const db = gauges.find((g) => g.scope === 'cloud-sql');
+    expect(db?.used).toBe(12);
+    expect(db?.limit).toBeNull();
+    expect(db?.headroom_percent).toBeNull();
+  });
+
+  it('sorts the tightest headroom first and never drops the unknowns', () => {
+    const gauges = computeQuotas({
+      resources: [svc('tight', 10), svc('loose', 100), svc('nolimit', null)],
+      peakInstances: new Map([
+        ['tight', 9],
+        ['loose', 5],
+      ]),
+      peakDbConnections: null,
+      providerGauges: [],
+    });
+    expect(gauges.map((g) => g.name)).toEqual(['tight instances', 'loose instances', 'nolimit instances']);
+  });
+});
+
+describe('docs — absorbed by reference, never copied', () => {
+  const page = `<html><head><style>:root{--x:1}</style></head><body>
+    <nav><div class="logo">x</div><a href="/index">Overview</a><a href="/gcp">Google Cloud</a></nav>
+    <main><h1>Google Cloud</h1><p>body</p>
+    <img src="/gcp-topology.svg" alt="t">
+    <a href="/runbooks">Runbooks &amp; Links</a>
+    <script>alert(1)</script></main></body></html>`;
+
+  it("derives the page index from the portal's own nav, so it cannot drift", () => {
+    expect(parseDocIndex(page)).toEqual([
+      { id: 'index', title: 'Overview' },
+      { id: 'gcp', title: 'Google Cloud' },
+    ]);
+  });
+
+  it('strips scripts and inline handlers from fetched content', () => {
+    const doc = extractDoc(page, 'gcp', 'fallback');
+    expect(doc.html).not.toContain('alert(1)');
+    expect(doc.html).not.toContain('<script');
+  });
+
+  it('rewrites portal links to console routes and images to the proxied path', () => {
+    // The portal's images sit behind its basic auth, so a raw <img src="/x.svg"> would 401 in the
+    // browser and render as a broken image with no explanation.
+    const doc = extractDoc(page, 'gcp', 'fallback');
+    expect(doc.html).toContain('src="/docs/asset/gcp-topology.svg"');
+    expect(doc.html).toContain('href="?s=docs&p=runbooks"');
+  });
+
+  it('takes only <main>, so the portal cannot restyle the console from its own <head>', () => {
+    const doc = extractDoc(page, 'gcp', 'fallback');
+    expect(doc.html).not.toContain('<style');
+    expect(doc.html).not.toContain('<nav');
+    expect(doc.title).toBe('Google Cloud');
+  });
+});
+
+describe('cloud run traffic — “what is serving?” must not answer “nothing”', () => {
+  it('resolves a LATEST traffic target to the latest ready revision', async () => {
+    const { resolveTraffic } = await import('../src/plugins/console-gcp/runtime');
+    // The shape EVERY service in this estate actually returns: a LATEST target with no revision
+    // name on it. Reading t.revision alone gives an empty map, and the Deploys screen then reports
+    // that production is serving nothing.
+    const t = resolveTraffic({
+      trafficStatuses: [{ type: 'TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST', percent: 100 }],
+      latestReadyRevision: 'projects/p/locations/us-east1/services/api/revisions/api-00013-v8t',
+    });
+    expect(t.get('api-00013-v8t')).toBe(100);
+  });
+
+  it('still honours an explicit pinned revision split', async () => {
+    const { resolveTraffic } = await import('../src/plugins/console-gcp/runtime');
+    const t = resolveTraffic({
+      trafficStatuses: [
+        { type: 'TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION', revision: 'api-1', percent: 90 },
+        { type: 'TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION', revision: 'api-2', percent: 10 },
+      ],
+      latestReadyRevision: 'projects/p/l/r/s/api/revisions/api-3',
+    });
+    expect([...t]).toEqual([
+      ['api-1', 90],
+      ['api-2', 10],
+    ]);
+  });
+});

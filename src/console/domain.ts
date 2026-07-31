@@ -235,6 +235,50 @@ export interface Finding {
   first_seen_at: string;
 }
 
+// ── The unified timeline ───────────────────────────────────────────────────────────────────────
+
+/**
+ * One event on one time axis.
+ *
+ * This type exists to answer the only question anybody actually asks during an incident: *what
+ * changed just before this started?* Today answering it means opening GitHub, Cloud Run's revision
+ * list and the log explorer in three tabs and comparing timestamps by eye. Every provider already
+ * emits timestamped facts; the timeline is just the refusal to keep them in separate screens.
+ */
+export type TimelineKind = 'deploy' | 'pipeline' | 'finding' | 'infra_apply' | 'incident' | 'action';
+
+export interface TimelineEvent {
+  at: string;
+  kind: TimelineKind;
+  title: string;
+  detail?: string;
+  service_key?: ServiceKey;
+  /** ok / failed / neutral — drives the colour, and nothing else. */
+  outcome?: 'ok' | 'failed' | 'neutral';
+  link?: string;
+}
+
+// ── Quota headroom ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A ceiling somebody set once and nobody watches. Cloud Run `max_instances` was hardcoded to 10 in
+ * forge's own service module — a limit that is invisible until the day traffic reaches it and
+ * requests start queuing behind a cap nobody remembers choosing.
+ *
+ * `limit: null` is a first-class answer: when an API does not publish the ceiling, the console says
+ * so. Inventing a plausible limit would make the headroom percentage a lie.
+ */
+export interface QuotaGauge {
+  name: string;
+  scope: string;
+  used: number | null;
+  limit: number | null;
+  unit: string;
+  detail: string;
+  /** Only computable when both used and limit are known. */
+  headroom_percent: number | null;
+}
+
 // ── Credentials / expiry ───────────────────────────────────────────────────────────────────────
 
 export interface Credential {
