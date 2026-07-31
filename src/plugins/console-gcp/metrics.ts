@@ -234,5 +234,33 @@ export function createManagedPrometheusProvider(opts: {
     async queryNative(expr: string, r: MetricRange, ctx: ProviderContext): Promise<MetricResult> {
       return run(expr, r, ctx);
     },
+
+    /**
+     * Is the pipeline ingesting ANYTHING?
+     *
+     * Deliberately not "does metric X have data": `mcp_tool_calls_total` is empty whenever nobody
+     * has called a tool, which is most of a normal Sunday. Using one quiet metric as a proxy for
+     * pipeline health raised a CRITICAL on a perfectly healthy system the first time this shipped —
+     * and a false alarm on day one is how an operator learns to ignore the console.
+     *
+     * Range-query, never instant: sparse gauges (emitted once at registration) are invisible to an
+     * instant query and look identical to an empty store. That confusion cost hours.
+     */
+    async isIngesting(ctx: ProviderContext): Promise<boolean> {
+      try {
+        const end = Math.floor(Date.now() / 1000);
+        const body = await gcpJson<{ data?: { result?: unknown[] } }>({
+          url:
+            `${base}/query_range?query=${encodeURIComponent('count({__name__=~".+"})')}` +
+            `&start=${end - 6 * 3600}&end=${end}&step=300`,
+          signal: ctx.signal,
+        });
+        return (body.data?.result ?? []).length > 0;
+      } catch {
+        // Unreachable is a provider-health problem, reported separately. Do not turn it into a
+        // false "pipeline dead".
+        return true;
+      }
+    },
   };
 }

@@ -122,6 +122,12 @@ export interface MetricsProvider extends Provider {
   query(i: MetricIntent, t: MetricTarget, r: MetricRange, ctx: ProviderContext): Promise<MetricResult>;
   /** Escape hatch for the explore screen, gated by `metrics.native`. */
   queryNative?(expr: string, r: MetricRange, ctx: ProviderContext): Promise<MetricResult>;
+  /**
+   * Is this store receiving anything at all? Distinct from any single metric being empty — a quiet
+   * metric is normal, an empty STORE is an outage. Optional: a store with no pipeline in front of
+   * it (Cloud Monitoring) has nothing to answer.
+   */
+  isIngesting?(ctx: ProviderContext): Promise<boolean>;
 }
 
 // ── Logs ───────────────────────────────────────────────────────────────────────────────────────

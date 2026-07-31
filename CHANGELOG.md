@@ -9,6 +9,18 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.80.2] - 2026-07-31
+
+### Fixed
+
+- **The metrics-pipeline finding no longer cries wolf.** It probed a single metric
+  (`mcp_tool_calls_total`) and raised a **CRITICAL** when that metric was empty — but an empty
+  tool-call counter just means nobody called a tool, which is most of a normal Sunday. The first
+  deploy of the console duly reported "No application metrics are being ingested" about a perfectly
+  healthy pipeline, and a false alarm on day one is exactly how an operator learns to ignore a
+  console. Pipeline health is now `MetricsProvider.isIngesting()`, which range-queries the whole
+  store; a store that is unreachable reports a provider-health problem rather than a dead pipeline.
+
 ## [0.80.1] - 2026-07-31
 
 ### Fixed

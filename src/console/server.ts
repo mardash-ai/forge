@@ -296,17 +296,9 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
         source: 'discovered' as const,
       }));
 
+    // Ask the STORE whether it is ingesting, never a single metric — see isIngesting().
     const gmp = metrics.find((p) => p.type === 'gcp.managed-prometheus');
-    let ingesting = true;
-    if (gmp) {
-      const probe = await gmp.query(
-        'request_rate',
-        { runtime_id: 'dorinda-api', env: ENV },
-        { start: new Date(Date.now() - 3600_000), end: new Date(), step_seconds: 300 },
-        c,
-      );
-      ingesting = probe.series.length > 0 || probe.empty_reason !== 'never_ingested';
-    }
+    const ingesting = gmp?.isIngesting ? await gmp.isIngesting(c) : true;
 
     const graph = buildServiceGraph({
       resources: invRes.items,
