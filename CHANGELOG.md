@@ -9,6 +9,18 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.90.0] - 2026-07-31
+
+### Fixed
+
+- **The Background Plane's domain-counter panel now covers account lifecycle**
+  (`account_purged`, `account_created`). The 2026-07-31 acceptance run added an `account.purged`
+  metric for the platform's most destructive operation — and it was *still* invisible, because no
+  panel queried it. Emitting a metric that no pane displays fails the standing bar exactly as hard
+  as not emitting one: either way the operator cannot answer "was an account purged today?". The
+  guard test asserts the new counters are present **and** that the six existing ones survived, since
+  the obvious way to break this panel is to rewrite its regex and drop something.
+
 ## [0.89.0] - 2026-07-31
 
 ### Fixed

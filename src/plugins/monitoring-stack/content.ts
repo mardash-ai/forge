@@ -1827,7 +1827,7 @@ export const DASHBOARD_BACKGROUND_PLANE = `{
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Domain counters (staged/approved/sent · sync ok/error) — appear on first event",
+      "title": "Domain + account-lifecycle counters — appear on first event",
       "gridPos": {
         "h": 9,
         "w": 24,
@@ -1841,7 +1841,7 @@ export const DASHBOARD_BACKGROUND_PLANE = `{
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (__name__) (rate({__name__=~\\"(gcal_sync|message_staged|message_sent|approval|reminders_fired|routines_ran).*\\"}[15m])) * 900",
+          "expr": "sum by (__name__) (rate({__name__=~\\"(gcal_sync|message_staged|message_sent|approval|reminders_fired|routines_ran|account_purged|account_created).*\\"}[15m])) * 900",
           "legendFormat": "{{__name__}}"
         }
       ]

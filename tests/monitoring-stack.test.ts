@@ -287,3 +287,20 @@ describe('generateMonitoringCompose — appDb (User Experience dashboard)', () =
     expect(renderMonitoringEnvExample()).toContain('GRAFANA_PG_RO_PASSWORD=');
   });
 });
+
+import { DASHBOARD_BACKGROUND_PLANE } from '../src/plugins/monitoring-stack/content';
+
+describe('Background Plane — a metric nobody displays does not exist (acceptance F-5/F-11)', () => {
+  it('covers account-lifecycle counters, not only the sync/message ones', () => {
+    // The purge emitted `account.purged` and STILL could not be seen in either UI, because no panel
+    // queried it. Emitting a metric that no pane displays fails the standing bar exactly as hard as
+    // not emitting it: the operator cannot answer "was an account purged today?" either way.
+    const dash = DASHBOARD_BACKGROUND_PLANE;
+    expect(dash).toContain('account_purged');
+    expect(dash).toContain('account_created');
+    // and it must not have lost the counters it already covered
+    for (const m of ['gcal_sync', 'message_staged', 'message_sent', 'approval', 'reminders_fired', 'routines_ran']) {
+      expect(dash).toContain(m);
+    }
+  });
+});
