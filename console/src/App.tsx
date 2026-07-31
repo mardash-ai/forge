@@ -183,22 +183,36 @@ export default function App() {
   return (
     <div style={{ display: 'flex', minHeight: '100%' }}>
       {palette && <Palette onPick={(s) => { setScreen(s); setPalette(false); }} onClose={() => setPalette(false)} />}
+      {/* Three flow rows — logo, scrolling list, footer — so the footer CANNOT overlap the last
+          item. It was absolutely positioned against a scrolling container, which meant it sat on
+          top of "Docs" at the bottom of the scroll, and the reserved padding was a magic number
+          that silently went stale the moment a screen was added. */}
       <nav
         style={{
           width: 'var(--rail-w)',
           flex: '0 0 auto',
+          display: 'flex',
+          flexDirection: 'column',
           background: 'var(--bg-surface)',
           borderRight: '1px solid var(--line)',
-          padding: '18px 0 96px',
           position: 'sticky',
           top: 0,
           height: '100vh',
-          overflowY: 'auto',
         }}
       >
-        <div style={{ padding: '0 20px 16px', fontWeight: 700, fontSize: 17, letterSpacing: '-0.02em' }}>
+        <div
+          style={{
+            padding: '18px 20px 14px',
+            fontWeight: 700,
+            fontSize: 17,
+            letterSpacing: '-0.02em',
+            flex: '0 0 auto',
+          }}
+        >
           forge<span style={{ color: 'var(--accent)' }}>/console</span>
         </div>
+        {/* minHeight:0 is what lets a flex child actually scroll instead of growing past the rail. */}
+        <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', paddingBottom: 8 }}>
         {NAV_GROUPS.map(([group, items]) => (
           <div key={group} style={{ marginBottom: 10 }}>
             <div
@@ -240,7 +254,17 @@ export default function App() {
             })}
           </div>
         ))}
-        <div style={{ position: 'absolute', bottom: 16, left: 20, right: 20, fontSize: 11, color: 'var(--text-faint)' }}>
+        </div>
+        <div
+          style={{
+            flex: '0 0 auto',
+            padding: '12px 20px 16px',
+            borderTop: '1px solid var(--line-faint)',
+            background: 'var(--bg-surface)',
+            fontSize: 11,
+            color: 'var(--text-faint)',
+          }}
+        >
           {boot.data ? `${boot.data.project} · ${boot.data.region}` : '…'}
           <div style={{ marginTop: 4 }}>⌘K to jump · · for density</div>
         </div>

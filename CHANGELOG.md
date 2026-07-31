@@ -9,6 +9,16 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.85.1] - 2026-07-31
+
+### Fixed
+
+- **The console's left rail no longer overlaps its own footer.** The footer was absolutely
+  positioned inside a scrolling container, so at the bottom of the scroll it sat on top of the last
+  nav item ("Docs"), and the space reserved for it was a magic padding value that went stale the
+  moment a screen was added. The rail is now three flow rows — logo, scrolling list, footer — so
+  overlap is structurally impossible at any viewport height and any number of screens.
+
 ## [0.85.0] - 2026-07-31
 
 ### Added
