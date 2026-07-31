@@ -201,6 +201,16 @@ describe('findings — report-only, and driven by things that actually happened'
     expect(f.some((x) => x.rule === 'credential-expiring')).toBe(false);
   });
 
+  it('flags a service-account key as CRITICAL — this platform should have none', () => {
+    const fnd = runFindings({
+      ...base,
+      credentials: [
+        { id: 'k1', env: 'prod-a', kind: 'service_account_key', name: 'deployer key', auto_renews: false, source: 'discovered' },
+      ],
+    });
+    expect(fnd.find((x) => x.rule === 'service-account-key-exists')?.severity).toBe('critical');
+  });
+
   it('cannot mutate the snapshot it inspects — report-only is structural', () => {
     const snap = { ...base, resources: [r({ name: 'x', kind: 'bucket' })] };
     runFindings(snap);

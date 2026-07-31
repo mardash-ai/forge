@@ -240,7 +240,7 @@ export interface Finding {
 export interface Credential {
   id: string;
   env: EnvKey;
-  kind: 'secret' | 'tls_certificate' | 'api_token' | 'oauth_client';
+  kind: 'secret' | 'tls_certificate' | 'api_token' | 'oauth_client' | 'service_account_key';
   name: string;
   created_at?: string;
   expires_at?: string;

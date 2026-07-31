@@ -288,7 +288,33 @@ const failingPipelines: Rule = (s) => {
   return out;
 };
 
+/**
+ * A user-managed service-account key should not exist ANYWHERE in this platform — everything
+ * authenticates through Workload Identity. A key is a long-lived credential that can be copied off
+ * a laptop, and its presence is the finding regardless of expiry.
+ */
+const serviceAccountKeys: Rule = (s) =>
+  s.credentials
+    .filter((c) => c.kind === 'service_account_key')
+    .map((c) =>
+      f(
+        {
+          rule: 'service-account-key-exists',
+          severity: 'critical',
+          title: `A service-account key exists: ${c.name}`,
+          detail:
+            'This platform authenticates exclusively through Workload Identity and should hold no ' +
+            'service-account keys. A key is long-lived, copyable, and does not expire with a session.',
+          subject: c.id,
+          env: c.env,
+          suggested_action: 'Delete the key and move whatever uses it to Workload Identity.',
+        },
+        s.now,
+      ),
+    );
+
 const RULES: Rule[] = [
+  serviceAccountKeys,
   metricsPipelineDead,
   collectorScalesToZero,
   databaseProtection,

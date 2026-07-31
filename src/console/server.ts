@@ -25,6 +25,7 @@ import { runFindings } from './findings';
 import { createGcpInventoryProvider } from '../plugins/console-gcp/inventory';
 import { createCloudMonitoringProvider, createManagedPrometheusProvider } from '../plugins/console-gcp/metrics';
 import { createCloudLoggingProvider } from '../plugins/console-gcp/logs';
+import { createGcpCredentialsProvider } from '../plugins/console-gcp/credentials';
 import { createGitHubPipelinesProvider } from '../plugins/console-github/pipelines';
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -47,6 +48,27 @@ export function buildRegistry(): ProviderRegistry {
     createCloudMonitoringProvider({ id: 'cloud-monitoring', envs: [ENV], scope: { project_id: PROJECT } }),
     createManagedPrometheusProvider({ id: 'managed-prometheus', envs: [ENV], scope: { project_id: PROJECT } }),
     createCloudLoggingProvider({ id: 'cloud-logging', envs: [ENV], scope: { project_id: PROJECT } }),
+    createGcpCredentialsProvider({
+      id: 'gcp-credentials',
+      envs: [ENV],
+      scope: { project_id: PROJECT },
+      // Expiries no API exposes. Configured rather than coded so adding one is not a release.
+      declared: (process.env.CONSOLE_DECLARED_EXPIRIES ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((entry) => {
+          // "name|kind|iso8601|detail"
+          const [name, kind, expires_at, detail] = entry.split('|');
+          return {
+            name: name ?? 'unknown',
+            kind: (kind ?? 'api_token') as never,
+            expires_at: expires_at ?? '',
+            ...(detail ? { detail } : {}),
+          };
+        })
+        .filter((d) => d.expires_at),
+    }),
     createGitHubPipelinesProvider({
       id: 'github-actions',
       envs: [ENV],

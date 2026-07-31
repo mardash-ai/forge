@@ -9,6 +9,21 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.83.0] - 2026-07-31
+
+### Added
+
+- **forge-console: a credentials provider.** The findings engine already had an expiry rule with
+  nothing feeding it. Now reports managed certificates (expiry and whether renewal can actually
+  complete — a managed cert only renews while its DNS authorization resolves, so "managed" is not
+  the same as "safe"), Secret Manager metadata, user-managed service-account keys, and declared
+  expiries for things no API exposes (a GitHub PAT's expiry is not readable by the token itself).
+  Declared entries are labelled as such so a hand-typed date is never mistaken for an observed fact.
+  Read with `secretmanager.viewer`, never `accessor` — it sees that a secret exists, never its value.
+- **Finding: a user-managed service-account key exists.** CRITICAL. This platform authenticates
+  exclusively through Workload Identity; a key is long-lived, copyable, and does not expire with a
+  session, so its existence is the finding.
+
 ## [0.82.0] - 2026-07-31
 
 ### Added
