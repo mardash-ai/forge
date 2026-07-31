@@ -17,3 +17,8 @@ terraform/**/.terraform.lock.hcl
 # console SPA build output + deps
 console/dist/
 console/node_modules/
+
+# tsc -b emits alongside the sources; only the Vite bundle ships
+console/src/**/*.js
+console/src/*.js
+console/tsconfig.tsbuildinfo
