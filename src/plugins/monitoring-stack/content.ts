@@ -613,7 +613,12 @@ groups:
               to: 0
             datasourceUid: forge-prometheus
             model:
-              expr: 'min(mcp_tools_registered) or on() vector(0)'
+              # ⛔ RANGE-AWARE. mcp_tools_registered is a SPARSE gauge (emitted once at
+              # registration), and Prometheus treats a sample as stale after 5 minutes — so an
+              # INSTANT query returns nothing shortly after boot, falls through to vector(0), and
+              # this rule fires permanently having never evaluated its real condition. Observed
+              # live on 2026-07-31: firing as NoData directly beneath a panel reading a healthy 31.
+              expr: 'max_over_time(mcp_tools_registered[6h]) or on() vector(0)'
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200

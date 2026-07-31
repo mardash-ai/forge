@@ -9,6 +9,22 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.93.0] - 2026-07-31
+
+### Fixed
+
+- **The Dead-MCP-Registration alert had never once evaluated its own condition.** It queried
+  `min(mcp_tools_registered)` with `instant: true`, but that gauge is **sparse** — emitted once at
+  registration — and Prometheus marks a sample stale after 5 minutes. Minutes after any deploy the
+  instant query returned nothing, fell through `or on() vector(0)`, and compared `0 < 31`, so the
+  rule fired permanently while the panel directly above it read a healthy **31**. An alert that
+  always fires is an alert you mute, and a muted alert is indistinguishable from no alert — on the
+  single rule that tells you the tool surface came up short after a deploy.
+  Now range-aware (`max_over_time(...[6h])`), with absence handled by the no-ingestion meta-check
+  that owns it rather than alarming here.
+  The existing test asserted the **broken** expression, pinning the bug in place; a test that locks
+  in the wrong form is worse than none, because it makes the fix look like the regression.
+
 ## [0.92.0] - 2026-07-31
 
 ### Fixed

@@ -164,7 +164,12 @@ describe('generateMonitoringCompose — defaults', () => {
     expect(GRAFANA_ALERT_RULES).not.toContain('{job=~');
     expect(GRAFANA_ALERT_RULES).toContain('service_name=');
     // registration lines only log at boot — the alert is gauge-based, not absent-line-based
-    expect(GRAFANA_ALERT_RULES).toContain('min(mcp_tools_registered) or on() vector(0)');
+    // Was `min(mcp_tools_registered) or on() vector(0)` with instant:true. That assertion pinned
+    // the BUG in place: an instant query cannot see a gauge emitted once at registration (5-minute
+    // staleness), so it fell through to vector(0) and the rule fired permanently without ever
+    // evaluating its real condition. A test that locks in the broken form is worse than no test —
+    // it makes the fix look like the regression.
+    expect(GRAFANA_ALERT_RULES).toContain('max_over_time(mcp_tools_registered[6h]) or on() vector(0)');
     expect(GRAFANA_ALERT_RULES).not.toContain('absent_over_time');
   });
 
@@ -338,5 +343,17 @@ describe('Service Health units — an unlabeled axis invites a wrong conclusion'
     const d = DASHBOARD_SERVICE_HTTP;
     const latency = d.slice(d.indexOf('Latency p95'));
     expect(latency.slice(0, 400)).toContain('"unit": "ms"');
+  });
+});
+
+describe('Dead MCP Registration alert — must not fire on a sparse gauge (acceptance F-2)', () => {
+  it('queries over a range, never an instant, so a once-at-boot gauge is visible', () => {
+    // The rule fired permanently as DatasourceNoData and had NEVER evaluated its real condition:
+    // an instant query cannot see a gauge emitted once at registration, because Prometheus marks a
+    // sample stale after 5 minutes. It then fell through `or vector(0)` and compared 0 < 31.
+    // A permanently-firing alert is one you mute, and a muted alert equals no alert — on the single
+    // rule that tells you the tool surface came up short after a deploy.
+    expect(GRAFANA_ALERT_RULES).toContain('max_over_time(mcp_tools_registered[6h])');
+    expect(GRAFANA_ALERT_RULES).not.toContain("expr: 'min(mcp_tools_registered) or on() vector(0)'");
   });
 });
