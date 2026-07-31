@@ -136,6 +136,10 @@ export function initOtelLangfuse(cfg: OtelLangfuseConfig = {}): boolean {
   // ── Tracing: needs the Langfuse key pair ──
   if (!pub || !sec) {
     _enabled = false;
+    // Clear the credential too. Leaving a stale `_authHeader` from an earlier init means a later
+    // metrics POST still carries an Authorization the caller has explicitly stopped supplying —
+    // init must fully describe the resulting state, never partially amend it.
+    _authHeader = '';
     return false;
   }
 
@@ -256,14 +260,48 @@ function bucketCounts(durationMs: number): string[] {
   return counts;
 }
 
+// Export outcome counters. Export used to end in `.catch(() => {})` — "silently discard collector
+// errors" — which is how a completely dark metrics pipeline survived for days: the collector could
+// reject every POST and nothing anywhere would say so. Dropping a metric is not worth an
+// exception, but it IS worth a count and a log line.
+let _mx = { ok: 0, failed: 0, lastError: '', lastOkAt: '' };
+
+function noteMetricExport(ok: boolean, detail?: string): void {
+  if (ok) { _mx.ok += 1; _mx.lastOkAt = new Date().toISOString(); return; }
+  _mx.failed += 1;
+  _mx.lastError = detail ?? 'unknown';
+  if (_mx.failed === 1 || _mx.failed % 20 === 0) {
+    process.stdout.write(JSON.stringify({
+      event: 'otel.metric_export_failed',
+      endpoint: _metricsEndpoint,
+      failures: _mx.failed,
+      error: _mx.lastError,
+    }) + '\n');
+  }
+}
+
+/** Metric export counters, for health endpoints. Never throws. */
+export function metricExportStats(): { ok: number; failed: number; lastError: string; lastOkAt: string } {
+  return { ..._mx };
+}
+
 function exportMetricsPayload(payload: unknown): void {
   if (!_metricsEnabled) return;
+  // ⚠️ Only send Authorization when we actually HAVE one. `_authHeader` is the Langfuse Basic
+  // credential and is the EMPTY STRING once tracing is retired — this function used to send
+  // `Authorization: ` on every metrics POST regardless. The OTLP collector needs no credential at
+  // all; an empty one is at best meaningless and at worst rejected.
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (_authHeader) headers['Authorization'] = _authHeader;
+
   fetch(_metricsEndpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': _authHeader },
+    headers,
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(5000),
-  }).catch(() => { /* silently discard collector errors */ });
+  })
+    .then((res) => (res.ok ? noteMetricExport(true) : noteMetricExport(false, `HTTP ${res.status}`)))
+    .catch((e: unknown) => noteMetricExport(false, (e as Error)?.message ?? 'fetch failed'));
 }
 
 function metricsEnvelope(metrics: unknown[]): unknown {

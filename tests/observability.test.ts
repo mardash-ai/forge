@@ -446,3 +446,57 @@ describe('metrics are independent of Langfuse credentials — 0.79.25', () => {
     expect(isMetricsEnabled()).toBe(true);
   });
 });
+
+// The metrics POST must not carry an EMPTY Authorization header. `_authHeader` is the Langfuse
+// Basic credential and is '' once tracing is retired; the collector needs no credential at all.
+// Sending `Authorization: ` on every export is at best meaningless and at worst rejected — and
+// because failures were swallowed, it would be invisible either way.
+describe('metrics export sends no empty Authorization — 0.79.26', () => {
+  const KEYS = ['OTEL_EXPORTER_OTLP_ENDPOINT', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY'];
+  const saved: Record<string, string | undefined> = {};
+  let calls: Array<{ url: string; headers: Record<string, string> }> = [];
+  const realFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    KEYS.forEach((k) => { saved[k] = process.env[k]; delete process.env[k]; });
+    calls = [];
+    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), headers: (init?.headers ?? {}) as Record<string, string> });
+      return new Response('{}', { status: 200 });
+    }) as typeof fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    KEYS.forEach((k) => (saved[k] === undefined ? delete process.env[k] : (process.env[k] = saved[k]!)));
+  });
+
+  it('omits Authorization entirely when there are no Langfuse keys', async () => {
+    const { initOtelLangfuse, recordMcpRegistrationMetric } = await import('../src/plugins/otel-langfuse/index');
+    initOtelLangfuse({ endpoint: 'https://collector.example' });
+    recordMcpRegistrationMetric({ app: 'dorinda-api', tools_count: 31 });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(calls.length).toBe(1);
+    const h = calls[0]!.headers;
+    expect(Object.keys(h)).not.toContain('Authorization');
+    expect(h['Authorization']).toBeUndefined();
+  });
+
+  it('still sends Authorization when Langfuse keys ARE present', async () => {
+    const { initOtelLangfuse, recordMcpRegistrationMetric } = await import('../src/plugins/otel-langfuse/index');
+    initOtelLangfuse({ endpoint: 'https://collector.example', publicKey: 'pk', secretKey: 'sk' });
+    recordMcpRegistrationMetric({ app: 'dorinda-api', tools_count: 31 });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls[0]!.headers['Authorization']).toMatch(/^Basic /);
+  });
+
+  it('counts a successful export so health can distinguish enabled from WORKING', async () => {
+    const { initOtelLangfuse, recordMcpRegistrationMetric, metricExportStats } =
+      await import('../src/plugins/otel-langfuse/index');
+    initOtelLangfuse({ endpoint: 'https://collector.example' });
+    const before = metricExportStats().ok;
+    recordMcpRegistrationMetric({ app: 'dorinda-api', tools_count: 31 });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(metricExportStats().ok).toBeGreaterThan(before);
+  });
+});

@@ -9,6 +9,25 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.79.26] - 2026-07-31
+
+### Fixed
+
+- **Metrics exports no longer send an empty `Authorization` header.** `exportMetricsPayload` always
+  set `Authorization: _authHeader`, and `_authHeader` is the **empty string** once tracing is
+  retired — so every metrics POST to the OTLP collector carried a meaningless credential. The
+  collector needs none at all. Now the header is sent only when one exists.
+- **`initOtelLangfuse` clears `_authHeader` when keys are absent.** It previously returned early
+  without clearing, so a stale credential from an earlier init survived into later exports. Init
+  must fully describe the resulting state, not partially amend it. (Caught by the test above, not
+  by inspection.)
+- **Metric export outcomes are observable.** Export ended in `.catch(() => {})` —
+  "silently discard collector errors" — which is why a totally dark pipeline survived for days:
+  the collector could reject every POST and nothing would say so. Outcomes are now counted, the
+  first failure and every 20th log a structured `otel.metric_export_failed` line, and
+  `metricExportStats()` is exported so a health endpoint can distinguish **enabled** from
+  **working**.
+
 ## [0.79.25] - 2026-07-31
 
 ### Fixed
