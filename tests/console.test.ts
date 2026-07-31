@@ -492,3 +492,46 @@ describe('cloud run traffic — “what is serving?” must not answer “nothin
     ]);
   });
 });
+
+describe('cloud logging — a request log must not render as a blank row', () => {
+  it('renders a Cloud Run request log as method, path, status and latency', async () => {
+    const { describeHttpRequest } = await import('../src/plugins/console-gcp/logs');
+    // The EXACT entry the acceptance run found rendering blank: the admin purge. A request log has
+    // no textPayload and no jsonPayload, so a message extractor that reads only those produces "".
+    expect(
+      describeHttpRequest({
+        requestMethod: 'POST',
+        requestUrl: 'https://api.dorinda.ai/api/admin/accounts/purge',
+        status: 200,
+        latency: '0.914489501s',
+      }),
+    ).toBe('POST api.dorinda.ai/api/admin/accounts/purge → 200 (914ms)');
+  });
+
+  it('drops the query string, which routinely carries tokens and ids', () => {
+    // Log lines end up in screenshots and pasted incident notes; a query string is where a secret
+    // most often rides along.
+    return import('../src/plugins/console-gcp/logs').then(({ describeHttpRequest }) => {
+      const out = describeHttpRequest({
+        requestMethod: 'GET',
+        requestUrl: 'https://api.dorinda.ai/connect/google/callback?code=SECRET&state=xyz',
+        status: 302,
+      });
+      expect(out).not.toContain('SECRET');
+      expect(out).toBe('GET api.dorinda.ai/connect/google/callback → 302');
+    });
+  });
+
+  it('returns empty for an entry with no httpRequest, so ordinary logs are unaffected', async () => {
+    const { describeHttpRequest, describeProtoPayload } = await import('../src/plugins/console-gcp/logs');
+    expect(describeHttpRequest(undefined)).toBe('');
+    expect(describeProtoPayload(undefined)).toBe('');
+  });
+
+  it('renders an audit log from protoPayload rather than blank', async () => {
+    const { describeProtoPayload } = await import('../src/plugins/console-gcp/logs');
+    expect(describeProtoPayload({ methodName: 'google.cloud.run.v2.Services.UpdateService',
+                                  resourceName: 'projects/p/services/dorinda-api' }))
+      .toBe('google.cloud.run.v2.Services.UpdateService projects/p/services/dorinda-api');
+  });
+});

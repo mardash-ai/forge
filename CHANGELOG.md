@@ -9,6 +9,26 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.87.0] - 2026-07-31
+
+### Fixed
+
+- **The console's log pane rendered Cloud Run request logs as completely blank rows.** A request log
+  carries no `textPayload` and no `jsonPayload` — the entry *is* `httpRequest` plus metadata — and the
+  extractor read only those two payloads. On a live acceptance run that was **26 of 40 lines blank**,
+  and the blank ones were the HTTP entries, which are exactly what you need to trace a flow. The admin
+  account-purge was searchable by its URL and still displayed as an empty row. For an operations
+  console, `POST /api/admin/accounts/purge → 200 (914ms)` *is* the log line. Audit logs
+  (`protoPayload`) had the same defect. The query string is deliberately dropped — it routinely
+  carries tokens, and a log line is where a secret most often reaches a screenshot.
+
+### Added
+
+- **Explore is deep-linkable**: `svc`, `sig`, `mins`, `intent` and the log filter `q` all live in the
+  URL, plus window and metric selectors and a free-text log filter. Reporting "the logs looked fine"
+  without a URL asks the reader to take it on trust, which is the opposite of what an operator pane
+  is for.
+
 ## [0.86.0] - 2026-07-31
 
 ### Changed

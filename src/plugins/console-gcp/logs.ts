@@ -41,6 +41,46 @@ function buildFilter(q: LogQuery): string {
   return parts.join(' AND ');
 }
 
+/**
+ * Render a Cloud Run **request log** as a readable line.
+ *
+ * ⛔ WHY THIS EXISTS: a request log carries NO `textPayload` and NO `jsonPayload` — the whole entry
+ * is `httpRequest` plus metadata. The extractor above looks only at those two payloads, so every
+ * request log rendered as a COMPLETELY BLANK ROW. On a live acceptance run that was 26 of 40 lines
+ * in the pane, and the blank ones were the HTTP entries — precisely what you need to trace a flow
+ * end to end. The admin purge was searchable by URL and yet displayed as an empty row.
+ *
+ * For an operations console, `POST /api/admin/accounts/purge → 200 (914ms)` IS the log line.
+ */
+export function describeHttpRequest(h: Record<string, unknown> | undefined): string {
+  if (!h) return '';
+  const method = String(h['requestMethod'] ?? 'REQ');
+  const raw = String(h['requestUrl'] ?? '');
+  let path = raw;
+  try {
+    // Show host+path, never the query string: it routinely carries tokens and ids, and log bodies
+    // are the one place a secret most often leaks into a screenshot.
+    const u = new URL(raw);
+    path = u.host + u.pathname;
+  } catch {
+    path = raw.split('?')[0] ?? raw;
+  }
+  if (!path) return '';
+  const status = h['status'] !== undefined ? ` → ${h['status']}` : '';
+  const lat = typeof h['latency'] === 'string' ? h['latency'] : '';
+  const ms = lat ? ` (${Math.round(parseFloat(lat) * 1000)}ms)` : '';
+  return `${method} ${path}${status}${ms}`;
+}
+
+/** Audit logs put everything in protoPayload; without this they render blank for the same reason. */
+export function describeProtoPayload(p: Record<string, unknown> | undefined): string {
+  if (!p) return '';
+  const name = p['methodName'] ?? p['serviceName'];
+  const resource = p['resourceName'];
+  if (!name && !resource) return '';
+  return [name, resource].filter(Boolean).join(' ');
+}
+
 export function createCloudLoggingProvider(opts: {
   id: string;
   envs: string[];
@@ -96,6 +136,8 @@ export function createCloudLoggingProvider(opts: {
           (typeof e.textPayload === 'string' && e.textPayload) ||
           (jp && (jp['message'] ?? jp['msg'] ?? jp['event']) as string) ||
           (jp ? JSON.stringify(jp) : '') ||
+          describeHttpRequest(e.httpRequest) ||
+          describeProtoPayload(e.protoPayload) ||
           '';
         return {
           timestamp: e.timestamp,

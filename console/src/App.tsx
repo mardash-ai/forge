@@ -1042,16 +1042,42 @@ function Pipelines() {
 
 // ── Explore (metrics + logs on one surface) ────────────────────────────────────────────────────
 
+/**
+ * DEEP-LINKABLE. Every knob on this screen lives in the URL (`svc`, `sig`, `mins`, `q`, `intent`),
+ * because the answer to "what did you actually look at?" has to be a link somebody else can open.
+ * An acceptance run that reports "logs looked fine" without a URL is asking to be taken on trust,
+ * which is the opposite of the point.
+ */
 function Explore() {
-  const [service, setService] = useState('dorinda-api');
-  const [signal, setSignal] = useState<'metrics' | 'logs'>('metrics');
+  const qs = new URLSearchParams(location.search);
+  const [service, setService] = useState(qs.get('svc') || 'dorinda-api');
+  const [signal, setSignal] = useState<'metrics' | 'logs'>((qs.get('sig') as 'metrics' | 'logs') || 'metrics');
+  const [minutes, setMinutes] = useState(Number(qs.get('mins')) || 60);
+  const [text, setText] = useState(qs.get('q') || '');
+  const [intent, setIntent] = useState(qs.get('intent') || 'request_rate');
+
+  useEffect(() => {
+    const u = new URL(location.href);
+    u.searchParams.set('svc', service);
+    u.searchParams.set('sig', signal);
+    u.searchParams.set('mins', String(minutes));
+    u.searchParams.set('intent', intent);
+    if (text) u.searchParams.set('q', text);
+    else u.searchParams.delete('q');
+    history.replaceState(null, '', u);
+  }, [service, signal, minutes, text, intent]);
+
   const metrics = useApi<MetricAnswer>(
-    signal === 'metrics' ? `/api/metrics?intent=request_rate&service=${encodeURIComponent(service)}&minutes=60` : null,
-    [service],
+    signal === 'metrics'
+      ? `/api/metrics?intent=${encodeURIComponent(intent)}&service=${encodeURIComponent(service)}&minutes=${minutes}`
+      : null,
+    [service, minutes, intent],
   );
   const logs = useApi<LogRow[]>(
-    signal === 'logs' ? `/api/logs?service=${encodeURIComponent(service)}&minutes=60&limit=80` : null,
-    [service],
+    signal === 'logs'
+      ? `/api/logs?service=${encodeURIComponent(service)}&minutes=${minutes}&limit=200${text ? `&text=${encodeURIComponent(text)}` : ''}`
+      : null,
+    [service, minutes, text],
   );
 
   const points = metrics.data?.series[0]?.points ?? [];
@@ -1075,13 +1101,38 @@ function Explore() {
             ['logs', 'Logs'],
           ]}
         />
-        <Note>last 60 minutes</Note>
+        <Segmented
+          ariaLabel="Window"
+          value={String(minutes)}
+          onChange={(v) => setMinutes(Number(v))}
+          options={[
+            ['15', '15m'],
+            ['60', '1h'],
+            ['360', '6h'],
+            ['1440', '24h'],
+          ]}
+        />
+        {signal === 'metrics' ? (
+          <Segmented
+            ariaLabel="Metric"
+            value={intent}
+            onChange={setIntent}
+            options={[
+              ['request_rate', 'Rate'],
+              ['error_rate', 'Errors'],
+              ['latency_p95', 'p95'],
+            ]}
+          />
+        ) : (
+          /* Free-text filter. An acceptance run needs to point at ONE flow's lines, not the stream. */
+          <Field ariaLabel="Filter logs" value={text} onChange={setText} placeholder="filter text" mono width={210} />
+        )}
       </Toolbar>
 
       {signal === 'metrics' ? (
         <Card
-          eyebrow={metrics.data ? `answered by ${metrics.data.provider_id}` : 'request rate'}
-          title="Request rate"
+          eyebrow={metrics.data ? `answered by ${metrics.data.provider_id}` : intent.replace(/_/g, ' ')}
+          title={intent === 'error_rate' ? 'Error rate' : intent === 'latency_p95' ? 'Latency p95' : 'Request rate'}
           subtitle="Which store answered is part of the reading, not a footnote — two metric backends disagree more often than either admits."
         >
           {metrics.error ? (
