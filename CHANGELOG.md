@@ -9,6 +9,25 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.81.0] - 2026-07-31
+
+### Added
+
+- **`terraform/modules/alerting`** — the watcher that lives OUTSIDE the thing it watches. Cloud
+  Monitoring, not Grafana: alerting that lives only in the pane means nothing is watching when the
+  pane is down, including nothing watching the pane.
+
+  The **first** policy in the file is the meta-check — *"no metric samples ingested in 30m"* —
+  because on 2026-07-31 Managed Prometheus was empty for days behind a five-fault chain while every
+  health check stayed green and every dashboard drew a flat line at zero. Nothing noticed. It
+  watches the collector's own export counter, so it fires whichever of the three hops died.
+
+  Also: external uptime checks per host (accepting **401/302/307** as healthy, so an authenticated
+  surface does not page continuously while working perfectly), Cloud Run 5xx per service, Cloud SQL
+  down and disk-above-85%, and an opt-in budget behind `create_budget` — budgets need a
+  billing-account role the project-scoped deployer deliberately does not hold, and gating it keeps
+  the rest of the module applyable.
+
 ## [0.80.2] - 2026-07-31
 
 ### Fixed
