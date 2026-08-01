@@ -20,7 +20,6 @@ import { agentRun } from './agent-run/index';
 import { sendEmail } from './send-email/index';
 import { sendMessage } from './send-message/index';
 import { setupObservability } from './setup-observability/index';
-import { provisionObservability } from './provision-observability/index';
 import { provisionMonitoring } from './provision-monitoring/index';
 import { evalCapability } from './eval/index';
 
@@ -48,7 +47,6 @@ export const capabilities: Capability<any, any>[] = [
   sendEmail,
   sendMessage,
   setupObservability,
-  provisionObservability,
   provisionMonitoring,
   evalCapability,
 ];

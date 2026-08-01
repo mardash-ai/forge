@@ -18,9 +18,13 @@ import {
 
 // Plugin: monitoring-stack.
 //
-// Forge owns the canonical METRICS + LOGGING environment (the Grafana pane) exactly the way
-// observability-stack owns the TRACING environment (the Langfuse pane, C37). One provision command
-// stands up the full pipeline as its own independent compose project:
+// Forge owns the canonical METRICS + LOGGING environment (the Grafana pane). One provision command
+// stands up the full pipeline as its own independent compose project.
+//
+// There used to be a sibling, `observability-stack`, owning a TRACING environment (the Langfuse
+// pane, C37). Langfuse was retired 2026-07-28 and that stack was deleted in 0.98.0 — it had spent
+// months generating a deployment nothing could use. Traces now go to the same OTLP collector as
+// everything else.
 //
 //   otel-collector  — the single OTLP ingest + fan-out: traces → Langfuse (Basic auth added here,
 //                     from the stack .env), logs → Loki, metrics → a :8889 Prometheus scrape

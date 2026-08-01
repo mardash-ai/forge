@@ -9,6 +9,20 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.98.0] - 2026-08-01
+
+### Removed
+- **The Langfuse provisioning stack — 644 lines that generated a deployment nothing could use.**
+  Langfuse was retired 2026-07-28; `provision-observability` and the `observability-stack` plugin
+  went on emitting a full Langfuse/ClickHouse compose project for months afterwards.
+
+  Gone: the `forge provision-observability` CLI command (49 lines), its capability registration,
+  `capabilities/provision-observability` (213), `plugins/observability-stack` (382), and its test.
+
+  ⚠️ **Breaking:** `forge provision-observability` no longer exists. It could not have produced a
+  working stack since the retirement, so nothing is losing a capability it actually had — but a
+  script invoking it will now fail loudly instead of quietly building something unusable.
+
 ## [0.97.0] - 2026-08-01
 
 ### Fixed
