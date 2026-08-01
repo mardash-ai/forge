@@ -37,6 +37,32 @@ variable "error_ratio_threshold" {
   type    = number
   default = 0.05
 }
+variable "job_success_metrics" {
+  description = <<-EOT
+    Scheduled jobs that must keep producing a SUCCESSFUL outcome, alerted on the ABSENCE of that
+    success signal.
+
+    Born from a real outage (dorinda acceptance run 2026-07-31, finding F-24): the Google Calendar
+    sweep ran every 15 minutes for over an hour doing nothing at all, and every signal that existed
+    said it was healthy — the cron returned HTTP 200, `sync_error` was null, the integration card
+    read "Connected". A 5xx policy cannot see this, because there is no 5xx. An uptime check cannot
+    see it, because the service is up.
+
+    The distinction that matters: alert on the ABSENCE OF SUCCESS, not the presence of failure. A
+    job that reports success while doing nothing is the hardest failure to notice, and the only
+    reliable evidence is a success counter that has stopped advancing.
+
+    Each entry needs a `filter` selecting the success series ONLY (typically via a status label) and
+    a `duration` comfortably longer than the job's interval, so one missed run is not a page.
+  EOT
+  type = list(object({
+    name     = string
+    filter   = string
+    duration = string
+    docs     = optional(string, "")
+  }))
+  default = []
+}
 variable "create_budget" {
   type        = bool
   default     = false
@@ -101,6 +127,41 @@ resource "google_monitoring_alert_policy" "no_metric_ingestion" {
       # OTLP metrics arriving via Managed Prometheus the monitored resource is `prometheus_target`.
       filter   = "metric.type=\"prometheus.googleapis.com/mcp_registration_health_ratio/gauge\" AND resource.type=\"prometheus_target\""
       duration = "1800s"
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_MEAN"
+      }
+    }
+  }
+  notification_channels = local.channels
+  alert_strategy { auto_close = "86400s" }
+}
+
+# ── 1b. Scheduled jobs that stopped SUCCEEDING (not merely started failing) ──────────────────────
+resource "google_monitoring_alert_policy" "job_success_absent" {
+  count        = length(var.job_success_metrics)
+  project      = var.project_id
+  display_name = "Job not succeeding: ${var.job_success_metrics[count.index].name}"
+  combiner     = "OR"
+  documentation {
+    content = join("\n", compact([
+      "`${var.job_success_metrics[count.index].name}` has produced no SUCCESSFUL outcome for ${var.job_success_metrics[count.index].duration}.",
+      "",
+      "The job is probably still running and still returning 200 — this fires on the absence of",
+      "success, precisely because a job that no-ops silently reports nothing wrong. Check, in order:",
+      "  1. the job's per-run structured log for its outcome/status breakdown",
+      "  2. whether every run is taking an early return (a skipped/degraded status climbing while ok stays flat)",
+      "  3. whether upstream state it depends on was emptied (credentials, selection, config)",
+      var.job_success_metrics[count.index].docs,
+    ]))
+  }
+  conditions {
+    display_name = "no successful run in ${var.job_success_metrics[count.index].duration}"
+    condition_absent {
+      # An absence condition REQUIRES a resource.type; OTLP metrics arriving through Managed
+      # Prometheus land on `prometheus_target`.
+      filter   = var.job_success_metrics[count.index].filter
+      duration = var.job_success_metrics[count.index].duration
       aggregations {
         alignment_period   = "300s"
         per_series_aligner = "ALIGN_MEAN"

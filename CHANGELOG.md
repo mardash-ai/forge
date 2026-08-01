@@ -9,6 +9,22 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.95.0] - 2026-08-01
+
+### Added
+- **`alerting`: `job_success_metrics` — alert on the ABSENCE of a scheduled job's success signal.**
+  A consumer declares `{name, filter, duration}` per job and gets a Cloud Monitoring policy that
+  fires when the success series stops advancing.
+
+  Born from a real outage (dorinda acceptance run 2026-07-31, finding F-24): the Google Calendar
+  sweep ran every 15 minutes for over an hour doing nothing, and every existing signal said it was
+  healthy — HTTP 200 from the cron, `sync_error` null, the integration card reading "Connected". No
+  5xx policy can see that, because there is no 5xx; no uptime check can, because the service is up.
+
+  The distinction the module now encodes: **alert on the absence of success, not the presence of
+  failure.** A job that reports success while doing nothing is the hardest failure to notice, and a
+  stalled success counter is the only reliable evidence of it.
+
 ## [0.94.0] - 2026-07-31
 
 ### Added

@@ -283,6 +283,95 @@ function bucketCounts(durationMs: number): string[] {
   return counts;
 }
 
+
+// ── Cumulative counter registry (F-16) ─────────────────────────────────────
+//
+// ⛔ MANAGED PROMETHEUS DROPS DELTA SUMS, SILENTLY.
+//
+// This tier emitted every counter and histogram with `aggregationTemporality: 1` (DELTA), one
+// data point of value 1 per call. GMP is Prometheus-semantics: a monotonic sum must be
+// **CUMULATIVE (2)**, and a DELTA sum is discarded on ingest with no error anywhere.
+//
+// The result went unnoticed for weeks because GAUGES carry no temporality and therefore landed
+// fine — so `mcp_tools_registered` sat in Grafana reading a healthy 31 while EVERY tool-call
+// counter, error counter and duration histogram was thrown away. Every "Tool calls / min" panel
+// read "No data", indistinguishable from a quiet system, and the no-ingestion meta-check passed
+// because the store genuinely was ingesting — that one gauge.
+//
+// Cumulative means the exporter must remember. Per (metric, attribute-set) we keep a running total
+// and a FIXED start time for the life of the process: that pair is what tells Prometheus a counter
+// reset happened when the process restarts, instead of the series appearing to jump backwards.
+const _counterState = new Map<string, { value: number; startNano: string }>();
+const _histState = new Map<string, { count: number; sum: number; buckets: number[]; startNano: string }>();
+
+/** Stable key for a metric + its attribute set. Attribute ORDER must not create a new series. */
+function _seriesKey(name: string, attrs: Array<{ key: string; value: unknown }>): string {
+  const parts = attrs
+    .map((a) => `${a.key}=${JSON.stringify((a.value as { stringValue?: string })?.stringValue ?? a.value)}`)
+    .sort();
+  return `${name}|${parts.join(',')}`;
+}
+
+/** Advance a cumulative counter and return the OTLP data point for it. */
+function _cumulativePoint(
+  name: string,
+  attrs: Array<{ key: string; value: unknown }>,
+  by: number,
+  nowN: string,
+): Record<string, unknown> {
+  const key = _seriesKey(name, attrs);
+  const prev = _counterState.get(key);
+  const next = { value: (prev?.value ?? 0) + by, startNano: prev?.startNano ?? nowN };
+  _counterState.set(key, next);
+  return {
+    attributes: attrs,
+    startTimeUnixNano: next.startNano,
+    timeUnixNano: nowN,
+    asInt: String(next.value),
+  };
+}
+
+/** Advance a cumulative histogram and return its OTLP data point. */
+function _cumulativeHistogramPoint(
+  name: string,
+  attrs: Array<{ key: string; value: unknown }>,
+  valueMs: number,
+  nowN: string,
+): Record<string, unknown> {
+  const key = _seriesKey(name, attrs);
+  const prev = _histState.get(key);
+  const buckets = prev ? prev.buckets.slice() : new Array(DURATION_BUCKETS.length + 1).fill(0);
+  let placed = false;
+  for (let i = 0; i < DURATION_BUCKETS.length; i++) {
+    if (valueMs <= (DURATION_BUCKETS[i] ?? Infinity)) { buckets[i] = (buckets[i] ?? 0) + 1; placed = true; break; }
+  }
+  if (!placed) buckets[DURATION_BUCKETS.length] = (buckets[DURATION_BUCKETS.length] ?? 0) + 1;
+  const next = {
+    count: (prev?.count ?? 0) + 1,
+    sum: (prev?.sum ?? 0) + valueMs,
+    buckets,
+    startNano: prev?.startNano ?? nowN,
+  };
+  _histState.set(key, next);
+  return {
+    attributes: attrs,
+    startTimeUnixNano: next.startNano,
+    timeUnixNano: nowN,
+    count: next.count,
+    sum: next.sum,
+    // OTLP wants CUMULATIVE bucket counts — each bucket is "how many observations fell at or below
+    // this bound, ever", not "this one observation".
+    bucketCounts: buckets.map(String),
+    explicitBounds: DURATION_BUCKETS,
+  };
+}
+
+/** Test seam: forget all cumulative state, as a process restart would. */
+export function _resetCumulativeStateForTest(): void {
+  _counterState.clear();
+  _histState.clear();
+}
+
 // Export outcome counters. Export used to end in `.catch(() => {})` — "silently discard collector
 // errors" — which is how a completely dark metrics pipeline survived for days: the collector could
 // reject every POST and nothing anywhere would say so. Dropping a metric is not worth an
@@ -368,20 +457,23 @@ export function recordToolCallMetric(opts: {
     {
       name: 'mcp.tool.calls',
       description: 'MCP tool call rate (RED Rate)',
-      sum: { dataPoints: [{ attributes: callAttrs, startTimeUnixNano: t, timeUnixNano: t, asInt: '1' }], aggregationTemporality: 1, isMonotonic: true },
+      sum: {
+        dataPoints: [_cumulativePoint('mcp.tool.calls', callAttrs, 1, t)],
+        aggregationTemporality: 2,
+        isMonotonic: true,
+      },
     },
     {
       name: 'mcp.tool.duration_ms',
       description: 'MCP tool call duration (RED Duration)',
       histogram: {
-        dataPoints: [{
-          attributes: [toAttrStr('tool', opts.tool), toAttrStr('app', opts.app)],
-          startTimeUnixNano: t, timeUnixNano: t,
-          count: 1, sum: opts.duration_ms,
-          bucketCounts: bucketCounts(opts.duration_ms),
-          explicitBounds: DURATION_BUCKETS,
-        }],
-        aggregationTemporality: 1,
+        dataPoints: [_cumulativeHistogramPoint(
+          'mcp.tool.duration_ms',
+          [toAttrStr('tool', opts.tool), toAttrStr('app', opts.app)],
+          opts.duration_ms,
+          t,
+        )],
+        aggregationTemporality: 2,
       },
     },
   ];
@@ -389,7 +481,11 @@ export function recordToolCallMetric(opts: {
     metrics.push({
       name: 'mcp.tool.errors',
       description: 'MCP tool call errors (RED Errors)',
-      sum: { dataPoints: [{ attributes: callAttrs, startTimeUnixNano: t, timeUnixNano: t, asInt: '1' }], aggregationTemporality: 1, isMonotonic: true },
+      sum: {
+        dataPoints: [_cumulativePoint('mcp.tool.errors', callAttrs, 1, t)],
+        aggregationTemporality: 2,
+        isMonotonic: true,
+      },
     });
   }
   exportMetricsPayload(metricsEnvelope(metrics));
