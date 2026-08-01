@@ -37,6 +37,30 @@ variable "error_ratio_threshold" {
   type    = number
   default = 0.05
 }
+variable "ingestion_heartbeat_filter" {
+  description = <<-EOT
+    The signal the "nothing ingested" meta-check watches. It MUST be emitted continuously while the
+    system is healthy — a heartbeat, not an event.
+
+    This was hardcoded to `mcp_registration_health_ratio`, a gauge emitted ONCE at MCP registration
+    (dorinda finding F-29). Its samples cluster at deploy times and nowhere else, so a 30-minute
+    absence window fired after every deploy and stayed firing through every quiet period — while a
+    genuine pipeline outage produced an identical signal. The one alert whose job is noticing that
+    metrics have stopped could not tell "dead" from "nothing happening".
+
+    The rule for any ABSENCE condition: absence must mean BROKEN. If the signal is also absent when
+    everything is fine, the alert is measuring silence, not failure. Point this at a metric that
+    travels the full app → OTLP → collector → GMP path (a GCP-native metric would prove the service
+    is up while saying nothing about the pipeline this check exists to validate).
+  EOT
+  type        = string
+  default     = "metric.type=\"prometheus.googleapis.com/pipeline_heartbeat_total/counter\" AND resource.type=\"prometheus_target\""
+}
+variable "ingestion_heartbeat_aligner" {
+  description = "Aligner for the heartbeat. ALIGN_RATE for a counter (the default heartbeat); ALIGN_MEAN for a gauge."
+  type        = string
+  default     = "ALIGN_RATE"
+}
 variable "job_success_metrics" {
   description = <<-EOT
     Scheduled jobs that must keep producing a SUCCESSFUL outcome, alerted on the ABSENCE of that
@@ -129,11 +153,13 @@ resource "google_monitoring_alert_policy" "no_metric_ingestion" {
     condition_absent {
       # The resource.type restriction is REQUIRED by the API for an absence condition, and for
       # OTLP metrics arriving via Managed Prometheus the monitored resource is `prometheus_target`.
-      filter   = "metric.type=\"prometheus.googleapis.com/mcp_registration_health_ratio/gauge\" AND resource.type=\"prometheus_target\""
+      filter   = var.ingestion_heartbeat_filter
       duration = "1800s"
       aggregations {
-        alignment_period   = "300s"
-        per_series_aligner = "ALIGN_MEAN"
+        alignment_period = "300s"
+        # Matches the heartbeat's kind: a COUNTER by default (Cloud Monitoring rejects ALIGN_MEAN on
+        # a CUMULATIVE INT64 outright). Set to ALIGN_MEAN if you point the filter at a gauge.
+        per_series_aligner = var.ingestion_heartbeat_aligner
       }
     }
   }

@@ -9,6 +9,22 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.96.0] - 2026-08-01
+
+### Fixed
+- **`alerting`: the "nothing ingested" meta-check no longer watches a sparse gauge.** Its filter was
+  hardcoded to `mcp_registration_health_ratio`, a gauge emitted ONCE at MCP registration — samples
+  cluster at deploy times and nowhere else, so a 30-minute absence window fired after every deploy
+  and stayed firing through every quiet period, while a genuine pipeline outage produced an
+  identical signal. The one alert whose job is noticing that metrics stopped could not tell "dead"
+  from "nothing happening" (dorinda finding F-29).
+
+  Now `ingestion_heartbeat_filter` (+ `ingestion_heartbeat_aligner`), defaulting to a
+  `pipeline_heartbeat_total` counter that a consumer emits from its health endpoint.
+
+  **The rule for any absence condition: absence must mean BROKEN.** If the signal is also absent
+  when everything is fine, the alert is measuring silence, not failure.
+
 ## [0.95.1] - 2026-08-01
 
 ### Fixed
