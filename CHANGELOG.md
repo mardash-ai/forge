@@ -9,6 +9,15 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.95.1] - 2026-08-01
+
+### Fixed
+- **`alerting`: `job_success_metrics` now aligns counters with `ALIGN_RATE`.** The first release
+  hardcoded `ALIGN_MEAN`, copied from the gauge-based ingestion policy, and Cloud Monitoring rejects
+  it outright on a counter: *"The aligner cannot be applied to metrics with kind CUMULATIVE and
+  value type INT64."* Success signals are almost always counters, so `ALIGN_RATE` is the default,
+  overridable per entry via the new optional `aligner` field for gauge-shaped signals.
+
 ## [0.95.0] - 2026-08-01
 
 ### Added

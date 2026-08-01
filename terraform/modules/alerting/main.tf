@@ -60,6 +60,10 @@ variable "job_success_metrics" {
     filter   = string
     duration = string
     docs     = optional(string, "")
+    # Success signals are usually COUNTERS, and Cloud Monitoring rejects ALIGN_MEAN on a CUMULATIVE
+    # INT64 outright ("The aligner cannot be applied to metrics with kind CUMULATIVE and value type
+    # INT64"). ALIGN_RATE is the correct default for a counter; override with ALIGN_MEAN for a gauge.
+    aligner = optional(string, "ALIGN_RATE")
   }))
   default = []
 }
@@ -164,7 +168,7 @@ resource "google_monitoring_alert_policy" "job_success_absent" {
       duration = var.job_success_metrics[count.index].duration
       aggregations {
         alignment_period   = "300s"
-        per_series_aligner = "ALIGN_MEAN"
+        per_series_aligner = var.job_success_metrics[count.index].aligner
       }
     }
   }
