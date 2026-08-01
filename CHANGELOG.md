@@ -9,6 +9,24 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.97.0] - 2026-08-01
+
+### Fixed
+- **Telemetry exports are awaited, not fire-and-forget.** Cloud Run's `cpu-throttling=true` cuts CPU
+  the instant a response is written, so a discarded export promise never completed for a short
+  handler — the reason every metric arrived from deploys and cron sweeps only. Both exporters now
+  return their promise, with the timeout cut **5s → 1s** (awaited, that number is worst-case request
+  latency when the collector is sick).
+- **A dropped metric can no longer be silent.** Every export failure logs `severity: CRITICAL`,
+  **unsampled** — the old code logged the 1st and every 20th, and spans ended in a bare
+  `.catch(() => {})`. Spans also gain health counters (`spanExportStats`) they never had.
+
+### Added
+- **`alerting`: `telemetry_export_alert`** — a **log-based** policy on that CRITICAL line. Deliberately
+  log-based: a metric-based alert cannot report that metrics are broken, because it dies with the
+  thing it monitors. Logs travel a separate path that survives both a dead collector and CPU
+  throttling.
+
 ## [0.96.0] - 2026-08-01
 
 ### Fixed

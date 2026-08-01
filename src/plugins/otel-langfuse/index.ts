@@ -236,22 +236,37 @@ function buildPayload(spans: OtlpSpan[]): string {
 }
 
 /**
+ * How long a telemetry export may take before we give up on it.
+ *
+ * Was 5000ms, chosen when export was fire-and-forget and the timeout cost nothing. Now that the
+ * export is AWAITED at the response boundary, this number is worst-case request latency whenever
+ * the collector is unhealthy — 5 seconds of it, on every request. 1s is the compromise: long enough
+ * that a warm same-region collector never trips it, short enough that an outage degrades latency
+ * rather than destroying it.
+ *
+ * Hitting this timeout is not a tuning problem, it is a REPORTABLE FAILURE: telemetry is being
+ * dropped. Both export paths log CRITICAL on every failure for exactly that reason.
+ */
+const EXPORT_TIMEOUT_MS = 1000;
+
+/**
  * Fire-and-forget export: POST the OTLP JSON payload to Langfuse.
  * Errors are caught and discarded — a collector outage must never throw.
  */
-function exportSpan(span: OtlpSpan): void {
-  if (!_enabled) return;
+function exportSpan(span: OtlpSpan): Promise<void> {
+  if (!_enabled) return Promise.resolve();
   const body = buildPayload([span]);
-  // Deliberately NOT awaited — fire-and-forget.
-  fetch(_endpoint, {
+  return fetch(_endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': _authHeader,
     },
     body,
-    signal: AbortSignal.timeout(5000), // 5 s hard cap — never blocks a tool call
-  }).catch(() => { /* silently discard collector errors */ });
+    signal: AbortSignal.timeout(EXPORT_TIMEOUT_MS),
+  })
+    .then((res) => (res.ok ? noteSpanExport(true) : noteSpanExport(false, `HTTP ${res.status}`)))
+    .catch((e: unknown) => noteSpanExport(false, (e as Error)?.message ?? 'fetch failed'));
 }
 
 // ── OTLP Metrics export (per-tool RED + MCP registration health) ───────────
@@ -382,14 +397,50 @@ function noteMetricExport(ok: boolean, detail?: string): void {
   if (ok) { _mx.ok += 1; _mx.lastOkAt = new Date().toISOString(); return; }
   _mx.failed += 1;
   _mx.lastError = detail ?? 'unknown';
-  if (_mx.failed === 1 || _mx.failed % 20 === 0) {
-    process.stdout.write(JSON.stringify({
-      event: 'otel.metric_export_failed',
-      endpoint: _metricsEndpoint,
-      failures: _mx.failed,
-      error: _mx.lastError,
-    }) + '\n');
-  }
+  /*
+   * ⛔ CRITICAL, and on EVERY failure — never sampled.
+   *
+   * A failed export means telemetry is being DROPPED. The alert for that cannot itself be a metric:
+   * if the export path is down, a "metrics are broken" counter cannot get out either. stdout is the
+   * one channel guaranteed to survive the failure it reports — Cloud Run captures it regardless of
+   * the collector's health and regardless of CPU throttling — so this line is what a log-based alert
+   * policy watches.
+   *
+   * `severity` is the field Cloud Logging promotes to the entry's level, which is what makes this
+   * alertable rather than just readable.
+   */
+  process.stderr.write(JSON.stringify({
+    severity: 'CRITICAL',
+    event: 'otel.metric_export_failed',
+    message: 'telemetry export failed — metrics are being dropped',
+    endpoint: _metricsEndpoint,
+    failures: _mx.failed,
+    error: _mx.lastError,
+    ts: new Date().toISOString(),
+  }) + '\n');
+}
+
+/** Same treatment for spans — see noteMetricExport. Traces had NO health signal at all before this. */
+let _sx = { ok: 0, failed: 0, lastError: '', lastOkAt: '' };
+
+function noteSpanExport(ok: boolean, detail?: string): void {
+  if (ok) { _sx.ok += 1; _sx.lastOkAt = new Date().toISOString(); return; }
+  _sx.failed += 1;
+  _sx.lastError = detail ?? 'unknown';
+  process.stderr.write(JSON.stringify({
+    severity: 'CRITICAL',
+    event: 'otel.span_export_failed',
+    message: 'telemetry export failed — spans are being dropped',
+    endpoint: _endpoint,
+    failures: _sx.failed,
+    error: _sx.lastError,
+    ts: new Date().toISOString(),
+  }) + '\n');
+}
+
+/** Span export counters, for health endpoints. Never throws. */
+export function spanExportStats(): { ok: number; failed: number; lastError: string; lastOkAt: string } {
+  return { ..._sx };
 }
 
 /** Metric export counters, for health endpoints. Never throws. */
@@ -397,8 +448,8 @@ export function metricExportStats(): { ok: number; failed: number; lastError: st
   return { ..._mx };
 }
 
-function exportMetricsPayload(payload: unknown): void {
-  if (!_metricsEnabled) return;
+function exportMetricsPayload(payload: unknown): Promise<void> {
+  if (!_metricsEnabled) return Promise.resolve();
   // ⚠️ Only send Authorization when we actually HAVE one. `_authHeader` is the Langfuse Basic
   // credential and is the EMPTY STRING once tracing is retired — this function used to send
   // `Authorization: ` on every metrics POST regardless. The OTLP collector needs no credential at
@@ -406,11 +457,14 @@ function exportMetricsPayload(payload: unknown): void {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (_authHeader) headers['Authorization'] = _authHeader;
 
-  fetch(_metricsEndpoint, {
+  // 1s, not 5s. The export is AWAITED now, so the timeout is request latency in the worst case —
+  // and hitting it means telemetry is being dropped, which is a condition to surface fast, not to
+  // wait patiently through. See noteMetricExport for why the failure is logged CRITICAL.
+  return fetch(_metricsEndpoint, {
     method: 'POST',
     headers,
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(EXPORT_TIMEOUT_MS),
   })
     .then((res) => (res.ok ? noteMetricExport(true) : noteMetricExport(false, `HTTP ${res.status}`)))
     .catch((e: unknown) => noteMetricExport(false, (e as Error)?.message ?? 'fetch failed'));

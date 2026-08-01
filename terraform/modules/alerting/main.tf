@@ -61,6 +61,17 @@ variable "ingestion_heartbeat_aligner" {
   type        = string
   default     = "ALIGN_RATE"
 }
+variable "telemetry_export_alert" {
+  description = <<-EOT
+    Alert when the app logs a telemetry export failure.
+
+    Deliberately LOG-based. A metric-based policy cannot report that metrics are broken — it dies
+    with the thing it monitors. Requires the emitting app to log `severity: CRITICAL` with
+    `type: otel.metric_export_failed` or `otel.span_export_failed`, unsampled.
+  EOT
+  type        = bool
+  default     = true
+}
 variable "job_success_metrics" {
   description = <<-EOT
     Scheduled jobs that must keep producing a SUCCESSFUL outcome, alerted on the ABSENCE of that
@@ -200,6 +211,55 @@ resource "google_monitoring_alert_policy" "job_success_absent" {
   }
   notification_channels = local.channels
   alert_strategy { auto_close = "86400s" }
+}
+
+# ── 1c. Telemetry is being DROPPED (log-based, and it has to be) ─────────────────────────────────
+#
+# When a telemetry export fails, metrics are being lost. The alert for that condition CANNOT be a
+# metric-based policy: if the export path is down, a "metrics are broken" counter cannot get out
+# either — the alert would go quiet at exactly the moment it is needed. Logs travel a completely
+# different path (stdout → Cloud Logging), which survives both a dead collector and Cloud Run's
+# post-response CPU throttling, so this watches the log line instead.
+#
+# The app emits `severity: CRITICAL` with `type: otel.metric_export_failed` / `otel.span_export_failed`
+# on EVERY failure, deliberately unsampled — a sampled line makes this policy unreliable.
+resource "google_monitoring_alert_policy" "telemetry_export_failed" {
+  count        = var.telemetry_export_alert ? 1 : 0
+  project      = var.project_id
+  display_name = "Telemetry is being dropped"
+  combiner     = "OR"
+  documentation {
+    mime_type = "text/markdown"
+    content = join("\n", [
+      "A telemetry export failed — **metrics and/or spans are being dropped right now**.",
+      "",
+      "Everything downstream of this is untrustworthy while it lasts: dashboards will render",
+      "partial data that looks like low traffic, and absence-based alerts may fire for the wrong",
+      "reason (or stop firing entirely).",
+      "",
+      "Check, in order:",
+      "  1. the otel-collector service — up, and `min_instances >= 1`? A push collector cannot scale to zero",
+      "  2. the collector's logs for `Exporting failed` — GMP rejects a whole batch if any TimeSeries duplicates",
+      "  3. `/api/health/deep` on the emitting service — it carries the export ok/failed counters",
+      "  4. whether the failure is a TIMEOUT: the export budget is 1s, so a slow collector trips it",
+    ])
+  }
+  conditions {
+    display_name = "telemetry export failure logged"
+    condition_matched_log {
+      filter = join(" AND ", [
+        "resource.type=\"cloud_run_revision\"",
+        "severity=\"CRITICAL\"",
+        "(jsonPayload.type=\"otel.metric_export_failed\" OR jsonPayload.type=\"otel.span_export_failed\")",
+      ])
+    }
+  }
+  # Log-based policies REQUIRE a rate limit; without it a flapping collector pages continuously.
+  alert_strategy {
+    notification_rate_limit { period = "300s" }
+    auto_close = "3600s"
+  }
+  notification_channels = local.channels
 }
 
 # ── 2. Uptime, probed from OUTSIDE ──────────────────────────────────────────────────────────────
