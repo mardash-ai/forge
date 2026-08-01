@@ -6,7 +6,7 @@ import { store } from '../src/storage/store';
 import { executeCapability } from '../src/core/runtime';
 import { SYSTEM_ACTOR } from '../src/shared/domain';
 import {
-  initOtelLangfuse,
+  initOtel,
   isEnabled,
   startSpan,
   withSpan,
@@ -19,7 +19,7 @@ import {
   recordToolCallMetric,
   recordMcpRegistrationMetric,
   isMetricsEnabled,
-} from '../src/plugins/otel-langfuse/index';
+} from '../src/plugins/otel/index';
 import type { ObservabilityStack } from '../src/resources/types';
 
 // C36 — SetupObservability capability + OTel-Langfuse helper.
@@ -115,7 +115,7 @@ describe('SetupObservability capability', () => {
 
 // ── OTel-Langfuse plugin unit tests ────────────────────────────────────────
 
-describe('otel-langfuse plugin: initOtelLangfuse', () => {
+describe('otel plugin: initOtel', () => {
   // Save / restore the module-level state between tests via the public API.
   const prevPub = process.env.LANGFUSE_PUBLIC_KEY;
   const prevSec = process.env.LANGFUSE_SECRET_KEY;
@@ -132,12 +132,12 @@ describe('otel-langfuse plugin: initOtelLangfuse', () => {
     // export to, so tracing is correctly off — that is the only condition that should disable it.
     delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
     delete process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
-    expect(initOtelLangfuse()).toBe(false);
+    expect(initOtel()).toBe(false);
     expect(isEnabled()).toBe(false);
   });
 
   it('returns true and enables tracing when keys are provided', () => {
-    const ok = initOtelLangfuse({
+    const ok = initOtel({
       endpoint: 'http://localhost:3000/api/public/otel',
       tracesEndpoint: 'https://collector.example/v1/traces',
     });
@@ -149,7 +149,7 @@ describe('otel-langfuse plugin: initOtelLangfuse', () => {
     process.env.LANGFUSE_PUBLIC_KEY = 'pk-env';
     process.env.LANGFUSE_SECRET_KEY = 'sk-env';
     process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://env-endpoint:3000/api/public/otel';
-    const ok = initOtelLangfuse();
+    const ok = initOtel();
     expect(ok).toBe(true);
     expect(isEnabled()).toBe(true);
   });
@@ -157,14 +157,14 @@ describe('otel-langfuse plugin: initOtelLangfuse', () => {
   // Restore after all init tests
   afterEach(() => {
     // disable again so other tests aren't affected by a stray enabled state
-    initOtelLangfuse({ tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces', });
     if (prevPub !== undefined) process.env.LANGFUSE_PUBLIC_KEY = prevPub;
     if (prevSec !== undefined) process.env.LANGFUSE_SECRET_KEY = prevSec;
     if (prevEp  !== undefined) process.env.OTEL_EXPORTER_OTLP_ENDPOINT = prevEp;
   });
 });
 
-describe('otel-langfuse plugin: SpanContext + startSpan', () => {
+describe('otel plugin: SpanContext + startSpan', () => {
   it('creates a span with a valid 16-byte trace id and 8-byte span id', () => {
     const span = startSpan('test.op');
     expect(span.traceId).toMatch(/^[0-9a-f]{32}$/);
@@ -186,19 +186,19 @@ describe('otel-langfuse plugin: SpanContext + startSpan', () => {
 
   it('end() does not throw whether tracing is enabled or disabled', () => {
     // disabled path
-    initOtelLangfuse({ tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces', });
     expect(() => startSpan('noop.op').end('ok')).not.toThrow();
 
     // enabled path (no real network — exportSpan fires-and-forgets)
-    initOtelLangfuse({ endpoint: 'http://127.0.0.1:19998/api/public/otel', tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ endpoint: 'http://127.0.0.1:19998/api/public/otel', tracesEndpoint: 'https://collector.example/v1/traces', });
     expect(() => startSpan('live.op').end('ok')).not.toThrow();
 
     // clean up
-    initOtelLangfuse({ tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces', });
   });
 });
 
-describe('otel-langfuse plugin: W3C trace-context propagation (cross-tier)', () => {
+describe('otel plugin: W3C trace-context propagation (cross-tier)', () => {
   it('traceparent() renders a valid W3C header from a span', () => {
     const span = startSpan('root.op');
     const tp = traceparent(span);
@@ -237,7 +237,7 @@ describe('otel-langfuse plugin: W3C trace-context propagation (cross-tier)', () 
   });
 });
 
-describe('otel-langfuse plugin: withSpan', () => {
+describe('otel plugin: withSpan', () => {
   it('returns the wrapped function result on success', async () => {
     const result = await withSpan('wrap.op', {}, async (_span) => 42);
     expect(result).toBe(42);
@@ -252,7 +252,7 @@ describe('otel-langfuse plugin: withSpan', () => {
   it('end() is called automatically even on error (no secondary throw from tracing)', async () => {
     // The end() call in withSpan must not produce a secondary throw when tracing
     // is disabled.
-    initOtelLangfuse({ tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces', });
     let caught: Error | undefined;
     try {
       await withSpan('auto-end.op', {}, async () => { throw new Error('expected'); });
@@ -263,7 +263,7 @@ describe('otel-langfuse plugin: withSpan', () => {
   });
 });
 
-describe('otel-langfuse plugin: ATTR constants', () => {
+describe('otel plugin: ATTR constants', () => {
   it('exports all required GenAI semantic convention attribute names', () => {
     expect(ATTR.GEN_AI_OPERATION_NAME).toBe('gen_ai.operation.name');
     expect(ATTR.GEN_AI_TOOL_NAME).toBe('gen_ai.tool.name');
@@ -293,7 +293,7 @@ describe('otel-langfuse plugin: ATTR constants', () => {
   });
 });
 
-describe('otel-langfuse plugin: capPayload (C36 payload capture)', () => {
+describe('otel plugin: capPayload (C36 payload capture)', () => {
   it('passes small strings through and JSON-stringifies everything else', () => {
     expect(capPayload('hello')).toBe('hello');
     expect(capPayload({ id: 'n1', n: 2 })).toBe('{"id":"n1","n":2}');
@@ -331,7 +331,7 @@ describe('otel-langfuse plugin: capPayload (C36 payload capture)', () => {
 // bucket under the dashboards' `sum by (tool)` (the live "(no-label)" series). These tests pin
 // the unified schema; regressing the keys breaks per-tool visibility in Grafana.
 
-describe('otel-langfuse plugin: RED metric attribute keys', () => {
+describe('otel plugin: RED metric attribute keys', () => {
   let bodies: string[];
   const realFetch = globalThis.fetch;
 
@@ -341,7 +341,7 @@ describe('otel-langfuse plugin: RED metric attribute keys', () => {
       bodies.push(String(init?.body ?? ''));
       return Promise.resolve(new Response(null, { status: 200 }));
     }) as typeof fetch;
-    initOtelLangfuse({
+    initOtel({
       endpoint: 'http://intercepted:3000/api/public/otel',
       tracesEndpoint: 'https://collector.example/v1/traces',
     });
@@ -349,7 +349,7 @@ describe('otel-langfuse plugin: RED metric attribute keys', () => {
 
   afterEach(() => {
     globalThis.fetch = realFetch;
-    initOtelLangfuse({ tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces', });
   });
 
   function attrKeys(body: string): Set<string> {
@@ -398,7 +398,7 @@ describe('otel-langfuse plugin: RED metric attribute keys', () => {
 
 // ── Metrics must SURVIVE the retirement of tracing ────────────────────────────────────────────
 //
-// Langfuse was retired 2026-07-28 (§5.1) and its keys went away. Because initOtelLangfuse() used
+// Langfuse was retired 2026-07-28 (§5.1) and its keys went away. Because initOtel() used
 // to clear _metricsEnabled whenever the key pair was missing, EVERY metric export silently
 // no-opped: Managed Prometheus held ZERO series for days while every health check stayed green.
 // Metrics go to a plain OTLP collector that takes unauthenticated writes; they have nothing to do
@@ -415,30 +415,30 @@ describe('metrics are independent of Langfuse credentials — 0.79.25', () => {
     // Requiring a Langfuse key pair meant every startSpan() in the codebase became a silent no-op
     // the day Langfuse was retired, and nothing reported it because an unexported span looks
     // exactly like a span with nothing to say.
-    expect(initOtelLangfuse({ endpoint: 'https://otel-collector.example.run.app' })).toBe(true);
+    expect(initOtel({ endpoint: 'https://otel-collector.example.run.app' })).toBe(true);
     expect(isEnabled()).toBe(true);
     expect(isMetricsEnabled()).toBe(true);
   });
 
   it('reads the endpoint from the environment, as Cloud Run supplies it', () => {
     process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'https://otel-collector.example.run.app';
-    initOtelLangfuse({ serviceName: 'dorinda-api' });
+    initOtel({ serviceName: 'dorinda-api' });
     expect(isMetricsEnabled()).toBe(true);
   });
 
   it('honours a metrics-only endpoint', () => {
     process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = 'https://collector.example/v1/metrics';
-    initOtelLangfuse();
+    initOtel();
     expect(isMetricsEnabled()).toBe(true);
   });
 
   it('stays OFF when no endpoint is configured at all — there is nowhere to send', () => {
-    initOtelLangfuse();
+    initOtel();
     expect(isMetricsEnabled()).toBe(false);
   });
 
   it('keeps tracing and metrics both on when keys AND endpoint are present', () => {
-    expect(initOtelLangfuse({
+    expect(initOtel({
       endpoint: 'https://collector.example', tracesEndpoint: 'https://collector.example/v1/traces',
     })).toBe(true);
     expect(isEnabled()).toBe(true);
@@ -470,8 +470,8 @@ describe('metrics export sends no empty Authorization — 0.79.26', () => {
   });
 
   it('omits Authorization entirely when there are no Langfuse keys', async () => {
-    const { initOtelLangfuse, recordMcpRegistrationMetric } = await import('../src/plugins/otel-langfuse/index');
-    initOtelLangfuse({ endpoint: 'https://collector.example' });
+    const { initOtel, recordMcpRegistrationMetric } = await import('../src/plugins/otel/index');
+    initOtel({ endpoint: 'https://collector.example' });
     // Distinct app per test: the registration gauge is debounced (0.79.27), so reusing one app
     // name across tests would collapse a later emit into an earlier identical one.
     recordMcpRegistrationMetric({ app: 'auth-absent-app', tools_count: 31 });
@@ -484,17 +484,17 @@ describe('metrics export sends no empty Authorization — 0.79.26', () => {
   });
 
   it('sends Authorization when OTEL_EXPORTER_OTLP_HEADERS supplies one', async () => {
-    const { initOtelLangfuse, recordMcpRegistrationMetric } = await import('../src/plugins/otel-langfuse/index');
-    initOtelLangfuse({ endpoint: 'https://collector.example', headers: 'authorization=Bearer tok' });
+    const { initOtel, recordMcpRegistrationMetric } = await import('../src/plugins/otel/index');
+    initOtel({ endpoint: 'https://collector.example', headers: 'authorization=Bearer tok' });
     recordMcpRegistrationMetric({ app: 'auth-present-app', tools_count: 31 });
     await new Promise((r) => setTimeout(r, 10));
     expect(calls[0]!.headers['Authorization']).toBe('Bearer tok');
   });
 
   it('counts a successful export so health can distinguish enabled from WORKING', async () => {
-    const { initOtelLangfuse, recordMcpRegistrationMetric, metricExportStats } =
-      await import('../src/plugins/otel-langfuse/index');
-    initOtelLangfuse({ endpoint: 'https://collector.example' });
+    const { initOtel, recordMcpRegistrationMetric, metricExportStats } =
+      await import('../src/plugins/otel/index');
+    initOtel({ endpoint: 'https://collector.example' });
     const before = metricExportStats().ok;
     recordMcpRegistrationMetric({ app: 'export-count-app', tools_count: 31 });
     await new Promise((r) => setTimeout(r, 20));
@@ -522,16 +522,16 @@ describe('registration gauge does not duplicate itself in one batch — 0.79.27'
   });
 
   it('collapses 31 identical registration gauges into ONE export', async () => {
-    const { initOtelLangfuse, recordMcpRegistrationMetric } = await import('../src/plugins/otel-langfuse/index');
-    initOtelLangfuse({ endpoint: 'https://collector.example' });
+    const { initOtel, recordMcpRegistrationMetric } = await import('../src/plugins/otel/index');
+    initOtel({ endpoint: 'https://collector.example' });
     for (let i = 0; i < 31; i++) recordMcpRegistrationMetric({ app: 'dedupe-app', tools_count: 31 });
     await new Promise((r) => setTimeout(r, 20));
     expect(posts).toBe(1);
   });
 
   it('still emits when the VALUE changes — a real change must never be swallowed', async () => {
-    const { initOtelLangfuse, recordMcpRegistrationMetric } = await import('../src/plugins/otel-langfuse/index');
-    initOtelLangfuse({ endpoint: 'https://collector.example' });
+    const { initOtel, recordMcpRegistrationMetric } = await import('../src/plugins/otel/index');
+    initOtel({ endpoint: 'https://collector.example' });
     recordMcpRegistrationMetric({ app: 'changing-app', tools_count: 30 });
     recordMcpRegistrationMetric({ app: 'changing-app', tools_count: 31 });
     await new Promise((r) => setTimeout(r, 20));

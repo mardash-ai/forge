@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 // C36 — OTel-Langfuse export helper
 //
 // A thin, fire-and-forget OTLP/HTTP JSON exporter that sends spans to a
-// self-hosted Langfuse stack.  Consumers call `initOtelLangfuse()` once at
+// self-hosted Langfuse stack.  Consumers call `initOtel()` once at
 // startup and then use `startSpan()` / `SpanContext.end()` to record work.
 //
 // Design goals (from the C36 contract):
@@ -73,7 +73,7 @@ let _metricsEnabled = false;
 
 // ── Initialisation ─────────────────────────────────────────────────────────
 
-export interface OtelLangfuseConfig {
+export interface OtelConfig {
   /**
    * OTLP traces endpoint. Defaults to OTEL_EXPORTER_OTLP_ENDPOINT env var, then
    * `http://langfuse-web:3000/api/public/otel`.
@@ -112,7 +112,7 @@ export interface OtelLangfuseConfig {
  *
  * So: metrics need an ENDPOINT, nothing more. Never gate them on trace credentials again.
  */
-export function initOtelLangfuse(cfg: OtelLangfuseConfig = {}): boolean {
+export function initOtel(cfg: OtelConfig = {}): boolean {
   _serviceName = cfg.serviceName ?? process.env.OTEL_SERVICE_NAME ?? 'forge';
 
   // ── Generic OTLP auth, if the collector wants any. Most do not. ──
@@ -228,7 +228,7 @@ function buildPayload(spans: OtlpSpan[]): string {
         ],
       },
       scopeSpans: [{
-        scope: { name: '@forge/otel-langfuse', version: '1.0.0' },
+        scope: { name: '@forge/otel', version: '1.0.0' },
         spans,
       }],
     }],
@@ -474,7 +474,7 @@ function metricsEnvelope(metrics: unknown[]): unknown {
   return {
     resourceMetrics: [{
       resource: { attributes: [{ key: 'service.name', value: { stringValue: _serviceName } }] },
-      scopeMetrics: [{ scope: { name: '@forge/otel-langfuse', version: '1.0.0' }, metrics }],
+      scopeMetrics: [{ scope: { name: '@forge/otel', version: '1.0.0' }, metrics }],
     }],
   };
 }

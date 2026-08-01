@@ -36,8 +36,8 @@ type Input = z.infer<typeof inputSchema>;
 //
 // The Langfuse compose services are in the platform compose.yaml behind the
 // "observability" profile; this capability records the configuration once they
-// are running.  Consumers import the forge OTel helper (plugins/otel-langfuse)
-// and call initOtelLangfuse() — the Resource gives them the endpoint + public key.
+// are running.  Consumers import the forge OTel helper (plugins/otel)
+// and call initOtel() — the Resource gives them the endpoint + public key.
 export const setupObservability: Capability<Input, ObservabilityStack> = {
   name: 'SetupObservability',
   slug: 'setup-observability',

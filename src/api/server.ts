@@ -28,7 +28,28 @@ import { getBackends } from '../storage/backends';
 
 // The Forge HTTP API. Capability APIs perform behavior; Resource/Event APIs
 // expose state and facts. Humans and agents use these SAME contracts.
-const app = Fastify({ logger: false });
+const app = Fastify({
+  /*
+   * Structured request logging, ON. It was `logger: false`, which left every non-MCP route on this
+   * plane completely dark — no request line, no status, no duration, nothing to correlate a trace id
+   * against (follow-up §1.5).
+   *
+   * Cloud Run captures stdout regardless of the collector's health or CPU state, so this is the one
+   * telemetry channel that cannot be lost by an export failure. `severity` is the field Cloud
+   * Logging promotes to the entry level; pino's default `level` is not, hence the mapping.
+   */
+  logger: {
+    level: process.env.LOG_LEVEL ?? 'info',
+    formatters: {
+      level: (label: string) => ({ severity: label.toUpperCase() }),
+    },
+    // The health probe fires constantly and says nothing; logging it buries the signal.
+    serializers: {
+      req: (r: { method: string; url: string }) => ({ method: r.method, url: r.url }),
+    },
+  },
+  disableRequestLogging: false,
+});
 
 function actorFromHeaders(headers: Record<string, unknown>): Actor {
   const type = (headers['x-forge-actor-type'] as string) || 'builder';

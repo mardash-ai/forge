@@ -586,7 +586,7 @@ ${labels.join('\n')}`;
   // Langfuse trace (observation input/output) by DEFAULT; an operator sets FORGE_MCP_TRACE_PAYLOADS=false
   // in .env.prod to disable payload capture. Default-true interpolation so the wire default is explicit.
   if (usesAuth) dpEnv.push('      - FORGE_MCP_TRACE_PAYLOADS=${FORGE_MCP_TRACE_PAYLOADS:-true}');
-  // C36 — the transport tier emits the `mcp.tool_call` trace ROOT (initOtelLangfuse reads these at boot).
+  // C36 — the transport tier emits the `mcp.tool_call` trace ROOT (initOtel reads these at boot).
   dpEnv.push(...otelEnv('forge-data-plane'));
   // The data-plane's ENTIRE state dir (FORGE_STATE_DIR=/forge-state) rides ONE durable
   // named volume. This is load-bearing for auth: C10's users/sessions/`forge_refresh`

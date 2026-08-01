@@ -10,7 +10,7 @@ import { signSessionToken } from '../src/shared/session';
 import { pkceChallenge } from '../src/mcp/oauth';
 import { verifyAccessToken } from '../src/mcp/verify';
 import { nowIso } from '../src/shared/time';
-import { initOtelLangfuse } from '../src/plugins/otel-langfuse/index';
+import { initOtel } from '../src/plugins/otel/index';
 import type { Application } from '../src/resources/types';
 
 // C23 — the OAuth 2.1 authorization-server flow, end to end. Exercised through the configured MCP store
@@ -391,14 +391,14 @@ describe('C36 — OAuth endpoint outcome spans', () => {
       if (String(url).startsWith(OTLP)) exported.push(JSON.parse(String(init?.body)));
       return Promise.resolve(new Response('{}', { status: 200 }));
     }) as typeof fetch);
-    initOtelLangfuse({ endpoint: OTLP });
+    initOtel({ endpoint: OTLP });
   });
   afterEach(() => {
     // Disable again so other suites are unaffected. Tracing is now gated on an ENDPOINT, so
     // disabling means clearing it — not removing a credential.
     delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
     delete process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
-    initOtelLangfuse({});
+    initOtel({});
     vi.restoreAllMocks();
   });
 

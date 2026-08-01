@@ -11,7 +11,7 @@ import { hasValidServiceToken } from '../shared/service-auth';
 import { verifyAccessTokenDetailed, bearerFrom, type VerifiedToken } from '../mcp/verify';
 import { scopesSatisfy } from '../mcp/oauth';
 import type { ToolRegistration, ToolFamily } from '../mcp/types';
-import { startSpan, traceparent, parentFromTraceparent, capPayload, ATTR, mcpLog, recordToolCallMetric, recordMcpRegistrationMetric } from '../plugins/otel-langfuse/index';
+import { startSpan, traceparent, parentFromTraceparent, capPayload, ATTR, mcpLog, recordToolCallMetric, recordMcpRegistrationMetric } from '../plugins/otel/index';
 
 // C23 — the REMOTE MCP SERVER the platform hosts for a consuming app, plus the app-facing management
 // surface. `POST /mcp` speaks JSON-RPC 2.0 over the Streamable-HTTP transport (request/response), and

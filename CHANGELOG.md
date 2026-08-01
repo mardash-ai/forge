@@ -9,6 +9,24 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [0.99.0] - 2026-08-01
+
+### Changed
+- **`plugins/otel-langfuse` → `plugins/otel`**, and the public API with it: `initOtelLangfuse` →
+  `initOtel`, `OtelLangfuseConfig` → `OtelConfig`, OTLP scope `@forge/otel-langfuse` → `@forge/otel`.
+  The vendor name in the module name is what let a dead Langfuse coupling hide for weeks — every
+  reader saw "otel-langfuse" and assumed the Langfuse part was load-bearing.
+
+  ⚠️ **Breaking:** consumers importing `initOtelLangfuse` must switch to `initOtel`.
+  ⚠️ The OTLP **scope name** label changes, so `otel_scope_name` series start fresh. Dashboards here
+  select on metric name and `app`, not scope, so nothing queried breaks.
+
+### Added
+- **Structured request logging on BOTH planes** (`data-plane/server.ts`, `api/server.ts`). They ran
+  `logger: false`, leaving every non-MCP route dark — no request line, no status, no duration,
+  nothing to correlate a trace id against. Levels are mapped to `severity` so Cloud Logging promotes
+  them to the entry level, and stdout is the one telemetry channel an export failure cannot lose.
+
 ## [0.98.0] - 2026-08-01
 
 ### Removed

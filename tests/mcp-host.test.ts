@@ -16,7 +16,7 @@ import { newToken } from '../src/plugins/auth-identity/index';
 import { expiresAtIso } from '../src/mcp/oauth';
 import { nowIso } from '../src/shared/time';
 import {
-  _resetRegistrationDebounce, initOtelLangfuse, _setMcpLogOverride } from '../src/plugins/otel-langfuse/index';
+  _resetRegistrationDebounce, initOtel, _setMcpLogOverride } from '../src/plugins/otel/index';
 import type { Application } from '../src/resources/types';
 
 // C23 — the hosted remote MCP server (Streamable-HTTP JSON-RPC) + the app-facing management surface.
@@ -614,10 +614,10 @@ describe('C36 — payload tracing + failure-path spans', () => {
       }
       return realFetch(url as Parameters<typeof fetch>[0], init);
     }) as typeof fetch);
-    initOtelLangfuse({ endpoint: OTLP, tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ endpoint: OTLP, tracesEndpoint: 'https://collector.example/v1/traces', });
   });
   afterEach(() => {
-    initOtelLangfuse({ tracesEndpoint: 'https://collector.example/v1/traces', }); // disable again so other tests are unaffected
+    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces', }); // disable again so other tests are unaffected
     vi.restoreAllMocks();
     delete process.env.FORGE_MCP_TRACE_PAYLOADS;
   });
@@ -861,11 +861,11 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
       }
       return realFetch(url as Parameters<typeof fetch>[0], init);
     }) as typeof fetch);
-    initOtelLangfuse({ endpoint: OTLP, tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ endpoint: OTLP, tracesEndpoint: 'https://collector.example/v1/traces', });
     _setMcpLogOverride((fields) => mcpLogs.push(fields));
   });
   afterEach(() => {
-    initOtelLangfuse({ tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces', });
     _setMcpLogOverride(undefined);
     vi.restoreAllMocks();
     delete process.env.FORGE_MCP_TRACE_PAYLOADS;
@@ -1039,7 +1039,7 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
   });
 
   it('does NOT export metrics when OTLP is disabled (no keys)', async () => {
-    initOtelLangfuse({ tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces', });
     exportedMetrics = [];
     await registerTool();
     const bearer = await mintAccess(['notes:read']);

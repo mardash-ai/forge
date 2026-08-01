@@ -24,7 +24,7 @@ import { registerIncidentRoutes } from '../api/incident-routes';
 import { registerAuthzRoutes } from '../api/authz-routes';
 import { registerOAuthRoutes } from '../api/oauth-routes';
 import { registerMcpRoutes } from '../api/mcp-routes';
-import { initOtelLangfuse } from '../plugins/otel-langfuse/index';
+import { initOtel } from '../plugins/otel/index';
 import { registerConnectRoutes } from '../api/connect-routes';
 import { registerMembershipRoutes } from '../api/membership-routes';
 import { registerBillingRoutes } from '../api/billing-routes';
@@ -36,7 +36,28 @@ import { getBackends } from '../storage/backends';
 // and exposes only the data-plane capabilities (plane = data|both): the scheduler
 // (C2), the secrets store (C5), and read/observe surfaces. It carries NO dev-time
 // capabilities (init/provision/install/dev/build/test/lint/explain/plan).
-const app = Fastify({ logger: false });
+const app = Fastify({
+  /*
+   * Structured request logging, ON. It was `logger: false`, which left every non-MCP route on this
+   * plane completely dark — no request line, no status, no duration, nothing to correlate a trace id
+   * against (follow-up §1.5).
+   *
+   * Cloud Run captures stdout regardless of the collector's health or CPU state, so this is the one
+   * telemetry channel that cannot be lost by an export failure. `severity` is the field Cloud
+   * Logging promotes to the entry level; pino's default `level` is not, hence the mapping.
+   */
+  logger: {
+    level: process.env.LOG_LEVEL ?? 'info',
+    formatters: {
+      level: (label: string) => ({ severity: label.toUpperCase() }),
+    },
+    // The health probe fires constantly and says nothing; logging it buries the signal.
+    serializers: {
+      req: (r: { method: string; url: string }) => ({ method: r.method, url: r.url }),
+    },
+  },
+  disableRequestLogging: false,
+});
 
 // Slugs this plane is allowed to run — control-plane capabilities are refused.
 const DATA_PLANE_SLUGS = new Set(
@@ -235,7 +256,7 @@ async function main() {
   await store.init();
   // C36 — wire the OTel→Langfuse exporter once at boot. Returns false (tracing silently disabled) when
   // LANGFUSE_PUBLIC_KEY/SECRET_KEY are absent, so an un-instrumented deploy behaves exactly as before.
-  const otelOn = initOtelLangfuse({ serviceName: process.env.OTEL_SERVICE_NAME ?? 'forge-data-plane' });
+  const otelOn = initOtel({ serviceName: process.env.OTEL_SERVICE_NAME ?? 'forge-data-plane' });
   // P26 — initialize the pluggable store backends EAGERLY so a bad datastore config fails the boot,
   // not the first request. When a Postgres backend is selected (FORGE_IDENTITY_BACKEND=postgres) this
   // opens the pool + ensures the schema, and throws (→ process exit below) if FORGE_DB_URL is missing

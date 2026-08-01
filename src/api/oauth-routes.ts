@@ -21,7 +21,7 @@ import {
   authServerMetadata,
 } from '../mcp/oauth';
 import type { OAuthClient, OAuthGrant, Consent, TokenEndpointAuthMethod } from '../mcp/types';
-import { startSpan } from '../plugins/otel-langfuse/index';
+import { startSpan } from '../plugins/otel/index';
 
 // C23 — the OAuth 2.1 AUTHORIZATION SERVER. The consuming app becomes an OAuth provider: it registers
 // clients (RFC 7591 dynamic registration), runs the authorize + consent flow (PKCE mandatory), and mints
