@@ -162,9 +162,19 @@ const sevTone: Record<string, StatusTone> = { critical: 'crit', warn: 'warn', in
 
 export default function App() {
   // Deep-linkable: any screen you could describe on a call has a URL.
-  const [screen, setScreen] = useState<Screen>(
-    () => (new URLSearchParams(location.search).get('s') as Screen) || 'overview',
-  );
+  const [screen, setScreen] = useState<Screen>(() => {
+    /*
+     * Validate against the real screen list. `(get('s') as Screen) || 'overview'` looked safe and
+     * was not: an UNKNOWN value is a non-empty string, so it passes the `||`, gets cast to Screen,
+     * and then no render branch matches — the page draws its nav and nothing else.
+     *
+     * A blank page is the one outcome this console is built to never produce ("a source that is
+     * down degrades its own rows and never blanks the page"), so a bad `?s=` falls back to Overview
+     * rather than rendering an empty shell that looks like a load failure.
+     */
+    const raw = new URLSearchParams(location.search).get('s');
+    return NAV.some(([id]) => id === raw) ? (raw as Screen) : 'overview';
+  });
   const [palette, setPalette] = useState(false);
   const [dense, setDense] = useState(() => document.documentElement.dataset['density'] === 'compact');
   const boot = useApi<Bootstrap>('/api/bootstrap');
