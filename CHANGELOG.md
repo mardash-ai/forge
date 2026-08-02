@@ -9,6 +9,38 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-02
+
+### Added
+- **The console's DATA section — accounts and test tenants.** The surface that replaces dorinda's
+  admin tool: find a person, see their state, comp/lock/delete them, and drive the acceptance
+  harness's fixtures (reset, seed, virtual clock). Behind a neutral `TenantProvider` contract, so it
+  generalises past one app; `src/plugins/console-dorinda/*` is the only place allowed to know one
+  app's vocabulary.
+  - **Two credentials, two surfaces, no fallback.** Admin can erase a real account; test-control
+    structurally cannot touch anything but a flagged fixture. There is deliberately no "use
+    whichever is set" path — a fallback is how a reset eventually arrives at the purge surface.
+  - **The console talks HTTP, never SQL.** Every write goes through the app's own endpoints, so the
+    app keeps its invariants and the console never becomes a second, unaudited way to mutate a
+    datastore. Forge reaching into a consumer schema would break the boundary `DELETE /tenant/:owner`
+    is careful to respect.
+  - A purge requires a typed email confirmation **and** a stated reason, and refuses to render as
+    success while any subsystem was retained.
+- **Docs aggregates every source into one pane.** `docs.ts` becomes a source registry: pages with no
+  other home are bundled (the retiring `dorinda-devs` portal moved in), and an app's own help pages
+  are fetched live from it, so there is never a second copy to disagree with the code.
+  - A page's CSS is **scoped**, not stripped — these documents carry their whole visual language in
+    CSS, including inline SVG diagrams positioned entirely by class.
+  - Two hand-transcribed cloud snapshots were **dropped rather than imported**; the Inventory, Cost,
+    Credentials and Headroom screens answer those questions live.
+
+### Fixed
+- **The audited-write guard enumerated routes by parsing `printRoutes()`**, which renders a tree for
+  humans and collapses shared prefixes — six routes under `/api/tenants/...` print as `/comp`,
+  `/lock`, `/purge`. Survivable while every write route was top-level; the dangerous case is a
+  collapsed fragment that happens to match a declared entry, which would pass the guard while
+  checking a different route than the one registered. Routes now come from Fastify's `onRoute` hook.
+
 ## [1.0.1] - 2026-08-02
 
 ### Fixed
