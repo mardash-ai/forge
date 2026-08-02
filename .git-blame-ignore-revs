@@ -1,0 +1,16 @@
+# Revisions git blame should skip — bulk reformats with no behaviour change.
+#
+# Without this, `git blame` on any line touched by a formatting sweep names the sweep instead of
+# the person and reason behind the code. That matters here: debugging in this estate leans hard on
+# "when did this change, and why?", and a blame that answers "style: adopt prettier" has destroyed
+# exactly the information you needed.
+#
+# Locally, enable it once per clone:
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub honours this file automatically in its blame view.
+#
+# Only ever add commits that are PROVABLY behaviour-free (typecheck + full suite green on both
+# sides). A functional change hidden in here would be invisible to blame forever.
+
+# style: adopt prettier (printWidth 110, singleQuote) — 226 files, 1080 tests green either side
+308f55a007264b87404b13a2a7d0e672c1777cb7

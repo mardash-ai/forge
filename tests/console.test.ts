@@ -1648,6 +1648,42 @@ describe('log filters combine — owner is a clause, not an override', () => {
     expect(f).toBe('jsonPayload.owner="x OR severity>=DEFAULT"');
   });
 
+  it('reads a trace id from the payload when the LogEntry trace field is absent', async () => {
+    /*
+     * The extractor and the filter must agree on where a trace id can live, or the console finds
+     * entries it cannot offer to pivot FROM: the row plainly carries an id and shows no Trace link.
+     *
+     * Reading only `e.trace` was the extractor half of the same two-places bug the filter had.
+     */
+    const { createCloudLoggingProvider } = await import('../src/plugins/console-gcp/logs');
+    const provider = createCloudLoggingProvider({
+      id: 'l',
+      envs: ['prod'],
+      scope: { project_id: 'p' },
+    });
+    const entries = [
+      { timestamp: 't1', severity: 'INFO', jsonPayload: { type: 'x', trace_id: 'payload-id' } },
+      { timestamp: 't2', severity: 'INFO', trace: 'projects/p/traces/entry-id', jsonPayload: {} },
+      { timestamp: 't3', severity: 'INFO', jsonPayload: { type: 'y' } },
+    ];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ entries }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as never;
+    try {
+      const out = await provider.query(
+        {} as never,
+        { start: new Date(0), end: new Date(1), limit: 10 } as never,
+        { signal: new AbortController().signal } as never,
+      );
+      expect(out.map((e) => e.trace_id)).toEqual(['payload-id', 'entry-id', undefined]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
   it('a trace pivot matches BOTH the LogEntry trace field and a payload trace_id', async () => {
     /*
      * The same trace id lives in two places, and matching one returns a SUBSET.

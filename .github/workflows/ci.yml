@@ -24,6 +24,12 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      # Without this the one-time reformat is a cosmetic event with no lasting property: formatting
+      # drifts back within weeks, and `prettier --write` becomes a loaded gun again (one stray run
+      # in a sibling repo reformatted 212 files during unrelated work). --check never writes.
+      - name: Format check
+        run: npx prettier --check .
+
       - name: Run tests
         run: npm test
 

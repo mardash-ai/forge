@@ -9,6 +9,19 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-08-02
+
+### Fixed
+- **A log row carrying a trace id showed no Trace link.** The extractor read the id only from the
+  LogEntry `trace` field, so a line whose id sat in `jsonPayload.trace_id` could be FOUND by the
+  (already fixed) filter and not pivoted FROM. The filter and the extractor now agree on where a
+  trace id can live.
+
+### Changed
+- **Prettier adopted** (printWidth 110, singleQuote — matching this repo's own 931:0 convention),
+  enforced by `prettier --check` in CI. The reformat is an isolated, behaviour-free commit listed
+  in `.git-blame-ignore-revs`.
+
 ## [1.4.2] - 2026-08-02
 
 ### Fixed

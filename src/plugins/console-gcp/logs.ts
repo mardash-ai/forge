@@ -178,7 +178,20 @@ export function createCloudLoggingProvider(opts: {
             ...(e.resource?.labels ?? {}),
             ...(e.labels ?? {}),
           },
-          ...(e.trace ? { trace_id: String(e.trace).split('/').pop()! } : {}),
+          /*
+           * The id the UI's Trace pivot is built from. Read from the LogEntry's `trace` field when
+           * present, and otherwise from the payload — the same two-places problem as `buildFilter`.
+           *
+           * Reading only `e.trace` meant a line that plainly CARRIES a trace id showed no Trace
+           * link at all, because the id sat in `jsonPayload.trace_id` where nothing looked. The
+           * filter and the extractor have to agree on where a trace id can live, or the console can
+           * find entries it cannot offer to pivot from.
+           */
+          ...(e.trace
+            ? { trace_id: String(e.trace).split('/').pop()! }
+            : typeof jp?.['trace_id'] === 'string'
+              ? { trace_id: jp['trace_id'] as string }
+              : {}),
           insert_id: e.insertId ?? `${e.timestamp}`,
         };
       });
