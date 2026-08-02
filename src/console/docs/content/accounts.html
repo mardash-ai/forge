@@ -1,0 +1,73 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Accounts &amp; test tenants · Dorinda Internals</title><style>
+:root{--bg:#0b1220;--panel:#111a2e;--ink:#e6edf7;--mut:#8b98ad;--line:#233150;
+--blue:#4c8dff;--green:#2fbf71;--amber:#f0b429;--red:#ef5350;--purple:#a78bfa;--cyan:#22d3ee}
+*{box-sizing:border-box;margin:0}
+body{font:15px/1.6 ui-sans-serif,-apple-system,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--ink);display:flex;min-height:100vh}
+nav{width:230px;background:var(--panel);border-right:1px solid var(--line);padding:24px 0;position:fixed;height:100vh}
+nav .logo{font-weight:800;font-size:18px;padding:0 22px 18px;color:#fff}
+nav .logo span{color:var(--blue)}
+nav a{display:block;padding:9px 22px;color:var(--mut);text-decoration:none;font-size:14px;border-left:3px solid transparent}
+nav a:hover{color:var(--ink)} nav a.on{color:#fff;border-left-color:var(--blue);background:#16233f}
+main{margin-left:230px;padding:40px 48px;max-width:1120px;width:100%}
+h1{font-size:30px;margin-bottom:6px} h2{font-size:20px;margin:34px 0 12px;padding-top:10px;border-top:1px solid var(--line)}
+h3{font-size:16px;margin:20px 0 8px} p{color:#c4cede;margin:8px 0} .sub{color:var(--mut);font-size:15px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+code{background:#1b2740;padding:2px 6px;border-radius:4px;color:#9fc3ff}
+pre{background:#0d1526;border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;color:#c8d6ee;margin:10px 0}
+table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
+th{color:var(--mut);text-align:left;font-weight:600;padding:8px 10px;border-bottom:2px solid var(--line)}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.pill{display:inline-block;padding:1px 9px;border-radius:20px;font-size:12px;font-weight:600}
+.p-read{background:#123c2a;color:#4ade80}.p-write{background:#3c2a12;color:#fbbf24}
+.p-danger{background:#3c1212;color:#f87171}.p-gate{background:#241a3f;color:#c4b5fd}
+.svgwrap{background:#0d1526;border:1px solid var(--line);border-radius:10px;padding:10px;margin:14px 0;overflow-x:auto}
+.svgwrap img{display:block;margin:auto;max-width:100%}
+a{color:var(--blue)}
+.callout{border-left:4px solid var(--amber);background:#1c1a10;padding:12px 16px;border-radius:0 8px 8px 0;margin:12px 0;color:#e8dcae}
+.ok{border-left-color:var(--green);background:#0f1f17;color:#b9e8cd}
+.big{font-size:40px;font-weight:800} .kpis{display:flex;gap:14px;flex-wrap:wrap}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 22px;text-align:center}
+.kpi .n{font-size:26px;font-weight:800;color:#fff}.kpi .l{color:var(--mut);font-size:12px}
+</style></head><body>
+<nav><div class="logo">dorinda<span>/devs</span></div><a href="/index">Overview</a><a href="/topology">System Topology</a><a href="/infra">Shared Infra & forge</a><a href="/mcp">MCP Tools</a><a href="/apis">APIs & Routing</a><a href="/clis">CLIs</a><a href="/sdks">Connectors & SDKs</a><a href="/ci">CI/CD</a><a href="/gcp">Google Cloud</a><a href="/runbooks">Runbooks & Links</a></nav>
+<main><h1>Operating accounts &amp; test tenants</h1>
+<p class="sub">The console's <b>Data</b> section — what it can do to a real account, what it deliberately cannot, and why the two credentials behind it are not interchangeable.</p>
+
+<h2>Where the data comes from</h2>
+<p>An account is not one thing. Half of it belongs to the <b>platform</b> — the login identity, the billing subscription, the household graph, the connector grants — and forge owns all of that. The other half belongs to the <b>app</b>: the rows in its own schema, keyed by owner id, that forge does not and must not know about.</p>
+<div class="callout">The console reaches an app's half over the app's <b>own HTTP surface</b>, never its database. That is slower than a query and it is the point: the app keeps its invariants — the transactional local delete, the tombstone that signs a deleted user out, the two-marker test-tenant guard — and the console never becomes a second, unaudited way to mutate a datastore. <b>&ldquo;Nothing is done manually against a datastore&rdquo; is a property of this arrangement, not a rule people follow.</b></div>
+
+<h2>Two credentials, two surfaces, no fallback</h2>
+<table>
+<tr><th>Credential</th><th>Reaches</th><th>Can it touch a real account?</th></tr>
+<tr><td><code>CONSOLE_DORINDA_ADMIN_TOKEN</code></td><td><code>/api/admin/*</code></td><td><span class="pill p-danger">yes — it can erase one</span></td></tr>
+<tr><td><code>CONSOLE_DORINDA_TEST_TOKEN</code></td><td><code>/api/test/tenant/*</code></td><td><span class="pill p-read">no — structurally cannot</span></td></tr>
+</table>
+<p>There is deliberately <b>no</b> &ldquo;use whichever is set&rdquo; path between them. A fallback is precisely how a reset would one day arrive at the purge surface. An unconfigured credential makes <em>that</em> screen report itself as unconfigured; it never silently borrows the other.</p>
+<div class="callout ok"><b>Production holds only the admin token.</b> The test-control surface is dark there — its kill switch is off, so those routes return <b>404</b> — and the Test tenants screen reports &ldquo;not configured&rdquo;, which is the honest state of that environment rather than a broken screen.</div>
+
+<h2>Deleting an account</h2>
+<p>Two halves, in this order: the app deletes its own owner-scoped tables in one transaction, then <b>one</b> platform call tears down all ten platform subsystems — connectors revoked <em>at the provider</em>, MCP grants, billing, push, notifications, search, blobs, app events, memberships, and the login identity last.</p>
+<ul>
+<li><b>You must type the account's email.</b> Checked by the console against the row you were looking at <em>and</em> by the app against the identity forge holds. The realistic mistake is never &ldquo;I didn't mean to delete an account&rdquo; — it is &ldquo;I didn't mean to delete <em>that</em> one&rdquo;, and a yes/no dialog does not catch it.</li>
+<li><b>A reason is required</b> and lands in the audit row. &ldquo;Someone with the operator password did it at 03:12&rdquo; is not an answer anyone can act on later.</li>
+<li><b>An incomplete erasure is never shown as success.</b> The cascade is partial-tolerant, so it reports <code>retained[]</code> — anything it could not remove, with the reason. An empty <code>retained</code> is the <em>only</em> state that renders as done. The cascade is idempotent; retry <b>by owner id</b>, since the local rows (and the email&rarr;owner mapping) are already gone.</li>
+</ul>
+
+<h2>Test tenants</h2>
+<p>A tenant qualifies only with <b>both</b> the <code>test_tenant</code> flag and an <code>@dorinda.test</code> address. Neither is settable through any API — an endpoint that could set the flag would let a caller nominate a real account as a fixture and then erase it, collapsing every layer into one call.</p>
+<table>
+<tr><th>Action</th><th>What it does</th></tr>
+<tr><td><b>Reset</b></td><td>Empties the tenant <em>and its household</em> but keeps the account, its login, its entitlement and its connected AI. Preserving the connector is what makes a nightly suite possible — deleting it would mean a human re-authorising in a browser every run.</td></tr>
+<tr><td><b>Clock</b></td><td>Moves the tenant's virtual time and then <b>settles</b>: every firing path runs at the new time until nothing more happens. Firing cascades, so a single pass would leave a state no real elapsed time produces.</td></tr>
+</table>
+<div class="callout"><b>The sweeps are owner-scoped, down in the SQL.</b> The production firing paths claim app-wide; running one at a fake future time without a scope would fire every real customer's pending reminders and calendar alerts <b>early</b> — real notifications, to real people, because a test moved a clock.</div>
+<p>If the clock cannot reach a fixed point it reports <code>settled: false</code> rather than failing. That is a <b>finding about the product</b> — most likely a firing path re-arming itself at the same instant — and the operator should read it as data.</p>
+
+<h2>Everything here is audited</h2>
+<p>Every mutation is registered in the console's audited write table, and a test fails the build if a mutating route is not. The audit row is written <b>before</b> the attempt and updated after, so a crash mid-write still leaves a record — those are the rows you want at 3am. See <a href="/audit">Audit</a>.</p>
+</main>
+</body></html>
