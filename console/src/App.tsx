@@ -131,6 +131,7 @@ const NAV_GROUPS: ReadonlyArray<readonly [string, ReadonlyArray<readonly [Screen
     'Data',
     [
       ['accounts', 'Accounts'],
+      ['connections', 'Connections'],
       ['testtenants', 'Test tenants'],
     ],
   ],
@@ -162,6 +163,7 @@ type Screen =
   | 'cost'
   | 'quota'
   | 'accounts'
+  | 'connections'
   | 'testtenants'
   | 'explore'
   | 'audit'
@@ -391,6 +393,7 @@ export default function App() {
           {screen === 'explore' && <Explore />}
           {screen === 'audit' && <Audit />}
           {screen === 'accounts' && <Accounts />}
+          {screen === 'connections' && <Connections />}
           {screen === 'testtenants' && <TestTenants />}
           {screen === 'docs' && <Docs />}
         </main>
@@ -2981,6 +2984,135 @@ function TestTenants() {
                     Seed (empty fixture)
                   </Button>
                 </Toolbar>
+              </Card>
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+interface ConnectionsData {
+  observedAt: string;
+  totals: { connections: number; activeRecently: number; revoked: number; toolRefreshChannels: number };
+  byClient: Array<{
+    client: string;
+    connections: number;
+    activeRecently: number;
+    revoked: number;
+    toolRefreshChannels: number;
+    lastSeenAt: string | null;
+  }>;
+  bySource: Array<{ source: string; toolRefreshChannels: number }>;
+  streamsError?: string;
+  note?: string;
+  recentWithinHours?: number;
+}
+
+/**
+ * Connections — which AI clients are attached, and which are holding a live channel RIGHT NOW.
+ *
+ * The second half is why this screen exists and why it could not be replaced by a Grafana panel.
+ * Tool-refresh channels live in an in-process registry, not a metrics store: they are observable
+ * only while they are open, and nothing records them. This is the screen you open when someone says
+ * the assistant cannot see a tool that shipped days ago — the question is whether that client is
+ * actually holding a channel, and no historical metric can answer it.
+ */
+function Connections() {
+  const [hours, setHours] = useState('24');
+  const data = useApi<ConnectionsData>(`/api/tenants/connections?hours=${encodeURIComponent(hours)}`, [hours]);
+  const d = data.data;
+  const unconfigured = (data.error ?? '').includes('not configured');
+
+  /*
+   * ⛔ When the live feed failed, channel counts are UNKNOWN — never 0.
+   *
+   * A false zero on the one panel an operator consults to answer "is anything actually connected"
+   * is worse than showing nothing: it turns "we could not ask" into "nobody is connected", and
+   * those lead to opposite actions.
+   */
+  const channels = (n: number) => (d?.streamsError ? '—' : String(n));
+
+  return (
+    <>
+      <Head
+        screen="connections"
+        title="Connections"
+        sub="The AI clients attached to this app, and which of them are holding a live tool-refresh channel right now. Channel state is in-process and unrecorded — it exists only while it exists, so no dashboard can reconstruct it."
+      />
+
+      {unconfigured ? (
+        <Card>
+          <Empty
+            kind="unconfigured"
+            title="No app credential configured"
+            detail="The console has no CONSOLE_DORINDA_ADMIN_TOKEN, so it cannot read the connector inventory."
+          />
+        </Card>
+      ) : data.error ? (
+        <Err msg={data.error} onRetry={data.reload} />
+      ) : data.loading ? (
+        <Card>
+          <Skeleton rows={6} />
+        </Card>
+      ) : (
+        <>
+          <Toolbar>
+            <Segmented
+              ariaLabel="Freshness window"
+              value={hours}
+              onChange={setHours}
+              options={[
+                ['1', '1h'],
+                ['24', '24h'],
+                ['168', '7d'],
+              ]}
+            />
+            {/* Observed-at is shown, not implied: these figures are a live read, and an operator
+                deciding whether a connector is healthy needs to know how old the answer is. */}
+            <Note>observed {d?.observedAt ? relative(d.observedAt) : '—'}</Note>
+          </Toolbar>
+
+          {d?.streamsError && (
+            <Err msg={`live channel feed unavailable — ${d.streamsError}. Channel counts show “—”, not zero.`} onRetry={data.reload} />
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--section-gap)' }}>
+            <StatTile label="AI connections" value={String(d?.totals.connections ?? 0)} />
+            <StatTile label={`Active in ${d?.recentWithinHours ?? 24}h`} value={String(d?.totals.activeRecently ?? 0)} />
+            <StatTile label="Channels held now" value={channels(d?.totals.toolRefreshChannels ?? 0)} />
+            <StatTile label="Revoked" value={String(d?.totals.revoked ?? 0)} />
+          </div>
+
+          <div style={{ marginTop: 'var(--section-gap)' }}>
+            <Card title="By client" subtitle="A client with connections but NO held channel will not see tool changes until it reconnects — that is the usual answer to “why can't it see the new tool?”." pad={false}>
+              <Table head={['Client', 'Connections', 'Active', 'Channels now', 'Revoked', 'Last seen']}>
+                {(d?.byClient ?? []).map((c) => (
+                  <tr key={c.client}>
+                    <Td primary>{c.client}</Td>
+                    <Td right mono>{c.connections}</Td>
+                    <Td right mono>{c.activeRecently}</Td>
+                    <Td right mono>{channels(c.toolRefreshChannels)}</Td>
+                    <Td right mono>{c.revoked}</Td>
+                    <Td mono>{c.lastSeenAt ? relative(c.lastSeenAt) : 'never'}</Td>
+                  </tr>
+                ))}
+              </Table>
+            </Card>
+          </div>
+
+          {(d?.bySource ?? []).length > 0 && (
+            <div style={{ marginTop: 'var(--section-gap)' }}>
+              <Card title="Held channels by source" subtitle={d?.note}>
+                <Table head={['Source', 'Channels now']}>
+                  {(d?.bySource ?? []).map((s) => (
+                    <tr key={s.source}>
+                      <Td primary>{s.source}</Td>
+                      <Td right mono>{channels(s.toolRefreshChannels)}</Td>
+                    </tr>
+                  ))}
+                </Table>
               </Card>
             </div>
           )}

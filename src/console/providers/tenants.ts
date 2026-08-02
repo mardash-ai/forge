@@ -40,7 +40,8 @@ export type TenantFeature =
   | 'test.list'
   | 'test.seed'
   | 'test.reset'
-  | 'test.clock';
+  | 'test.clock'
+  | 'connections.read';
 
 /** A row in the accounts list — the least a console needs to find the account it means. */
 export interface TenantAccount {
@@ -100,6 +101,49 @@ export interface TestTenantSettle {
   warnings: string[];
 }
 
+/**
+ * WHO IS CONNECTED — the diagnostic half of tenant operations.
+ *
+ * Distinct from an account's row count: this answers "which AI clients are attached, and are they
+ * actually holding a live tool-refresh channel right now". That second part is the one you reach for
+ * when someone says the assistant cannot see a tool that shipped days ago, and it is not derivable
+ * from any metrics store — the channels live in an in-process registry, so they exist only while
+ * they exist.
+ */
+export interface ConnectionsClient {
+  /** The AI on the far end — Claude, ChatGPT, Other. */
+  client: string;
+  /** Grants on record, excluding revoked. */
+  connections: number;
+  /** Grants seen within the freshness window. */
+  activeRecently: number;
+  /** Revoked grants, kept for the audit trail. */
+  revoked: number;
+  /** Tool-refresh channels this client holds RIGHT NOW. */
+  toolRefreshChannels: number;
+  lastSeenAt: string | null;
+}
+
+export interface ConnectionsView {
+  /** Stamped per read, so freshness is provable rather than assumed. */
+  observedAt: string;
+  totals: { connections: number; activeRecently: number; revoked: number; toolRefreshChannels: number };
+  byClient: ConnectionsClient[];
+  bySource: Array<{ source: string; toolRefreshChannels: number }>;
+  /**
+   * Set when the LIVE channel feed could not be read.
+   *
+   * When this is present the channel counts are UNKNOWN, not zero, and the UI must say so. A false
+   * zero on the one panel an operator consults to answer "is anything actually connected" is worse
+   * than showing nothing at all.
+   */
+  streamsError?: string;
+  /** Why per-device platform is not observable for hosted connectors — the app's own words. */
+  note?: string;
+  /** Freshness window the "recently active" figures were computed over. */
+  recentWithinHours?: number;
+}
+
 export interface TenantProvider {
   kind: 'tenants';
   id: string;
@@ -127,6 +171,9 @@ export interface TenantProvider {
   // Deliberately separate methods rather than flags on the ones above. A reset is not a small purge
   // and must never be reachable by an operator who meant to purge; the two live on different app
   // surfaces, behind different credentials, and the console keeps that separation visible.
+
+  /** Live connector inventory. Read-only — nothing here mutates, so it needs no audited write. */
+  connections(ctx: ProviderContext, hours?: number): Promise<ConnectionsView>;
 
   listTestTenants(ctx: ProviderContext): Promise<TenantAccount[]>;
   seed(ctx: ProviderContext, owner: string, fixture: unknown): Promise<Record<string, unknown>>;

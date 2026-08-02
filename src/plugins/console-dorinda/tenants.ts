@@ -1,5 +1,6 @@
 import type { ProviderContext } from '../../console/providers/types';
 import type {
+  ConnectionsView,
   TenantAccount,
   TenantDetail,
   TenantFeature,
@@ -118,6 +119,7 @@ export function createDorindaTenantProvider(cfg: DorindaTenantConfig): TenantPro
     'accounts.lock': Boolean(cfg.adminToken),
     'accounts.purge': Boolean(cfg.adminToken),
     'test.list': Boolean(cfg.adminToken), // the flag rides on the admin account list
+    'connections.read': Boolean(cfg.adminToken),
     'test.seed': Boolean(cfg.testToken),
     'test.reset': Boolean(cfg.testToken),
     'test.clock': Boolean(cfg.testToken),
@@ -147,6 +149,31 @@ export function createDorindaTenantProvider(cfg: DorindaTenantConfig): TenantPro
         credential: 'admin',
       });
       return (out.accounts ?? []).map(toAccount);
+    },
+
+    async connections(ctx, hours = 24) {
+      const r = await call<Record<string, unknown>>(
+        ctx,
+        `/api/admin/connections?hours=${encodeURIComponent(String(hours))}`,
+        { credential: 'admin' },
+      );
+      const totals = (r['totals'] ?? {}) as Record<string, number>;
+      return {
+        observedAt: String(r['observedAt'] ?? ''),
+        totals: {
+          connections: Number(totals['connections'] ?? 0),
+          activeRecently: Number(totals['activeRecently'] ?? 0),
+          revoked: Number(totals['revoked'] ?? 0),
+          toolRefreshChannels: Number(totals['toolRefreshChannels'] ?? 0),
+        },
+        byClient: (r['byClient'] as ConnectionsView['byClient']) ?? [],
+        bySource: (r['bySource'] as ConnectionsView['bySource']) ?? [],
+        // Carried through verbatim: when the live feed failed, the channel counts are UNKNOWN and
+        // the UI has to say so rather than render the zeros that happen to be in the payload.
+        streamsError: (r['streamsError'] as string | undefined) ?? undefined,
+        note: (r['platformNote'] as string | undefined) ?? undefined,
+        recentWithinHours: Number(r['recentWithinHours'] ?? hours),
+      } satisfies ConnectionsView;
     },
 
     async listTestTenants(ctx) {

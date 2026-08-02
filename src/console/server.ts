@@ -813,6 +813,22 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     }
   });
 
+  app.get('/api/tenants/connections', async (req, reply) => {
+    const t = withTenants(req, reply);
+    if (!t) return;
+    if (!t.supports('connections.read')) {
+      return reply.code(501).send({
+        error: { code: 'not_configured', message: 'no CONSOLE_DORINDA_ADMIN_TOKEN configured, so connectors cannot be read' },
+      });
+    }
+    const hours = Number((req.query as { hours?: string }).hours ?? 24);
+    try {
+      return envelope(await t.connections(ctx(), Number.isFinite(hours) && hours > 0 ? hours : 24));
+    } catch (e) {
+      return tenantFail(reply, e);
+    }
+  });
+
   app.get('/api/tenants/test', async (req, reply) => {
     const t = withTenants(req, reply);
     if (!t) return;

@@ -1086,3 +1086,68 @@ describe('the top-line dashboard is the definition, and it must stay honest', ()
     expect(exprs.some((e) => e.includes('pipeline_heartbeat_total'))).toBe(true);
   });
 });
+
+describe('connections — a false zero is worse than no answer', () => {
+  const ctx = { env: 'prod-a' as never, signal: AbortSignal.timeout(5_000), now: new Date() };
+
+  it('carries streamsError through, so the UI can show UNKNOWN instead of 0', async () => {
+    /*
+     * The live channel feed comes from an in-process registry on the data plane. When it cannot be
+     * read, the payload still contains zeros — and rendering those turns "we could not ask" into
+     * "nobody is connected". Those lead to opposite actions: one sends you to reconnect a client
+     * that is fine, the other hides a client that is genuinely detached.
+     */
+    const { createDorindaTenantProvider } = await import('../src/plugins/console-dorinda/tenants');
+    const real = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          observedAt: '2026-08-02T00:00:00Z',
+          totals: { connections: 2, activeRecently: 1, revoked: 0, toolRefreshChannels: 0 },
+          byClient: [{ client: 'Claude', connections: 2, activeRecently: 1, revoked: 0, toolRefreshChannels: 0, lastSeenAt: null }],
+          bySource: [],
+          streamsError: 'data-plane unreachable',
+          platformNote: 'hosted connectors are not device-observable',
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )) as never;
+    try {
+      const p = createDorindaTenantProvider({ origin: 'https://api.test', adminToken: 'ADMIN' });
+      const out = await p.connections(ctx);
+      expect(out.streamsError).toBe('data-plane unreachable');
+      expect(out.totals.connections).toBe(2);
+      expect(out.note).toContain('device-observable');
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
+  it('passes the freshness window through and reports it back', async () => {
+    const { createDorindaTenantProvider } = await import('../src/plugins/console-dorinda/tenants');
+    const calls: string[] = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = (async (u: string) => {
+      calls.push(String(u));
+      return new Response(JSON.stringify({ observedAt: 'x', totals: {}, byClient: [], bySource: [], recentWithinHours: 168 }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as never;
+    try {
+      const p = createDorindaTenantProvider({ origin: 'https://api.test', adminToken: 'ADMIN' });
+      const out = await p.connections(ctx, 168);
+      expect(calls[0]).toContain('hours=168');
+      // Reported back rather than assumed by the UI — "active" means nothing without its window.
+      expect(out.recentWithinHours).toBe(168);
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
+  it('needs only the admin credential — it is a read, so no audited write', async () => {
+    const { createDorindaTenantProvider } = await import('../src/plugins/console-dorinda/tenants');
+    const p = createDorindaTenantProvider({ origin: 'https://api.test', adminToken: 'ADMIN' });
+    expect(p.supports('connections.read')).toBe(true);
+    const noAdmin = createDorindaTenantProvider({ origin: 'https://api.test', testToken: 'TEST' });
+    expect(noAdmin.supports('connections.read')).toBe(false);
+  });
+});

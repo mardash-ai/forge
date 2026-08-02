@@ -9,6 +9,21 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-08-02
+
+### Added
+- **A Connections screen** — which AI clients are attached, and which are holding a live
+  tool-refresh channel *right now*.
+  - This could not have been replaced by a Grafana panel, which is why it blocked retiring the
+    dorinda admin tool: channel state lives in an in-process registry, not a metrics store. It is
+    observable only while it exists and nothing records it, so no dashboard can reconstruct it. It
+    is also the screen that answers "why can't the assistant see the tool that shipped days ago" —
+    a client with connections but no held channel will not see tool changes until it reconnects.
+  - **A failed live feed shows `—`, never `0`.** The payload still contains zeros when the feed is
+    unreadable, and rendering them turns "we could not ask" into "nobody is connected". Those lead
+    to opposite actions.
+  - Read-only, so it needs the admin credential and no audited write.
+
 ## [1.1.1] - 2026-08-02
 
 ### Added

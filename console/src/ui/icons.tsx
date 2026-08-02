@@ -331,6 +331,15 @@ const IconTestTenants = () => (
   </I>
 );
 
+/** Two nodes joined — a live link, distinct from the person glyph on Accounts. */
+const IconConnections = () => (
+  <I>
+    <circle cx="4" cy="8" r="2.2" />
+    <circle cx="12" cy="8" r="2.2" />
+    <path d="M6.2 8H9.8" />
+  </I>
+);
+
 export const RAIL_ICON = {
   overview: IconOverview,
   timeline: IconTimeline,
@@ -345,6 +354,7 @@ export const RAIL_ICON = {
   cost: IconCost,
   quota: IconHeadroom,
   accounts: IconAccounts,
+  connections: IconConnections,
   testtenants: IconTestTenants,
   explore: IconExplore,
   audit: IconAudit,
