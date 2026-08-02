@@ -1445,3 +1445,25 @@ describe('Explore renders logs only — metrics live on Dashboards now', () => {
     expect(explore).toContain('severity');
   });
 });
+
+describe('log filters combine — owner is a clause, not an override', () => {
+  it('owner filters by opaque id and STILL respects service and severity', async () => {
+    /*
+     * The first attempt routed owner through `native`, which REPLACES the whole filter — so asking
+     * for "this user's errors in dorinda-api" would silently have returned every line for that user
+     * across every service at every level. A filter that quietly answers a broader question than
+     * the one asked is worse than one that fails.
+     */
+    const { buildFilter } = await import('../src/plugins/console-gcp/logs');
+    const f = buildFilter({ owner: 'user_abc', runtime_id: 'dorinda-api', severity_at_least: 'error' as never });
+    expect(f).toContain('jsonPayload.owner="user_abc"');
+    expect(f).toContain('resource.labels.service_name="dorinda-api"');
+    expect(f).toContain('severity>=ERROR');
+  });
+
+  it('strips quotes from an owner so a filter cannot be rewritten', async () => {
+    const { buildFilter } = await import('../src/plugins/console-gcp/logs');
+    const f = buildFilter({ owner: 'x" OR severity>="DEFAULT' });
+    expect(f).toBe('jsonPayload.owner="x OR severity>=DEFAULT"');
+  });
+});

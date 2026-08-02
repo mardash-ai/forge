@@ -411,6 +411,7 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
       minutes?: string;
       limit?: string;
       trace?: string;
+      owner?: string;
     };
     const end = new Date();
     const minutes = Number(q.minutes ?? 60);
@@ -432,6 +433,16 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
            * ones around it.
            */
           ...(q.trace ? { trace_id: q.trace } : {}),
+          /*
+           * Filter by OWNER ID, never by email.
+           *
+           * The console shows a list of emails and resolves the chosen one to an owner before
+           * asking — dorinda-api writes only the opaque id into its logs, deliberately, because
+           * Cloud Logging retains entries outside the app's database and an email written there
+           * would survive the account being deleted. The operator's experience is identical; the
+           * durable artefact carries no personal data.
+           */
+          ...(q.owner ? { owner: q.owner } : {}),
         },
         { start: new Date(end.getTime() - minutes * 60_000), end, limit },
         c,

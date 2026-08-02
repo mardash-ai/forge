@@ -25,7 +25,7 @@ function mapSeverity(s: string | undefined): Severity {
  * Build a Cloud Logging filter. Values are quoted and any embedded quote is stripped, because a
  * service name is user-influenced input and an unescaped one would let a caller rewrite the filter.
  */
-function buildFilter(q: LogQuery): string {
+export function buildFilter(q: LogQuery): string {
   if (q.native) return q.native;
   const clean = (v: string) => v.replace(/["\\\n]/g, '');
   const parts: string[] = [];
@@ -37,6 +37,10 @@ function buildFilter(q: LogQuery): string {
     parts.push(`severity>=${q.severity_at_least.toUpperCase()}`);
   }
   if (q.trace_id) parts.push(`trace:"${clean(q.trace_id)}"`);
+  // A first-class clause rather than a `native` override, so "this user's errors in dorinda-api"
+  // is expressible. Routing owner through `native` would have silently discarded the service and
+  // severity filters, which is the sort of narrowing that answers a different question than asked.
+  if (q.owner) parts.push(`jsonPayload.owner="${clean(q.owner)}"`);
   if (q.text) parts.push(`"${clean(q.text)}"`);
   return parts.join(' AND ');
 }

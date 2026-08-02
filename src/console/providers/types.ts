@@ -150,6 +150,15 @@ export interface LogQuery {
   text?: string;
   severity_at_least?: Severity;
   trace_id?: string;
+  /**
+   * The account this work belongs to — an opaque OWNER ID, never an email.
+   *
+   * Apps write only the id into their logs, because log stores retain entries outside the app's
+   * database and an email written there would survive the account being deleted. The console shows
+   * a list of emails and resolves the chosen one to an id before asking, so the operator experience
+   * is identical while the durable artefact carries no personal data.
+   */
+  owner?: string;
   native?: string;
 }
 

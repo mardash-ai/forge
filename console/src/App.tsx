@@ -9,6 +9,7 @@ import {
   Pill,
   Provenance,
   Segmented,
+  Select,
   Skeleton,
   StatTile,
   Status,
@@ -1090,15 +1091,42 @@ const SEV_TONE: Record<string, StatusTone> = {
  */
 function Explore() {
   const qs = new URLSearchParams(location.search);
-  const [service, setService] = useState(qs.get('svc') || 'dorinda-api');
+  const [service, setService] = useState(qs.get('svc') ?? '');
   const [minutes, setMinutes] = useState(Number(qs.get('mins')) || 60);
   const [text, setText] = useState(qs.get('q') || '');
   const [severity, setSeverity] = useState(qs.get('sev') || '');
   const [trace, setTrace] = useState(qs.get('trace') || '');
+  const [owner, setOwner] = useState(qs.get('owner') || '');
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  /*
+   * The service list comes from the console's own inventory, not a hand-kept array — a list of
+   * services that has to be edited when one is added is a list that will be wrong.
+   *
+   * Falls back to a free-text box when inventory is unavailable, because a dropdown with nothing in
+   * it would make the screen unusable for a reason that has nothing to do with logs.
+   */
+  const svc = useApi<{ services: Array<{ key: string; display_name: string }> }>('/api/services');
+  /*
+   * The user picker shows EMAILS and sends an OWNER ID.
+   *
+   * dorinda-api writes only the opaque id into its logs, deliberately: Cloud Logging retains entries
+   * outside the app's database, so an email written there would outlive the account it belongs to
+   * and a purge could never reach it. Resolving here costs one list the console already loads, and
+   * the operator never types or sees an id.
+   */
+  const accounts = useApi<Array<{ owner: string; email: string | null }>>('/api/tenants/accounts');
+  const userOptions = (accounts.data ?? [])
+    .filter((a) => a.email)
+    .map((a) => [a.owner, a.email!] as const)
+    .sort((a, b) => a[1].localeCompare(b[1]));
+  const serviceOptions = (svc.data?.services ?? [])
+    .map((x) => [x.key, x.display_name || x.key] as const)
+    .sort((a, b) => a[1].localeCompare(b[1]));
 
   useEffect(() => {
     const u = new URL(location.href);
+    u.searchParams.set('owner', owner);
     u.searchParams.set('svc', service);
     u.searchParams.set('mins', String(minutes));
     u.searchParams.set('sev', severity);
@@ -1106,7 +1134,7 @@ function Explore() {
     if (text) u.searchParams.set('q', text);
     else u.searchParams.delete('q');
     history.replaceState(null, '', u);
-  }, [service, minutes, text, severity, trace]);
+  }, [service, minutes, text, severity, trace, owner]);
 
   /*
    * A trace filter REPLACES the others rather than narrowing them.
@@ -1117,10 +1145,12 @@ function Explore() {
    */
   const path = trace
     ? `/api/logs?trace=${encodeURIComponent(trace)}&minutes=${minutes}&limit=500`
-    : `/api/logs?service=${encodeURIComponent(service)}&minutes=${minutes}&limit=300` +
+    : `/api/logs?minutes=${minutes}&limit=300` +
+      (service ? `&service=${encodeURIComponent(service)}` : '') +
+      (owner ? `&owner=${encodeURIComponent(owner)}` : '') +
       (text ? `&text=${encodeURIComponent(text)}` : '') +
       (severity ? `&severity=${encodeURIComponent(severity)}` : '');
-  const logs = useApi<LogLine[]>(path, [service, minutes, text, severity, trace]);
+  const logs = useApi<LogLine[]>(path, [service, minutes, text, severity, trace, owner]);
 
   const lines = logs.data ?? [];
   const count = (s: string) =>
@@ -1133,11 +1163,24 @@ function Explore() {
       <Head
         screen="explore"
         title="Explore"
-        sub="Logs from Cloud Logging, where every log in this estate already lives. Metrics moved to Dashboards, which embeds the real Grafana boards rather than redrawing one series at a time."
+        sub="Logs from Cloud Logging. Someone contacts support: pick their email, raise the severity, read what happened. The picker shows emails and filters on an opaque owner id — logs outlive the database, so an address written into one would survive the account it belongs to."
       />
 
       <Toolbar>
-        <Field ariaLabel="Service" value={service} onChange={setService} mono width={170} placeholder="service" />
+        {serviceOptions.length > 0 ? (
+          <Select
+            ariaLabel="Service"
+            value={service}
+            onChange={setService}
+            width={190}
+            // "All" is the FIRST option and the default. Most log questions start "something is
+            // wrong" rather than "something is wrong in dorinda-api", and defaulting to one service
+            // quietly hides every line from the others.
+            options={[['', 'All services'], ...serviceOptions]}
+          />
+        ) : (
+          <Field ariaLabel="Service" value={service} onChange={setService} mono width={170} placeholder="all services" />
+        )}
         <Segmented
           ariaLabel="Window"
           value={String(minutes)}
@@ -1160,7 +1203,16 @@ function Explore() {
             ['ERROR', 'Error+'],
           ]}
         />
-        <Field ariaLabel="Filter text" value={text} onChange={setText} placeholder="contains…" mono width={190} />
+        {userOptions.length > 0 && (
+          <Select
+            ariaLabel="User"
+            value={owner}
+            onChange={setOwner}
+            width={230}
+            options={[['', 'All users'], ...userOptions]}
+          />
+        )}
+        <Field ariaLabel="Filter text" value={text} onChange={setText} placeholder="contains…" mono width={170} />
       </Toolbar>
 
       {trace && (
@@ -1211,7 +1263,7 @@ function Explore() {
                 detail={
                   trace
                     ? `Nothing for trace ${trace} in this window. Traces age out — widen the window before concluding the request never happened.`
-                    : `Nothing from ${service}${severity ? ` at ${severity}+` : ''}${text ? ` containing “${text}”` : ''} in this window. That is an absence of matches, not proof the service is quiet — clear the filters to check.`
+                    : `Nothing from ${service || 'any service'}${severity ? ` at ${severity}+` : ''}${text ? ` containing “${text}”` : ''} in this window. That is an absence of matches, not proof anything is quiet — clear the filters to check.`
                 }
               />
             ) : (

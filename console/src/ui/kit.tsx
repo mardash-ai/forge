@@ -747,3 +747,54 @@ export function Toolbar({ children }: { children: ReactNode }) {
 export function Note({ children }: { children: ReactNode }) {
   return <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{children}</span>;
 }
+
+/**
+ * A single-choice dropdown, for lists too long or too open-ended for `Segmented`.
+ *
+ * Native `<select>` on purpose: it gets keyboard behaviour, type-ahead, screen-reader semantics and
+ * sensible mobile handling for free, and none of those are worth reimplementing to gain a custom
+ * chevron. Styled to match the other controls so a toolbar still lines up.
+ */
+export function Select({
+  value,
+  onChange,
+  options,
+  ariaLabel,
+  width = 190,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: ReadonlyArray<readonly [string, string]>;
+  ariaLabel: string;
+  width?: number;
+  disabled?: boolean;
+}) {
+  return (
+    <select
+      value={value}
+      aria-label={ariaLabel}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+      style={{
+        height: 'var(--control-h)',
+        width,
+        maxWidth: '100%',
+        background: 'var(--bg-inset)',
+        border: '1px solid var(--line-strong)',
+        borderRadius: 'var(--r-md)',
+        color: disabled ? 'var(--text-faint)' : 'var(--text-primary)',
+        padding: '0 8px',
+        font: 'inherit',
+        fontSize: 13,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+      }}
+    >
+      {options.map(([v, label]) => (
+        <option key={v} value={v}>
+          {label}
+        </option>
+      ))}
+    </select>
+  );
+}
