@@ -437,6 +437,49 @@ describe('quota headroom — a limit is never invented', () => {
   });
 });
 
+describe('the bundled doc pages actually resolve, not merely exist', () => {
+  /*
+   * A page is not shipped because a file is on disk. It is shipped when the console can DISCOVER
+   * it and EXTRACT it — the same "verify the pane, not the store" rule this estate has already paid
+   * for once.
+   *
+   * This is a SMOKE test over the real discovery + extraction path, and its scope is worth stating
+   * plainly rather than overselling: it catches a page that is unreadable, that yields no title
+   * from either <h1> or <title> (so it lists under its raw slug), or that extracts an empty body.
+   *
+   * Two things it deliberately does NOT catch, both verified by breaking them and watching this
+   * suite stay green — because a test whose stated failure mode is wrong is worse than no test:
+   *   · a missing <main> — `extractDoc` falls back to <body> on purpose, since dorinda-web's pages
+   *     wrap their content in a plain <div class="wrap">;
+   *   · a missing <h1> alone — `listPages` falls back to <title> before the slug.
+   */
+  it('every bundled page is discoverable and extracts a title and a body', async () => {
+    const { builtinSource } = await import('../src/console/docs');
+    const src = builtinSource(new URL('../src/console/docs/content', import.meta.url).pathname);
+    const pages = await src.listPages(new AbortController().signal);
+    expect(pages.length).toBeGreaterThan(0);
+    for (const p of pages) {
+      const doc = await src.getPage(p.id, new AbortController().signal);
+      // A title equal to the id means BOTH <h1> and <title> were missing — the page lists under
+      // its raw slug, which reads as a deliberate name rather than a broken page.
+      expect(p.title, `page ${p.id} has no <h1> and no <title>`).not.toBe(p.id);
+      // A page with no extracted body has its content outside <main> and renders blank.
+      expect(doc.html.length, `page ${p.id} extracted an empty body`).toBeGreaterThan(200);
+      expect(doc.html).not.toContain('<script');
+    }
+  });
+
+  it('ships the Explore/logs help page — the surface that had none', async () => {
+    const { builtinSource } = await import('../src/console/docs');
+    const src = builtinSource(new URL('../src/console/docs/content', import.meta.url).pathname);
+    const doc = await src.getPage('logging', new AbortController().signal);
+    expect(doc.title).toMatch(/Logs, owners/i);
+    // The two things an operator opens this page to understand.
+    expect(doc.html).toContain('trace_id');
+    expect(doc.html).toMatch(/per ITEM/i);
+  });
+});
+
 describe('docs — absorbed by reference, never copied', () => {
   const page = `<html><head><style>:root{--x:1}</style></head><body>
     <nav><div class="logo">x</div><a href="/index">Overview</a><a href="/gcp">Google Cloud</a></nav>
