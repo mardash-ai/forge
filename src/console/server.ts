@@ -26,6 +26,7 @@ import { runFindings } from './findings';
 import { buildTimeline } from './timeline';
 import { computeQuotas } from './quota';
 import { builtinSource, webManifestSource, indexAll, findSource, unqualify, type DocSource } from './docs';
+import { createGrafanaCatalog } from './metrics-catalog';
 import { createGcpInventoryProvider } from '../plugins/console-gcp/inventory';
 import { createCloudMonitoringProvider, createManagedPrometheusProvider } from '../plugins/console-gcp/metrics';
 import { createCloudLoggingProvider } from '../plugins/console-gcp/logs';
@@ -318,14 +319,53 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     return envelope(items, sources);
   });
 
+  /*
+   * The top-line product metrics are DEFINED in a Grafana dashboard and read from it here — see
+   * metrics-catalog.ts for why they are not also written down in this repo. The short answer: they
+   * were, in both places, and both copies computed tool errors from a metric that is never emitted.
+   */
+  const catalog = createGrafanaCatalog({
+    origin: process.env.CONSOLE_GRAFANA_URL,
+    user: process.env.CONSOLE_GRAFANA_USER,
+    pass: process.env.CONSOLE_GRAFANA_PASS,
+    dashboardUid: process.env.CONSOLE_TOPLINE_DASHBOARD ?? 'dorinda-product-topline',
+  });
+
+  app.get('/api/metrics/catalog', async () => envelope(await catalog.get(AbortSignal.timeout(10_000))));
+
   app.get('/api/metrics', async (req) => {
-    const q = req.query as { intent?: string; service?: string; minutes?: string };
+    const q = req.query as { intent?: string; service?: string; minutes?: string; metric?: string };
     const intent = (q.intent ?? 'request_rate') as MetricIntent;
     const end = new Date();
     const minutes = Number(q.minutes ?? 60);
     const range = { start: new Date(end.getTime() - minutes * 60_000), end, step_seconds: Math.max(60, Math.floor((minutes * 60) / 120)) };
     const c = ctx();
     const provs = registry.byKind('metrics', ENV) as MetricsProvider[];
+
+    /*
+     * A CATALOG metric runs the dashboard's own PromQL, verbatim.
+     *
+     * Resolved by id against the catalog rather than taking an expression from the query string:
+     * accepting arbitrary PromQL from a URL would make this an open query proxy into the metrics
+     * store, and the id indirection means the only expressions this can ever run are ones a human
+     * put on the dashboard.
+     */
+    if (q.metric) {
+      const cat = await catalog.get(AbortSignal.timeout(10_000));
+      if (cat.error) {
+        return envelope({ series: [], provider_id: 'grafana-catalog', empty_reason: 'not_supported', detail: cat.error });
+      }
+      const m = cat.metrics.find((x) => x.id === q.metric);
+      if (!m) {
+        return envelope({ series: [], provider_id: 'grafana-catalog', empty_reason: 'not_supported', detail: `no catalog metric "${q.metric}"` });
+      }
+      const native = provs.find((p) => p.supports('metrics.native') && p.queryNative);
+      if (!native) {
+        return envelope({ series: [], provider_id: 'none', empty_reason: 'not_supported', detail: 'no provider can run raw PromQL' });
+      }
+      const r = await native.queryNative!(m.expr, range, c);
+      return envelope(r, [{ provider_id: native.id, ok: true }]);
+    }
     const target = { runtime_id: q.service ?? 'dorinda-api', env: ENV };
     const usable = provs.filter((p) => p.supportsIntent(intent, target));
     if (usable.length === 0) {

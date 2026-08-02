@@ -948,3 +948,141 @@ describe('tenant provider — two credentials, two surfaces', () => {
     }
   });
 });
+
+describe('metric catalog — one definition, read from the dashboard', () => {
+  it('extracts a queryable metric from each panel, ignoring rows and text', async () => {
+    const { extractCatalog } = await import('../src/console/metrics-catalog');
+    const doc = {
+      dashboard: {
+        title: 'Product — top-line',
+        panels: [
+          { type: 'row', title: 'Group', panels: [{ title: 'Nested', targets: [{ expr: 'up' }] }] },
+          { title: 'Tool calls / min', type: 'timeseries', description: 'why it matters', fieldConfig: { defaults: { unit: 'cpm' } }, targets: [{ expr: 'sum(rate(x[5m]))' }] },
+          { title: 'Just prose', type: 'text' },
+          { title: 'No expr', type: 'timeseries', targets: [{}] },
+        ],
+      },
+    };
+    const out = extractCatalog(doc);
+    expect(out.map((m) => m.id)).toEqual(['nested', 'tool-calls-min']);
+    const calls = out.find((m) => m.id === 'tool-calls-min')!;
+    expect(calls.expr).toBe('sum(rate(x[5m]))');
+    expect(calls.unit).toBe('cpm');
+    // The description rides along, so the EXPLANATION cannot drift from the query either.
+    expect(calls.description).toBe('why it matters');
+  });
+
+  it('gives colliding panel titles distinct ids', async () => {
+    const { extractCatalog } = await import('../src/console/metrics-catalog');
+    const out = extractCatalog({
+      panels: [
+        { title: 'Rate', targets: [{ expr: 'a' }] },
+        { title: 'Rate', targets: [{ expr: 'b' }] },
+      ],
+    });
+    // Without this, the second panel silently shadows the first and one metric becomes unreachable.
+    expect(out.map((m) => m.id)).toEqual(['rate', 'rate-2']);
+    expect(out.map((m) => m.expr)).toEqual(['a', 'b']);
+  });
+
+  it('reports a failure and returns NO metrics — never a stale local copy', async () => {
+    const { createGrafanaCatalog } = await import('../src/console/metrics-catalog');
+    const real = globalThis.fetch;
+    globalThis.fetch = (async () => new Response('nope', { status: 503 })) as never;
+    try {
+      const c = createGrafanaCatalog({ origin: 'https://g.test', user: 'u', pass: 'p', dashboardUid: 'd' });
+      const out = await c.get(AbortSignal.timeout(5_000));
+      expect(out.metrics).toEqual([]);
+      expect(out.error).toContain('503');
+      // A bundled fallback copy would render happily while disagreeing with the dashboard — which is
+      // the precise failure a shared definition exists to prevent. Absence must stay visible.
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
+  it('treats a dashboard with no queryable panels as an ERROR, not an empty catalog', async () => {
+    const { createGrafanaCatalog } = await import('../src/console/metrics-catalog');
+    const real = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ dashboard: { title: 'T', panels: [{ title: 'text only' }] } }), {
+        headers: { 'content-type': 'application/json' },
+      })) as never;
+    try {
+      const c = createGrafanaCatalog({ origin: 'https://g.test', user: 'u', pass: 'p', dashboardUid: 'd' });
+      const out = await c.get(AbortSignal.timeout(5_000));
+      // "The dashboard changed shape" and "there are no metrics" look identical otherwise.
+      expect(out.error).toContain('no queryable panels');
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
+  it('caches, so Grafana is not in the hot path of every render', async () => {
+    const { createGrafanaCatalog } = await import('../src/console/metrics-catalog');
+    let calls = 0;
+    const real = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      calls++;
+      return new Response(JSON.stringify({ dashboard: { title: 'T', panels: [{ title: 'A', targets: [{ expr: 'x' }] }] } }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as never;
+    try {
+      const c = createGrafanaCatalog({ origin: 'https://g.test', user: 'u', pass: 'p', dashboardUid: 'd' }, 60_000);
+      let t = 1_000;
+      await c.get(AbortSignal.timeout(5_000), () => t);
+      await c.get(AbortSignal.timeout(5_000), () => t);
+      expect(calls).toBe(1);
+      t += 61_000;
+      await c.get(AbortSignal.timeout(5_000), () => t);
+      expect(calls).toBe(2);
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
+  it('is unconfigured, not broken, when Grafana details are absent', async () => {
+    const { createGrafanaCatalog, catalogConfigured } = await import('../src/console/metrics-catalog');
+    expect(catalogConfigured({})).toBe(false);
+    const c = createGrafanaCatalog({});
+    const out = await c.get(AbortSignal.timeout(5_000));
+    expect(out.error).toContain('not configured');
+  });
+});
+
+describe('the top-line dashboard is the definition, and it must stay honest', () => {
+  it('never queries mcp_tool_errors_total — a metric that is NEVER emitted', async () => {
+    /*
+     * The bug that motivated the shared catalog. dorinda-api records errors as
+     * mcp_tool_calls_total{outcome="error"}; there is no mcp_tool_errors_total, and enumerating
+     * __name__ in Managed Prometheus on 2026-08-02 confirmed it. Both Grafana and the console used
+     * to query that name — Grafana via a regex that matched nothing silently, the console directly —
+     * so error rate read as zero on two surfaces at once, with nothing to compare against.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const path = new URL('../../dorinda-metrics/dashboards/dorinda-product-topline.json', import.meta.url).pathname;
+    const raw = await readFile(path, 'utf8').catch(() => null);
+    if (!raw) return; // dorinda-metrics not checked out beside forge — skip rather than fail.
+    // Assert against the QUERIES, not the file. A panel description explains this very bug and names
+    // the metric; matching raw text flagged that prose and would have pressured the explanation to
+    // get vaguer to satisfy a test. Same lesson as the docs boundary check.
+    const dash = JSON.parse(raw) as { panels: Array<{ title: string; targets: Array<{ expr: string }> }> };
+    const exprs = dash.panels.flatMap((p) => p.targets.map((t) => t.expr));
+    expect(exprs.length).toBeGreaterThan(4);
+    for (const e of exprs) expect(e, `panel query uses a metric that is never emitted: ${e}`).not.toContain('mcp_tool_errors');
+    expect(exprs.some((e) => e.includes('outcome="error"'))).toBe(true);
+  });
+
+  it('carries a heartbeat panel — without it every other panel can lie', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const path = new URL('../../dorinda-metrics/dashboards/dorinda-product-topline.json', import.meta.url).pathname;
+    const raw = await readFile(path, 'utf8').catch(() => null);
+    if (!raw) return;
+    // A dead pipeline makes "no traffic" and "no telemetry" identical. Absence must mean BROKEN,
+    // which only a heartbeat can express — an event-driven metric cannot.
+    const dash = JSON.parse(raw) as { panels: Array<{ targets: Array<{ expr: string }> }> };
+    const exprs = dash.panels.flatMap((p) => p.targets.map((t) => t.expr));
+    expect(exprs.some((e) => e.includes('pipeline_heartbeat_total'))).toBe(true);
+  });
+});

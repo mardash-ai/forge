@@ -1078,6 +1078,17 @@ function Explore() {
   const [minutes, setMinutes] = useState(Number(qs.get('mins')) || 60);
   const [text, setText] = useState(qs.get('q') || '');
   const [intent, setIntent] = useState(qs.get('intent') || 'request_rate');
+  /*
+   * The product metrics come from the Grafana dashboard, not from this file.
+   *
+   * A catalog entry is addressed as `product:<panel-id>`; anything else is one of the console's
+   * built-in infrastructure intents. Keeping ONE `intent` param means every metric on this screen
+   * stays deep-linkable the same way, whichever store defines it.
+   */
+  const catalog = useApi<{ source: { title: string; url?: string }; metrics: Array<{ id: string; title: string; description?: string; unit?: string }>; error?: string }>('/api/metrics/catalog');
+  const catalogMetrics = catalog.data?.metrics ?? [];
+  const productId = intent.startsWith('product:') ? intent.slice('product:'.length) : null;
+  const activeCatalog = catalogMetrics.find((m) => m.id === productId) ?? null;
 
   useEffect(() => {
     const u = new URL(location.href);
@@ -1092,9 +1103,11 @@ function Explore() {
 
   const metrics = useApi<MetricAnswer>(
     signal === 'metrics'
-      ? `/api/metrics?intent=${encodeURIComponent(intent)}&service=${encodeURIComponent(service)}&minutes=${minutes}`
+      ? productId
+        ? `/api/metrics?metric=${encodeURIComponent(productId)}&minutes=${minutes}`
+        : `/api/metrics?intent=${encodeURIComponent(intent)}&service=${encodeURIComponent(service)}&minutes=${minutes}`
       : null,
-    [service, minutes, intent],
+    [service, minutes, intent, productId],
   );
   const logs = useApi<LogRow[]>(
     signal === 'logs'
@@ -1155,16 +1168,35 @@ function Explore() {
       )}
 
       {signal === 'metrics' ? (
-          <Segmented
-            ariaLabel="Metric"
-            value={intent}
-            onChange={setIntent}
-            options={[
-              ['request_rate', 'Rate'],
-              ['error_rate', 'Errors'],
-              ['latency_p95', 'p95'],
-            ]}
-          />
+          <>
+            {/* Product metrics lead, because "is the product working" is the question people arrive
+                with; the infrastructure intents answer "is the machine working", which is a
+                different and usually later question. */}
+            {catalogMetrics.length > 0 && (
+              <Segmented
+                ariaLabel="Product metric"
+                value={productId ? intent : ''}
+                onChange={setIntent}
+                options={catalogMetrics.map((m) => [`product:${m.id}`, m.title] as const)}
+              />
+            )}
+            <Segmented
+              ariaLabel="Infrastructure metric"
+              value={productId ? '' : intent}
+              onChange={setIntent}
+              options={[
+                ['request_rate', 'Rate'],
+                ['error_rate', 'Errors'],
+                ['latency_p95', 'p95'],
+              ]}
+            />
+            {catalog.data?.error && (
+              /* Named, not hidden. The console deliberately keeps NO local copy of these queries —
+                 a stale copy that renders happily while disagreeing with the dashboard is the exact
+                 failure the shared definition exists to prevent. */
+              <Note>product metrics unavailable — {catalog.data.error}</Note>
+            )}
+          </>
         ) : (
           /* Free-text filter. An acceptance run needs to point at ONE flow's lines, not the stream. */
           <Field ariaLabel="Filter logs" value={text} onChange={setText} placeholder="filter text" mono width={210} />
@@ -1174,8 +1206,22 @@ function Explore() {
       {signal === 'metrics' ? (
         <Card
           eyebrow={metrics.data ? `answered by ${metrics.data.provider_id}` : intent.replace(/_/g, ' ')}
-          title={intent === 'error_rate' ? 'Error rate' : intent === 'latency_p95' ? 'Latency p95' : 'Request rate'}
-          subtitle="Which store answered is part of the reading, not a footnote — two metric backends disagree more often than either admits."
+          title={
+            activeCatalog
+              ? activeCatalog.title
+              : intent === 'error_rate'
+                ? 'Error rate'
+                : intent === 'latency_p95'
+                  ? 'Latency p95'
+                  : 'Request rate'
+          }
+          subtitle={
+            activeCatalog
+              ? // The panel's own description, written once in the dashboard and read here — so the
+                // explanation cannot drift from the query it explains either.
+                `${activeCatalog.description ?? ''} Defined in ${catalog.data?.source.title ?? 'the Grafana dashboard'}; the console reads it rather than restating it.`
+              : 'Which store answered is part of the reading, not a footnote — two metric backends disagree more often than either admits.'
+          }
         >
           {metrics.error ? (
             <Err msg={metrics.error} onRetry={metrics.reload} />

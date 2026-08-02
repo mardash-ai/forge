@@ -9,6 +9,31 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-02
+
+### Added
+- **Top-line product metrics in Explore, read FROM the Grafana dashboard.** The console fetches
+  `dorinda-product-topline` over the Grafana API and runs the panels' own PromQL, rather than
+  restating it. Edit a query on the dashboard and the console follows — no forge release, no second
+  edit, no drift. A catalog metric is addressed as `product:<panel-id>`, so it stays deep-linkable
+  like every other knob on that screen; the panel's description travels with it, so the explanation
+  cannot drift from the query either.
+  - Expressions are resolved by **id against the catalog**, never taken from the query string —
+    accepting raw PromQL from a URL would make the console an open query proxy into the metrics store.
+  - When Grafana is unreachable the catalog reports the failure and the built-in infrastructure
+    intents remain. It deliberately keeps **no bundled copy** of the product queries: a stale copy
+    that renders happily while disagreeing with the dashboard is the exact failure a shared
+    definition exists to prevent.
+- A console help page for the Data section (accounts, test tenants, the two credentials).
+
+### Fixed
+- **`error_rate` queried `mcp_tool_errors_total`, a metric that is never emitted.** dorinda-api
+  records errors as `mcp_tool_calls_total{outcome="error"}`; enumerating `__name__` in Managed
+  Prometheus confirms no such metric exists. Grafana's panels had the same bug in a regex form that
+  matched nothing silently. Two copies of one definition, both wrong the same way, on the panels
+  meant to say when something is broken — which is precisely why the definition now lives in one
+  place.
+
 ## [1.1.0] - 2026-08-02
 
 ### Added
