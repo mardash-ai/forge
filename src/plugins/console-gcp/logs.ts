@@ -36,7 +36,25 @@ export function buildFilter(q: LogQuery): string {
   if (q.severity_at_least) {
     parts.push(`severity>=${q.severity_at_least.toUpperCase()}`);
   }
-  if (q.trace_id) parts.push(`trace:"${clean(q.trace_id)}"`);
+  /*
+   * BOTH fields, because the same trace id lives in two places and matching one returns a subset.
+   *
+   * `trace` is the LogEntry's OWN field. Cloud Run stamps it on its REQUEST logs (adopting the
+   * inbound `traceparent`), and an app can populate it for its own lines only by writing the magic
+   * `logging.googleapis.com/trace` key into a structured payload.
+   *
+   * `jsonPayload.trace_id` is the plain field an app writes when it is not doing anything
+   * GCP-specific — the normal case, and the one this console must not punish.
+   *
+   * Matching only `trace` is why the pivot returned exactly ONE entry per request: the ids were
+   * correct and identical, and the app's lines simply lived in the other field. A console that
+   * silently returns a SUBSET is worse than one that returns nothing — the operator concludes the
+   * request really did only do one thing, and stops looking.
+   */
+  if (q.trace_id) {
+    const t = clean(q.trace_id);
+    parts.push(`(trace:"${t}" OR jsonPayload.trace_id="${t}")`);
+  }
   // A first-class clause rather than a `native` override, so "this user's errors in dorinda-api"
   // is expressible. Routing owner through `native` would have silently discarded the service and
   // severity filters, which is the sort of narrowing that answers a different question than asked.

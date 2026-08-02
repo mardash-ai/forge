@@ -1509,4 +1509,35 @@ describe('log filters combine — owner is a clause, not an override', () => {
     const f = buildFilter({ owner: 'x" OR severity>="DEFAULT' });
     expect(f).toBe('jsonPayload.owner="x OR severity>=DEFAULT"');
   });
+
+  it('a trace pivot matches BOTH the LogEntry trace field and a payload trace_id', async () => {
+    /*
+     * The same trace id lives in two places, and matching one returns a SUBSET.
+     *
+     * Verified against production, not reasoned about: for one traceparent,
+     * `trace="projects/dorinda-prod/traces/<id>"` returned 3 Cloud Run REQUEST logs while
+     * `jsonPayload.trace_id="<id>"` returned 6 APP logs. Identical id, different fields. The pivot
+     * queried only the first, so it returned the request logs alone — which is why "Trace" looked
+     * like it always found exactly one entry per request.
+     *
+     * A console that silently returns a subset is worse than one that returns nothing: the operator
+     * concludes the request really did only do one thing, and stops looking.
+     */
+    const { buildFilter } = await import('../src/plugins/console-gcp/logs');
+    const f = buildFilter({ trace_id: 'abc123' } as never);
+    expect(f).toContain('trace:"abc123"');
+    expect(f).toContain('jsonPayload.trace_id="abc123"');
+    // OR'd inside one group — otherwise the service/severity clauses would AND against only one arm.
+    expect(f).toBe('(trace:"abc123" OR jsonPayload.trace_id="abc123")');
+  });
+
+  it('the trace clause stays grouped when combined, so other filters apply to both arms', async () => {
+    // Without the parentheses, `a AND trace:x OR jsonPayload.trace_id=x` parses as
+    // `(a AND trace:x) OR (trace_id=x)` — the second arm escapes the service filter entirely and
+    // returns another service's lines. Silent, and exactly the wrong kind of wrong.
+    const { buildFilter } = await import('../src/plugins/console-gcp/logs');
+    const f = buildFilter({ trace_id: 'abc123', runtime_id: 'dorinda-api' } as never);
+    expect(f).toContain('(trace:"abc123" OR jsonPayload.trace_id="abc123")');
+    expect(f.indexOf('resource.labels.service_name')).toBeLessThan(f.indexOf('(trace:'));
+  });
 });
