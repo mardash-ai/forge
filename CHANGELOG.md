@@ -9,6 +9,15 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-08-02
+
+### Added
+- **An Explore/logs help page in the console docs** (`Logs, owners & traces`). The Explore tab
+  shipped without one. It documents the envelope every line carries, what the **Trace** pivot
+  returns and why two runtimes emit into a single trace (the edge middleware mints the trace id but
+  structurally cannot carry an owner — it runs before auth and has no `AsyncLocalStorage`), why
+  sweep attribution is per **item** rather than per sweep, and why logs never contain an email.
+
 ## [1.4.0] - 2026-08-02
 
 ### Added
