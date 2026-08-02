@@ -9,6 +9,19 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-02
+
+### Added
+- **Service and user dropdowns on the log view.** Service is driven by the console's own inventory
+  and defaults to **All** — most log questions start "something is wrong", and defaulting to one
+  service quietly hides every other line.
+- **`owner` as a first-class log filter.** The user picker shows EMAILS and filters on an opaque
+  owner id, because log stores retain entries outside an app's database and an address written into
+  one would outlive the account it belongs to.
+  - Implemented as a real filter clause, NOT a `native` override. The first attempt used native,
+    which replaces the whole filter — "this user's errors in dorinda-api" would silently have
+    returned every line for that user, everywhere, at every level.
+
 ## [1.3.0] - 2026-08-02
 
 ### Changed
