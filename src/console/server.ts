@@ -29,7 +29,10 @@ import { builtinSource, webManifestSource, indexAll, findSource, unqualify, type
 import { createGrafanaCatalog, resolveGrafanaMacros } from './metrics-catalog';
 import { createGrafanaBoards } from './grafana-boards';
 import { createGcpInventoryProvider } from '../plugins/console-gcp/inventory';
-import { createCloudMonitoringProvider, createManagedPrometheusProvider } from '../plugins/console-gcp/metrics';
+import {
+  createCloudMonitoringProvider,
+  createManagedPrometheusProvider,
+} from '../plugins/console-gcp/metrics';
 import { createCloudLoggingProvider } from '../plugins/console-gcp/logs';
 import { createGcpCredentialsProvider } from '../plugins/console-gcp/credentials';
 import { createCloudRunRuntimeProvider } from '../plugins/console-gcp/runtime';
@@ -67,7 +70,11 @@ export function buildRegistry(): ProviderRegistry {
   const providers = [
     createGcpInventoryProvider({ id: 'gcp-inventory', envs: [ENV], scope }),
     createCloudMonitoringProvider({ id: 'cloud-monitoring', envs: [ENV], scope: { project_id: PROJECT } }),
-    createManagedPrometheusProvider({ id: 'managed-prometheus', envs: [ENV], scope: { project_id: PROJECT } }),
+    createManagedPrometheusProvider({
+      id: 'managed-prometheus',
+      envs: [ENV],
+      scope: { project_id: PROJECT },
+    }),
     createCloudLoggingProvider({ id: 'cloud-logging', envs: [ENV], scope: { project_id: PROJECT } }),
     createGcpCredentialsProvider({
       id: 'gcp-credentials',
@@ -188,12 +195,7 @@ const auditLog: AuditRow[] = [];
  * Auditing only on success loses exactly the interesting cases: the crash mid-write, the provider
  * timeout, the permission denial. Those are the rows you want at 3am.
  */
-async function audited<T>(
-  actor: string,
-  action: string,
-  target: string,
-  fn: () => Promise<T>,
-): Promise<T> {
+async function audited<T>(actor: string, action: string, target: string, fn: () => Promise<T>): Promise<T> {
   const row: AuditRow = { at: new Date().toISOString(), actor, action, target, outcome: 'attempted' };
   auditLog.unshift(row);
   if (auditLog.length > 500) auditLog.pop();
@@ -359,7 +361,11 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     const intent = (q.intent ?? 'request_rate') as MetricIntent;
     const end = new Date();
     const minutes = Number(q.minutes ?? 60);
-    const range = { start: new Date(end.getTime() - minutes * 60_000), end, step_seconds: Math.max(60, Math.floor((minutes * 60) / 120)) };
+    const range = {
+      start: new Date(end.getTime() - minutes * 60_000),
+      end,
+      step_seconds: Math.max(60, Math.floor((minutes * 60) / 120)),
+    };
     const c = ctx();
     const provs = registry.byKind('metrics', ENV) as MetricsProvider[];
 
@@ -374,15 +380,30 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     if (q.metric) {
       const cat = await catalog.get(AbortSignal.timeout(10_000));
       if (cat.error) {
-        return envelope({ series: [], provider_id: 'grafana-catalog', empty_reason: 'not_supported', detail: cat.error });
+        return envelope({
+          series: [],
+          provider_id: 'grafana-catalog',
+          empty_reason: 'not_supported',
+          detail: cat.error,
+        });
       }
       const m = cat.metrics.find((x) => x.id === q.metric);
       if (!m) {
-        return envelope({ series: [], provider_id: 'grafana-catalog', empty_reason: 'not_supported', detail: `no catalog metric "${q.metric}"` });
+        return envelope({
+          series: [],
+          provider_id: 'grafana-catalog',
+          empty_reason: 'not_supported',
+          detail: `no catalog metric "${q.metric}"`,
+        });
       }
       const native = provs.find((p) => p.supports('metrics.native') && p.queryNative);
       if (!native) {
-        return envelope({ series: [], provider_id: 'none', empty_reason: 'not_supported', detail: 'no provider can run raw PromQL' });
+        return envelope({
+          series: [],
+          provider_id: 'none',
+          empty_reason: 'not_supported',
+          detail: 'no provider can run raw PromQL',
+        });
       }
       // Grafana macros are resolved against the console's OWN window, exactly as Grafana resolves
       // them against the dashboard's. Passing `[$__range]` through would be a parse error at
@@ -394,13 +415,21 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     const target = { runtime_id: q.service ?? 'dorinda-api', env: ENV };
     const usable = provs.filter((p) => p.supportsIntent(intent, target));
     if (usable.length === 0) {
-      return envelope({ series: [], provider_id: 'none', empty_reason: 'not_supported', detail: `no provider answers "${intent}"` });
+      return envelope({
+        series: [],
+        provider_id: 'none',
+        empty_reason: 'not_supported',
+        detail: `no provider answers "${intent}"`,
+      });
     }
     const results = await Promise.all(usable.map((p) => p.query(intent, target, range, c)));
     // Prefer a provider that actually returned data; otherwise keep the first result SO THAT its
     // empty_reason survives — that explanation is the whole point.
     const withData = results.find((r) => r.series.length > 0);
-    return envelope(withData ?? results[0]!, usable.map((p) => ({ provider_id: p.id, ok: true })));
+    return envelope(
+      withData ?? results[0]!,
+      usable.map((p) => ({ provider_id: p.id, ok: true })),
+    );
   });
 
   app.get('/api/logs', async (req) => {
@@ -479,7 +508,9 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
 
     const [invRes, runRes, credRes] = await Promise.all([
       aggregate(inv, (p) => p.list(c)),
-      aggregate(pipes, (p) => (p.supports('pipelines.runs') ? p.listRuns({ limit: 30 }, c) : Promise.resolve([]))),
+      aggregate(pipes, (p) =>
+        p.supports('pipelines.runs') ? p.listRuns({ limit: 30 }, c) : Promise.resolve([]),
+      ),
       aggregate(creds, (p) => p.list(c)),
     ]);
 
@@ -619,14 +650,20 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
         }),
       );
       const db = await cm.query('db_connections', { runtime_id: '', env: ENV }, range, c);
-      if (db.series.length > 0) peakDb = Math.max(0, ...db.series.flatMap((x) => x.points.map((p) => p.v ?? 0)));
+      if (db.series.length > 0)
+        peakDb = Math.max(0, ...db.series.flatMap((x) => x.points.map((p) => p.v ?? 0)));
     }
 
     const providerGauges: QuotaGauge[] = (
-      await Promise.all(registry.all().map((p) => (p.quotas ? p.quotas(c).catch(() => []) : Promise.resolve([]))))
+      await Promise.all(
+        registry.all().map((p) => (p.quotas ? p.quotas(c).catch(() => []) : Promise.resolve([]))),
+      )
     ).flat();
 
-    return envelope(computeQuotas({ resources: invRes.items, peakInstances, peakDbConnections: peakDb, providerGauges }), invRes.sources);
+    return envelope(
+      computeQuotas({ resources: invRes.items, peakInstances, peakDbConnections: peakDb, providerGauges }),
+      invRes.sources,
+    );
   });
 
   // ── The unified "what changed" timeline ──
@@ -642,7 +679,9 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     const runtime = registry.byKind('runtime', ENV) as RuntimeProvider[];
 
     const [runRes, invRes] = await Promise.all([
-      aggregate(pipes, (p) => (p.supports('pipelines.runs') ? p.listRuns({ limit: 50 }, c) : Promise.resolve([]))),
+      aggregate(pipes, (p) =>
+        p.supports('pipelines.runs') ? p.listRuns({ limit: 50 }, c) : Promise.resolve([]),
+      ),
       aggregate(inv, (p) => p.list(c)),
     ]);
 
@@ -650,8 +689,9 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     const revisions = await Promise.all(
       services.map(async (s) => ({
         service: s.name,
-        revisions: await Promise.all(runtime.map((p) => p.listRevisions(s.name, c).catch(() => [])))
-          .then((all) => all.flat()),
+        revisions: await Promise.all(runtime.map((p) => p.listRevisions(s.name, c).catch(() => []))).then(
+          (all) => all.flat(),
+        ),
       })),
     );
 
@@ -695,11 +735,15 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     const q = req.query as { p?: string };
     const ref = unqualify(q.p ?? '');
     if (!ref) {
-      return reply.code(400).send({ error: { code: 'invalid_page', message: 'page id must be `source:page`' } });
+      return reply
+        .code(400)
+        .send({ error: { code: 'invalid_page', message: 'page id must be `source:page`' } });
     }
     const source = findSource(docSources, ref.sourceId);
     if (!source) {
-      return reply.code(404).send({ error: { code: 'unknown_source', message: `no doc source ${ref.sourceId}` } });
+      return reply
+        .code(404)
+        .send({ error: { code: 'unknown_source', message: `no doc source ${ref.sourceId}` } });
     }
     try {
       return envelope(await source.getPage(ref.pageId, AbortSignal.timeout(15_000)));
@@ -755,13 +799,12 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
   }
 
   /** Resolve the provider or answer 501 — an unconfigured app is a STATE, not a failure. */
-  function withTenants(
-    req: FastifyRequest,
-    reply: FastifyReply,
-  ): TenantProvider | null {
+  function withTenants(req: FastifyRequest, reply: FastifyReply): TenantProvider | null {
     const t = tenantProvider((req.query as { app?: string })?.app ?? (req.body as { app?: string })?.app);
     if (!t) {
-      reply.code(501).send({ error: { code: 'not_configured', message: 'no tenant provider is configured' } });
+      reply
+        .code(501)
+        .send({ error: { code: 'not_configured', message: 'no tenant provider is configured' } });
       return null;
     }
     return t;
@@ -803,7 +846,9 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     if (!t) return;
     const body = req.body as { owner?: string; comped?: boolean };
     if (!body?.owner || typeof body.comped !== 'boolean') {
-      return reply.code(400).send({ error: { code: 'bad_request', message: 'owner and comped are required' } });
+      return reply
+        .code(400)
+        .send({ error: { code: 'bad_request', message: 'owner and comped are required' } });
     }
     try {
       return envelope(
@@ -821,7 +866,9 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     if (!t) return;
     const body = req.body as { owner?: string; locked?: boolean };
     if (!body?.owner || typeof body.locked !== 'boolean') {
-      return reply.code(400).send({ error: { code: 'bad_request', message: 'owner and locked are required' } });
+      return reply
+        .code(400)
+        .send({ error: { code: 'bad_request', message: 'owner and locked are required' } });
     }
     try {
       return envelope(
@@ -870,7 +917,10 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     if (!t) return;
     if (!t.supports('connections.read')) {
       return reply.code(501).send({
-        error: { code: 'not_configured', message: 'no CONSOLE_DORINDA_ADMIN_TOKEN configured, so connectors cannot be read' },
+        error: {
+          code: 'not_configured',
+          message: 'no CONSOLE_DORINDA_ADMIN_TOKEN configured, so connectors cannot be read',
+        },
       });
     }
     const hours = Number((req.query as { hours?: string }).hours ?? 24);
@@ -895,9 +945,12 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     const t = withTenants(req, reply);
     if (!t) return;
     const body = req.body as { owner?: string };
-    if (!body?.owner) return reply.code(400).send({ error: { code: 'bad_request', message: 'owner is required' } });
+    if (!body?.owner)
+      return reply.code(400).send({ error: { code: 'bad_request', message: 'owner is required' } });
     try {
-      return envelope(await audited(actorOf(req), 'test.reset', body.owner, () => t.reset(ctx(), body.owner!)));
+      return envelope(
+        await audited(actorOf(req), 'test.reset', body.owner, () => t.reset(ctx(), body.owner!)),
+      );
     } catch (e) {
       return tenantFail(reply, e);
     }
@@ -907,10 +960,13 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     const t = withTenants(req, reply);
     if (!t) return;
     const body = req.body as { owner?: string; fixture?: unknown };
-    if (!body?.owner) return reply.code(400).send({ error: { code: 'bad_request', message: 'owner is required' } });
+    if (!body?.owner)
+      return reply.code(400).send({ error: { code: 'bad_request', message: 'owner is required' } });
     try {
       return envelope(
-        await audited(actorOf(req), 'test.seed', body.owner, () => t.seed(ctx(), body.owner!, body.fixture ?? {})),
+        await audited(actorOf(req), 'test.seed', body.owner, () =>
+          t.seed(ctx(), body.owner!, body.fixture ?? {}),
+        ),
       );
     } catch (e) {
       return tenantFail(reply, e);
@@ -932,8 +988,15 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
   app.post('/api/tenants/test/clock', async (req, reply) => {
     const t = withTenants(req, reply);
     if (!t) return;
-    const body = req.body as { owner?: string; at?: string; advance_ms?: number; settle?: boolean; clear?: boolean };
-    if (!body?.owner) return reply.code(400).send({ error: { code: 'bad_request', message: 'owner is required' } });
+    const body = req.body as {
+      owner?: string;
+      at?: string;
+      advance_ms?: number;
+      settle?: boolean;
+      clear?: boolean;
+    };
+    if (!body?.owner)
+      return reply.code(400).send({ error: { code: 'bad_request', message: 'owner is required' } });
     try {
       if (body.clear) {
         await audited(actorOf(req), 'test.clock.clear', body.owner, () => t.clearClock(ctx(), body.owner!));
@@ -952,19 +1015,29 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
   // ── The single write ──
 
   app.post('/api/actions/dispatch', async (req, reply) => {
-    const body = req.body as { pipeline_id?: string; ref?: string; inputs?: Record<string, string>; reason?: string };
+    const body = req.body as {
+      pipeline_id?: string;
+      ref?: string;
+      inputs?: Record<string, string>;
+      reason?: string;
+    };
     if (!body?.pipeline_id) {
       return reply.code(400).send({ error: { code: 'bad_request', message: 'pipeline_id is required' } });
     }
     // A production action must carry a stated reason — it lands in the audit row.
     if (!body.reason || body.reason.trim().length < 3) {
-      return reply.code(422).send({ error: { code: 'reason_required', message: 'a reason is required for any dispatch' } });
+      return reply
+        .code(422)
+        .send({ error: { code: 'reason_required', message: 'a reason is required for any dispatch' } });
     }
     const provs = registry.byKind('pipelines', ENV) as PipelinesProvider[];
     const p = provs.find((x) => x.supports('pipelines.dispatch'));
     if (!p) {
       return reply.code(501).send({
-        error: { code: 'not_supported', message: 'no pipeline provider can dispatch — is the GitHub token configured?' },
+        error: {
+          code: 'not_supported',
+          message: 'no pipeline provider can dispatch — is the GitHub token configured?',
+        },
       });
     }
     const actor = actorOf(req);

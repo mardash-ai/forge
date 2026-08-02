@@ -24,7 +24,10 @@ describe('C15 computeStatus — banner + component aggregation', () => {
 
   it('all checks ok → All Systems Operational', () => {
     const probe: HealthProbeResult = {
-      url: 'x', reachable: true, httpStatus: 200, conforms: true,
+      url: 'x',
+      reachable: true,
+      httpStatus: 200,
+      conforms: true,
       health: { status: 'ok', service: APP, time: 'x', checks: [{ name: 'db', status: 'ok' }] },
     };
     const r = computeStatus(probe, opts);
@@ -37,8 +40,16 @@ describe('C15 computeStatus — banner + component aggregation', () => {
 
   it('a non-required check down (C6 degraded) → Degraded Performance', () => {
     const probe: HealthProbeResult = {
-      url: 'x', reachable: true, httpStatus: 200, conforms: true,
-      health: { status: 'degraded', service: APP, time: 'x', checks: [{ name: 'cache', status: 'unavailable', detail: 'timeout' }] },
+      url: 'x',
+      reachable: true,
+      httpStatus: 200,
+      conforms: true,
+      health: {
+        status: 'degraded',
+        service: APP,
+        time: 'x',
+        checks: [{ name: 'cache', status: 'unavailable', detail: 'timeout' }],
+      },
     };
     const r = computeStatus(probe, opts);
     expect(r.overall).toBe('degraded');
@@ -48,16 +59,35 @@ describe('C15 computeStatus — banner + component aggregation', () => {
 
   it('a required check down among several → Partial Outage', () => {
     const probe: HealthProbeResult = {
-      url: 'x', reachable: true, httpStatus: 503, conforms: true,
-      health: { status: 'unavailable', service: APP, time: 'x', checks: [{ name: 'db', status: 'unavailable' }, { name: 'cache', status: 'ok' }] },
+      url: 'x',
+      reachable: true,
+      httpStatus: 503,
+      conforms: true,
+      health: {
+        status: 'unavailable',
+        service: APP,
+        time: 'x',
+        checks: [
+          { name: 'db', status: 'unavailable' },
+          { name: 'cache', status: 'ok' },
+        ],
+      },
     };
     expect(computeStatus(probe, opts).overall).toBe('partial_outage');
   });
 
   it('every check down → Major Outage', () => {
     const probe: HealthProbeResult = {
-      url: 'x', reachable: true, httpStatus: 503, conforms: true,
-      health: { status: 'unavailable', service: APP, time: 'x', checks: [{ name: 'db', status: 'unavailable' }] },
+      url: 'x',
+      reachable: true,
+      httpStatus: 503,
+      conforms: true,
+      health: {
+        status: 'unavailable',
+        service: APP,
+        time: 'x',
+        checks: [{ name: 'db', status: 'unavailable' }],
+      },
     };
     expect(computeStatus(probe, opts).overall).toBe('major_outage');
   });
@@ -69,7 +99,10 @@ describe('C15 computeStatus — banner + component aggregation', () => {
   });
 
   it('non-conforming health → Degraded with an unknown web state', () => {
-    const r = computeStatus({ url: 'x', reachable: true, httpStatus: 200, conforms: false, parseError: 'bad' }, opts);
+    const r = computeStatus(
+      { url: 'x', reachable: true, httpStatus: 200, conforms: false, parseError: 'bad' },
+      opts,
+    );
     expect(r.overall).toBe('degraded');
     expect(r.components[0]).toMatchObject({ name: `${APP} (web)`, state: 'unknown' });
   });
@@ -104,9 +137,18 @@ async function startHealth(status: number, body: unknown): Promise<number> {
 async function seedApp(): Promise<void> {
   const now = nowIso();
   const app: Application = {
-    id: `app_${APP}`, type: 'Application', app_id: `app_${APP}`, created_at: now, updated_at: now,
-    name: APP, repo_path: repo, platform: 'web', framework: 'nextjs', template: 'nextjs-web',
-    language: 'typescript', package_manager: 'npm',
+    id: `app_${APP}`,
+    type: 'Application',
+    app_id: `app_${APP}`,
+    created_at: now,
+    updated_at: now,
+    name: APP,
+    repo_path: repo,
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   };
   await store.saveResource(app);
   await writeFile(path.join(repo, 'forge.app.json'), JSON.stringify({ port: 3000 }, null, 2));
@@ -130,7 +172,8 @@ afterEach(async () => {
   await server.close();
   if (health) await new Promise<void>((r) => health!.close(() => r()));
   health = undefined;
-  const restore = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
+  const restore = (k: string, v: string | undefined) =>
+    v === undefined ? delete process.env[k] : (process.env[k] = v);
   restore('FORGE_STATE_DIR', prevState);
   restore('FORGE_APP_CALLBACK_HOST', prevHost);
   restore('FORGE_APP_CALLBACK_PORT', prevPort);
@@ -140,7 +183,12 @@ afterEach(async () => {
 
 describe('C15 /status route (public, no auth, live C6)', () => {
   it('renders a themed operational dashboard from a healthy app', async () => {
-    const port = await startHealth(200, { status: 'ok', service: APP, time: nowIso(), checks: [{ name: 'db', status: 'ok' }] });
+    const port = await startHealth(200, {
+      status: 'ok',
+      service: APP,
+      time: nowIso(),
+      checks: [{ name: 'db', status: 'ok' }],
+    });
     process.env.FORGE_APP_CALLBACK_PORT = String(port);
     await seedApp();
 
@@ -156,7 +204,9 @@ describe('C15 /status route (public, no auth, live C6)', () => {
 
   it('banner degrades when a health check is forced to fail', async () => {
     const port = await startHealth(503, {
-      status: 'unavailable', service: APP, time: nowIso(),
+      status: 'unavailable',
+      service: APP,
+      time: nowIso(),
       checks: [{ name: 'db', status: 'unavailable', detail: 'ECONNREFUSED' }],
     });
     process.env.FORGE_APP_CALLBACK_PORT = String(port);
@@ -201,7 +251,12 @@ describe('C15 Phase 2 — uptime history on /status(.json)', () => {
   ];
 
   it('/status.json gains an additive uptime section; Phase-1 fields are unchanged', async () => {
-    const port = await startHealth(200, { status: 'ok', service: APP, time: nowIso(), checks: [{ name: 'db', status: 'ok' }] });
+    const port = await startHealth(200, {
+      status: 'ok',
+      service: APP,
+      time: nowIso(),
+      checks: [{ name: 'db', status: 'ok' }],
+    });
     process.env.FORGE_APP_CALLBACK_PORT = String(port);
     await seedApp();
 
@@ -217,7 +272,12 @@ describe('C15 Phase 2 — uptime history on /status(.json)', () => {
   });
 
   it('the live page (no history) is byte-for-byte the Phase-1 page — no timeline markup', async () => {
-    const port = await startHealth(200, { status: 'ok', service: APP, time: nowIso(), checks: [{ name: 'db', status: 'ok' }] });
+    const port = await startHealth(200, {
+      status: 'ok',
+      service: APP,
+      time: nowIso(),
+      checks: [{ name: 'db', status: 'ok' }],
+    });
     process.env.FORGE_APP_CALLBACK_PORT = String(port);
     await seedApp();
     const html = (await server.inject({ method: 'GET', url: '/status' })).body;
@@ -226,7 +286,12 @@ describe('C15 Phase 2 — uptime history on /status(.json)', () => {
   });
 
   it('renders a themed per-component uptime timeline once history exists', async () => {
-    const port = await startHealth(200, { status: 'ok', service: APP, time: nowIso(), checks: [{ name: 'db', status: 'ok' }] });
+    const port = await startHealth(200, {
+      status: 'ok',
+      service: APP,
+      time: nowIso(),
+      checks: [{ name: 'db', status: 'ok' }],
+    });
     process.env.FORGE_APP_CALLBACK_PORT = String(port);
     await seedApp();
     // Two samples today for the live components (shares the temp state dir).

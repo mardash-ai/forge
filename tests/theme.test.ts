@@ -122,14 +122,23 @@ describe('C16 theme — normalization', () => {
   });
 
   it('mode:light makes colors{} the whole light palette (surfaces included)', () => {
-    const t = normalizeTheme({ mode: 'light', colors: { background: '#fffaf5', surface: '#ffffff', text: '#1a1a1a' } });
+    const t = normalizeTheme({
+      mode: 'light',
+      colors: { background: '#fffaf5', surface: '#ffffff', text: '#1a1a1a' },
+    });
     expect(t.light.background).toBe('#fffaf5');
     expect(t.light.surface).toBe('#ffffff');
     expect(t.light.text).toBe('#1a1a1a');
   });
 
   it('regression: a mode:dark theme with matching colors{} + dark{} (forge-os shape) renders identically', () => {
-    const palette = { primary: '#e0b970', background: '#16120e', surface: '#1f1a14', text: '#f5ecd9', border: '#3a3126' };
+    const palette = {
+      primary: '#e0b970',
+      background: '#16120e',
+      surface: '#1f1a14',
+      text: '#f5ecd9',
+      border: '#3a3126',
+    };
     const withRedundantDark = normalizeTheme({ mode: 'dark', colors: palette, dark: palette });
     const selfContained = normalizeTheme({ mode: 'dark', colors: palette });
     expect(withRedundantDark.dark).toEqual(selfContained.dark);
@@ -162,7 +171,12 @@ describe('C16 theme — normalization', () => {
   });
 
   it('drops a malicious logo/favicon but keeps the rest', () => {
-    const t = normalizeTheme({ name: 'X', logo: 'javascript:alert(1)', favicon: '/f.ico', colors: { primary: '#123456' } });
+    const t = normalizeTheme({
+      name: 'X',
+      logo: 'javascript:alert(1)',
+      favicon: '/f.ico',
+      colors: { primary: '#123456' },
+    });
     expect(t.logo).toBeUndefined();
     expect(t.favicon).toBe('/f.ico');
     expect(t.light.primary).toBe('#123456');
@@ -245,6 +259,8 @@ describe('C16 theme — token rendering', () => {
     expect(head).toContain('<link rel="icon" href="/f.ico">');
     // custom style tag only when custom css is present
     expect(themeCustomStyleTag(DEFAULT_THEME)).toBe('');
-    expect(themeCustomStyleTag(normalizeTheme({ custom_css: '.x{color:red}' }))).toContain('<style id="forge-custom">');
+    expect(themeCustomStyleTag(normalizeTheme({ custom_css: '.x{color:red}' }))).toContain(
+      '<style id="forge-custom">',
+    );
   });
 });

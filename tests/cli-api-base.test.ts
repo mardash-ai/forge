@@ -54,6 +54,8 @@ describe('IPv4 `0.0.0.0` bind vs loopback dial (P20 root cause)', () => {
     const port = await startIPv4Server();
     // The IPv4-only bind never listens on the IPv6 loopback, so a `::1` dial is refused
     // (or unreachable where IPv6 is disabled) — in all cases it throws, never 200.
-    await expect(fetch(`http://[::1]:${port}/health`, { signal: AbortSignal.timeout(2000) })).rejects.toThrow();
+    await expect(
+      fetch(`http://[::1]:${port}/health`, { signal: AbortSignal.timeout(2000) }),
+    ).rejects.toThrow();
   });
 });

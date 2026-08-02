@@ -28,18 +28,34 @@ let server: FastifyInstance;
 const seedApp = async (): Promise<void> => {
   const now = nowIso();
   await store.saveResource({
-    id: APP_ID, type: 'Application', app_id: APP_ID, created_at: now, updated_at: now,
-    name: APP, repo_path: '/app', platform: 'web', framework: 'nextjs', template: 'nextjs-web', language: 'typescript', package_manager: 'npm',
+    id: APP_ID,
+    type: 'Application',
+    app_id: APP_ID,
+    created_at: now,
+    updated_at: now,
+    name: APP,
+    repo_path: '/app',
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   } as Application);
 };
 
 // Craft a logged-in C10 session cookie (a real user + server-side session + signed access token). Each call
 // mints a UNIQUE user so a test can log in more than once (e.g. one login per authorization code).
 let userSeq = 0;
-const loginCookie = async (email = `user${++userSeq}@demo.test`): Promise<{ userId: string; cookie: string }> => {
+const loginCookie = async (
+  email = `user${++userSeq}@demo.test`,
+): Promise<{ userId: string; cookie: string }> => {
   const user = await authStore.createUser(APP_ID, { email, email_verified: true });
   const session = await authStore.createSession(APP_ID, user.id, 3600);
-  const token = signSessionToken({ userId: user.id, email: user.email, sessionId: session.id }, SESSION_SECRET, 3600);
+  const token = signSessionToken(
+    { userId: user.id, email: user.email, sessionId: session.id },
+    SESSION_SECRET,
+    3600,
+  );
   return { userId: user.id, cookie: `forge_session=${token}` };
 };
 
@@ -57,14 +73,17 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await server.close();
-  if (prevDir === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prevDir;
-  if (prevSecret === undefined) delete process.env.AUTH_SESSION_SECRET; else process.env.AUTH_SESSION_SECRET = prevSecret;
+  if (prevDir === undefined) delete process.env.FORGE_STATE_DIR;
+  else process.env.FORGE_STATE_DIR = prevDir;
+  if (prevSecret === undefined) delete process.env.AUTH_SESSION_SECRET;
+  else process.env.AUTH_SESSION_SECRET = prevSecret;
   await rm(dir, { recursive: true, force: true });
 });
 
 const post = (url: string, payload: unknown, headers: Record<string, string> = {}) =>
   server.inject({ method: 'POST', url, payload: payload as object, headers });
-const get = (url: string, headers: Record<string, string> = {}) => server.inject({ method: 'GET', url, headers });
+const get = (url: string, headers: Record<string, string> = {}) =>
+  server.inject({ method: 'GET', url, headers });
 
 // Register a public (PKCE) client and return its client_id.
 const registerClient = async (): Promise<string> => {
@@ -113,8 +132,10 @@ describe('C23 — discovery + dynamic client registration', () => {
       expect(meta.issuer).toBe('https://api.dorinda.ai');
       expect(meta.token_endpoint).toBe('https://api.dorinda.ai/oauth/token');
     } finally {
-      if (prevMcp === undefined) delete process.env.FORGE_MCP_PUBLIC_URL; else process.env.FORGE_MCP_PUBLIC_URL = prevMcp;
-      if (prevOauth === undefined) delete process.env.FORGE_OAUTH_PUBLIC_URL; else process.env.FORGE_OAUTH_PUBLIC_URL = prevOauth;
+      if (prevMcp === undefined) delete process.env.FORGE_MCP_PUBLIC_URL;
+      else process.env.FORGE_MCP_PUBLIC_URL = prevMcp;
+      if (prevOauth === undefined) delete process.env.FORGE_OAUTH_PUBLIC_URL;
+      else process.env.FORGE_OAUTH_PUBLIC_URL = prevOauth;
     }
   });
 });
@@ -149,7 +170,8 @@ describe('C23 — authorize + consent (requires a C10 login)', () => {
       expect(consent.body).toContain('Dorinda'); // the brand shows…
       expect(consent.body).not.toContain(`connect to <b>${APP}</b>`); // …not the internal slug
     } finally {
-      if (prev === undefined) delete process.env.FORGE_OAUTH_DISPLAY_NAME; else process.env.FORGE_OAUTH_DISPLAY_NAME = prev;
+      if (prev === undefined) delete process.env.FORGE_OAUTH_DISPLAY_NAME;
+      else process.env.FORGE_OAUTH_DISPLAY_NAME = prev;
     }
   });
 
@@ -176,10 +198,16 @@ describe('C23 — authorize + consent (requires a C10 login)', () => {
   it('rejects an unregistered redirect_uri and a missing PKCE challenge', async () => {
     const clientId = await registerClient();
     const { cookie } = await loginCookie();
-    const bad = await get(`/oauth/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent('https://evil.test/cb')}&code_challenge=x`, { cookie });
+    const bad = await get(
+      `/oauth/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent('https://evil.test/cb')}&code_challenge=x`,
+      { cookie },
+    );
     expect(bad.statusCode).toBe(400);
     // No code_challenge → redirect back with error=invalid_request (PKCE mandatory).
-    const noPkce = await get(`/oauth/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(REDIRECT)}`, { cookie });
+    const noPkce = await get(
+      `/oauth/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(REDIRECT)}`,
+      { cookie },
+    );
     expect(noPkce.statusCode).toBe(303);
     expect(noPkce.headers.location).toContain('error=invalid_request');
   });
@@ -193,10 +221,19 @@ describe('C23 — the full authorization_code + PKCE + refresh flow', () => {
     const challenge = pkceChallenge(verifier);
     const { cookie, userId } = await loginCookie();
     // approve the consent → an authorization code on the redirect
-    const decision = await post('/oauth/authorize/decision', {
-      client_id: clientId, redirect_uri: REDIRECT, scope: 'notes:read notes:write', state: 'xyz',
-      code_challenge: challenge, code_challenge_method: 'S256', decision: 'approve',
-    }, { cookie });
+    const decision = await post(
+      '/oauth/authorize/decision',
+      {
+        client_id: clientId,
+        redirect_uri: REDIRECT,
+        scope: 'notes:read notes:write',
+        state: 'xyz',
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        decision: 'approve',
+      },
+      { cookie },
+    );
     expect(decision.statusCode).toBe(303);
     const url = new URL(decision.headers.location as string);
     expect(url.searchParams.get('state')).toBe('xyz');
@@ -207,13 +244,25 @@ describe('C23 — the full authorization_code + PKCE + refresh flow', () => {
     const { clientId, code, userId } = await runToCode();
 
     // Wrong verifier → invalid_grant (PKCE enforced).
-    const badPkce = await post('/oauth/token', { grant_type: 'authorization_code', code, code_verifier: 'wrong', client_id: clientId, redirect_uri: REDIRECT });
+    const badPkce = await post('/oauth/token', {
+      grant_type: 'authorization_code',
+      code,
+      code_verifier: 'wrong',
+      client_id: clientId,
+      redirect_uri: REDIRECT,
+    });
     expect(badPkce.statusCode).toBe(400);
     expect(badPkce.json().error).toBe('invalid_grant');
 
     // The code is now CONSUMED by the failed attempt (one-shot) — mint a fresh one for the happy path.
     const fresh = await runToCode();
-    const tok = await post('/oauth/token', { grant_type: 'authorization_code', code: fresh.code, code_verifier: verifier, client_id: fresh.clientId, redirect_uri: REDIRECT });
+    const tok = await post('/oauth/token', {
+      grant_type: 'authorization_code',
+      code: fresh.code,
+      code_verifier: verifier,
+      client_id: fresh.clientId,
+      redirect_uri: REDIRECT,
+    });
     expect(tok.statusCode).toBe(200);
     const body = tok.json();
     expect(body).toMatchObject({ token_type: 'Bearer', scope: 'notes:read notes:write' });
@@ -226,15 +275,28 @@ describe('C23 — the full authorization_code + PKCE + refresh flow', () => {
     expect(verified!.scopes.sort()).toEqual(['notes:read', 'notes:write']);
 
     // Refresh rotates: a new access + refresh; the OLD refresh is now dead (one-shot rotation).
-    const refreshed = await post('/oauth/token', { grant_type: 'refresh_token', refresh_token: body.refresh_token, client_id: fresh.clientId });
+    const refreshed = await post('/oauth/token', {
+      grant_type: 'refresh_token',
+      refresh_token: body.refresh_token,
+      client_id: fresh.clientId,
+    });
     expect(refreshed.statusCode).toBe(200);
     expect(refreshed.json().access_token).not.toBe(body.access_token);
-    const replay = await post('/oauth/token', { grant_type: 'refresh_token', refresh_token: body.refresh_token, client_id: fresh.clientId });
+    const replay = await post('/oauth/token', {
+      grant_type: 'refresh_token',
+      refresh_token: body.refresh_token,
+      client_id: fresh.clientId,
+    });
     expect(replay.statusCode).toBe(400);
     expect(replay.json().error).toBe('invalid_grant');
 
     // Refresh may NARROW scope but never widen it.
-    const narrowed = await post('/oauth/token', { grant_type: 'refresh_token', refresh_token: refreshed.json().refresh_token, client_id: fresh.clientId, scope: 'notes:read' });
+    const narrowed = await post('/oauth/token', {
+      grant_type: 'refresh_token',
+      refresh_token: refreshed.json().refresh_token,
+      client_id: fresh.clientId,
+      scope: 'notes:read',
+    });
     expect(narrowed.json().scope).toBe('notes:read');
 
     // Revoke the access token → it no longer verifies.
@@ -247,7 +309,13 @@ describe('C23 — the full authorization_code + PKCE + refresh flow', () => {
   // Mint a full token pair via the normal code+PKCE flow (for the Basic-auth refresh tests).
   const freshTokens = async (): Promise<{ clientId: string; refreshToken: string }> => {
     const fresh = await runToCode();
-    const tok = await post('/oauth/token', { grant_type: 'authorization_code', code: fresh.code, code_verifier: verifier, client_id: fresh.clientId, redirect_uri: REDIRECT });
+    const tok = await post('/oauth/token', {
+      grant_type: 'authorization_code',
+      code: fresh.code,
+      code_verifier: verifier,
+      client_id: fresh.clientId,
+      redirect_uri: REDIRECT,
+    });
     expect(tok.statusCode).toBe(200);
     return { clientId: fresh.clientId, refreshToken: tok.json().refresh_token };
   };
@@ -283,10 +351,19 @@ describe('C23 — the full authorization_code + PKCE + refresh flow', () => {
     const clientId = await registerClient();
     const challenge = pkceChallenge(verifier);
     const { cookie } = await loginCookie();
-    const decision = await post('/oauth/authorize/decision', {
-      client_id: clientId, redirect_uri: REDIRECT, scope: 'notes:read', state: 'zzz',
-      code_challenge: challenge, code_challenge_method: 'S256', decision: 'deny',
-    }, { cookie });
+    const decision = await post(
+      '/oauth/authorize/decision',
+      {
+        client_id: clientId,
+        redirect_uri: REDIRECT,
+        scope: 'notes:read',
+        state: 'zzz',
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        decision: 'deny',
+      },
+      { cookie },
+    );
     expect(decision.statusCode).toBe(303);
     expect(decision.headers.location).toContain('error=access_denied');
   });
@@ -300,15 +377,26 @@ describe('Change A — RFC 8707 resource/audience binding round-trips authorize 
   const RESOURCE = 'https://api.example/mcp';
 
   // Mint an authorization code, optionally carrying a `resource` (as the consent form would post it).
-  const codeWithResource = async (resource?: string): Promise<{ clientId: string; code: string; userId: string }> => {
+  const codeWithResource = async (
+    resource?: string,
+  ): Promise<{ clientId: string; code: string; userId: string }> => {
     const clientId = await registerClient();
     const challenge = pkceChallenge(verifier);
     const { cookie, userId } = await loginCookie();
-    const decision = await post('/oauth/authorize/decision', {
-      client_id: clientId, redirect_uri: REDIRECT, scope: 'notes:read', state: 'r1',
-      code_challenge: challenge, code_challenge_method: 'S256', decision: 'approve',
-      ...(resource ? { resource } : {}),
-    }, { cookie });
+    const decision = await post(
+      '/oauth/authorize/decision',
+      {
+        client_id: clientId,
+        redirect_uri: REDIRECT,
+        scope: 'notes:read',
+        state: 'r1',
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        decision: 'approve',
+        ...(resource ? { resource } : {}),
+      },
+      { cookie },
+    );
     expect(decision.statusCode).toBe(303);
     const url = new URL(decision.headers.location as string);
     return { clientId, code: url.searchParams.get('code')!, userId };
@@ -316,7 +404,14 @@ describe('Change A — RFC 8707 resource/audience binding round-trips authorize 
 
   it('binds the resource onto the access token: matching verify passes, a different resource is rejected', async () => {
     const { clientId, code, userId } = await codeWithResource(RESOURCE);
-    const tok = await post('/oauth/token', { grant_type: 'authorization_code', code, code_verifier: verifier, client_id: clientId, redirect_uri: REDIRECT, resource: RESOURCE });
+    const tok = await post('/oauth/token', {
+      grant_type: 'authorization_code',
+      code,
+      code_verifier: verifier,
+      client_id: clientId,
+      redirect_uri: REDIRECT,
+      resource: RESOURCE,
+    });
     expect(tok.statusCode).toBe(200);
     const access = tok.json().access_token as string;
     // Verifies for the bound resource + surfaces it on VerifiedToken.
@@ -326,21 +421,41 @@ describe('Change A — RFC 8707 resource/audience binding round-trips authorize 
     expect(await verifyAccessToken(APP_ID, access)).toMatchObject({ userId, resource: RESOURCE });
 
     // The binding survives a refresh rotation.
-    const refreshed = await post('/oauth/token', { grant_type: 'refresh_token', refresh_token: tok.json().refresh_token, client_id: clientId });
+    const refreshed = await post('/oauth/token', {
+      grant_type: 'refresh_token',
+      refresh_token: tok.json().refresh_token,
+      client_id: clientId,
+    });
     expect(refreshed.statusCode).toBe(200);
-    expect(await verifyAccessToken(APP_ID, refreshed.json().access_token, RESOURCE)).toMatchObject({ userId, resource: RESOURCE });
+    expect(await verifyAccessToken(APP_ID, refreshed.json().access_token, RESOURCE)).toMatchObject({
+      userId,
+      resource: RESOURCE,
+    });
   });
 
   it('rejects a token exchange whose resource does not match the code (invalid_target)', async () => {
     const { clientId, code } = await codeWithResource(RESOURCE);
-    const bad = await post('/oauth/token', { grant_type: 'authorization_code', code, code_verifier: verifier, client_id: clientId, redirect_uri: REDIRECT, resource: 'https://evil.example/mcp' });
+    const bad = await post('/oauth/token', {
+      grant_type: 'authorization_code',
+      code,
+      code_verifier: verifier,
+      client_id: clientId,
+      redirect_uri: REDIRECT,
+      resource: 'https://evil.example/mcp',
+    });
     expect(bad.statusCode).toBe(400);
     expect(bad.json().error).toBe('invalid_target');
   });
 
   it('a code with NO resource still issues a working, UNBOUND token — back-compat', async () => {
     const { clientId, code, userId } = await codeWithResource(); // no resource requested
-    const tok = await post('/oauth/token', { grant_type: 'authorization_code', code, code_verifier: verifier, client_id: clientId, redirect_uri: REDIRECT });
+    const tok = await post('/oauth/token', {
+      grant_type: 'authorization_code',
+      code,
+      code_verifier: verifier,
+      client_id: clientId,
+      redirect_uri: REDIRECT,
+    });
     expect(tok.statusCode).toBe(200);
     // Even when a resource server expects one, an unbound token still verifies (existing live tokens keep working).
     const v = await verifyAccessToken(APP_ID, tok.json().access_token, RESOURCE);
@@ -374,12 +489,19 @@ describe('C36 — OAuth endpoint outcome spans', () => {
   interface WireSpan {
     name: string;
     status: { code: number };
-    attributes: Array<{ key: string; value: { stringValue?: string; intValue?: number; boolValue?: boolean } }>;
+    attributes: Array<{
+      key: string;
+      value: { stringValue?: string; intValue?: number; boolValue?: boolean };
+    }>;
   }
   const spans = (): WireSpan[] =>
-    (exported as Array<{ resourceSpans: Array<{ scopeSpans: Array<{ spans: WireSpan[] }> }> }>)
-      .flatMap((b) => b.resourceSpans.flatMap((rs) => rs.scopeSpans.flatMap((ss) => ss.spans)));
-  const spanNamed = (name: string): WireSpan | undefined => spans().filter((s) => s.name === name).at(-1);
+    (exported as Array<{ resourceSpans: Array<{ scopeSpans: Array<{ spans: WireSpan[] }> }> }>).flatMap((b) =>
+      b.resourceSpans.flatMap((rs) => rs.scopeSpans.flatMap((ss) => ss.spans)),
+    );
+  const spanNamed = (name: string): WireSpan | undefined =>
+    spans()
+      .filter((s) => s.name === name)
+      .at(-1);
   const attr = (s: WireSpan | undefined, key: string): string | number | boolean | undefined => {
     const v = s?.attributes.find((a) => a.key === key)?.value;
     return v === undefined ? undefined : (v.stringValue ?? v.intValue ?? v.boolValue);
@@ -407,10 +529,19 @@ describe('C36 — OAuth endpoint outcome spans', () => {
     const clientId = await registerClient();
     const challenge = pkceChallenge(verifier);
     const { cookie } = await loginCookie();
-    const decision = await post('/oauth/authorize/decision', {
-      client_id: clientId, redirect_uri: REDIRECT, scope: 'notes:read', state: 's1',
-      code_challenge: challenge, code_challenge_method: 'S256', decision: 'approve',
-    }, { cookie });
+    const decision = await post(
+      '/oauth/authorize/decision',
+      {
+        client_id: clientId,
+        redirect_uri: REDIRECT,
+        scope: 'notes:read',
+        state: 's1',
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        decision: 'approve',
+      },
+      { cookie },
+    );
     expect(decision.statusCode).toBe(303);
     const url = new URL(decision.headers.location as string);
     return { clientId, code: url.searchParams.get('code')!, challenge };
@@ -418,7 +549,13 @@ describe('C36 — OAuth endpoint outcome spans', () => {
 
   it('an issuing exchange records oauth.token outcome=issued (grant_type + public client_id) — and NO code/token/PKCE material', async () => {
     const { clientId, code, challenge } = await approveToCode();
-    const tok = await post('/oauth/token', { grant_type: 'authorization_code', code, code_verifier: verifier, client_id: clientId, redirect_uri: REDIRECT });
+    const tok = await post('/oauth/token', {
+      grant_type: 'authorization_code',
+      code,
+      code_verifier: verifier,
+      client_id: clientId,
+      redirect_uri: REDIRECT,
+    });
     expect(tok.statusCode).toBe(200);
 
     const span = spanNamed('oauth.token');
@@ -441,11 +578,21 @@ describe('C36 — OAuth endpoint outcome spans', () => {
     expect(attr(spanNamed('oauth.token'), 'oauth.outcome')).toBe('unsupported_grant_type');
     expect(spanNamed('oauth.token')!.status.code).toBe(3);
 
-    await post('/oauth/token', { grant_type: 'authorization_code', code: 'whatever', client_id: 'mcpc_nope' });
+    await post('/oauth/token', {
+      grant_type: 'authorization_code',
+      code: 'whatever',
+      client_id: 'mcpc_nope',
+    });
     expect(attr(spanNamed('oauth.token'), 'oauth.outcome')).toBe('invalid_client');
 
     const { clientId, code } = await approveToCode();
-    await post('/oauth/token', { grant_type: 'authorization_code', code, code_verifier: 'the-wrong-verifier', client_id: clientId, redirect_uri: REDIRECT });
+    await post('/oauth/token', {
+      grant_type: 'authorization_code',
+      code,
+      code_verifier: 'the-wrong-verifier',
+      client_id: clientId,
+      redirect_uri: REDIRECT,
+    });
     expect(attr(spanNamed('oauth.token'), 'oauth.outcome')).toBe('invalid_grant');
   });
 
@@ -469,10 +616,19 @@ describe('C36 — OAuth endpoint outcome spans', () => {
     const clientId = await registerClient();
     const challenge = pkceChallenge(verifier);
     const { cookie } = await loginCookie();
-    await post('/oauth/authorize/decision', {
-      client_id: clientId, redirect_uri: REDIRECT, scope: 'notes:read', state: 's2',
-      code_challenge: challenge, code_challenge_method: 'S256', decision: 'deny',
-    }, { cookie });
+    await post(
+      '/oauth/authorize/decision',
+      {
+        client_id: clientId,
+        redirect_uri: REDIRECT,
+        scope: 'notes:read',
+        state: 's2',
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        decision: 'deny',
+      },
+      { cookie },
+    );
     const denied = spanNamed('oauth.authorize_decision');
     expect(attr(denied, 'oauth.outcome')).toBe('deny');
     expect(attr(denied, 'oauth.client_id')).toBe(clientId);

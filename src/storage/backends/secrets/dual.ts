@@ -7,7 +7,10 @@ import type { SecretsBackend, Sealed, Vault } from './types';
 // entries are content-addressed by (app, name), so the mirror is faithful. FORGE_SECRETS_BACKEND=postgres
 // + FORGE_SECRETS_DUAL_WRITE=1.
 export class DualWriteSecretsBackend implements SecretsBackend {
-  constructor(private readonly primary: PgSecretsBackend, private readonly secondary: FsSecretsBackend) {}
+  constructor(
+    private readonly primary: PgSecretsBackend,
+    private readonly secondary: FsSecretsBackend,
+  ) {}
 
   readVault(appId: string): Promise<Vault> {
     return this.primary.readVault(appId);

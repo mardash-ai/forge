@@ -88,7 +88,10 @@ export function parseDocIndex(html: string): DocPage[] {
   const out: DocPage[] = [];
   for (const m of nav.matchAll(/<a\s+href="\/([a-z0-9_-]+)"[^>]*>([\s\S]*?)<\/a>/gi)) {
     const id = m[1]!;
-    const title = m[2]!.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
+    const title = m[2]!
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .trim();
     if (id && title) out.push({ id, title });
   }
   return out;
@@ -220,7 +223,10 @@ export function extractDoc(html: string, sourceId: string, id: string, fallbackT
   // page's <style> and <title> into the console shell.
   const body = MAIN.exec(html)?.[1] ?? BODY.exec(html)?.[1] ?? html;
   const title =
-    /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(body)?.[1]?.replace(/<[^>]+>/g, '').trim() ||
+    /<h1[^>]*>([\s\S]*?)<\/h1>/i
+      .exec(body)?.[1]
+      ?.replace(/<[^>]+>/g, '')
+      .trim() ||
     /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim() ||
     fallbackTitle;
 
@@ -241,7 +247,10 @@ export function extractDoc(html: string, sourceId: string, id: string, fallbackT
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/\son[a-z]+="[^"]*"/gi, '')
     .replace(/<img([^>]*?)src="\/?([^":]+)"/gi, (_m, a: string, p: string) => `<img${a}src="${asset(p)}"`)
-    .replace(/<object([^>]*?)data="\/?([^":]+)"/gi, (_m, a: string, p: string) => `<object${a}data="${asset(p)}"`)
+    .replace(
+      /<object([^>]*?)data="\/?([^":]+)"/gi,
+      (_m, a: string, p: string) => `<object${a}data="${asset(p)}"`,
+    )
     // Portal-style absolute links (`/gcp`) and dorinda-web-style relative ones (`admin-purge.html`).
     .replace(
       /<a\s+href="\/?([a-z0-9_-]+)(?:\.html)?"([^>]*)>([\s\S]*?)<\/a>/gi,
@@ -305,7 +314,10 @@ export function builtinSource(dir: string): DocSource {
         const id = f.replace(/\.html$/, '');
         const html = await readFile(join(dir, f), 'utf8');
         const title =
-          /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1]?.replace(/<[^>]+>/g, '').trim() ||
+          /<h1[^>]*>([\s\S]*?)<\/h1>/i
+            .exec(html)?.[1]
+            ?.replace(/<[^>]+>/g, '')
+            .trim() ||
           /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.split('·')[0]?.trim() ||
           id;
         pages.push({ id, title });

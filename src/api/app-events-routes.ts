@@ -28,16 +28,40 @@ export function registerAppEventRoutes(
     const a = await store.findAppByName(n);
     return a && a.type === 'Application' ? a.id : null;
   };
-  const unknownApp = { error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } };
+  const unknownApp = {
+    error: {
+      code: 'not_found',
+      message: 'unknown app (pass `app` or set FORGE_APP_NAME).',
+      retry: 'change-input',
+    },
+  };
 
   app.post('/app-events', async (req, reply) => {
-    const b = (req.body ?? {}) as { app?: string; type?: string; subject?: string; owner?: string; data?: Record<string, unknown> };
+    const b = (req.body ?? {}) as {
+      app?: string;
+      type?: string;
+      subject?: string;
+      owner?: string;
+      data?: Record<string, unknown>;
+    };
     if (!b.type || typeof b.type !== 'string') {
-      return reply.status(422).send({ error: { code: 'invalid_input', message: 'an app event requires a string `type`.', retry: 'change-input' } });
+      return reply.status(422).send({
+        error: {
+          code: 'invalid_input',
+          message: 'an app event requires a string `type`.',
+          retry: 'change-input',
+        },
+      });
     }
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
-    const event = await store.appendAppEvent({ app_id, type: b.type, subject: b.subject, owner: b.owner, data: b.data });
+    const event = await store.appendAppEvent({
+      app_id,
+      type: b.type,
+      subject: b.subject,
+      owner: b.owner,
+      data: b.data,
+    });
     return reply.status(200).send({ event });
   });
 
@@ -45,7 +69,12 @@ export function registerAppEventRoutes(
     const q = req.query as { app?: string; subject?: string; owner?: string; limit?: string };
     const app_id = await resolveAppId(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
-    const events = await store.listAppEvents({ app_id, subject: q.subject, owner: q.owner, limit: q.limit ? Number(q.limit) : undefined });
+    const events = await store.listAppEvents({
+      app_id,
+      subject: q.subject,
+      owner: q.owner,
+      limit: q.limit ? Number(q.limit) : undefined,
+    });
     return { events };
   });
 

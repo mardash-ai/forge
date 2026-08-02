@@ -31,7 +31,9 @@ export async function ensureConnectionsSchema(pool: Pool): Promise<void> {
   `);
 }
 
-interface DataRow<T> { data: T }
+interface DataRow<T> {
+  data: T;
+}
 
 export class PgConnectionBackend implements ConnectionBackend, MigratableConnectionBackend {
   constructor(private readonly pool: Pool) {}
@@ -43,7 +45,15 @@ export class PgConnectionBackend implements ConnectionBackend, MigratableConnect
        VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)
        ON CONFLICT (app_id, owner, provider) DO UPDATE SET
          status=EXCLUDED.status, expires_at=EXCLUDED.expires_at, data=EXCLUDED.data, updated_at=EXCLUDED.updated_at`,
-      [appId, conn.owner, conn.provider, conn.status, conn.access_expires_at, JSON.stringify(conn), conn.updated_at],
+      [
+        appId,
+        conn.owner,
+        conn.provider,
+        conn.status,
+        conn.access_expires_at,
+        JSON.stringify(conn),
+        conn.updated_at,
+      ],
     );
     return conn;
   }
@@ -62,7 +72,10 @@ export class PgConnectionBackend implements ConnectionBackend, MigratableConnect
     return r.rows.map((row) => row.data);
   }
   async deleteConnection(appId: string, owner: string, provider: string): Promise<boolean> {
-    const r = await this.pool.query('DELETE FROM forge_connections WHERE app_id=$1 AND owner=$2 AND provider=$3', [appId, owner, provider]);
+    const r = await this.pool.query(
+      'DELETE FROM forge_connections WHERE app_id=$1 AND owner=$2 AND provider=$3',
+      [appId, owner, provider],
+    );
     return (r.rowCount ?? 0) > 0;
   }
 
@@ -85,7 +98,10 @@ export class PgConnectionBackend implements ConnectionBackend, MigratableConnect
     return r.rows[0]?.data ?? null;
   }
   async pruneExpiredRequests(appId: string, nowIso: string): Promise<number> {
-    const r = await this.pool.query('DELETE FROM forge_connection_requests WHERE app_id=$1 AND expires_at <= $2', [appId, nowIso]);
+    const r = await this.pool.query(
+      'DELETE FROM forge_connection_requests WHERE app_id=$1 AND expires_at <= $2',
+      [appId, nowIso],
+    );
     return r.rowCount ?? 0;
   }
 
@@ -93,7 +109,9 @@ export class PgConnectionBackend implements ConnectionBackend, MigratableConnect
   async exportApp(appId: string): Promise<ConnectionsExport> {
     const [connections, requests] = await Promise.all([
       this.pool.query<DataRow<Connection>>('SELECT data FROM forge_connections WHERE app_id=$1', [appId]),
-      this.pool.query<DataRow<ConnectRequest>>('SELECT data FROM forge_connection_requests WHERE app_id=$1', [appId]),
+      this.pool.query<DataRow<ConnectRequest>>('SELECT data FROM forge_connection_requests WHERE app_id=$1', [
+        appId,
+      ]),
     ]);
     return { connections: connections.rows.map((r) => r.data), requests: requests.rows.map((r) => r.data) };
   }
@@ -117,7 +135,11 @@ export class PgConnectionBackend implements ConnectionBackend, MigratableConnect
       }
       await client.query('COMMIT');
     } catch (e) {
-      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
       throw e;
     } finally {
       client.release();

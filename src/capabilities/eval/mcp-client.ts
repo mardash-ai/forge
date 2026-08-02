@@ -24,7 +24,9 @@ export interface McpClient {
  * bearer (only its hash is stored). Scoped `owner`; TTL = the platform access-token TTL (1h). */
 export async function mintAccessToken(appId: string, ownerId: string): Promise<string> {
   const raw = newToken();
-  await (await getBackends()).mcp.putGrant(appId, {
+  await (
+    await getBackends()
+  ).mcp.putGrant(appId, {
     kind: 'access',
     token_hash: raw.hash,
     client_id: 'eval-harness',
@@ -68,8 +70,11 @@ export function mcpClient(opts: {
     async listTools() {
       const r = await rpc('tools/list');
       const tools =
-        (r.result as { tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }> })
-          ?.tools ?? [];
+        (
+          r.result as {
+            tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>;
+          }
+        )?.tools ?? [];
       return tools.map((t) => ({
         name: t.name,
         description: t.description ?? '',

@@ -112,8 +112,16 @@ describe('C33+C21 — billingTransitionNotification (pure mapping)', () => {
   });
 
   it('a new billing PERIOD yields a NEW idempotency key (a re-failure next period notifies again)', () => {
-    const p1 = billingTransitionNotification('active', rec({ status: 'past_due', current_period_end: '2026-08-01T00:00:00.000Z' }), PUBLIC_BASE);
-    const p2 = billingTransitionNotification('active', rec({ status: 'past_due', current_period_end: '2026-09-01T00:00:00.000Z' }), PUBLIC_BASE);
+    const p1 = billingTransitionNotification(
+      'active',
+      rec({ status: 'past_due', current_period_end: '2026-08-01T00:00:00.000Z' }),
+      PUBLIC_BASE,
+    );
+    const p2 = billingTransitionNotification(
+      'active',
+      rec({ status: 'past_due', current_period_end: '2026-09-01T00:00:00.000Z' }),
+      PUBLIC_BASE,
+    );
     expect(p1!.idempotencyKey).not.toBe(p2!.idempotencyKey);
   });
 
@@ -138,14 +146,19 @@ describe('C33+C21 — webhook fires the notification on a real transition (idemp
     createCheckoutSession: async () => ({ id: 'cs_1', url: 'https://checkout.test/cs_1' }),
     createPortalSession: async () => ({ url: 'https://portal.test/p/1' }),
     createTrialingSubscription: async (input) => ({
-      id: 'sub_trial_notify', status: 'trialing',
+      id: 'sub_trial_notify',
+      status: 'trialing',
       trial_end: Math.floor(Date.now() / 1000) + input.trialPeriodDays * 24 * 3600,
-      current_period_end: null, cancel_at_period_end: false,
-      customer_id: input.customerId, price_id: input.priceId, currency: 'usd',
+      current_period_end: null,
+      cancel_at_period_end: false,
+      customer_id: input.customerId,
+      price_id: input.priceId,
+      currency: 'usd',
       metadata: input.metadata,
     }),
     resumeSubscription: async () => ({ resumed: false, subscription: null }),
-    retrieveSubscription: async (_secretKey, subscriptionId) => (subs.has(subscriptionId) ? subs.get(subscriptionId)! : defaultSub),
+    retrieveSubscription: async (_secretKey, subscriptionId) =>
+      subs.has(subscriptionId) ? subs.get(subscriptionId)! : defaultSub,
     cancelSubscription: async () => ({ canceled: true }),
     deleteCustomer: async () => ({ deleted: true }),
   };
@@ -169,7 +182,8 @@ describe('C33+C21 — webhook fires the notification on a real transition (idemp
     const raw = JSON.stringify(event);
     const header = computeStripeSignatureHeader(raw, WEBHOOK_SECRET);
     return server.inject({
-      method: 'POST', url: '/hooks/billing/stripe',
+      method: 'POST',
+      url: '/hooks/billing/stripe',
       headers: { 'content-type': 'application/json', 'stripe-signature': header },
       payload: raw,
     });
@@ -180,7 +194,8 @@ describe('C33+C21 — webhook fires the notification on a real transition (idemp
     return user.id;
   };
 
-  const listOwnerNotifications = async (owner: string) => store.listNotifications(APP_ID, { owner, includeDismissed: true });
+  const listOwnerNotifications = async (owner: string) =>
+    store.listNotifications(APP_ID, { owner, includeDismissed: true });
 
   beforeEach(async () => {
     prevDir = process.env.FORGE_STATE_DIR;
@@ -193,8 +208,18 @@ describe('C33+C21 — webhook fires the notification on a real transition (idemp
     await store.init();
     const now = nowIso();
     await store.saveResource({
-      id: APP_ID, type: 'Application', app_id: APP_ID, created_at: now, updated_at: now,
-      name: APP, repo_path: '/app', platform: 'web', framework: 'nextjs', template: 'nextjs-web', language: 'typescript', package_manager: 'npm',
+      id: APP_ID,
+      type: 'Application',
+      app_id: APP_ID,
+      created_at: now,
+      updated_at: now,
+      name: APP,
+      repo_path: '/app',
+      platform: 'web',
+      framework: 'nextjs',
+      template: 'nextjs-web',
+      language: 'typescript',
+      package_manager: 'npm',
     } as Application);
     await setSecret(APP_ID, 'STRIPE_SECRET_KEY', 'sk_test_x');
     await setSecret(APP_ID, 'STRIPE_WEBHOOK_SECRET', WEBHOOK_SECRET);
@@ -212,32 +237,68 @@ describe('C33+C21 — webhook fires the notification on a real transition (idemp
     await server.close();
     resetStripeClient();
     await (await getBackends()).billing.__truncateAllForTests?.();
-    if (prevDir === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prevDir;
-    if (prevKey === undefined) delete process.env.FORGE_SECRETS_KEY; else process.env.FORGE_SECRETS_KEY = prevKey;
-    if (prevPublic === undefined) delete process.env.FORGE_AUTH_PUBLIC_URL; else process.env.FORGE_AUTH_PUBLIC_URL = prevPublic;
+    if (prevDir === undefined) delete process.env.FORGE_STATE_DIR;
+    else process.env.FORGE_STATE_DIR = prevDir;
+    if (prevKey === undefined) delete process.env.FORGE_SECRETS_KEY;
+    else process.env.FORGE_SECRETS_KEY = prevKey;
+    if (prevPublic === undefined) delete process.env.FORGE_AUTH_PUBLIC_URL;
+    else process.env.FORGE_AUTH_PUBLIC_URL = prevPublic;
     await rm(dir, { recursive: true, force: true });
   });
 
   it('a FRESH activation then an UNCHANGED active webhook notify NOTHING', async () => {
     const uid = await seedUser();
-    defaultSub = stripeSub({ status: 'active', metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' } });
+    defaultSub = stripeSub({
+      status: 'active',
+      metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' },
+    });
     // none → active (fresh subscription): not a billing-problem transition.
-    expect((await deliverEvent({ id: 'evt_1', type: 'customer.subscription.created', data: { object: { id: 'sub_123' } } })).json().outcome).toBe('processed');
+    expect(
+      (
+        await deliverEvent({
+          id: 'evt_1',
+          type: 'customer.subscription.created',
+          data: { object: { id: 'sub_123' } },
+        })
+      ).json().outcome,
+    ).toBe('processed');
     // active → active (a routine update webhook): unchanged status.
-    expect((await deliverEvent({ id: 'evt_2', type: 'customer.subscription.updated', data: { object: { id: 'sub_123' } } })).json().outcome).toBe('processed');
+    expect(
+      (
+        await deliverEvent({
+          id: 'evt_2',
+          type: 'customer.subscription.updated',
+          data: { object: { id: 'sub_123' } },
+        })
+      ).json().outcome,
+    ).toBe('processed');
     expect(await listOwnerNotifications(uid)).toHaveLength(0);
   });
 
   it('active → past_due lands ONE owner-scoped in_app notification deep-linked to /billing; a retry does not double-notify', async () => {
     const uid = await seedUser();
     // First observe active…
-    defaultSub = stripeSub({ status: 'active', metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' } });
-    await deliverEvent({ id: 'evt_active', type: 'customer.subscription.created', data: { object: { id: 'sub_123' } } });
+    defaultSub = stripeSub({
+      status: 'active',
+      metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' },
+    });
+    await deliverEvent({
+      id: 'evt_active',
+      type: 'customer.subscription.created',
+      data: { object: { id: 'sub_123' } },
+    });
     expect(await listOwnerNotifications(uid)).toHaveLength(0);
 
     // …then Stripe reports the payment failed → past_due.
-    defaultSub = stripeSub({ status: 'past_due', metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' } });
-    const failed = { id: 'evt_failed', type: 'invoice.payment_failed', data: { object: { subscription: 'sub_123' } } };
+    defaultSub = stripeSub({
+      status: 'past_due',
+      metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' },
+    });
+    const failed = {
+      id: 'evt_failed',
+      type: 'invoice.payment_failed',
+      data: { object: { subscription: 'sub_123' } },
+    };
     await deliverEvent(failed);
 
     const after = await listOwnerNotifications(uid);
@@ -248,17 +309,38 @@ describe('C33+C21 — webhook fires the notification on a real transition (idemp
     // Retry the SAME event → deduped at the webhook, no reprocess → still exactly one notification.
     expect((await deliverEvent(failed)).json().outcome).toBe('duplicate');
     // A DIFFERENT event carrying the still-past_due status → no state change → still one notification.
-    defaultSub = stripeSub({ status: 'past_due', metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' } });
-    await deliverEvent({ id: 'evt_recheck', type: 'customer.subscription.updated', data: { object: { id: 'sub_123' } } });
+    defaultSub = stripeSub({
+      status: 'past_due',
+      metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' },
+    });
+    await deliverEvent({
+      id: 'evt_recheck',
+      type: 'customer.subscription.updated',
+      data: { object: { id: 'sub_123' } },
+    });
     expect(await listOwnerNotifications(uid)).toHaveLength(1);
   });
 
   it('active → canceled lands the cancellation notification', async () => {
     const uid = await seedUser();
-    defaultSub = stripeSub({ status: 'active', metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' } });
-    await deliverEvent({ id: 'evt_a', type: 'customer.subscription.created', data: { object: { id: 'sub_123' } } });
-    defaultSub = stripeSub({ status: 'canceled', metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' } });
-    await deliverEvent({ id: 'evt_del', type: 'customer.subscription.deleted', data: { object: { id: 'sub_123' } } });
+    defaultSub = stripeSub({
+      status: 'active',
+      metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' },
+    });
+    await deliverEvent({
+      id: 'evt_a',
+      type: 'customer.subscription.created',
+      data: { object: { id: 'sub_123' } },
+    });
+    defaultSub = stripeSub({
+      status: 'canceled',
+      metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' },
+    });
+    await deliverEvent({
+      id: 'evt_del',
+      type: 'customer.subscription.deleted',
+      data: { object: { id: 'sub_123' } },
+    });
 
     const after = await listOwnerNotifications(uid);
     expect(after.map((n) => n.key)).toContain('billing.subscription.canceled');

@@ -9,7 +9,10 @@ import type { Notification } from '../../../notifications/types';
 // keeps the FS copy faithful — an operator can flip reads back to the FS backend with no data loss.
 // Selected with FORGE_NOTIFICATIONS_BACKEND=postgres + FORGE_NOTIFICATIONS_DUAL_WRITE=1.
 export class DualWriteNotificationBackend implements NotificationBackend {
-  constructor(private readonly primary: PgNotificationBackend, private readonly secondary: FsNotificationBackend) {}
+  constructor(
+    private readonly primary: PgNotificationBackend,
+    private readonly secondary: FsNotificationBackend,
+  ) {}
 
   private async mirror(appId: string): Promise<void> {
     await this.secondary.importApp(appId, await this.primary.exportApp(appId));

@@ -48,7 +48,10 @@ export interface Trajectory {
 
 /** Executes one tool call against the MCP transport. Returns the tool result; `ok` is false when
  * the tool errored (e.g. a 402/403 surfaced as an MCP `isError`), which the model may react to. */
-export type CallTool = (name: string, args: Record<string, unknown>) => Promise<{ ok: boolean; result: unknown }>;
+export type CallTool = (
+  name: string,
+  args: Record<string, unknown>,
+) => Promise<{ ok: boolean; result: unknown }>;
 
 export interface RunAgentOpts {
   provider: 'anthropic' | 'openai';
@@ -75,7 +78,8 @@ const DEFAULT_MAX_TOKENS = 1024;
 function sanitizeToolSchema(schema: Record<string, unknown>): Record<string, unknown> {
   const s: Record<string, unknown> = { ...schema };
   for (const k of ['oneOf', 'allOf', 'anyOf', 'enum', 'const', 'not']) delete s[k];
-  if (s.type !== 'object') return { type: 'object', properties: (s.properties as Record<string, unknown>) ?? {} };
+  if (s.type !== 'object')
+    return { type: 'object', properties: (s.properties as Record<string, unknown>) ?? {} };
   if (s.properties === undefined) s.properties = {};
   return s;
 }
@@ -97,30 +101,61 @@ async function runAnthropic(opts: RunAgentOpts): Promise<Trajectory> {
   const toolCalls: ToolInvocation[] = [];
   const finalTextParts: string[] = [];
   const messages: Array<Record<string, unknown>> = [{ role: 'user', content: opts.prompt }];
-  const tools = opts.tools.map((t) => ({ name: t.name, description: t.description, input_schema: sanitizeToolSchema(t.inputSchema) }));
+  const tools = opts.tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    input_schema: sanitizeToolSchema(t.inputSchema),
+  }));
   const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
   for (let step = 0; step < maxSteps; step++) {
     const res = await doFetch(ANTHROPIC_API_URL, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-api-key': opts.apiKey, 'anthropic-version': ANTHROPIC_API_VERSION },
-      body: JSON.stringify({ model: opts.model, max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS, system: opts.system, tools, messages }),
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': opts.apiKey,
+        'anthropic-version': ANTHROPIC_API_VERSION,
+      },
+      body: JSON.stringify({
+        model: opts.model,
+        max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
+        system: opts.system,
+        tools,
+        messages,
+      }),
     });
     const body = (await res.json().catch(() => ({}))) as {
-      content?: Array<Record<string, unknown>>; stop_reason?: string; error?: { message?: string };
+      content?: Array<Record<string, unknown>>;
+      stop_reason?: string;
+      error?: { message?: string };
       usage?: { input_tokens?: number; output_tokens?: number };
     };
     usage.inputTokens += Number(body?.usage?.input_tokens ?? 0);
     usage.outputTokens += Number(body?.usage?.output_tokens ?? 0);
     if (!res.ok) {
-      return { provider: 'anthropic', model: opts.model, toolCalls, finalText: finalTextParts.join('\n'), steps: step, usage,
-        error: `anthropic HTTP ${res.status}: ${body?.error?.message ?? ''}`.trim() };
+      return {
+        provider: 'anthropic',
+        model: opts.model,
+        toolCalls,
+        finalText: finalTextParts.join('\n'),
+        steps: step,
+        usage,
+        error: `anthropic HTTP ${res.status}: ${body?.error?.message ?? ''}`.trim(),
+      };
     }
     const blocks = Array.isArray(body.content) ? body.content : [];
-    for (const b of blocks) if (b.type === 'text' && typeof b.text === 'string') finalTextParts.push(b.text as string);
+    for (const b of blocks)
+      if (b.type === 'text' && typeof b.text === 'string') finalTextParts.push(b.text as string);
     const toolUses = blocks.filter((b) => b.type === 'tool_use');
     if (body.stop_reason !== 'tool_use' || toolUses.length === 0) {
-      return { provider: 'anthropic', model: opts.model, toolCalls, finalText: finalTextParts.join('\n').trim(), steps: step + 1, usage };
+      return {
+        provider: 'anthropic',
+        model: opts.model,
+        toolCalls,
+        finalText: finalTextParts.join('\n').trim(),
+        steps: step + 1,
+        usage,
+      };
     }
     messages.push({ role: 'assistant', content: blocks });
     const toolResults: Array<Record<string, unknown>> = [];
@@ -129,12 +164,24 @@ async function runAnthropic(opts: RunAgentOpts): Promise<Trajectory> {
       const args = (tu.input as Record<string, unknown>) ?? {};
       const { ok, result } = await opts.callTool(name, args);
       toolCalls.push({ name, args, ok, result });
-      toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: resultText(result), is_error: !ok });
+      toolResults.push({
+        type: 'tool_result',
+        tool_use_id: tu.id,
+        content: resultText(result),
+        is_error: !ok,
+      });
     }
     messages.push({ role: 'user', content: toolResults });
   }
-  return { provider: 'anthropic', model: opts.model, toolCalls, finalText: finalTextParts.join('\n').trim(), steps: maxSteps, usage,
-    error: `reached maxSteps (${maxSteps}) without finishing` };
+  return {
+    provider: 'anthropic',
+    model: opts.model,
+    toolCalls,
+    finalText: finalTextParts.join('\n').trim(),
+    steps: maxSteps,
+    usage,
+    error: `reached maxSteps (${maxSteps}) without finishing`,
+  };
 }
 
 // ── OpenAI (GPT) ────────────────────────────────────────────────────────────
@@ -148,45 +195,79 @@ async function runOpenai(opts: RunAgentOpts): Promise<Trajectory> {
     { role: 'system', content: opts.system },
     { role: 'user', content: opts.prompt },
   ];
-  const tools = opts.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: sanitizeToolSchema(t.inputSchema) } }));
+  const tools = opts.tools.map((t) => ({
+    type: 'function',
+    function: { name: t.name, description: t.description, parameters: sanitizeToolSchema(t.inputSchema) },
+  }));
   const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
   for (let step = 0; step < maxSteps; step++) {
     const res = await doFetch(OPENAI_API_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${opts.apiKey}` },
-      body: JSON.stringify({ model: opts.model, max_completion_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS, tools, messages }),
+      body: JSON.stringify({
+        model: opts.model,
+        max_completion_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
+        tools,
+        messages,
+      }),
     });
     const body = (await res.json().catch(() => ({}))) as {
-      choices?: Array<{ message?: Record<string, unknown>; finish_reason?: string }>; error?: { message?: string };
+      choices?: Array<{ message?: Record<string, unknown>; finish_reason?: string }>;
+      error?: { message?: string };
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
     usage.inputTokens += Number(body?.usage?.prompt_tokens ?? 0);
     usage.outputTokens += Number(body?.usage?.completion_tokens ?? 0);
     if (!res.ok) {
-      return { provider: 'openai', model: opts.model, toolCalls, finalText: finalTextParts.join('\n'), steps: step, usage,
-        error: `openai HTTP ${res.status}: ${body?.error?.message ?? ''}`.trim() };
+      return {
+        provider: 'openai',
+        model: opts.model,
+        toolCalls,
+        finalText: finalTextParts.join('\n'),
+        steps: step,
+        usage,
+        error: `openai HTTP ${res.status}: ${body?.error?.message ?? ''}`.trim(),
+      };
     }
     const choice = body.choices?.[0];
     const msg = choice?.message ?? {};
     if (typeof msg.content === 'string' && msg.content) finalTextParts.push(msg.content);
     const calls = Array.isArray(msg.tool_calls) ? (msg.tool_calls as Array<Record<string, unknown>>) : [];
     if (calls.length === 0) {
-      return { provider: 'openai', model: opts.model, toolCalls, finalText: finalTextParts.join('\n').trim(), steps: step + 1, usage };
+      return {
+        provider: 'openai',
+        model: opts.model,
+        toolCalls,
+        finalText: finalTextParts.join('\n').trim(),
+        steps: step + 1,
+        usage,
+      };
     }
     messages.push(msg);
     for (const c of calls) {
       const fn = (c.function as { name?: string; arguments?: string }) ?? {};
       const name = String(fn.name);
       let args: Record<string, unknown> = {};
-      try { args = fn.arguments ? JSON.parse(fn.arguments) : {}; } catch { args = {}; }
+      try {
+        args = fn.arguments ? JSON.parse(fn.arguments) : {};
+      } catch {
+        args = {};
+      }
       const { ok, result } = await opts.callTool(name, args);
       toolCalls.push({ name, args, ok, result });
       messages.push({ role: 'tool', tool_call_id: c.id, content: resultText(result) });
     }
   }
-  return { provider: 'openai', model: opts.model, toolCalls, finalText: finalTextParts.join('\n').trim(), steps: maxSteps, usage,
-    error: `reached maxSteps (${maxSteps}) without finishing` };
+  return {
+    provider: 'openai',
+    model: opts.model,
+    toolCalls,
+    finalText: finalTextParts.join('\n').trim(),
+    steps: maxSteps,
+    usage,
+    error: `reached maxSteps (${maxSteps}) without finishing`,
+  };
 }
 
 /** Drive a real model as an MCP client through its tool-use loop. Never throws — a provider error
@@ -195,7 +276,14 @@ export async function runAgent(opts: RunAgentOpts): Promise<Trajectory> {
   try {
     return opts.provider === 'anthropic' ? await runAnthropic(opts) : await runOpenai(opts);
   } catch (e) {
-    return { provider: opts.provider, model: opts.model, toolCalls: [], finalText: '', steps: 0,
-      usage: { inputTokens: 0, outputTokens: 0 }, error: `agent loop threw: ${(e as Error)?.message ?? String(e)}` };
+    return {
+      provider: opts.provider,
+      model: opts.model,
+      toolCalls: [],
+      finalText: '',
+      steps: 0,
+      usage: { inputTokens: 0, outputTokens: 0 },
+      error: `agent loop threw: ${(e as Error)?.message ?? String(e)}`,
+    };
   }
 }

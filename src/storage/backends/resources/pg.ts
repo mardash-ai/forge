@@ -29,7 +29,9 @@ export async function ensureResourceSchema(pool: Pool): Promise<void> {
   `);
 }
 
-interface ResRow { data: AnyResource }
+interface ResRow {
+  data: AnyResource;
+}
 
 const UPSERT_SQL = `
   INSERT INTO forge_resources (type, id, app_id, owner, created_at, updated_at, data)
@@ -40,7 +42,15 @@ const UPSERT_SQL = `
 
 function upsertParams(r: BaseResource): unknown[] {
   const any = r as AnyResource;
-  return [r.type, r.id, any.app_id ?? null, any.owner ?? null, any.created_at ?? null, any.updated_at ?? null, JSON.stringify(r)];
+  return [
+    r.type,
+    r.id,
+    any.app_id ?? null,
+    any.owner ?? null,
+    any.created_at ?? null,
+    any.updated_at ?? null,
+    JSON.stringify(r),
+  ];
 }
 
 export class PgResourceBackend implements ResourceBackend, MigratableResourceBackend {
@@ -52,7 +62,10 @@ export class PgResourceBackend implements ResourceBackend, MigratableResourceBac
   }
 
   async get<T extends AnyResource = AnyResource>(type: ResourceType, id: string): Promise<T | null> {
-    const r = await this.pool.query<ResRow>('SELECT data FROM forge_resources WHERE type=$1 AND id=$2', [type, id]);
+    const r = await this.pool.query<ResRow>('SELECT data FROM forge_resources WHERE type=$1 AND id=$2', [
+      type,
+      id,
+    ]);
     return r.rows[0] ? (r.rows[0].data as T) : null;
   }
 
@@ -113,7 +126,11 @@ export class PgResourceBackend implements ResourceBackend, MigratableResourceBac
       for (const res of resources) await client.query(UPSERT_SQL, upsertParams(res as BaseResource));
       await client.query('COMMIT');
     } catch (e) {
-      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
       throw e;
     } finally {
       client.release();

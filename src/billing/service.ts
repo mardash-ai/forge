@@ -10,12 +10,7 @@ import {
   type StripeEvent,
   type StripeSubscription,
 } from '../plugins/stripe-billing/index';
-import {
-  deriveEntitlement,
-  deriveEntitlements,
-  defaultPlan,
-  planByKey,
-} from './entitlements';
+import { deriveEntitlement, deriveEntitlements, defaultPlan, planByKey } from './entitlements';
 import {
   emptyProviderRefs,
   noneRecord,
@@ -51,7 +46,13 @@ export const billingNotConfigured = () =>
     retry: 'needs-human',
   });
 export const unknownPlan = (planKey: string) =>
-  new ForgeError({ code: 'unknown_plan', message: `No plan "${planKey}" in this app's catalog.`, status: 422, retry: 'change-input', details: { plan_key: planKey } });
+  new ForgeError({
+    code: 'unknown_plan',
+    message: `No plan "${planKey}" in this app's catalog.`,
+    status: 422,
+    retry: 'change-input',
+    details: { plan_key: planKey },
+  });
 export const priceUnconfigured = (planKey: string) =>
   new ForgeError({
     code: 'price_unconfigured',
@@ -61,7 +62,12 @@ export const priceUnconfigured = (planKey: string) =>
     details: { plan_key: planKey },
   });
 export const notACustomer = () =>
-  new ForgeError({ code: 'not_a_customer', message: 'This subscriber has no billing customer yet (no checkout has been started).', status: 404, retry: 'change-input' });
+  new ForgeError({
+    code: 'not_a_customer',
+    message: 'This subscriber has no billing customer yet (no checkout has been started).',
+    status: 404,
+    retry: 'change-input',
+  });
 export const invalidCatalog = (message: string, details?: unknown) =>
   new ForgeError({ code: 'invalid_catalog', message, status: 422, retry: 'change-input', details });
 
@@ -83,7 +89,11 @@ function validatePlans(plans: unknown): PlanDef[] {
     const plan_key = p.plan_key.trim();
     if (keys.has(plan_key)) throw invalidCatalog(`duplicate plan_key "${plan_key}".`, { plan_key });
     keys.add(plan_key);
-    if (!p.display || typeof (p.display as { name?: string }).name !== 'string' || !(p.display as { name?: string }).name!.trim()) {
+    if (
+      !p.display ||
+      typeof (p.display as { name?: string }).name !== 'string' ||
+      !(p.display as { name?: string }).name!.trim()
+    ) {
       throw invalidCatalog(`plan "${plan_key}" needs display.name.`, { plan_key });
     }
     if (typeof p.interval !== 'string' || !VALID_INTERVALS.has(p.interval)) {
@@ -92,7 +102,10 @@ function validatePlans(plans: unknown): PlanDef[] {
     const entitlements = (p.entitlements ?? {}) as Record<string, unknown>;
     for (const [k, v] of Object.entries(entitlements)) {
       if (!(typeof v === 'boolean' || typeof v === 'number' || typeof v === 'string')) {
-        throw invalidCatalog(`entitlement "${k}" on plan "${plan_key}" must be boolean|number|string.`, { plan_key, key: k });
+        throw invalidCatalog(`entitlement "${k}" on plan "${plan_key}" must be boolean|number|string.`, {
+          plan_key,
+          key: k,
+        });
       }
     }
     const isDefault = Boolean(p.is_default);
@@ -102,8 +115,12 @@ function validatePlans(plans: unknown): PlanDef[] {
       plan_key,
       display: {
         name: (p.display as { name: string }).name.trim(),
-        ...((p.display as { description?: string }).description !== undefined ? { description: (p.display as { description?: string }).description } : {}),
-        ...((p.display as { order?: number }).order !== undefined ? { order: (p.display as { order?: number }).order } : {}),
+        ...((p.display as { description?: string }).description !== undefined
+          ? { description: (p.display as { description?: string }).description }
+          : {}),
+        ...((p.display as { order?: number }).order !== undefined
+          ? { order: (p.display as { order?: number }).order }
+          : {}),
       },
       interval: p.interval as PlanDef['interval'],
       prices: {
@@ -120,7 +137,9 @@ function validatePlans(plans: unknown): PlanDef[] {
     });
   }
   if (defaults !== 1) {
-    throw invalidCatalog(`the catalog must contain EXACTLY ONE plan with is_default:true (found ${defaults}).`);
+    throw invalidCatalog(
+      `the catalog must contain EXACTLY ONE plan with is_default:true (found ${defaults}).`,
+    );
   }
   return out;
 }
@@ -148,13 +167,21 @@ export async function getSubscription(appId: string, subscriber: string): Promis
 
 export async function getEntitlementsView(appId: string, subscriber: string): Promise<EntitlementsView> {
   const state = await (await backend()).read(appId);
-  const record = state.subscriptions[subscriber] ?? noneRecord(appId, subscriber, defaultPlan(state.catalog)?.plan_key ?? null, nowIso());
+  const record =
+    state.subscriptions[subscriber] ??
+    noneRecord(appId, subscriber, defaultPlan(state.catalog)?.plan_key ?? null, nowIso());
   return deriveEntitlements(record, state.catalog);
 }
 
-export async function getEntitlementView(appId: string, subscriber: string, key: string): Promise<EntitlementView> {
+export async function getEntitlementView(
+  appId: string,
+  subscriber: string,
+  key: string,
+): Promise<EntitlementView> {
   const state = await (await backend()).read(appId);
-  const record = state.subscriptions[subscriber] ?? noneRecord(appId, subscriber, defaultPlan(state.catalog)?.plan_key ?? null, nowIso());
+  const record =
+    state.subscriptions[subscriber] ??
+    noneRecord(appId, subscriber, defaultPlan(state.catalog)?.plan_key ?? null, nowIso());
   return deriveEntitlement(record, state.catalog, key);
 }
 
@@ -199,7 +226,11 @@ export async function createCheckout(input: CheckoutInput): Promise<{ url: strin
     await rememberCustomer(input.appId, input.subscriber, customerId, input.scopeRef);
   }
 
-  const metadata: Record<string, string> = { subscriber: input.subscriber, app: input.appId, plan_key: input.planKey };
+  const metadata: Record<string, string> = {
+    subscriber: input.subscriber,
+    app: input.appId,
+    plan_key: input.planKey,
+  };
   if (input.scopeRef) metadata.scope_ref = input.scopeRef;
 
   const session = await stripe.createCheckoutSession({
@@ -218,13 +249,21 @@ export async function createCheckout(input: CheckoutInput): Promise<{ url: strin
   return { url: session.url, session_id: session.id };
 }
 
-export async function createPortal(appId: string, subscriber: string, returnUrl: string): Promise<{ url: string }> {
+export async function createPortal(
+  appId: string,
+  subscriber: string,
+  returnUrl: string,
+): Promise<{ url: string }> {
   const cfg = await resolveBillingConfig(appId);
   if (!cfg.configured || !cfg.secretKey) throw billingNotConfigured();
   const state = await (await backend()).read(appId);
   const customerId = state.subscriptions[subscriber]?.provider_refs.stripe_customer_id ?? null;
   if (!customerId) throw notACustomer();
-  const { url } = await getStripeClient().createPortalSession({ secretKey: cfg.secretKey, customerId, returnUrl });
+  const { url } = await getStripeClient().createPortalSession({
+    secretKey: cfg.secretKey,
+    customerId,
+    returnUrl,
+  });
   return { url };
 }
 
@@ -264,7 +303,11 @@ export async function createTrialingSubscriptionAtSignup(input: TrialInput): Pro
     customerId = created.id;
   }
 
-  const metadata: Record<string, string> = { subscriber: input.subscriber, app: input.appId, plan_key: input.planKey };
+  const metadata: Record<string, string> = {
+    subscriber: input.subscriber,
+    app: input.appId,
+    plan_key: input.planKey,
+  };
   if (input.scopeRef) metadata.scope_ref = input.scopeRef;
 
   // Create the trialing subscription: NO payment method, TRIAL_DAYS trial, pause on trial end.
@@ -301,17 +344,29 @@ export async function createTrialingSubscriptionAtSignup(input: TrialInput): Pro
 
 // Upsert only the stripe_customer_id (+ optional echo-only scope_ref) onto the subscriber's record,
 // preserving any existing subscription state (or seeding a fresh `none` record).
-async function rememberCustomer(appId: string, subscriber: string, customerId: string, scopeRef?: string): Promise<void> {
-  await (await backend()).mutate(appId, (state) => {
+async function rememberCustomer(
+  appId: string,
+  subscriber: string,
+  customerId: string,
+  scopeRef?: string,
+): Promise<void> {
+  await (
+    await backend()
+  ).mutate(appId, (state) => {
     const now = nowIso();
-    const existing = state.subscriptions[subscriber] ?? noneRecord(appId, subscriber, defaultPlan(state.catalog)?.plan_key ?? null, now);
+    const existing =
+      state.subscriptions[subscriber] ??
+      noneRecord(appId, subscriber, defaultPlan(state.catalog)?.plan_key ?? null, now);
     const next: SubscriptionRecord = {
       ...existing,
       scope_ref: scopeRef ?? existing.scope_ref,
       provider_refs: { ...existing.provider_refs, stripe_customer_id: customerId },
       updated_at: now,
     };
-    return { state: { ...state, subscriptions: { ...state.subscriptions, [subscriber]: next } }, result: undefined };
+    return {
+      state: { ...state, subscriptions: { ...state.subscriptions, [subscriber]: next } },
+      result: undefined,
+    };
   });
 }
 
@@ -329,7 +384,8 @@ function canonicalFromStripe(
   // plan_key: prefer the metadata we stamped at checkout; else map the price id via the catalog.
   const planKey =
     sub.metadata.plan_key ||
-    catalog?.plans.find((p) => p.prices.stripe.price_id && p.prices.stripe.price_id === sub.price_id)?.plan_key ||
+    catalog?.plans.find((p) => p.prices.stripe.price_id && p.prices.stripe.price_id === sub.price_id)
+      ?.plan_key ||
     existing?.plan_key ||
     null;
   const fields: Omit<SubscriptionRecord, 'version' | 'created_at' | 'updated_at'> = {
@@ -364,7 +420,11 @@ export async function applyCanonicalSubscription(
   fields: Omit<SubscriptionRecord, 'version' | 'created_at' | 'updated_at'>,
   version: number,
 ): Promise<{ applied: boolean; record: SubscriptionRecord; previous_status: SubscriptionStatus }> {
-  return (await backend()).mutate<{ applied: boolean; record: SubscriptionRecord; previous_status: SubscriptionStatus }>(appId, (state) => {
+  return (await backend()).mutate<{
+    applied: boolean;
+    record: SubscriptionRecord;
+    previous_status: SubscriptionStatus;
+  }>(appId, (state) => {
     const now = nowIso();
     const existing = state.subscriptions[fields.subscriber];
     const previous_status: SubscriptionStatus = existing?.status ?? 'none';
@@ -401,15 +461,20 @@ async function reconcileSubscription(
   const version = Date.now();
   if (!sub) return null;
   const state = await (await backend()).read(appId);
-  const existing = Object.values(state.subscriptions).find((r) => r.provider_refs.stripe_subscription_id === sub.id)
-    ?? (sub.metadata.subscriber ? state.subscriptions[sub.metadata.subscriber] : undefined);
+  const existing =
+    Object.values(state.subscriptions).find((r) => r.provider_refs.stripe_subscription_id === sub.id) ??
+    (sub.metadata.subscriber ? state.subscriptions[sub.metadata.subscriber] : undefined);
   // Sticky admin overlays: while an operator LOCK or COMP is in place, a webhook / sweep re-pull must NOT
   // overwrite the forced status (that would silently un-lock — or worse, REVOKE a comped reviewer/demo
   // account when its underlying trial ends). Skip; unlock/un-comp re-reconciles.
   if (existing?.admin_locked_at || existing?.admin_comped_at) return existing;
   const canonical = canonicalFromStripe(appId, sub, state.catalog, existing);
   if (!canonical) return null;
-  const { applied, record, previous_status } = await applyCanonicalSubscription(appId, canonical.fields, version);
+  const { applied, record, previous_status } = await applyCanonicalSubscription(
+    appId,
+    canonical.fields,
+    version,
+  );
   // Only an APPLIED write can be a real transition; the guard inside billingTransitionNotification also
   // requires previous_status !== record.status, so a same-status re-fetch never notifies.
   if (applied) await notifyBillingTransition(appId, appName, previous_status, record);
@@ -425,7 +490,7 @@ function subscriptionIdFromEvent(event: StripeEvent): string | null {
     return typeof obj.id === 'string' ? obj.id : null;
   }
   const sub = obj.subscription;
-  return typeof sub === 'string' ? sub : (sub as { id?: string } | null)?.id ?? null;
+  return typeof sub === 'string' ? sub : ((sub as { id?: string } | null)?.id ?? null);
 }
 
 // For `setup_intent.succeeded` and `payment_method.attached` the subscription is not directly on the
@@ -449,8 +514,8 @@ const HANDLED_EVENT_TYPES = new Set([
   'customer.subscription.trial_will_end', // §1B / §1F: T-2 reminder trigger
   'invoice.paid',
   'invoice.payment_failed',
-  'setup_intent.succeeded',        // §1B / §1E: card added at conversion; resume if paused
-  'payment_method.attached',       // §1B / §1E: card attached to customer; resume if paused
+  'setup_intent.succeeded', // §1B / §1E: card added at conversion; resume if paused
+  'payment_method.attached', // §1B / §1E: card attached to customer; resume if paused
 ]);
 
 export interface WebhookResult {
@@ -481,14 +546,18 @@ export async function handleStripeWebhook(
   const store = await backend();
   const fresh = await store.mutate(appId, (state) => {
     if (state.webhook_events[event.id]) return { state, result: false };
-    const marks = { ...state.webhook_events, [event.id]: { id: event.id, type: event.type, received_at: nowIso() } };
+    const marks = {
+      ...state.webhook_events,
+      [event.id]: { id: event.id, type: event.type, received_at: nowIso() },
+    };
     const nextState: BillingState = { ...state, webhook_events: marks };
     pruneWebhookEvents(nextState);
     return { state: nextState, result: true };
   });
   if (!fresh) return { status: 200, outcome: 'duplicate', event_type: event.type };
 
-  if (!HANDLED_EVENT_TYPES.has(event.type)) return { status: 200, outcome: 'ignored', event_type: event.type };
+  if (!HANDLED_EVENT_TYPES.has(event.type))
+    return { status: 200, outcome: 'ignored', event_type: event.type };
 
   // --- customer-keyed events (setup_intent.succeeded / payment_method.attached) --------------------
   // These events carry a `customer` id, not a `subscription` id. We resolve the subscription by
@@ -541,7 +610,10 @@ export async function handleStripeWebhook(
 // live inside the platform (an operator / a C2 job triggers it via POST /billing/reconcile) rather than
 // asking the app to poll — the app stays ignorant of Stripe. Not auto-scheduled by default (so it never
 // hits Stripe when unconfigured); wire it to C2 per deployment. No-op when unconfigured.
-export async function reconcileApp(appId: string, appName?: string): Promise<{ reconciled: number; skipped: number }> {
+export async function reconcileApp(
+  appId: string,
+  appName?: string,
+): Promise<{ reconciled: number; skipped: number }> {
   const cfg = await resolveBillingConfig(appId);
   if (!cfg.configured || !cfg.secretKey) return { reconciled: 0, skipped: 0 };
   const state = await (await backend()).read(appId);
@@ -550,7 +622,13 @@ export async function reconcileApp(appId: string, appName?: string): Promise<{ r
   for (const record of Object.values(state.subscriptions)) {
     const subId = record.provider_refs.stripe_subscription_id;
     // Admin-locked/comped subs are sticky (see reconcileSubscription) — skip them here too, before any Stripe call.
-    if (!subId || record.status === 'none' || record.status === 'canceled' || record.admin_locked_at || record.admin_comped_at) {
+    if (
+      !subId ||
+      record.status === 'none' ||
+      record.status === 'canceled' ||
+      record.admin_locked_at ||
+      record.admin_comped_at
+    ) {
       skipped++;
       continue;
     }
@@ -581,7 +659,11 @@ export interface AdminLockResult {
   had_subscription: boolean; // whether a real subscription-of-record existed before the call
 }
 
-export async function setAdminLock(appId: string, subscriber: string, locked: boolean): Promise<AdminLockResult> {
+export async function setAdminLock(
+  appId: string,
+  subscriber: string,
+  locked: boolean,
+): Promise<AdminLockResult> {
   const store = await backend();
   const out = await store.mutate<AdminLockResult>(appId, (state) => {
     const now = nowIso();
@@ -593,7 +675,16 @@ export async function setAdminLock(appId: string, subscriber: string, locked: bo
 
     if (locked === currentlyLocked) {
       // Idempotent no-op (already in the requested state).
-      return { state, result: { subscriber, locked, changed: false, status: base.status, had_subscription: hadSubscription } };
+      return {
+        state,
+        result: {
+          subscriber,
+          locked,
+          changed: false,
+          status: base.status,
+          had_subscription: hadSubscription,
+        },
+      };
     }
 
     const record: SubscriptionRecord = locked
@@ -603,7 +694,9 @@ export async function setAdminLock(appId: string, subscriber: string, locked: bo
           // Restore target: if the record was COMPED, its visible status is the overlaid `active` — the
           // honest restore target is what the comp itself had saved. Locking also CLEARS the comp
           // (mutual exclusion; operator intent wins).
-          admin_lock_prev_status: base.admin_comped_at ? (base.admin_comp_prev_status ?? 'none') : base.status,
+          admin_lock_prev_status: base.admin_comped_at
+            ? (base.admin_comp_prev_status ?? 'none')
+            : base.status,
           admin_comped_at: null,
           admin_comp_prev_status: null,
           status: 'paused', // the exact trial-expired state
@@ -695,7 +788,17 @@ export async function setAdminComp(
 
     if (comped === currentlyComped && (planKey === undefined || base.plan_key === planKey)) {
       // Idempotent no-op (already in the requested state, on the requested plan).
-      return { state, result: { subscriber, comped, changed: false, status: base.status, plan_key: base.plan_key, had_subscription: hadSubscription } };
+      return {
+        state,
+        result: {
+          subscriber,
+          comped,
+          changed: false,
+          status: base.status,
+          plan_key: base.plan_key,
+          had_subscription: hadSubscription,
+        },
+      };
     }
 
     const record: SubscriptionRecord = comped
@@ -705,7 +808,9 @@ export async function setAdminComp(
           // Restore target: if the record was LOCKED, its visible status is the overlaid `paused` — the
           // honest restore target is what the lock itself had saved. Comping also CLEARS the lock
           // (mutual exclusion; operator intent wins).
-          admin_comp_prev_status: base.admin_locked_at ? (base.admin_lock_prev_status ?? 'none') : base.status,
+          admin_comp_prev_status: base.admin_locked_at
+            ? (base.admin_lock_prev_status ?? 'none')
+            : base.status,
           admin_locked_at: null,
           admin_lock_prev_status: null,
           status: 'active', // full entitlements, permanently
@@ -725,7 +830,14 @@ export async function setAdminComp(
         };
     return {
       state: { ...state, subscriptions: { ...state.subscriptions, [subscriber]: record } },
-      result: { subscriber, comped, changed: true, status: record.status, plan_key: record.plan_key, had_subscription: hadSubscription },
+      result: {
+        subscriber,
+        comped,
+        changed: true,
+        status: record.status,
+        plan_key: record.plan_key,
+        had_subscription: hadSubscription,
+      },
     };
   });
 
@@ -786,7 +898,10 @@ export async function deleteCustomer(appId: string, subscriber: string): Promise
   if (stripeConfigured) {
     const stripe = getStripeClient();
     // Also cancel `paused` subscriptions (§1D: paused is live at Stripe; must clean up on teardown).
-    if (subscriptionId && (record.status === 'active' || record.status === 'trialing' || record.status === 'paused')) {
+    if (
+      subscriptionId &&
+      (record.status === 'active' || record.status === 'trialing' || record.status === 'paused')
+    ) {
       const { canceled } = await stripe.cancelSubscription(cfg.secretKey!, subscriptionId);
       base.subscription_canceled = canceled;
     }

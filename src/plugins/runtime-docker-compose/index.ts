@@ -16,11 +16,11 @@ export function composeRun(
   command: string[],
   opts: { logFile?: string; timeoutMs?: number } = {},
 ): Promise<RunResult> {
-  return run(
-    'docker',
-    ['compose', 'run', '--rm', '--no-deps', '-T', service, ...command],
-    { cwd: appDir, logFile: opts.logFile, timeoutMs: opts.timeoutMs ?? 20 * 60_000 },
-  );
+  return run('docker', ['compose', 'run', '--rm', '--no-deps', '-T', service, ...command], {
+    cwd: appDir,
+    logFile: opts.logFile,
+    timeoutMs: opts.timeoutMs ?? 20 * 60_000,
+  });
 }
 
 // Start the full environment detached (dependencies included). `env` carries
@@ -149,9 +149,7 @@ export function generateCompose(opts: ComposeOptions): string {
   // One interpolation line per declared secret. `${NAME:-}` keeps the var
   // DEFINED-but-empty when unset, so the app can detect absence and degrade
   // (e.g. return 503) instead of crashing — and no value is ever written here.
-  const secretEnv = (opts.secrets ?? [])
-    .map((name) => `      - ${name}=\${${name}:-}`)
-    .join('\n');
+  const secretEnv = (opts.secrets ?? []).map((name) => `      - ${name}=\${${name}:-}`).join('\n');
 
   const web = `  web:
     image: node:22-bookworm-slim

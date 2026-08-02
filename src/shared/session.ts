@@ -70,7 +70,12 @@ function intFromEnv(name: string, dflt: number, min: number, max: number): numbe
 
 // Resolved TTL knobs (env-overridable, clamped to sane bounds).
 export function accessTtlSeconds(): number {
-  return intFromEnv('FORGE_AUTH_ACCESS_TTL_SECONDS', DEFAULT_ACCESS_TTL_SECONDS, 30, DEFAULT_SESSION_TTL_SECONDS);
+  return intFromEnv(
+    'FORGE_AUTH_ACCESS_TTL_SECONDS',
+    DEFAULT_ACCESS_TTL_SECONDS,
+    30,
+    DEFAULT_SESSION_TTL_SECONDS,
+  );
 }
 export function refreshTtlSeconds(): number {
   return intFromEnv('FORGE_AUTH_REFRESH_TTL_SECONDS', DEFAULT_REFRESH_TTL_SECONDS, 60, 60 * 60 * 24 * 365);
@@ -189,7 +194,13 @@ export function signOAuthState(
   ttlSeconds: number = DEFAULT_OAUTH_STATE_TTL_SECONDS,
   now: number = Math.floor(Date.now() / 1000),
 ): string {
-  const payload: OAuthStateClaims = { n: input.nonce, next: input.next, app: input.app, iat: now, exp: now + ttlSeconds };
+  const payload: OAuthStateClaims = {
+    n: input.nonce,
+    next: input.next,
+    app: input.app,
+    iat: now,
+    exp: now + ttlSeconds,
+  };
   const body = b64urlJson(payload);
   const sig = b64url(createHmac('sha256', secret).update(body).digest());
   return `${body}.${sig}`;
@@ -279,13 +290,7 @@ export function clearRefreshCookie(opts: { secure?: boolean } = {}): string {
 }
 
 function cookie(name: string, value: string, opts: { secure: boolean; maxAgeSeconds: number }): string {
-  const attrs = [
-    `${name}=${value}`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Lax',
-    `Max-Age=${opts.maxAgeSeconds}`,
-  ];
+  const attrs = [`${name}=${value}`, 'Path=/', 'HttpOnly', 'SameSite=Lax', `Max-Age=${opts.maxAgeSeconds}`];
   if (opts.secure) attrs.push('Secure');
   return attrs.join('; ');
 }
@@ -315,7 +320,10 @@ export const DEFAULT_PUBLIC_PATHS = ['/auth', '/api/health', '/api/cron'] as con
 // Match a request pathname against a public list. An entry matches the exact path
 // or any sub-path (`/auth` matches `/auth` and `/auth/login`). Trailing `/*` is
 // accepted and treated as a prefix, so both `/api/cron` and `/api/cron/*` work.
-export function isPublicPath(pathname: string, publicList: readonly string[] = DEFAULT_PUBLIC_PATHS): boolean {
+export function isPublicPath(
+  pathname: string,
+  publicList: readonly string[] = DEFAULT_PUBLIC_PATHS,
+): boolean {
   const p = pathname.replace(/\/+$/, '') || '/';
   for (const raw of publicList) {
     const base = raw.replace(/\/\*$/, '').replace(/\/+$/, '') || '/';

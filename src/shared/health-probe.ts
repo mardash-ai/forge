@@ -20,7 +20,8 @@ export function resolveAppBase(manifest: Record<string, unknown>): string {
   const host = process.env.FORGE_APP_CALLBACK_HOST ?? 'host.docker.internal';
   const envPort = process.env.FORGE_APP_CALLBACK_PORT;
   const webPort = (manifest.infra as { ports?: { web?: unknown } } | undefined)?.ports?.web;
-  const manifestPort = typeof webPort === 'number' ? webPort : typeof manifest.port === 'number' ? manifest.port : 3000;
+  const manifestPort =
+    typeof webPort === 'number' ? webPort : typeof manifest.port === 'number' ? manifest.port : 3000;
   const url = process.env.FORGE_APP_CALLBACK_URL;
   if (url) return url.replace(/\/$/, '');
   return `http://${host}:${envPort ?? manifestPort}`;
@@ -60,7 +61,12 @@ export interface HttpProbeResult {
 // so gate assertions can see the redirect; pass `redirect:'follow'` to chase it.
 export async function httpProbe(
   url: string,
-  opts: { method?: string; timeoutMs?: number; redirect?: 'follow' | 'manual'; headers?: Record<string, string> } = {},
+  opts: {
+    method?: string;
+    timeoutMs?: number;
+    redirect?: 'follow' | 'manual';
+    headers?: Record<string, string>;
+  } = {},
 ): Promise<HttpProbeResult> {
   try {
     const res = await fetch(url, {
@@ -125,9 +131,24 @@ export async function probeHealth(
   }
   const parsed = parseHealthResponse(json);
   if (parsed.ok) {
-    return { url, reachable: true, httpStatus: res.status, conforms: true, health: parsed.value, redirectLocation: res.location };
+    return {
+      url,
+      reachable: true,
+      httpStatus: res.status,
+      conforms: true,
+      health: parsed.value,
+      redirectLocation: res.location,
+    };
   }
-  return { url, reachable: true, httpStatus: res.status, conforms: false, parseError: parsed.error, bodyPreview: text.slice(0, 200), redirectLocation: res.location };
+  return {
+    url,
+    reachable: true,
+    httpStatus: res.status,
+    conforms: false,
+    parseError: parsed.error,
+    bodyPreview: text.slice(0, 200),
+    redirectLocation: res.location,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +208,9 @@ export async function waitForHealthReady(url: string, opts: ReadinessWaitOptions
   let interval = base;
   for (;;) {
     attempts++;
-    const probe = await probeHealth(url, opts.probeTimeoutMs ?? HEALTH_TIMEOUT_MS, { redirect: opts.redirect ?? 'manual' });
+    const probe = await probeHealth(url, opts.probeTimeoutMs ?? HEALTH_TIMEOUT_MS, {
+      redirect: opts.redirect ?? 'manual',
+    });
     opts.onAttempt?.(attempts, probe);
     if (isReady(probe)) return { ready: true, attempts, waitedMs: now() - start, last: probe };
     // Out of budget (or the gate is disabled with timeoutMs<=0): stop and hand the last probe back.

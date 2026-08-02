@@ -40,7 +40,9 @@ describe('Notification store — concurrency (P5)', () => {
     // Seed keys that will be dismissed / cleared concurrently with fresh upserts.
     const dismissKeys = ['d0', 'd1', 'd2', 'd3', 'd4'];
     const clearKeys = ['c0', 'c1', 'c2', 'c3', 'c4'];
-    await Promise.all([...dismissKeys, ...clearKeys].map((key) => store.upsertNotification('a', { key, title: key })));
+    await Promise.all(
+      [...dismissKeys, ...clearKeys].map((key) => store.upsertNotification('a', { key, title: key })),
+    );
 
     const freshKeys = Array.from({ length: 20 }, (_, i) => `u${i}`);
 

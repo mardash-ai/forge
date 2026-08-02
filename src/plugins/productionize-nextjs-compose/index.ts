@@ -389,7 +389,8 @@ export function generateProdCompose(opts: ProdComposeOptions): string {
   const blobsBackend = opts.blobsBackend ?? 'filesystem';
   const observability = opts.observability ?? false;
   const mcpMtlsHost = (opts.mcpMtlsHost ?? '').trim();
-  const mcpMtlsTlsOptions = (opts.mcpMtlsTlsOptions ?? DEFAULT_MCP_MTLS_TLS_OPTIONS).trim() || DEFAULT_MCP_MTLS_TLS_OPTIONS;
+  const mcpMtlsTlsOptions =
+    (opts.mcpMtlsTlsOptions ?? DEFAULT_MCP_MTLS_TLS_OPTIONS).trim() || DEFAULT_MCP_MTLS_TLS_OPTIONS;
   // C36 — the OTLP→Langfuse export env for a tier. The endpoint defaults to the internal Langfuse
   // address; the LANGFUSE keys are empty-default (`${VAR:-}`) so a missing key silently DISABLES tracing
   // (the tier is unaffected) instead of failing the deploy — observability must never take the app down.
@@ -631,7 +632,13 @@ ${labels.join('\n')}`;
   // 's3'` flips the sidecar to the object store (operator supplies FORGE_S3_* in .env.prod).
   if (blobsBackend === 's3') {
     dpEnv.push('      - FORGE_BLOBS_BACKEND=s3');
-    for (const v of ['FORGE_S3_ENDPOINT', 'FORGE_S3_BUCKET', 'FORGE_S3_ACCESS_KEY', 'FORGE_S3_SECRET_KEY', 'FORGE_S3_REGION']) {
+    for (const v of [
+      'FORGE_S3_ENDPOINT',
+      'FORGE_S3_BUCKET',
+      'FORGE_S3_ACCESS_KEY',
+      'FORGE_S3_SECRET_KEY',
+      'FORGE_S3_REGION',
+    ]) {
       dpEnv.push(`      - ${v}=\${${v}:-}`);
     }
   }
@@ -669,8 +676,12 @@ ${dpVolumes.join('\n')}
       ];
       const pgVolumes = ['      - postgres_data:/var/lib/postgresql/data'];
       if (platformDb) {
-        pgEnv.push('      - FORGE_PLATFORM_DB_PASSWORD=${FORGE_PLATFORM_DB_PASSWORD:?set FORGE_PLATFORM_DB_PASSWORD in .env.prod}');
-        pgVolumes.push(`      - ./${PLATFORM_DB_INIT_FILE}:/docker-entrypoint-initdb.d/${PLATFORM_DB_INIT_FILE}:ro`);
+        pgEnv.push(
+          '      - FORGE_PLATFORM_DB_PASSWORD=${FORGE_PLATFORM_DB_PASSWORD:?set FORGE_PLATFORM_DB_PASSWORD in .env.prod}',
+        );
+        pgVolumes.push(
+          `      - ./${PLATFORM_DB_INIT_FILE}:/docker-entrypoint-initdb.d/${PLATFORM_DB_INIT_FILE}:ro`,
+        );
       }
       services.push(`  postgres:
     image: postgres:16-alpine
@@ -804,15 +815,23 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
   }
   if (opts.platformDb) {
     lines.push('# --- Forge platform datastore on Postgres (P26) ---');
-    lines.push(`# FORGE_PLATFORM_DB_PASSWORD — password for the least-privilege ${PLATFORM_DB_ROLE} role that owns`);
-    lines.push(`#   the separate ${PLATFORM_DB_NAME} database (Forge's OWN state: C10 identity, …). NOT the app DB.`);
+    lines.push(
+      `# FORGE_PLATFORM_DB_PASSWORD — password for the least-privilege ${PLATFORM_DB_ROLE} role that owns`,
+    );
+    lines.push(
+      `#   the separate ${PLATFORM_DB_NAME} database (Forge's OWN state: C10 identity, …). NOT the app DB.`,
+    );
     lines.push('#   Required when platform storage is on Postgres. Generate: openssl rand -hex 32');
-    lines.push('#   (URL-safe hex — it is interpolated into FORGE_DB_URL; a base64 `/ + =` would break the URL, P32.)');
+    lines.push(
+      '#   (URL-safe hex — it is interpolated into FORGE_DB_URL; a base64 `/ + =` would break the URL, P32.)',
+    );
     lines.push('FORGE_PLATFORM_DB_PASSWORD=change-me');
     lines.push('');
   }
   if (opts.secrets.length) {
-    lines.push('# --- Declared secrets (injected into the web AND data-plane containers; never commit real values) ---');
+    lines.push(
+      '# --- Declared secrets (injected into the web AND data-plane containers; never commit real values) ---',
+    );
     for (const s of opts.secrets) {
       lines.push(...envCommentLines(describeSecret(s)));
       lines.push(`${s}=`);
@@ -827,7 +846,9 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
   if (usesAuth) {
     const undeclared = AUTH_PROVIDER_VARS.filter((v) => !opts.secrets.includes(v));
     if (undeclared.length) {
-      lines.push('# --- Optional sign-in providers (C10) — wired into the data-plane; fill to enable, leave blank to skip ---');
+      lines.push(
+        '# --- Optional sign-in providers (C10) — wired into the data-plane; fill to enable, leave blank to skip ---',
+      );
       lines.push('# At least ONE sign-in method (Google OR SMTP) must be configured or no one can sign in.');
       for (const v of undeclared) {
         lines.push(...envCommentLines(describeSecret(v)));
@@ -840,19 +861,33 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
   // DIFFERENT hosts, these pin the origin each surface must advertise. All three are wired into the
   // data-plane defined-but-empty; empty = request-host-derived, so single-host apps need none of them.
   if (usesAuth) {
-    lines.push('# --- Split-host public URLs (P38 · C23) — pin ONLY when the UI and API/MCP live on different hosts ---');
+    lines.push(
+      '# --- Split-host public URLs (P38 · C23) — pin ONLY when the UI and API/MCP live on different hosts ---',
+    );
     lines.push('# Empty = derived from the incoming request host (single-host apps leave all three blank).');
-    lines.push('# FORGE_AUTH_PUBLIC_URL — USER-FACING origin for hosted C10 sign-in URLs (e.g. https://app.example.com).');
+    lines.push(
+      '# FORGE_AUTH_PUBLIC_URL — USER-FACING origin for hosted C10 sign-in URLs (e.g. https://app.example.com).',
+    );
     lines.push('# FORGE_OAUTH_PUBLIC_URL — USER-FACING origin for the C24 "Connect" (/connect/*) callback.');
-    lines.push('# FORGE_MCP_PUBLIC_URL — the MCP OAuth resource identifier + issuer origin: the MACHINE-FACING api');
+    lines.push(
+      '# FORGE_MCP_PUBLIC_URL — the MCP OAuth resource identifier + issuer origin: the MACHINE-FACING api',
+    );
     lines.push('#   host the /mcp endpoint + its OAuth AS are reached on (e.g. https://api.example.com).');
-    lines.push('# FORGE_MCP_ALT_HOSTS — comma-separated ADDITIONAL hostnames allowed to appear as the MCP resource');
-    lines.push('#   identifier — e.g. a dedicated mTLS host; the forwarded host is only honored if it is the primary');
+    lines.push(
+      '# FORGE_MCP_ALT_HOSTS — comma-separated ADDITIONAL hostnames allowed to appear as the MCP resource',
+    );
+    lines.push(
+      '#   identifier — e.g. a dedicated mTLS host; the forwarded host is only honored if it is the primary',
+    );
     lines.push('#   MCP host or in this list.');
     const mtlsHost = (opts.mcpMtlsHost ?? '').trim();
     if (mtlsHost) {
-      lines.push(`#   This app declares the dedicated mTLS MCP host \`${mtlsHost}\` — the compose already defaults`);
-      lines.push(`#   FORGE_MCP_ALT_HOSTS to it; set a value here only to REPLACE that default (include \`${mtlsHost}\`).`);
+      lines.push(
+        `#   This app declares the dedicated mTLS MCP host \`${mtlsHost}\` — the compose already defaults`,
+      );
+      lines.push(
+        `#   FORGE_MCP_ALT_HOSTS to it; set a value here only to REPLACE that default (include \`${mtlsHost}\`).`,
+      );
     }
     lines.push('FORGE_AUTH_PUBLIC_URL=');
     lines.push('FORGE_OAUTH_PUBLIC_URL=');
@@ -860,9 +895,15 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
     lines.push('FORGE_MCP_ALT_HOSTS=');
     lines.push('');
     lines.push('# --- MCP OAuth access-token lifetime (C23) ---');
-    lines.push('# FORGE_OAUTH_ACCESS_TTL_SECONDS — lifetime (seconds) of the MCP OAuth access tokens the data-plane');
-    lines.push('#   mints. Default 28800 (8h): connector hosts may NOT refresh mid-session — they ride one access');
-    lines.push('#   token until expiry, then show the connector as unavailable until the user reconnects, so 8h keeps');
+    lines.push(
+      '# FORGE_OAUTH_ACCESS_TTL_SECONDS — lifetime (seconds) of the MCP OAuth access tokens the data-plane',
+    );
+    lines.push(
+      '#   mints. Default 28800 (8h): connector hosts may NOT refresh mid-session — they ride one access',
+    );
+    lines.push(
+      '#   token until expiry, then show the connector as unavailable until the user reconnects, so 8h keeps',
+    );
     lines.push('#   a session alive for a working day. Empty = the 28800 default.');
     lines.push('FORGE_OAUTH_ACCESS_TTL_SECONDS=');
     lines.push('');
@@ -874,7 +915,9 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
   if (usesBilling) {
     const undeclared = BILLING_PROVIDER_VARS.filter((v) => !opts.secrets.includes(v));
     if (undeclared.length) {
-      lines.push('# --- Billing provider (C-billing · Stripe) — wired into the data-plane; fill to enable checkout/webhooks ---');
+      lines.push(
+        '# --- Billing provider (C-billing · Stripe) — wired into the data-plane; fill to enable checkout/webhooks ---',
+      );
       for (const v of undeclared) {
         lines.push(...envCommentLines(describeSecret(v)));
         lines.push(`${v}=`);
@@ -887,7 +930,9 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
     lines.push('# --- Blob object store (C20, S3-compatible) — required because blobs_backend=s3 (P33) ---');
     lines.push('# FORGE_S3_ENDPOINT — e.g. https://s3.us-east-1.amazonaws.com or a MinIO URL.');
     lines.push('# FORGE_S3_BUCKET — the bucket blob bytes are stored in (created on boot if absent).');
-    lines.push('# FORGE_S3_ACCESS_KEY / FORGE_S3_SECRET_KEY — credentials; FORGE_S3_REGION (default us-east-1).');
+    lines.push(
+      '# FORGE_S3_ACCESS_KEY / FORGE_S3_SECRET_KEY — credentials; FORGE_S3_REGION (default us-east-1).',
+    );
     lines.push('FORGE_S3_ENDPOINT=');
     lines.push('FORGE_S3_BUCKET=');
     lines.push('FORGE_S3_ACCESS_KEY=');
@@ -897,13 +942,17 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
   }
   // C36 — MCP observability: the OTLP key pair the app + sidecar authenticate their Langfuse push with.
   if (opts.observability) {
-    lines.push('# --- MCP observability (C36) — traces the full MCP interaction to the self-hosted Langfuse ---');
+    lines.push(
+      '# --- MCP observability (C36) — traces the full MCP interaction to the self-hosted Langfuse ---',
+    );
     lines.push('# The forge sidecar (transport) + this app (dispatch) export OTLP spans to the shared');
     lines.push('# observability stack, stitched into ONE trace. These keys authenticate the OTLP push (the');
     lines.push('# Langfuse project public/secret key pair). EMPTY = tracing silently disabled (the app is');
     lines.push('# UNAFFECTED); fill them to enable. Source: the box observability stack .env.langfuse.');
     lines.push('# OTEL_EXPORTER_OTLP_ENDPOINT defaults to http://langfuse-web:3000/api/public/otel.');
-    lines.push('# FORGE_MCP_TRACE_PAYLOADS — tool-call arguments + results are recorded on the Langfuse trace');
+    lines.push(
+      '# FORGE_MCP_TRACE_PAYLOADS — tool-call arguments + results are recorded on the Langfuse trace',
+    );
     lines.push('#   (the observation input/output); set false to disable payload capture. Default: true.');
     lines.push('LANGFUSE_PUBLIC_KEY=');
     lines.push('LANGFUSE_SECRET_KEY=');
@@ -912,11 +961,15 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
   }
   if (opts.withJobs) {
     lines.push('# --- Scheduled jobs (C2) ---');
-    lines.push(`# ${JOBS_FILE} is mounted into the data-plane sidecar and registered on boot — no env needed.`);
+    lines.push(
+      `# ${JOBS_FILE} is mounted into the data-plane sidecar and registered on boot — no env needed.`,
+    );
     // P36 — cron fires MUST be authenticated: the compose makes AUTH_SERVICE_TOKEN deploy-required when jobs
     // are declared (an unset token fails the deploy), and the app gates /api/cron/* on it.
     if (!opts.secrets.includes(AUTH_SERVICE_TOKEN_VAR)) {
-      lines.push('# AUTH_SERVICE_TOKEN is REQUIRED (P36): the C2 scheduler presents it on each fire and the app');
+      lines.push(
+        '# AUTH_SERVICE_TOKEN is REQUIRED (P36): the C2 scheduler presents it on each fire and the app',
+      );
       lines.push('#   verifies it — without it /api/cron/* is publicly reachable and fires UNAUTHENTICATED.');
       lines.push('#   Generate: openssl rand -hex 32');
       lines.push('AUTH_SERVICE_TOKEN=change-me');
@@ -924,7 +977,9 @@ export function generateEnvProdExample(opts: EnvProdExampleOptions): string {
     }
   } else {
     lines.push('# --- Optional: scheduled jobs (C2) the data-plane sidecar registers on boot ---');
-    lines.push(`# Declare jobs in ${JOBS_FILE} at the repo root (re-run \`forge productionize\` to wire it), or:`);
+    lines.push(
+      `# Declare jobs in ${JOBS_FILE} at the repo root (re-run \`forge productionize\` to wire it), or:`,
+    );
     lines.push(`# FORGE_JOBS_FILE=/app/${JOBS_FILE}`);
   }
   return lines.join('\n') + '\n';
@@ -976,9 +1031,13 @@ export function generateProvisioningRunbook(opts: ProvisioningRunbookOptions): s
   out.push(`# Provisioning — ${opts.appName}`);
   out.push('');
   out.push('> Generated by Forge — Productionize. Do not hand-edit; re-run `forge productionize` instead.');
-  out.push('> It lists exactly the secrets **this** app needs (a subset of the full matrix in `forge/PROVISIONING.md`).');
+  out.push(
+    '> It lists exactly the secrets **this** app needs (a subset of the full matrix in `forge/PROVISIONING.md`).',
+  );
   out.push('');
-  out.push(`Public host: \`${opts.host}\`. Real values live in \`app/.env.prod\` (never committed) — this file only explains them.`);
+  out.push(
+    `Public host: \`${opts.host}\`. Real values live in \`app/.env.prod\` (never committed) — this file only explains them.`,
+  );
   out.push('');
 
   // Checklist table.
@@ -1012,19 +1071,29 @@ export function generateProvisioningRunbook(opts: ProvisioningRunbookOptions): s
   if (usesAuth) {
     out.push('## Enabling a working sign-in method (C10)');
     out.push('');
-    out.push('This app uses hosted auth (C10). **A user needs at least one working sign-in method.** With *neither* Google OAuth *nor* SMTP configured, `/auth/signup` shows **no form** and reports that email sign-up is unavailable — there is **no way to sign in**. Configure at least one:');
+    out.push(
+      'This app uses hosted auth (C10). **A user needs at least one working sign-in method.** With *neither* Google OAuth *nor* SMTP configured, `/auth/signup` shows **no form** and reports that email sign-up is unavailable — there is **no way to sign in**. Configure at least one:',
+    );
     out.push('');
-    out.push(`- **Google sign-in** — set \`GOOGLE_CLIENT_ID\` + \`GOOGLE_CLIENT_SECRET\`. Works with **no email dependency**. Authorized redirect URI: \`https://${opts.host}/auth/google/callback\`.${hasGoogle ? ' _(declared as a secret)_' : ' _(wired into the data-plane — just fill `.env.prod`)_'}`);
-    out.push(`- **Email + password** — set \`SMTP_URL\` + \`EMAIL_FROM\`. Unlocks email/password **signup + verification + password reset**.${hasEmail ? ' _(declared as a secret)_' : ' _(wired into the data-plane — just fill `.env.prod`)_'}`);
+    out.push(
+      `- **Google sign-in** — set \`GOOGLE_CLIENT_ID\` + \`GOOGLE_CLIENT_SECRET\`. Works with **no email dependency**. Authorized redirect URI: \`https://${opts.host}/auth/google/callback\`.${hasGoogle ? ' _(declared as a secret)_' : ' _(wired into the data-plane — just fill `.env.prod`)_'}`,
+    );
+    out.push(
+      `- **Email + password** — set \`SMTP_URL\` + \`EMAIL_FROM\`. Unlocks email/password **signup + verification + password reset**.${hasEmail ? ' _(declared as a secret)_' : ' _(wired into the data-plane — just fill `.env.prod`)_'}`,
+    );
     out.push('');
     // P34 — productionize now wires the optional Google/SMTP vars into the data-plane automatically when the
     // app uses hosted auth, so `.env.prod` is the single source of truth: fill a value and redeploy — NO
     // `--secret` re-declare / re-productionize needed.
     if (!hasGoogle || !hasEmail) {
-      out.push('These optional provider vars are already wired into the data-plane (P34) — you do **not** need to re-declare them. Just add the value(s) to `app/.env.prod` and redeploy:');
+      out.push(
+        'These optional provider vars are already wired into the data-plane (P34) — you do **not** need to re-declare them. Just add the value(s) to `app/.env.prod` and redeploy:',
+      );
       out.push('');
       out.push('```sh');
-      out.push(`# edit app/.env.prod — e.g. GOOGLE_CLIENT_ID=…  GOOGLE_CLIENT_SECRET=…  (and/or SMTP_URL=…  EMAIL_FROM=…)`);
+      out.push(
+        `# edit app/.env.prod — e.g. GOOGLE_CLIENT_ID=…  GOOGLE_CLIENT_SECRET=…  (and/or SMTP_URL=…  EMAIL_FROM=…)`,
+      );
       out.push(`./forge deploy --app ${opts.appName}`);
       out.push('```');
       out.push('');
@@ -1036,10 +1105,16 @@ export function generateProvisioningRunbook(opts: ProvisioningRunbookOptions): s
   if (usesBilling) {
     out.push('## Enabling billing (C-billing · Stripe)');
     out.push('');
-    out.push('This app uses billing. The data-plane sidecar is the tier that calls Stripe; it needs two secrets, both already wired into the data-plane (P41) — set the values in `app/.env.prod` and redeploy:');
+    out.push(
+      'This app uses billing. The data-plane sidecar is the tier that calls Stripe; it needs two secrets, both already wired into the data-plane (P41) — set the values in `app/.env.prod` and redeploy:',
+    );
     out.push('');
-    out.push(`- **\`STRIPE_SECRET_KEY\`** (\`sk_test_…\` / \`sk_live_…\`) — required for checkout + trials. Without it every checkout/trial-start returns a clean 503.${declared.has('STRIPE_SECRET_KEY') ? ' _(declared as a secret)_' : ' _(wired into the data-plane — just fill `.env.prod`)_'}`);
-    out.push(`- **\`STRIPE_WEBHOOK_SECRET\`** (\`whsec_…\`) — required for the subscription lifecycle (trial_will_end, conversion, cancellation, invoice paid/failed). Add a webhook endpoint at \`https://${opts.host}/hooks/billing/stripe\` and copy its signing secret.${declared.has('STRIPE_WEBHOOK_SECRET') ? ' _(declared as a secret)_' : ' _(wired into the data-plane — just fill `.env.prod`)_'}`);
+    out.push(
+      `- **\`STRIPE_SECRET_KEY\`** (\`sk_test_…\` / \`sk_live_…\`) — required for checkout + trials. Without it every checkout/trial-start returns a clean 503.${declared.has('STRIPE_SECRET_KEY') ? ' _(declared as a secret)_' : ' _(wired into the data-plane — just fill `.env.prod`)_'}`,
+    );
+    out.push(
+      `- **\`STRIPE_WEBHOOK_SECRET\`** (\`whsec_…\`) — required for the subscription lifecycle (trial_will_end, conversion, cancellation, invoice paid/failed). Add a webhook endpoint at \`https://${opts.host}/hooks/billing/stripe\` and copy its signing secret.${declared.has('STRIPE_WEBHOOK_SECRET') ? ' _(declared as a secret)_' : ' _(wired into the data-plane — just fill `.env.prod`)_'}`,
+    );
     out.push('');
     out.push('```sh');
     out.push('# edit app/.env.prod — STRIPE_SECRET_KEY=sk_test_…  STRIPE_WEBHOOK_SECRET=whsec_…');
@@ -1051,9 +1126,13 @@ export function generateProvisioningRunbook(opts: ProvisioningRunbookOptions): s
   if (opts.withJobs) {
     out.push('## Scheduled jobs (C2) + the cron service token (P36)');
     out.push('');
-    out.push(`\`${JOBS_FILE}\` is mounted into the data-plane sidecar and registered on boot — no env needed.`);
+    out.push(
+      `\`${JOBS_FILE}\` is mounted into the data-plane sidecar and registered on boot — no env needed.`,
+    );
     out.push('');
-    out.push('**The cron fire is authenticated.** The C2 scheduler calls each job back at `POST /api/cron/*` presenting `AUTH_SERVICE_TOKEN` as **both** an `Authorization: Bearer <token>` header **and** an `x-forge-service-token: <token>` header. Because Traefik routes all `/api/*` **publicly**, the app **must** gate `/api/cron/*` on this token (constant-time compare) — otherwise the endpoints are open. `productionize` makes `AUTH_SERVICE_TOKEN` **deploy-required** whenever jobs are declared, so a missing token **fails the deploy** rather than silently firing unauthenticated. Set it in `app/.env.prod` (`openssl rand -hex 32`).');
+    out.push(
+      '**The cron fire is authenticated.** The C2 scheduler calls each job back at `POST /api/cron/*` presenting `AUTH_SERVICE_TOKEN` as **both** an `Authorization: Bearer <token>` header **and** an `x-forge-service-token: <token>` header. Because Traefik routes all `/api/*` **publicly**, the app **must** gate `/api/cron/*` on this token (constant-time compare) — otherwise the endpoints are open. `productionize` makes `AUTH_SERVICE_TOKEN` **deploy-required** whenever jobs are declared, so a missing token **fails the deploy** rather than silently firing unauthenticated. Set it in `app/.env.prod` (`openssl rand -hex 32`).',
+    );
     out.push('');
   }
 

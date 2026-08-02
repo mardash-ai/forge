@@ -43,8 +43,15 @@ export async function ensureNotificationSchema(pool: Pool): Promise<void> {
 const toOwnerCol = (owner: string | undefined): string => owner ?? '';
 
 interface NotifRow {
-  owner: string; key: string; title: string; body: string | null; data: unknown; subject: string | null;
-  dismissed: boolean; created_at: string; updated_at: string;
+  owner: string;
+  key: string;
+  title: string;
+  body: string | null;
+  data: unknown;
+  subject: string | null;
+  dismissed: boolean;
+  created_at: string;
+  updated_at: string;
 }
 function rowToNotification(r: NotifRow): Notification {
   return {
@@ -71,7 +78,16 @@ const UPSERT_SQL = `
   RETURNING owner, key, title, body, data, subject, dismissed, created_at, updated_at`;
 
 function upsertParams(appId: string, input: NotificationUpsertInput, now: string): unknown[] {
-  return [appId, toOwnerCol(input.owner), input.key, input.title, input.body ?? null, JSON.stringify(input.data ?? {}), input.subject ?? null, now];
+  return [
+    appId,
+    toOwnerCol(input.owner),
+    input.key,
+    input.title,
+    input.body ?? null,
+    JSON.stringify(input.data ?? {}),
+    input.subject ?? null,
+    now,
+  ];
 }
 
 export class PgNotificationBackend implements NotificationBackend, MigratableNotificationBackend {
@@ -85,7 +101,11 @@ export class PgNotificationBackend implements NotificationBackend, MigratableNot
       await client.query('COMMIT');
       return out;
     } catch (e) {
-      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
       throw e;
     } finally {
       client.release();
@@ -162,7 +182,18 @@ export class PgNotificationBackend implements NotificationBackend, MigratableNot
         await c.query(
           `INSERT INTO forge_notifications (app_id, owner, key, title, body, data, subject, dismissed, created_at, updated_at, group_id, visibility)
            VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10, NULL, 'private')`,
-          [appId, toOwnerCol(n.owner), n.key, n.title, n.body ?? null, JSON.stringify(n.data ?? {}), n.subject ?? null, n.dismissed, n.created_at, n.updated_at],
+          [
+            appId,
+            toOwnerCol(n.owner),
+            n.key,
+            n.title,
+            n.body ?? null,
+            JSON.stringify(n.data ?? {}),
+            n.subject ?? null,
+            n.dismissed,
+            n.created_at,
+            n.updated_at,
+          ],
         );
       }
     });
@@ -172,8 +203,10 @@ export class PgNotificationBackend implements NotificationBackend, MigratableNot
     await this.pool.query('TRUNCATE forge_notifications');
   }
   async deleteByOwner(appId: string, owner: string): Promise<number> {
-    const r = await this.pool.query('DELETE FROM forge_notifications WHERE app_id=$1 AND owner=$2', [appId, owner]);
+    const r = await this.pool.query('DELETE FROM forge_notifications WHERE app_id=$1 AND owner=$2', [
+      appId,
+      owner,
+    ]);
     return r.rowCount ?? 0;
   }
-
 }

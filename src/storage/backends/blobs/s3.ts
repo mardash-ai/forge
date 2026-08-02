@@ -36,8 +36,14 @@ export async function ensureBlobSchema(pool: Pool): Promise<void> {
 }
 
 interface BlobRow {
-  blob_id: string; owner: string; content_type: string; size: string; checksum: string;
-  filename: string | null; attrs: unknown; created_at: string;
+  blob_id: string;
+  owner: string;
+  content_type: string;
+  size: string;
+  checksum: string;
+  filename: string | null;
+  attrs: unknown;
+  created_at: string;
 }
 function rowToMeta(r: BlobRow): BlobMetadata {
   return {
@@ -63,7 +69,10 @@ async function toBuffer(stream: Readable): Promise<Buffer> {
 export class S3BlobBackend implements BlobBackend, MigratableBlobBackend {
   private locks = new Map<string, Promise<unknown>>();
 
-  constructor(private readonly pool: Pool, private readonly s3: S3Client) {}
+  constructor(
+    private readonly pool: Pool,
+    private readonly s3: S3Client,
+  ) {}
 
   private withLock<T>(appId: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.locks.get(appId) ?? Promise.resolve();
@@ -111,7 +120,12 @@ export class S3BlobBackend implements BlobBackend, MigratableBlobBackend {
     return this.ownerUsage(appId, owner);
   }
 
-  async commit(appId: string, tmpPath: string, meta: BlobMetadata, config: BlobConfig): Promise<CommitResult> {
+  async commit(
+    appId: string,
+    tmpPath: string,
+    meta: BlobMetadata,
+    config: BlobConfig,
+  ): Promise<CommitResult> {
     return this.withLock(appId, async () => {
       const usage = await this.ownerUsage(appId, meta.owner);
       if (usage.count + 1 > config.quotaObjects) {
@@ -129,7 +143,17 @@ export class S3BlobBackend implements BlobBackend, MigratableBlobBackend {
         await this.pool.query(
           `INSERT INTO forge_blobs (app_id, blob_id, owner, content_type, size, checksum, filename, attrs, created_at, group_id, visibility)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9, NULL, 'private')`,
-          [appId, meta.blob_id, meta.owner, meta.content_type, meta.size, meta.checksum, meta.filename ?? null, meta.attrs != null ? JSON.stringify(meta.attrs) : null, meta.created_at],
+          [
+            appId,
+            meta.blob_id,
+            meta.owner,
+            meta.content_type,
+            meta.size,
+            meta.checksum,
+            meta.filename ?? null,
+            meta.attrs != null ? JSON.stringify(meta.attrs) : null,
+            meta.created_at,
+          ],
         );
       } catch (err) {
         // Metadata could not be persisted → remove the just-PUT object so nothing is orphaned.
@@ -154,10 +178,11 @@ export class S3BlobBackend implements BlobBackend, MigratableBlobBackend {
     return this.withLock(appId, async () => {
       // Metadata first (instantly unreachable), then the object — a crash between leaves an orphan object
       // with no dangling metadata, the safe direction (same as the FS backend).
-      const r = await this.pool.query(
-        'DELETE FROM forge_blobs WHERE app_id=$1 AND owner=$2 AND blob_id=$3',
-        [appId, owner, blobId],
-      );
+      const r = await this.pool.query('DELETE FROM forge_blobs WHERE app_id=$1 AND owner=$2 AND blob_id=$3', [
+        appId,
+        owner,
+        blobId,
+      ]);
       if ((r.rowCount ?? 0) === 0) return false;
       await this.s3.deleteObject(this.key(appId, blobId)).catch(() => undefined);
       return true;
@@ -206,7 +231,17 @@ export class S3BlobBackend implements BlobBackend, MigratableBlobBackend {
        ON CONFLICT (app_id, blob_id) DO UPDATE SET
          owner=EXCLUDED.owner, content_type=EXCLUDED.content_type, size=EXCLUDED.size, checksum=EXCLUDED.checksum,
          filename=EXCLUDED.filename, attrs=EXCLUDED.attrs, created_at=EXCLUDED.created_at`,
-      [appId, meta.blob_id, meta.owner, meta.content_type, meta.size, meta.checksum, meta.filename ?? null, meta.attrs != null ? JSON.stringify(meta.attrs) : null, meta.created_at],
+      [
+        appId,
+        meta.blob_id,
+        meta.owner,
+        meta.content_type,
+        meta.size,
+        meta.checksum,
+        meta.filename ?? null,
+        meta.attrs != null ? JSON.stringify(meta.attrs) : null,
+        meta.created_at,
+      ],
     );
   }
 

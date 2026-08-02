@@ -36,7 +36,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  const restore = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
+  const restore = (k: string, v: string | undefined) =>
+    v === undefined ? delete process.env[k] : (process.env[k] = v);
   restore('FORGE_WORKSPACE', prevWorkspace);
   restore('FORGE_STATE_DIR', prevState);
   restore('FORGE_APP_LAYOUT', prevLayout);
@@ -73,9 +74,18 @@ describe('P19 · resolveAppLenient — deploy-time app resolution (store record 
     await writeManifest('forge-os');
     const now = nowIso();
     const app: Application = {
-      id: 'app_forgeos', type: 'Application', app_id: 'app_forgeos', created_at: now, updated_at: now,
-      name: 'forge-os', repo_path: '/srv/forge-os', platform: 'web', framework: 'nextjs',
-      template: 'nextjs-web', language: 'typescript', package_manager: 'npm',
+      id: 'app_forgeos',
+      type: 'Application',
+      app_id: 'app_forgeos',
+      created_at: now,
+      updated_at: now,
+      name: 'forge-os',
+      repo_path: '/srv/forge-os',
+      platform: 'web',
+      framework: 'nextjs',
+      template: 'nextjs-web',
+      language: 'typescript',
+      package_manager: 'npm',
     };
     await store.saveResource(app);
 

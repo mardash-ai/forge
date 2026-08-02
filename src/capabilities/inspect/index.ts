@@ -8,7 +8,12 @@ import { appRefInput, resolveApp, baseResource } from '../_shared';
 import { listSecretNames } from '../../plugins/secrets-local/index';
 import type { ScheduledJob, AgentTask, EmailDelivery } from '../../resources/types';
 import { httpStatusFor } from '../../shared/health';
-import { resolveAppBase, resolveReadinessPath, probeHealth, HEALTH_TIMEOUT_MS } from '../../shared/health-probe';
+import {
+  resolveAppBase,
+  resolveReadinessPath,
+  probeHealth,
+  HEALTH_TIMEOUT_MS,
+} from '../../shared/health-probe';
 import { resolveAuthConfig, redactEmail } from '../../plugins/auth-identity/index';
 import { resolveEmailConfig } from '../../plugins/email-smtp/index';
 import * as authStore from '../../plugins/auth-identity/store';
@@ -16,7 +21,22 @@ import * as authStore from '../../plugins/auth-identity/store';
 const inputSchema = z.object({
   ...appRefInput,
   type: z
-    .enum(['app', 'resources', 'events', 'app-events', 'notifications', 'routes', 'scripts', 'docker', 'secrets', 'jobs', 'agent-runs', 'email', 'auth', 'health'])
+    .enum([
+      'app',
+      'resources',
+      'events',
+      'app-events',
+      'notifications',
+      'routes',
+      'scripts',
+      'docker',
+      'secrets',
+      'jobs',
+      'agent-runs',
+      'email',
+      'auth',
+      'health',
+    ])
     .default('app'),
   // Owner (C11) — an opaque per-user id. When set, the owner-scoped views (`app-events`,
   // `notifications`, `agent-runs`) return ONLY that owner's records; omitted = app-scoped (all
@@ -49,7 +69,10 @@ function fileToRoute(rel: string): { route: string; kind: 'page' | 'api' } | nul
   const norm = rel.replace(/\\/g, '/');
   const m = norm.match(/^app\/(.*\/)?(route|page)\.(tsx?|jsx?)$/);
   if (!m) return null;
-  const segs = (m[1] ?? '').split('/').filter(Boolean).filter((s) => !/^\(.*\)$/.test(s));
+  const segs = (m[1] ?? '')
+    .split('/')
+    .filter(Boolean)
+    .filter((s) => !/^\(.*\)$/.test(s));
   const route = '/' + segs.join('/');
   return { route: route === '/' ? '/' : route.replace(/\/$/, ''), kind: m[2] === 'route' ? 'api' : 'page' };
 }
@@ -59,7 +82,8 @@ function fileToRoute(rel: string): { route: string; kind: 'page' | 'api' } | nul
 export const inspect: Capability<Input, Inspection> = {
   name: 'Inspect',
   slug: 'inspect',
-  description: 'Return a compact structured view of an Application (app, resources, events, app-events, notifications, routes, scripts, docker, secrets, jobs, agent-runs, email, health).',
+  description:
+    'Return a compact structured view of an Application (app, resources, events, app-events, notifications, routes, scripts, docker, secrets, jobs, agent-runs, email, health).',
   inputSchema,
   resourceType: 'Inspection',
   events: ['InspectionCreated'],
@@ -127,8 +151,18 @@ export const inspect: Capability<Input, Inspection> = {
       case 'notifications': {
         // The app's derived notifications (C4) — active + dismissed. Owner-scoped (C11) when an
         // owner is supplied: only that user's notifications.
-        const notes = await ctx.store.listNotifications(app.id, { includeDismissed: true, owner: input.owner });
-        data = notes.map((n) => ({ key: n.key, title: n.title, subject: n.subject, owner: n.owner, dismissed: n.dismissed, at: n.updated_at }));
+        const notes = await ctx.store.listNotifications(app.id, {
+          includeDismissed: true,
+          owner: input.owner,
+        });
+        data = notes.map((n) => ({
+          key: n.key,
+          title: n.title,
+          subject: n.subject,
+          owner: n.owner,
+          dismissed: n.dismissed,
+          at: n.updated_at,
+        }));
         const active = notes.filter((n) => !n.dismissed).length;
         const scope = input.owner ? ` (owner ${input.owner})` : '';
         summary = `${active} active notification(s) for ${app.name}${scope}${notes.length > active ? ` (+${notes.length - active} dismissed)` : ''}.`;
@@ -166,7 +200,10 @@ export const inspect: Capability<Input, Inspection> = {
         break;
       }
       case 'jobs': {
-        const jobs = (await ctx.store.listResources({ type: 'ScheduledJob', app_id: app.id })) as ScheduledJob[];
+        const jobs = (await ctx.store.listResources({
+          type: 'ScheduledJob',
+          app_id: app.id,
+        })) as ScheduledJob[];
         data = jobs.map((j) => ({
           name: j.name,
           schedule: j.schedule,
@@ -184,7 +221,11 @@ export const inspect: Capability<Input, Inspection> = {
       case 'agent-runs': {
         // Durable agent-run records (C1) — every model invocation, success AND failure. Owner-scoped
         // (C11) when an owner is supplied: only that user's runs.
-        const runs = (await ctx.store.listResources({ type: 'AgentTask', app_id: app.id, owner: input.owner })) as AgentTask[];
+        const runs = (await ctx.store.listResources({
+          type: 'AgentTask',
+          app_id: app.id,
+          owner: input.owner,
+        })) as AgentTask[];
         data = runs.map((r) => ({
           id: r.id,
           label: r.label,
@@ -205,7 +246,10 @@ export const inspect: Capability<Input, Inspection> = {
       case 'email': {
         // Durable transactional-email records (C12) — every attempted send, success AND failure.
         // Shows the REDACTED recipient + subject + status only (no body/creds are ever stored).
-        const deliveries = (await ctx.store.listResources({ type: 'EmailDelivery', app_id: app.id })) as EmailDelivery[];
+        const deliveries = (await ctx.store.listResources({
+          type: 'EmailDelivery',
+          app_id: app.id,
+        })) as EmailDelivery[];
         data = deliveries.map((d) => ({
           id: d.id,
           to: d.to,
@@ -269,7 +313,11 @@ export const inspect: Capability<Input, Inspection> = {
         const servicesBlock = compose.split(/^services:$/m)[1]?.split(/^\S/m)[0] ?? '';
         const services = [...servicesBlock.matchAll(/^ {2}([a-z0-9_-]+):$/gim)].map((m) => m[1]);
         const provisioned = compose.length > 0;
-        data = { provisioned, services, compose_file: provisioned ? path.join(app.repo_path, 'compose.yaml') : null };
+        data = {
+          provisioned,
+          services,
+          compose_file: provisioned ? path.join(app.repo_path, 'compose.yaml') : null,
+        };
         summary = provisioned
           ? `Provisioned. Services: ${services.join(', ')}.`
           : 'Not provisioned yet. Run: forge provision --app ' + app.name;
@@ -306,7 +354,9 @@ export const inspect: Capability<Input, Inspection> = {
             checks: h.checks,
             ...(conventionOk
               ? {}
-              : { convention_warning: `HTTP ${probe.httpStatus} but status '${h.status}' implies HTTP ${expected} (200/503 convention)` }),
+              : {
+                  convention_warning: `HTTP ${probe.httpStatus} but status '${h.status}' implies HTTP ${expected} (200/503 convention)`,
+                }),
           };
           const failed = h.checks.filter((c) => c.status === 'unavailable').map((c) => c.name);
           summary =
@@ -314,7 +364,14 @@ export const inspect: Capability<Input, Inspection> = {
             (failed.length ? `, down: ${failed.join(', ')}` : '') +
             (conventionOk ? '' : ' [convention mismatch]');
         } else {
-          data = { url, reachable: true, http_status: probe.httpStatus, conforms: false, error: probe.parseError, body_preview: probe.bodyPreview };
+          data = {
+            url,
+            reachable: true,
+            http_status: probe.httpStatus,
+            conforms: false,
+            error: probe.parseError,
+            body_preview: probe.bodyPreview,
+          };
           summary = `${app.name} health endpoint reachable (HTTP ${probe.httpStatus}) but does not conform to the standard schema — ${probe.parseError}.`;
         }
         break;

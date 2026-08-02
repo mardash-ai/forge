@@ -53,7 +53,11 @@ export function computeStatus(
     components.push({ name: web, state: 'down', detail: 'health endpoint unreachable' });
   } else if (!probe.conforms || !probe.health) {
     overall = 'degraded';
-    components.push({ name: web, state: 'unknown', detail: 'health endpoint did not return the standard schema' });
+    components.push({
+      name: web,
+      state: 'unknown',
+      detail: 'health endpoint did not return the standard schema',
+    });
   } else {
     const h = probe.health;
     components.push({ name: web, state: 'operational' });

@@ -50,7 +50,13 @@ describe('forge.infra.json schema — the rules are in the schema, not in memory
   });
 
   it('rejects a NON-foundation stack without required_platform_contract (§3.5)', () => {
-    const bad = { ...FOUNDATION, kind: 'service', org_id: undefined, billing_account: undefined, folder: undefined };
+    const bad = {
+      ...FOUNDATION,
+      kind: 'service',
+      org_id: undefined,
+      billing_account: undefined,
+      folder: undefined,
+    };
     expect(() => infraConfigSchema.parse(bad)).toThrow(/required_platform_contract/);
   });
 
@@ -111,7 +117,7 @@ describe('§3.5 contract publication', () => {
   });
 });
 
-  async function runInfra(args: string[], cwd: string, env: Record<string, string | undefined> = {}) {
+async function runInfra(args: string[], cwd: string, env: Record<string, string | undefined> = {}) {
   return new Promise<{ code: number; out: string }>((resolve) => {
     const p = spawn('npx', ['tsx', join(__dirname, '..', 'src', 'infra', 'cli.ts'), ...args], {
       cwd,
@@ -163,7 +169,6 @@ describe('bootstrap role curation', () => {
 });
 
 describe('§3.6 guard — apply is CI-only (subprocess, the real thing)', () => {
-
   it('refuses `apply` locally without BOTH --local and --allow-local-apply, and never half of it', async () => {
     const repo = join(dir, 'guard-repo');
     await mkdir(join(repo, 'infra'), { recursive: true });
@@ -211,7 +216,9 @@ describe('serverless app-callback (I1 cutover fix)', () => {
   const KEYS = ['FORGE_APP_CALLBACK_URL', 'FORGE_APP_CALLBACK_HOST', 'FORGE_APP_CALLBACK_PORT'];
   const saved: Record<string, string | undefined> = {};
   beforeAll(() => KEYS.forEach((k) => (saved[k] = process.env[k])));
-  afterAll(() => KEYS.forEach((k) => (saved[k] === undefined ? delete process.env[k] : (process.env[k] = saved[k]!))));
+  afterAll(() =>
+    KEYS.forEach((k) => (saved[k] === undefined ? delete process.env[k] : (process.env[k] = saved[k]!))),
+  );
 
   it('prefers a full FORGE_APP_CALLBACK_URL over the compose host+port form', async () => {
     const { appCallbackBase } = await import('../src/shared/app-callback');
@@ -255,32 +262,58 @@ describe('§3.3 code-plane behaviour gate — Ready is not working', () => {
 
     // these make a real request
     expect(isBehaviourCheck(parse({ kind: 'http', url: 'https://api.dorinda.ai/api/health' }))).toBe(true);
-    expect(isBehaviourCheck(parse({ kind: 'certless_discovery', url: 'https://mcp.dorinda.ai/.well-known/x' }))).toBe(true);
+    expect(
+      isBehaviourCheck(parse({ kind: 'certless_discovery', url: 'https://mcp.dorinda.ai/.well-known/x' })),
+    ).toBe(true);
     expect(isBehaviourCheck(parse({ kind: 'command', run: './scripts/verify-mcp-edge.sh' }))).toBe(true);
 
     // a placeholder must not satisfy the gate it stands in for — this exact stub was live in dorinda-api
-    expect(isBehaviourCheck(parse({ kind: 'command', run: 'true # TODO at cutover: promote verify-mcp-edge.sh' }))).toBe(false);
+    expect(
+      isBehaviourCheck(parse({ kind: 'command', run: 'true # TODO at cutover: promote verify-mcp-edge.sh' })),
+    ).toBe(false);
     expect(isBehaviourCheck(parse({ kind: 'command', run: ':' }))).toBe(false);
   });
 
   it('needs terraform outputs ONLY for the pre-DNS-cutover check forms', async () => {
     const { checksNeedOutputs } = await import('../src/infra/verify');
     const mk = (verify: unknown[]) => ({
-      root: dir, tfDir: dir, config: infraConfigSchema.parse({ ...FOUNDATION, verify }),
+      root: dir,
+      tfDir: dir,
+      config: infraConfigSchema.parse({ ...FOUNDATION, verify }),
     });
     // the shape the code plane ships with: plain public-DNS checks, no terraform required
-    expect(checksNeedOutputs(mk([
-      { kind: 'http', url: 'https://api.dorinda.ai/api/health/deep' },
-      { kind: 'command', run: './scripts/verify-mcp-edge.sh' },
-      { kind: 'cloud_run_ready', service: 'dorinda-api' },
-    ]))).toBe(false);
+    expect(
+      checksNeedOutputs(
+        mk([
+          { kind: 'http', url: 'https://api.dorinda.ai/api/health/deep' },
+          { kind: 'command', run: './scripts/verify-mcp-edge.sh' },
+          { kind: 'cloud_run_ready', service: 'dorinda-api' },
+        ]),
+      ),
+    ).toBe(false);
     // pinned-IP forms genuinely need an output
-    expect(checksNeedOutputs(mk([
-      { kind: 'http', url: 'https://api.dorinda.ai/api/health', resolve_to_output: 'main_ip_from_contract' },
-    ]))).toBe(true);
-    expect(checksNeedOutputs(mk([
-      { kind: 'certless_discovery', url: 'https://mcp.dorinda.ai/.well-known/x', resolve_to_output: 'mcp_ip' },
-    ]))).toBe(true);
+    expect(
+      checksNeedOutputs(
+        mk([
+          {
+            kind: 'http',
+            url: 'https://api.dorinda.ai/api/health',
+            resolve_to_output: 'main_ip_from_contract',
+          },
+        ]),
+      ),
+    ).toBe(true);
+    expect(
+      checksNeedOutputs(
+        mk([
+          {
+            kind: 'certless_discovery',
+            url: 'https://mcp.dorinda.ai/.well-known/x',
+            resolve_to_output: 'mcp_ip',
+          },
+        ]),
+      ),
+    ).toBe(true);
   });
 
   it('runs a command check from the REPO ROOT, not the process cwd', async () => {
@@ -339,10 +372,15 @@ describe('verify http — warm-up tolerance (2026-07-31 acceptance finding F-7)'
     // a deploy that was healthy two minutes later. A gate that cries wolf gets re-run unread.
     const { __setFetchViaForTest, runVerifyCheckForTest } = await import('../src/infra/verify');
     let n = 0;
-    __setFetchViaForTest(async () => (++n < 3 ? { status: 503, body: '' } : { status: 200, body: '"ok":true' }));
+    __setFetchViaForTest(async () =>
+      ++n < 3 ? { status: 503, body: '' } : { status: 200, body: '"ok":true' },
+    );
     const r = await runVerifyCheckForTest({
-      kind: 'http', url: 'https://x/api/health/deep', expect_status: 200,
-      expect_body: '"ok":true', warmup_seconds: 30,
+      kind: 'http',
+      url: 'https://x/api/health/deep',
+      expect_status: 200,
+      expect_body: '"ok":true',
+      warmup_seconds: 30,
     });
     expect(r.status).toBe('pass');
     expect(r.detail).toContain('attempts');
@@ -353,7 +391,10 @@ describe('verify http — warm-up tolerance (2026-07-31 acceptance finding F-7)'
     const { __setFetchViaForTest, runVerifyCheckForTest } = await import('../src/infra/verify');
     __setFetchViaForTest(async () => ({ status: 500, body: '' }));
     const r = await runVerifyCheckForTest({
-      kind: 'http', url: 'https://x/api/health/deep', expect_status: 200, warmup_seconds: 0,
+      kind: 'http',
+      url: 'https://x/api/health/deep',
+      expect_status: 200,
+      warmup_seconds: 0,
     });
     expect(r.status).toBe('fail');
     expect(r.detail).toContain('got 500');

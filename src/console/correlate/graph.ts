@@ -147,13 +147,9 @@ export function buildServiceGraph(input: CorrelateInput): ServiceGraph {
   for (const repo of input.repos) {
     const short = repo.split('/').pop() ?? repo;
     if (runtimeNames.has(short)) {
-      bind(
-        short,
-        'repo',
-        { env: 'prod-a', external_id: repo, display: repo },
-        0.9,
-        [ev('repo-name-eq-service', `repo "${short}" matches the runtime name`, 0.9)],
-      );
+      bind(short, 'repo', { env: 'prod-a', external_id: repo, display: repo }, 0.9, [
+        ev('repo-name-eq-service', `repo "${short}" matches the runtime name`, 0.9),
+      ]);
     }
   }
 
@@ -164,13 +160,9 @@ export function buildServiceGraph(input: CorrelateInput): ServiceGraph {
       ? short
       : [...runtimeNames].find((n) => p.path.includes(n) || p.name.includes(n));
     if (target) {
-      bind(
-        target,
-        'pipeline',
-        { env: 'prod-a', external_id: p.id, display: `${short}/${p.name}` },
-        0.8,
-        [ev('pipeline-repo-match', `workflow "${p.name}" in ${p.repo}`, 0.8)],
-      );
+      bind(target, 'pipeline', { env: 'prod-a', external_id: p.id, display: `${short}/${p.name}` }, 0.8, [
+        ev('pipeline-repo-match', `workflow "${p.name}" in ${p.repo}`, 0.8),
+      ]);
     }
   }
 
@@ -214,7 +206,13 @@ export function buildServiceGraph(input: CorrelateInput): ServiceGraph {
   // like a secret matched on a name prefix, carries its own confidence on the binding and must not
   // drag the service down: reporting dorinda-api at 0.6 when its runtime, backend and host are all
   // certain would make every service look uncertain and teach you to ignore the number.
-  const IDENTITY: ReadonlySet<BindingKind> = new Set<BindingKind>(['runtime', 'repo', 'backend', 'host', 'image_repo']);
+  const IDENTITY: ReadonlySet<BindingKind> = new Set<BindingKind>([
+    'runtime',
+    'repo',
+    'backend',
+    'host',
+    'image_repo',
+  ]);
   for (const s of services.values()) {
     const identity = s.bindings.filter((b) => IDENTITY.has(b.kind));
     s.confidence = (identity.length ? identity : s.bindings).reduce((m, b) => Math.min(m, b.confidence), 1);

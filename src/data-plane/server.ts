@@ -97,7 +97,11 @@ app.post('/capabilities/:slug', async (req, reply) => {
   const { slug } = req.params as { slug: string };
   if (!DATA_PLANE_SLUGS.has(slug)) {
     return reply.status(404).send({
-      error: { code: 'not_found', message: `Capability "${slug}" is not served by the data plane (control-plane only).`, retry: 'change-input' },
+      error: {
+        code: 'not_found',
+        message: `Capability "${slug}" is not served by the data plane (control-plane only).`,
+        retry: 'change-input',
+      },
     });
   }
   const actor = actorFromHeaders(req.headers as Record<string, unknown>);
@@ -108,26 +112,38 @@ app.post('/capabilities/:slug', async (req, reply) => {
 // Read surfaces (state + facts) — safe in production.
 app.get('/resources', async (req) => {
   const q = req.query as { type?: string; app_id?: string; owner?: string };
-  const type = q.type && (RESOURCE_TYPES as readonly string[]).includes(q.type) ? (q.type as ResourceType) : undefined;
+  const type =
+    q.type && (RESOURCE_TYPES as readonly string[]).includes(q.type) ? (q.type as ResourceType) : undefined;
   // `owner` (C11) scopes per-user resources (e.g. C1 agent-runs) to one user; omitted = app-scoped.
   return { resources: await store.listResources({ type, app_id: q.app_id, owner: q.owner }) };
 });
 app.get('/resources/:id', async (req, reply) => {
   const { id } = req.params as { id: string };
   const r = await store.findResourceById(id);
-  if (!r) return reply.status(404).send({ error: { code: 'not_found', message: `No resource "${id}".`, retry: 'change-input' } });
+  if (!r)
+    return reply
+      .status(404)
+      .send({ error: { code: 'not_found', message: `No resource "${id}".`, retry: 'change-input' } });
   return { resource: r };
 });
 app.get('/events', async (req) => {
   const q = req.query as { app_id?: string; resource_id?: string; limit?: string };
-  return { events: await store.listEvents({ app_id: q.app_id, resource_id: q.resource_id, limit: q.limit ? Number(q.limit) : 50 }) };
+  return {
+    events: await store.listEvents({
+      app_id: q.app_id,
+      resource_id: q.resource_id,
+      limit: q.limit ? Number(q.limit) : 50,
+    }),
+  };
 });
 app.get('/logs/:resourceId', async (req, reply) => {
   const { resourceId } = req.params as { resourceId: string };
   try {
     return reply.type('text/plain').send(await readFile(logPath(resourceId), 'utf8'));
   } catch {
-    return reply.status(404).send({ error: { code: 'not_found', message: `No log for "${resourceId}".`, retry: 'change-input' } });
+    return reply
+      .status(404)
+      .send({ error: { code: 'not_found', message: `No log for "${resourceId}".`, retry: 'change-input' } });
   }
 });
 
@@ -220,9 +236,18 @@ async function ensureApp(name: string): Promise<Application> {
   const id = process.env.FORGE_APP_ID ?? newResourceId('Application');
   const now = nowIso();
   const resource: Application = {
-    id, type: 'Application', app_id: id, created_at: now, updated_at: now,
-    name, repo_path: process.env.FORGE_APP_REPO_PATH ?? '/app',
-    platform: 'web', framework: 'nextjs', template: 'nextjs-web', language: 'typescript', package_manager: 'npm',
+    id,
+    type: 'Application',
+    app_id: id,
+    created_at: now,
+    updated_at: now,
+    name,
+    repo_path: process.env.FORGE_APP_REPO_PATH ?? '/app',
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   };
   await store.saveResource(resource);
   return resource;
@@ -243,11 +268,19 @@ async function loadJobsFile(appName: string): Promise<number> {
   let n = 0;
   for (const j of jobs) {
     try {
-      await executeCapability('schedule-job', { app: appName, ...(j as Record<string, unknown>) }, SYSTEM_ACTOR);
+      await executeCapability(
+        'schedule-job',
+        { app: appName, ...(j as Record<string, unknown>) },
+        SYSTEM_ACTOR,
+      );
       n++;
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.error('data-plane: failed to register job', (j as { name?: string })?.name, String((e as Error)?.message ?? e));
+      console.error(
+        'data-plane: failed to register job',
+        (j as { name?: string })?.name,
+        String((e as Error)?.message ?? e),
+      );
     }
   }
   return n;
@@ -276,7 +309,9 @@ async function main() {
   // per-app uptime history the status page renders. No-op when disabled.
   startHealthSampler(store, { planeLabel: 'Forge data plane' });
   // eslint-disable-next-line no-console
-  console.log(`forge data-plane listening on http://0.0.0.0:${port} (app=${appName}, jobs=${loaded}, store ${backends.describe()}, otel=${otelOn ? 'on' : 'off'})`);
+  console.log(
+    `forge data-plane listening on http://0.0.0.0:${port} (app=${appName}, jobs=${loaded}, store ${backends.describe()}, otel=${otelOn ? 'on' : 'off'})`,
+  );
 }
 
 main().catch((err) => {

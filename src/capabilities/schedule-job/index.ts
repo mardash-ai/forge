@@ -9,7 +9,10 @@ import { IMPLEMENTATION } from '../../plugins/scheduler-node/index';
 
 const inputSchema = z.object({
   app: z.string().min(1).describe('Application name'),
-  name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, 'job name must be kebab-case').describe('Job name, unique per app'),
+  name: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9-]*$/, 'job name must be kebab-case')
+    .describe('Job name, unique per app'),
   target_path: z.string().startsWith('/', 'target must be an app path like /api/cron/habits').optional(),
   method: z.enum(['GET', 'POST']).default('POST'),
   // Exactly one of these (unless --remove):
@@ -27,7 +30,8 @@ type Input = z.infer<typeof inputSchema>;
 export const scheduleJob: Capability<Input, ScheduledJob> = {
   name: 'ScheduleJob',
   slug: 'schedule-job',
-  description: 'Register or remove a durable scheduled job (recurring cron/interval or one-shot) that calls back into the app.',
+  description:
+    'Register or remove a durable scheduled job (recurring cron/interval or one-shot) that calls back into the app.',
   inputSchema,
   resourceType: 'ScheduledJob',
   events: ['JobScheduled', 'JobUnscheduled'],
@@ -41,7 +45,8 @@ export const scheduleJob: Capability<Input, ScheduledJob> = {
     ) as ScheduledJob | undefined;
 
     if (input.remove) {
-      if (!existing) throw notFound(`No scheduled job "${input.name}" for app "${input.app}".`, { name: input.name });
+      if (!existing)
+        throw notFound(`No scheduled job "${input.name}" for app "${input.app}".`, { name: input.name });
       await ctx.store.deleteResource('ScheduledJob', existing.id);
       await ctx.emit({
         type: 'JobUnscheduled',
@@ -60,7 +65,10 @@ export const scheduleJob: Capability<Input, ScheduledJob> = {
     // Validate the schedule and seed the first fire time.
     const canonical = toCanonical(input);
     const next = nextRun(parseSchedule(canonical), new Date());
-    if (!next) throw invalidInput('Schedule is already in the past — nothing would ever run.', { schedule: canonical });
+    if (!next)
+      throw invalidInput('Schedule is already in the past — nothing would ever run.', {
+        schedule: canonical,
+      });
 
     const resource: ScheduledJob = {
       ...(existing ?? baseResource('ScheduledJob', app.id)),
@@ -83,7 +91,12 @@ export const scheduleJob: Capability<Input, ScheduledJob> = {
       resource_type: 'ScheduledJob',
       resource_id: resource.id,
       app_id: app.id,
-      data: { name: input.name, schedule: canonical, target: resource.target, implementation: IMPLEMENTATION },
+      data: {
+        name: input.name,
+        schedule: canonical,
+        target: resource.target,
+        implementation: IMPLEMENTATION,
+      },
     });
 
     return resource;

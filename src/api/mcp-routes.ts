@@ -11,7 +11,16 @@ import { hasValidServiceToken } from '../shared/service-auth';
 import { verifyAccessTokenDetailed, bearerFrom, type VerifiedToken } from '../mcp/verify';
 import { scopesSatisfy } from '../mcp/oauth';
 import type { ToolRegistration, ToolFamily } from '../mcp/types';
-import { startSpan, traceparent, parentFromTraceparent, capPayload, ATTR, mcpLog, recordToolCallMetric, recordMcpRegistrationMetric } from '../plugins/otel/index';
+import {
+  startSpan,
+  traceparent,
+  parentFromTraceparent,
+  capPayload,
+  ATTR,
+  mcpLog,
+  recordToolCallMetric,
+  recordMcpRegistrationMetric,
+} from '../plugins/otel/index';
 
 // C23 — the REMOTE MCP SERVER the platform hosts for a consuming app, plus the app-facing management
 // surface. `POST /mcp` speaks JSON-RPC 2.0 over the Streamable-HTTP transport (request/response), and
@@ -42,7 +51,13 @@ const TOOL_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const FAMILIES: ToolFamily[] = ['read', 'write', 'action'];
 
 const invalid = (message: string) => ({ error: { code: 'invalid_input', message, retry: 'change-input' } });
-const unknownApp = { error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } };
+const unknownApp = {
+  error: {
+    code: 'not_found',
+    message: 'unknown app (pass `app` or set FORGE_APP_NAME).',
+    retry: 'change-input',
+  },
+};
 
 // C36 payload capture gate — tool-call ARGUMENTS + the returned PAYLOAD are recorded on the trace as the
 // Langfuse observation input/output by default; ONLY the literal string "false" disables. Read per call so
@@ -165,13 +180,23 @@ export function toolListSubscriberCount(appId: string): number {
   return toolListSubscribers.get(appId)?.size ?? 0;
 }
 
-export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () => string | undefined } = {}): void {
-  const resolveAppId = async (req: FastifyRequest, explicit?: string): Promise<{ id: string; name: string } | null> => {
+export function registerMcpRoutes(
+  app: FastifyInstance,
+  opts: { defaultApp?: () => string | undefined } = {},
+): void {
+  const resolveAppId = async (
+    req: FastifyRequest,
+    explicit?: string,
+  ): Promise<{ id: string; name: string } | null> => {
     const n =
       (typeof explicit === 'string' && explicit.trim()) ||
-      (typeof (req.query as { app?: string })?.app === 'string' && (req.query as { app?: string }).app!.trim()) ||
-      (typeof (req.body as { app?: string })?.app === 'string' && (req.body as { app?: string }).app!.trim()) ||
-      (Array.isArray(req.headers[APP_HEADER]) ? (req.headers[APP_HEADER] as string[])[0] : (req.headers[APP_HEADER] as string | undefined)) ||
+      (typeof (req.query as { app?: string })?.app === 'string' &&
+        (req.query as { app?: string }).app!.trim()) ||
+      (typeof (req.body as { app?: string })?.app === 'string' &&
+        (req.body as { app?: string }).app!.trim()) ||
+      (Array.isArray(req.headers[APP_HEADER])
+        ? (req.headers[APP_HEADER] as string[])[0]
+        : (req.headers[APP_HEADER] as string | undefined)) ||
       opts.defaultApp?.();
     if (!n) return null;
     const a = await store.findAppByName(String(n));
@@ -188,7 +213,10 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
   function issuerBase(req: FastifyRequest): string {
     const explicit = process.env.FORGE_MCP_PUBLIC_URL || process.env.FORGE_OAUTH_PUBLIC_URL;
     if (explicit) return explicit.replace(/\/+$/, '');
-    const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]!.trim() || 'https';
+    const proto =
+      String(req.headers['x-forwarded-proto'] ?? '')
+        .split(',')[0]!
+        .trim() || 'https';
     const host = String(req.headers['x-forwarded-host'] ?? req.headers['host'] ?? 'localhost');
     return `${proto}://${host}`;
   }
@@ -206,12 +234,26 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
   // un-allowlisted host NEVER wins: we fall back to the pin (then FORGE_OAUTH_PUBLIC_URL, then — dev only —
   // the forwarded origin). Trailing slashes trimmed.
   function resourceBase(req: FastifyRequest): string {
-    const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]!.trim() || 'https';
-    const fwdHost = String(req.headers['x-forwarded-host'] ?? req.headers['host'] ?? 'localhost').split(',')[0]!.trim();
+    const proto =
+      String(req.headers['x-forwarded-proto'] ?? '')
+        .split(',')[0]!
+        .trim() || 'https';
+    const fwdHost = String(req.headers['x-forwarded-host'] ?? req.headers['host'] ?? 'localhost')
+      .split(',')[0]!
+      .trim();
     const pin = process.env.FORGE_MCP_PUBLIC_URL?.replace(/\/+$/, '');
     const allowed = new Set<string>();
-    if (pin) { try { allowed.add(new URL(pin).host); } catch { /* malformed pin — ignore */ } }
-    for (const h of (process.env.FORGE_MCP_ALT_HOSTS ?? '').split(',')) { const t = h.trim(); if (t) allowed.add(t); }
+    if (pin) {
+      try {
+        allowed.add(new URL(pin).host);
+      } catch {
+        /* malformed pin — ignore */
+      }
+    }
+    for (const h of (process.env.FORGE_MCP_ALT_HOSTS ?? '').split(',')) {
+      const t = h.trim();
+      if (t) allowed.add(t);
+    }
     if (fwdHost && allowed.has(fwdHost)) return `${proto}://${fwdHost}`;
     return pin ?? process.env.FORGE_OAUTH_PUBLIC_URL?.replace(/\/+$/, '') ?? `${proto}://${fwdHost}`;
   }
@@ -223,7 +265,12 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
   const MCP_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
   app.addHook('onSend', async (req, reply) => {
     const path = req.url.split('?')[0]!;
-    if (path === '/mcp' || path.startsWith('/mcp/') || path === '/.well-known/oauth-protected-resource' || path === '/.well-known/oauth-protected-resource/mcp') {
+    if (
+      path === '/mcp' ||
+      path.startsWith('/mcp/') ||
+      path === '/.well-known/oauth-protected-resource' ||
+      path === '/.well-known/oauth-protected-resource/mcp'
+    ) {
       reply.header('content-security-policy', MCP_CSP);
     }
   });
@@ -235,8 +282,18 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
   // compare — the same principal + verifier the C2 cron fire / C24 broker / billing admin ops present).
   // FAIL CLOSED: an app with no configured AUTH_SERVICE_TOKEN rejects. This gate is deliberately NOT on
   // `POST /mcp` (OAuth-token gated) nor the public `.well-known/oauth-protected-resource` discovery doc.
-  const needServiceToken = { error: { code: 'unauthorized', message: 'a valid x-forge-service-token is required.', retry: 'needs-human' } };
-  async function requireServiceToken(req: FastifyRequest, reply: FastifyReply, appId: string): Promise<boolean> {
+  const needServiceToken = {
+    error: {
+      code: 'unauthorized',
+      message: 'a valid x-forge-service-token is required.',
+      retry: 'needs-human',
+    },
+  };
+  async function requireServiceToken(
+    req: FastifyRequest,
+    reply: FastifyReply,
+    appId: string,
+  ): Promise<boolean> {
     if (await hasValidServiceToken(req, appId)) return true;
     reply.status(401).send(needServiceToken);
     return false;
@@ -251,7 +308,9 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
   // (verified live 2026-07-23 via the edge access log). The WWW-Authenticate pointer (POST /mcp 401 below)
   // advertises this same path-suffixed URL so discovery loops back to the canonical location.
   const protectedResourceHandler = async (req: FastifyRequest, reply: FastifyReply) =>
-    reply.status(200).send({ resource: `${resourceBase(req)}/mcp`, authorization_servers: [issuerBase(req)] });
+    reply
+      .status(200)
+      .send({ resource: `${resourceBase(req)}/mcp`, authorization_servers: [issuerBase(req)] });
   app.get('/.well-known/oauth-protected-resource', protectedResourceHandler);
   app.get('/.well-known/oauth-protected-resource/mcp', protectedResourceHandler);
 
@@ -266,7 +325,11 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     // token with no bound resource still verifies (back-compat with tokens issued before aud-binding). The
     // resource id is PER-HOST (resourceBase): a token minted for the dedicated mTLS host is accepted only on
     // that host, and the WWW-Authenticate pointer names the same host so discovery loops back consistently.
-    const { verified, reason } = await verifyAccessTokenDetailed(app_.id, bearerFrom(req.headers.authorization), `${resourceBase(req)}/mcp`);
+    const { verified, reason } = await verifyAccessTokenDetailed(
+      app_.id,
+      bearerFrom(req.headers.authorization),
+      `${resourceBase(req)}/mcp`,
+    );
     if (!verified) {
       // C36 — a transport auth rejection used to die INVISIBLY (no span, zero trace-side evidence a client
       // was knocking). Emit a short span with the reject reason (invalid_token vs resource_mismatch) + the
@@ -279,14 +342,25 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
         attributes: { 'mcp.app': app_.name, ...(typeof method === 'string' ? { 'mcp.method': method } : {}) },
       });
       rejectSpan.end('error', rejectReason);
-      mcpLog({ event: 'mcp.auth_reject', trace_id: rejectSpan.traceId, app: app_.name, reason: rejectReason, ...(typeof method === 'string' ? { method } : {}) });
+      mcpLog({
+        event: 'mcp.auth_reject',
+        trace_id: rejectSpan.traceId,
+        app: app_.name,
+        reason: rejectReason,
+        ...(typeof method === 'string' ? { method } : {}),
+      });
       return reply
         .status(401)
-        .header('WWW-Authenticate', `Bearer resource_metadata="${resourceBase(req)}/.well-known/oauth-protected-resource/mcp"`)
+        .header(
+          'WWW-Authenticate',
+          `Bearer resource_metadata="${resourceBase(req)}/.well-known/oauth-protected-resource/mcp"`,
+        )
         .send({ error: 'invalid_token', error_description: 'a valid OAuth access token is required.' });
     }
 
-    const body = req.body as { jsonrpc?: string; id?: string | number; method?: string; params?: Record<string, unknown> } | undefined;
+    const body = req.body as
+      | { jsonrpc?: string; id?: string | number; method?: string; params?: Record<string, unknown> }
+      | undefined;
     if (!body || body.jsonrpc !== '2.0' || typeof body.method !== 'string') {
       return reply.status(200).send(rpcError(body?.id ?? null, -32600, 'Invalid Request'));
     }
@@ -301,53 +375,59 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       if (method === 'initialize') {
         const latest = await (await mcp()).latestInstructions(app_.id);
         const clientProto = (params?.protocolVersion as string) || MCP_PROTOCOL_VERSION;
-        return reply.status(200).send(rpcResult(id!, {
-          protocolVersion: clientProto,
-          // listChanged: TRUE — we push `notifications/tools/list_changed` over the standalone
-          // `GET /mcp` SSE stream whenever the tool surface changes, so clients re-fetch `tools/list`
-          // automatically instead of serving a cached surface until the user reconnects.
-          capabilities: { tools: { listChanged: true } },
-          serverInfo: { name: `forge-mcp:${app_.name}`, version: MCP_SERVER_VERSION },
-          ...(latest ? { instructions: latest.text } : {}),
-        }));
+        return reply.status(200).send(
+          rpcResult(id!, {
+            protocolVersion: clientProto,
+            // listChanged: TRUE — we push `notifications/tools/list_changed` over the standalone
+            // `GET /mcp` SSE stream whenever the tool surface changes, so clients re-fetch `tools/list`
+            // automatically instead of serving a cached surface until the user reconnects.
+            capabilities: { tools: { listChanged: true } },
+            serverInfo: { name: `forge-mcp:${app_.name}`, version: MCP_SERVER_VERSION },
+            ...(latest ? { instructions: latest.text } : {}),
+          }),
+        );
       }
       if (method === 'ping') {
         return reply.status(200).send(rpcResult(id!, {}));
       }
       if (method === 'tools/list') {
         const tools = await (await mcp()).listTools(app_.id);
-        return reply.status(200).send(rpcResult(id!, {
-          tools: tools.map((t) => {
-            // MCP tool annotations on the wire — camelCase, built from the snake_case registration hints.
-            // Only the keys the app declared appear; the whole object is omitted when it would be empty.
-            const annotations: Record<string, unknown> = {
-              ...(t.title ? { title: t.title } : {}),
-              ...(t.read_only_hint !== undefined ? { readOnlyHint: t.read_only_hint } : {}),
-              ...(t.destructive_hint !== undefined ? { destructiveHint: t.destructive_hint } : {}),
-              ...(t.idempotent_hint !== undefined ? { idempotentHint: t.idempotent_hint } : {}),
-              ...(t.open_world_hint !== undefined ? { openWorldHint: t.open_world_hint } : {}),
-            };
-            return {
-              name: t.name,
-              description: t.description,
-              ...(t.title ? { title: t.title } : {}),
-              inputSchema: t.input_schema ?? { type: 'object' },
-              ...(t.output_schema ? { outputSchema: t.output_schema } : {}),
-              ...(Object.keys(annotations).length ? { annotations } : {}),
-              // Change B — per-tool securitySchemes (ChatGPT Apps SDK shape). Every tool is OAuth-gated by its
-              // `scope`, so advertise an oauth2 scheme referencing that scope; a scopeless tool advertises
-              // `noauth`. This only DECLARES the requirement — the platform still enforces scope on each call.
-              securitySchemes: t.scope ? [{ type: 'oauth2', scopes: [t.scope] }] : [{ type: 'noauth' }],
-            };
+        return reply.status(200).send(
+          rpcResult(id!, {
+            tools: tools.map((t) => {
+              // MCP tool annotations on the wire — camelCase, built from the snake_case registration hints.
+              // Only the keys the app declared appear; the whole object is omitted when it would be empty.
+              const annotations: Record<string, unknown> = {
+                ...(t.title ? { title: t.title } : {}),
+                ...(t.read_only_hint !== undefined ? { readOnlyHint: t.read_only_hint } : {}),
+                ...(t.destructive_hint !== undefined ? { destructiveHint: t.destructive_hint } : {}),
+                ...(t.idempotent_hint !== undefined ? { idempotentHint: t.idempotent_hint } : {}),
+                ...(t.open_world_hint !== undefined ? { openWorldHint: t.open_world_hint } : {}),
+              };
+              return {
+                name: t.name,
+                description: t.description,
+                ...(t.title ? { title: t.title } : {}),
+                inputSchema: t.input_schema ?? { type: 'object' },
+                ...(t.output_schema ? { outputSchema: t.output_schema } : {}),
+                ...(Object.keys(annotations).length ? { annotations } : {}),
+                // Change B — per-tool securitySchemes (ChatGPT Apps SDK shape). Every tool is OAuth-gated by its
+                // `scope`, so advertise an oauth2 scheme referencing that scope; a scopeless tool advertises
+                // `noauth`. This only DECLARES the requirement — the platform still enforces scope on each call.
+                securitySchemes: t.scope ? [{ type: 'oauth2', scopes: [t.scope] }] : [{ type: 'noauth' }],
+              };
+            }),
           }),
-        }));
+        );
       }
       if (method === 'tools/call') {
         return await handleToolCall(req, reply, app_, verified, id!, params);
       }
       return reply.status(200).send(rpcError(id!, -32601, `Method not found: ${method}`));
     } catch (e) {
-      return reply.status(200).send(rpcError(id ?? null, -32603, `Internal error: ${String((e as Error)?.message ?? e)}`));
+      return reply
+        .status(200)
+        .send(rpcError(id ?? null, -32603, `Internal error: ${String((e as Error)?.message ?? e)}`));
     }
   });
 
@@ -362,7 +442,8 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
   ) {
     const name = params?.name as string | undefined;
     const args = (params?.arguments as Record<string, unknown> | undefined) ?? {};
-    if (!name || typeof name !== 'string') return reply.status(200).send(rpcError(id, -32602, 'tools/call requires a string `name`.'));
+    if (!name || typeof name !== 'string')
+      return reply.status(200).send(rpcError(id, -32602, 'tools/call requires a string `name`.'));
 
     // Duration tracking for the structured log + RED metrics — started before the tool lookup so
     // every exit path (unknown tool, scope failure, app unreachable, dispatch) has an honest elapsed time.
@@ -399,8 +480,24 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     if (!tool) {
       span.end('error', 'unknown_tool');
       const dur = Date.now() - startMs;
-      mcpLog({ event: 'mcp.tool_call', trace_id: span.traceId, app: app_.name, tool: name, client: verified.clientId, user: verified.userId, duration_ms: dur, outcome: 'error', error_class: 'unknown_tool' });
-      recordToolCallMetric({ tool: name, app: app_.name, outcome: 'error', duration_ms: dur, error_class: 'unknown_tool' });
+      mcpLog({
+        event: 'mcp.tool_call',
+        trace_id: span.traceId,
+        app: app_.name,
+        tool: name,
+        client: verified.clientId,
+        user: verified.userId,
+        duration_ms: dur,
+        outcome: 'error',
+        error_class: 'unknown_tool',
+      });
+      recordToolCallMetric({
+        tool: name,
+        app: app_.name,
+        outcome: 'error',
+        duration_ms: dur,
+        error_class: 'unknown_tool',
+      });
       return reply.status(200).send(rpcError(id, -32602, `Unknown tool: ${name}`));
     }
     span.setAttribute('mcp.tool.family', tool.family);
@@ -412,9 +509,27 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       await recordCall(app_.id, name, verified, false, 'insufficient_scope');
       span.setAttribute(ATTR.AUTHZ_DECISION, 'insufficient_scope').end('error', 'insufficient_scope');
       const dur = Date.now() - startMs;
-      mcpLog({ event: 'mcp.tool_call', trace_id: span.traceId, app: app_.name, tool: name, client: verified.clientId, user: verified.userId, duration_ms: dur, outcome: 'error', error_class: 'insufficient_scope' });
-      recordToolCallMetric({ tool: name, app: app_.name, outcome: 'error', duration_ms: dur, error_class: 'insufficient_scope' });
-      return reply.status(200).send(rpcError(id, -32001, 'insufficient_scope', { required_scope: tool.scope }));
+      mcpLog({
+        event: 'mcp.tool_call',
+        trace_id: span.traceId,
+        app: app_.name,
+        tool: name,
+        client: verified.clientId,
+        user: verified.userId,
+        duration_ms: dur,
+        outcome: 'error',
+        error_class: 'insufficient_scope',
+      });
+      recordToolCallMetric({
+        tool: name,
+        app: app_.name,
+        outcome: 'error',
+        duration_ms: dur,
+        error_class: 'insufficient_scope',
+      });
+      return reply
+        .status(200)
+        .send(rpcError(id, -32001, 'insufficient_scope', { required_scope: tool.scope }));
     }
 
     // Dispatch to the app's handler (the C2 sidecar→app callback), authenticated as a service.
@@ -423,16 +538,35 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       await recordCall(app_.id, name, verified, false, 'app_unreachable');
       span.end('error', 'app_unreachable');
       const dur = Date.now() - startMs;
-      mcpLog({ event: 'mcp.tool_call', trace_id: span.traceId, app: app_.name, tool: name, client: verified.clientId, user: verified.userId, duration_ms: dur, outcome: 'error', error_class: 'app_unreachable' });
-      recordToolCallMetric({ tool: name, app: app_.name, outcome: 'error', duration_ms: dur, error_class: 'app_unreachable' });
-      return reply.status(200).send(rpcError(id, -32011, 'the app handler is not reachable (never provisioned?).'));
+      mcpLog({
+        event: 'mcp.tool_call',
+        trace_id: span.traceId,
+        app: app_.name,
+        tool: name,
+        client: verified.clientId,
+        user: verified.userId,
+        duration_ms: dur,
+        outcome: 'error',
+        error_class: 'app_unreachable',
+      });
+      recordToolCallMetric({
+        tool: name,
+        app: app_.name,
+        outcome: 'error',
+        duration_ms: dur,
+        error_class: 'app_unreachable',
+      });
+      return reply
+        .status(200)
+        .send(rpcError(id, -32011, 'the app handler is not reachable (never provisioned?).'));
     }
     const serviceToken = await resolveServiceToken(app_.id);
     // The DCR-registered client NAME (e.g. "Claude", "ChatGPT") — the opaque `mcpc_…` client_id alone
     // can't tell an app WHICH AI host is calling, so a consumer can't render "Connected" per platform.
     // Forward the human name so the app can label the connection it records. Best-effort (never blocks a
     // tool call). Only the public client_name is passed — never a secret.
-    const clientName = (await (await mcp()).getClient(app_.id, verified.clientId).catch(() => null))?.client_name;
+    const clientName = (await (await mcp()).getClient(app_.id, verified.clientId).catch(() => null))
+      ?.client_name;
     let ok = false;
     let payload: unknown;
     let httpStatus: number | undefined;
@@ -440,10 +574,22 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       const res = await fetch(`${base}${tool.handler_path}`, {
         method: 'POST',
         // `traceparent` propagates THIS trace into the app tier so the proxy edge + dispatch spans join it.
-        headers: { 'content-type': 'application/json', traceparent: traceparent(span), ...serviceAuthHeaders(serviceToken) },
+        headers: {
+          'content-type': 'application/json',
+          traceparent: traceparent(span),
+          ...serviceAuthHeaders(serviceToken),
+        },
         // The C29 governance SEAM: the app's handler gets the user + the tool's safety family/high-risk hint
         // and runs its own authorize() (the platform enforced scope; the app decides allow/stage/deny).
-        body: JSON.stringify({ tool: name, arguments: args, user: { id: verified.userId }, family: tool.family, high_risk: tool.high_risk ?? false, client_id: verified.clientId, ...(clientName ? { client_name: clientName } : {}) }),
+        body: JSON.stringify({
+          tool: name,
+          arguments: args,
+          user: { id: verified.userId },
+          family: tool.family,
+          high_risk: tool.high_risk ?? false,
+          client_id: verified.clientId,
+          ...(clientName ? { client_name: clientName } : {}),
+        }),
         signal: AbortSignal.timeout(TOOL_CALL_TIMEOUT_MS),
       });
       httpStatus = res.status;
@@ -462,24 +608,48 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     span.end(ok ? 'ok' : 'error', errorClass);
 
     // Structured log (one line per tool call — always on, not OTel-gated) + RED metrics (OTel-gated).
-    mcpLog({ event: 'mcp.tool_call', trace_id: span.traceId, app: app_.name, tool: name, client: clientName ?? verified.clientId, user: verified.userId, duration_ms, outcome: ok ? 'ok' : 'error', ...(errorClass ? { error_class: errorClass } : {}) });
-    recordToolCallMetric({ tool: name, app: app_.name, outcome: ok ? 'ok' : 'error', duration_ms, ...(errorClass ? { error_class: errorClass } : {}) });
+    mcpLog({
+      event: 'mcp.tool_call',
+      trace_id: span.traceId,
+      app: app_.name,
+      tool: name,
+      client: clientName ?? verified.clientId,
+      user: verified.userId,
+      duration_ms,
+      outcome: ok ? 'ok' : 'error',
+      ...(errorClass ? { error_class: errorClass } : {}),
+    });
+    recordToolCallMetric({
+      tool: name,
+      app: app_.name,
+      outcome: ok ? 'ok' : 'error',
+      duration_ms,
+      ...(errorClass ? { error_class: errorClass } : {}),
+    });
 
     // Wrap the app's JSON into an MCP tool result. A structured object rides `structuredContent`; a
     // human-readable rendering rides `content` text. A non-2xx handler → an MCP tool error (isError).
     // `_meta.traceparent` stamps the W3C correlation id onto the result so a CHAT-VISIBLE failure is
     // directly searchable in traces: the user sees the failure; the id links it to the backend trace.
     const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
-    return reply.status(200).send(rpcResult(id, {
-      content: [{ type: 'text', text }],
-      ...(payload && typeof payload === 'object' ? { structuredContent: payload } : {}),
-      ...(ok ? {} : { isError: true }),
-      _meta: { traceparent: traceparent(span) },
-    }));
+    return reply.status(200).send(
+      rpcResult(id, {
+        content: [{ type: 'text', text }],
+        ...(payload && typeof payload === 'object' ? { structuredContent: payload } : {}),
+        ...(ok ? {} : { isError: true }),
+        _meta: { traceparent: traceparent(span) },
+      }),
+    );
   }
 
   // Every host tool call is a C3 fact: who (user), which host (client), which tool, and whether it ran.
-  async function recordCall(appId: string, tool: string, verified: VerifiedToken, ok: boolean, reason?: string) {
+  async function recordCall(
+    appId: string,
+    tool: string,
+    verified: VerifiedToken,
+    ok: boolean,
+    reason?: string,
+  ) {
     await store.appendAppEvent({
       app_id: appId,
       type: 'mcp.tool_call',
@@ -506,7 +676,10 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     if (!verified) {
       return reply
         .status(401)
-        .header('WWW-Authenticate', `Bearer resource_metadata="${resourceBase(req)}/.well-known/oauth-protected-resource/mcp"`)
+        .header(
+          'WWW-Authenticate',
+          `Bearer resource_metadata="${resourceBase(req)}/.well-known/oauth-protected-resource/mcp"`,
+        )
         .send({ error: 'invalid_token', error_description: 'a valid OAuth access token is required.' });
     }
 
@@ -536,7 +709,12 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       userAgent,
     });
     const openedAt = Date.now();
-    mcpLog({ event: 'mcp.stream_open', app: app_.name, client: clientName, attached: toolListSubscriberCount(app_.id) });
+    mcpLog({
+      event: 'mcp.stream_open',
+      app: app_.name,
+      client: clientName,
+      attached: toolListSubscriberCount(app_.id),
+    });
     startSpan('mcp.stream_open', {
       attributes: { 'mcp.app': app_.name, 'mcp.client_name': clientName },
     }).end('ok');
@@ -559,7 +737,13 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       // A very SHORT-lived stream is itself a finding (a proxy or the client is dropping it), which
       // would silently defeat the whole mechanism — so record how long it actually stayed open.
       const heldMs = Date.now() - openedAt;
-      mcpLog({ event: 'mcp.stream_close', app: app_.name, client: clientName, held_ms: heldMs, attached: toolListSubscriberCount(app_.id) });
+      mcpLog({
+        event: 'mcp.stream_close',
+        app: app_.name,
+        client: clientName,
+        held_ms: heldMs,
+        attached: toolListSubscriberCount(app_.id),
+      });
     };
     req.raw.on('close', cleanup);
     req.raw.on('error', cleanup);
@@ -570,9 +754,15 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     const app_ = await resolveAppId(req, b.app);
     if (!app_) return reply.status(404).send(unknownApp);
     if (!(await requireServiceToken(req, reply, app_.id))) return;
-    if (!b.name || !TOOL_NAME_RE.test(b.name)) return reply.status(422).send(invalid('a tool `name` (a-zA-Z0-9_- up to 64) is required.'));
-    if (!b.handler_path || !b.handler_path.startsWith('/')) return reply.status(422).send(invalid('a `handler_path` app path (e.g. /api/mcp/tools/create_note) is required.'));
-    const family: ToolFamily = FAMILIES.includes(b.family as ToolFamily) ? (b.family as ToolFamily) : 'action';
+    if (!b.name || !TOOL_NAME_RE.test(b.name))
+      return reply.status(422).send(invalid('a tool `name` (a-zA-Z0-9_- up to 64) is required.'));
+    if (!b.handler_path || !b.handler_path.startsWith('/'))
+      return reply
+        .status(422)
+        .send(invalid('a `handler_path` app path (e.g. /api/mcp/tools/create_note) is required.'));
+    const family: ToolFamily = FAMILIES.includes(b.family as ToolFamily)
+      ? (b.family as ToolFamily)
+      : 'action';
     const now = nowIso();
     const existing = await (await mcp()).getTool(app_.id, b.name);
     const tool: ToolRegistration = {
@@ -602,7 +792,12 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     // Registration-health metric: the current registered-tool count after this change.
     const toolsAfterPut = await (await mcp()).listTools(app_.id);
     recordMcpRegistrationMetric({ app: app_.name, tools_count: toolsAfterPut.length });
-    mcpLog({ event: 'mcp.tool_register', app: app_.name, tool: tool.name, tools_count: toolsAfterPut.length });
+    mcpLog({
+      event: 'mcp.tool_register',
+      app: app_.name,
+      tool: tool.name,
+      tools_count: toolsAfterPut.length,
+    });
     return reply.status(200).send({ tool });
   });
 
@@ -646,8 +841,15 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     const app_ = await resolveAppId(req, b.app);
     if (!app_) return reply.status(404).send(unknownApp);
     if (!(await requireServiceToken(req, reply, app_.id))) return;
-    if (typeof b.text !== 'string' || !b.text.trim()) return reply.status(422).send(invalid('a non-empty instruction `text` is required.'));
-    const block = await (await mcp()).appendInstructions(app_.id, { text: b.text, ...(b.label ? { label: b.label } : {}), created_at: nowIso() });
+    if (typeof b.text !== 'string' || !b.text.trim())
+      return reply.status(422).send(invalid('a non-empty instruction `text` is required.'));
+    const block = await (
+      await mcp()
+    ).appendInstructions(app_.id, {
+      text: b.text,
+      ...(b.label ? { label: b.label } : {}),
+      created_at: nowIso(),
+    });
     return reply.status(200).send({ instructions: block });
   });
 
@@ -656,19 +858,33 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
     if (!app_) return reply.status(404).send(unknownApp);
     if (!(await requireServiceToken(req, reply, app_.id))) return;
     const q = req.query as { version?: string };
-    const block = q.version ? await (await mcp()).getInstructions(app_.id, Number(q.version)) : await (await mcp()).latestInstructions(app_.id);
-    if (!block) return reply.status(404).send({ error: { code: 'not_found', message: 'no instruction block declared.', retry: 'change-input' } });
+    const block = q.version
+      ? await (await mcp()).getInstructions(app_.id, Number(q.version))
+      : await (await mcp()).latestInstructions(app_.id);
+    if (!block)
+      return reply.status(404).send({
+        error: { code: 'not_found', message: 'no instruction block declared.', retry: 'change-input' },
+      });
     return { instructions: block };
   });
 
   // Proactive scheduling — register (or remove) a per-app C2 job that periodically prompts the connected
   // agent to use a designated tool (the app names the tool + cadence + the app path the fire calls back).
   app.post('/mcp/proactive', async (req, reply) => {
-    const b = (req.body ?? {}) as { app?: string; tool?: string; every?: string; cron?: string; target_path?: string; disabled?: boolean; remove?: boolean };
+    const b = (req.body ?? {}) as {
+      app?: string;
+      tool?: string;
+      every?: string;
+      cron?: string;
+      target_path?: string;
+      disabled?: boolean;
+      remove?: boolean;
+    };
     const app_ = await resolveAppId(req, b.app);
     if (!app_) return reply.status(404).send(unknownApp);
     if (!(await requireServiceToken(req, reply, app_.id))) return;
-    if (!b.tool || !TOOL_NAME_RE.test(b.tool)) return reply.status(422).send(invalid('a `tool` name is required.'));
+    if (!b.tool || !TOOL_NAME_RE.test(b.tool))
+      return reply.status(422).send(invalid('a `tool` name is required.'));
     const jobName = `mcp-proactive-${b.tool}`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     try {
       const result = await executeCapability(
@@ -676,7 +892,14 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
         {
           app: app_.name,
           name: jobName,
-          ...(b.remove ? { remove: true } : { target_path: b.target_path, ...(b.every ? { every: b.every } : {}), ...(b.cron ? { cron: b.cron } : {}), ...(b.disabled ? { disabled: true } : {}) }),
+          ...(b.remove
+            ? { remove: true }
+            : {
+                target_path: b.target_path,
+                ...(b.every ? { every: b.every } : {}),
+                ...(b.cron ? { cron: b.cron } : {}),
+                ...(b.disabled ? { disabled: true } : {}),
+              }),
         },
         SYSTEM_ACTOR,
       );
@@ -684,7 +907,13 @@ export function registerMcpRoutes(app: FastifyInstance, opts: { defaultApp?: () 
       return reply.status(200).send({ proactive: (result as { resource?: unknown }).resource ?? result });
     } catch (e) {
       const err = e as { status?: number; toJSON?: () => unknown; message?: string };
-      return reply.status(err.status ?? 400).send(typeof err.toJSON === 'function' ? err.toJSON() : invalid(err.message ?? 'could not schedule the proactive job.'));
+      return reply
+        .status(err.status ?? 400)
+        .send(
+          typeof err.toJSON === 'function'
+            ? err.toJSON()
+            : invalid(err.message ?? 'could not schedule the proactive job.'),
+        );
     }
   });
 

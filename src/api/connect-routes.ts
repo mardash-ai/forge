@@ -4,7 +4,13 @@ import { executeCapability } from '../core/runtime';
 import { SYSTEM_ACTOR } from '../shared/domain';
 import { ForgeError } from '../shared/errors';
 import type { EmailDelivery } from '../resources/types';
-import { APP_HEADER, SESSION_COOKIE, SERVICE_TOKEN_HEADER, verifySessionToken, parseCookies } from '../shared/session';
+import {
+  APP_HEADER,
+  SESSION_COOKIE,
+  SERVICE_TOKEN_HEADER,
+  verifySessionToken,
+  parseCookies,
+} from '../shared/session';
 import { resolveAuthConfig, resolveServiceToken, serviceTokenMatches } from '../plugins/auth-identity/index';
 import * as authStore from '../plugins/auth-identity/store';
 import { providerIds } from '../connectors/providers';
@@ -37,7 +43,10 @@ import {
 //
 // Registered on BOTH planes (like /auth). Records connect/disconnect/token-issue to the C3 app-event log.
 
-export function registerConnectRoutes(app: FastifyInstance, opts: { defaultApp?: () => string | undefined } = {}): void {
+export function registerConnectRoutes(
+  app: FastifyInstance,
+  opts: { defaultApp?: () => string | undefined } = {},
+): void {
   const trimmed = (v: unknown): string | undefined => {
     const s = typeof v === 'string' ? v.trim() : '';
     return s || undefined;
@@ -54,7 +63,10 @@ export function registerConnectRoutes(app: FastifyInstance, opts: { defaultApp?:
     if (fromHeader) return fromHeader;
     return opts.defaultApp?.();
   };
-  const resolveAppId = async (req: FastifyRequest, explicit?: string): Promise<{ id: string; name: string } | null> => {
+  const resolveAppId = async (
+    req: FastifyRequest,
+    explicit?: string,
+  ): Promise<{ id: string; name: string } | null> => {
     const n = resolveAppName(req, explicit);
     if (!n) return null;
     const a = await store.findAppByName(n);
@@ -64,13 +76,19 @@ export function registerConnectRoutes(app: FastifyInstance, opts: { defaultApp?:
   function publicBase(req: FastifyRequest): string {
     const explicit = process.env.FORGE_OAUTH_PUBLIC_URL;
     if (explicit) return explicit.replace(/\/+$/, '');
-    const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]!.trim() || 'https';
+    const proto =
+      String(req.headers['x-forwarded-proto'] ?? '')
+        .split(',')[0]!
+        .trim() || 'https';
     const host = String(req.headers['x-forwarded-host'] ?? req.headers['host'] ?? 'localhost');
     return `${proto}://${host}`;
   }
 
   // The logged-in C10 user for this app, or null (reuses the C10 session contract, like the C23 AS).
-  async function sessionUser(req: FastifyRequest, appId: string): Promise<{ userId: string; email: string } | null> {
+  async function sessionUser(
+    req: FastifyRequest,
+    appId: string,
+  ): Promise<{ userId: string; email: string } | null> {
     const cfg = await resolveAuthConfig(appId);
     if (!cfg.sessionSecret) return null;
     const claims = verifySessionToken(parseCookies(req.headers.cookie)[SESSION_COOKIE], cfg.sessionSecret);
@@ -92,7 +110,9 @@ export function registerConnectRoutes(app: FastifyInstance, opts: { defaultApp?:
 
   const errorReply = (reply: FastifyReply, e: unknown) => {
     if (e instanceof ForgeError) return reply.status(e.status).send(e.toJSON());
-    return reply.status(500).send({ error: { code: 'internal_error', message: String((e as Error)?.message ?? e), retry: 'no' } });
+    return reply
+      .status(500)
+      .send({ error: { code: 'internal_error', message: String((e as Error)?.message ?? e), retry: 'no' } });
   };
 
   // Parse `scopes` from a query value: space- or comma-delimited.
@@ -108,9 +128,21 @@ export function registerConnectRoutes(app: FastifyInstance, opts: { defaultApp?:
     return s.startsWith('/') && !s.startsWith('//') && !s.startsWith('/\\') ? s : dflt;
   };
 
-  async function recordC3(appId: string, type: string, provider: string, owner: string, data: Record<string, unknown>): Promise<void> {
+  async function recordC3(
+    appId: string,
+    type: string,
+    provider: string,
+    owner: string,
+    data: Record<string, unknown>,
+  ): Promise<void> {
     try {
-      await store.appendAppEvent({ app_id: appId, type, subject: provider, owner, data: { provider, ...data } });
+      await store.appendAppEvent({
+        app_id: appId,
+        type,
+        subject: provider,
+        owner,
+        data: { provider, ...data },
+      });
     } catch {
       // C3 is best-effort telemetry — never fail the connect/broker call because the timeline write hiccuped.
     }
@@ -138,7 +170,10 @@ export function registerConnectRoutes(app: FastifyInstance, opts: { defaultApp?:
     const user = await sessionUser(req, app_.id);
     if (!user) {
       // Bounce through the hosted C10 login and come back here (same-origin path — C10 safeNext accepts it).
-      return reply.code(302).header('location', `/auth/login?next=${encodeURIComponent(req.url)}`).send();
+      return reply
+        .code(302)
+        .header('location', `/auth/login?next=${encodeURIComponent(req.url)}`)
+        .send();
     }
     const q = req.query as { scopes?: string; return_to?: string };
     try {
@@ -166,10 +201,16 @@ export function registerConnectRoutes(app: FastifyInstance, opts: { defaultApp?:
     // The provider denied / errored — bounce back with a flag (we don't know return_to without the request,
     // so land on the app root; the app can surface the error param).
     if (q.error) {
-      return reply.code(302).header('location', `/?connect_error=${encodeURIComponent(q.error)}`).send();
+      return reply
+        .code(302)
+        .header('location', `/?connect_error=${encodeURIComponent(q.error)}`)
+        .send();
     }
     if (!q.code || !q.state) {
-      return reply.code(302).header('location', `/?connect_error=${encodeURIComponent('invalid_callback')}`).send();
+      return reply
+        .code(302)
+        .header('location', `/?connect_error=${encodeURIComponent('invalid_callback')}`)
+        .send();
     }
     const session = await sessionUser(req, app_.id);
     try {
@@ -185,10 +226,16 @@ export function registerConnectRoutes(app: FastifyInstance, opts: { defaultApp?:
         ...(connection.account_label ? { account_label: connection.account_label } : {}),
       });
       const sep = returnTo.includes('?') ? '&' : '?';
-      return reply.code(302).header('location', `${returnTo}${sep}connected=${encodeURIComponent(connection.provider)}`).send();
+      return reply
+        .code(302)
+        .header('location', `${returnTo}${sep}connected=${encodeURIComponent(connection.provider)}`)
+        .send();
     } catch (e) {
       if (e instanceof ForgeError) {
-        return reply.code(302).header('location', `/?connect_error=${encodeURIComponent(e.code)}`).send();
+        return reply
+          .code(302)
+          .header('location', `/?connect_error=${encodeURIComponent(e.code)}`)
+          .send();
       }
       return errorReply(reply, e);
     }
@@ -271,7 +318,14 @@ export function registerConnectRoutes(app: FastifyInstance, opts: { defaultApp?:
       if (!presented || !serviceTokenMatches(presented, configured)) return reply.status(401).send(needAuth);
       owner = trimmed(b.owner);
       via = 'service';
-      if (!owner) return reply.status(422).send({ error: { code: 'invalid_input', message: 'a service-authenticated broker call must pass `owner`.', retry: 'change-input' } });
+      if (!owner)
+        return reply.status(422).send({
+          error: {
+            code: 'invalid_input',
+            message: 'a service-authenticated broker call must pass `owner`.',
+            retry: 'change-input',
+          },
+        });
     }
 
     try {
@@ -279,7 +333,9 @@ export function registerConnectRoutes(app: FastifyInstance, opts: { defaultApp?:
         appId: app_.id,
         owner,
         provider,
-        ...(trimmed(b.require_scope ?? b.scope) ? { requireScope: trimmed(b.require_scope ?? b.scope)! } : {}),
+        ...(trimmed(b.require_scope ?? b.scope)
+          ? { requireScope: trimmed(b.require_scope ?? b.scope)! }
+          : {}),
       });
       await recordC3(app_.id, 'connector.token_issued', provider, owner, { via, scopes: fresh.scopes });
       return reply.status(200).send(fresh);
@@ -316,7 +372,14 @@ export function registerConnectRoutes(app: FastifyInstance, opts: { defaultApp?:
       if (!presented || !serviceTokenMatches(presented, configured)) return reply.status(401).send(needAuth);
       owner = trimmed(b.owner);
       via = 'service';
-      if (!owner) return reply.status(422).send({ error: { code: 'invalid_input', message: 'a service-authenticated send must pass `owner`.', retry: 'change-input' } });
+      if (!owner)
+        return reply.status(422).send({
+          error: {
+            code: 'invalid_input',
+            message: 'a service-authenticated send must pass `owner`.',
+            retry: 'change-input',
+          },
+        });
     }
 
     // Build the Capability input from the body; `provider` comes from the URL (not the client body). The
@@ -340,12 +403,18 @@ export function registerConnectRoutes(app: FastifyInstance, opts: { defaultApp?:
     try {
       const { resource } = await executeCapability('send-message', capInput, SYSTEM_ACTOR);
       const message = resource as EmailDelivery;
-      await recordC3(app_.id, message.status === 'sent' ? 'message.sent' : 'message.failed', provider, owner, {
-        via,
-        channel: message.channel ?? null,
-        message_id: message.message_id ?? null,
-        ...(message.status === 'failed' && message.error ? { error: message.error } : {}),
-      });
+      await recordC3(
+        app_.id,
+        message.status === 'sent' ? 'message.sent' : 'message.failed',
+        provider,
+        owner,
+        {
+          via,
+          channel: message.channel ?? null,
+          message_id: message.message_id ?? null,
+          ...(message.status === 'failed' && message.error ? { error: message.error } : {}),
+        },
+      );
       return reply.status(200).send({ message });
     } catch (e) {
       return errorReply(reply, e);
@@ -353,5 +422,17 @@ export function registerConnectRoutes(app: FastifyInstance, opts: { defaultApp?:
   });
 }
 
-const unknownApp = { error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } };
-const needAuth = { error: { code: 'unauthorized', message: 'a signed-in user (or a valid service token) is required.', retry: 'needs-human' } };
+const unknownApp = {
+  error: {
+    code: 'not_found',
+    message: 'unknown app (pass `app` or set FORGE_APP_NAME).',
+    retry: 'change-input',
+  },
+};
+const needAuth = {
+  error: {
+    code: 'unauthorized',
+    message: 'a signed-in user (or a valid service token) is required.',
+    retry: 'needs-human',
+  },
+};

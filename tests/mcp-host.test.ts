@@ -15,8 +15,7 @@ import {
 import { newToken } from '../src/plugins/auth-identity/index';
 import { expiresAtIso } from '../src/mcp/oauth';
 import { nowIso } from '../src/shared/time';
-import {
-  _resetRegistrationDebounce, initOtel, _setMcpLogOverride } from '../src/plugins/otel/index';
+import { _resetRegistrationDebounce, initOtel, _setMcpLogOverride } from '../src/plugins/otel/index';
 import type { Application } from '../src/resources/types';
 
 // C23 — the hosted remote MCP server (Streamable-HTTP JSON-RPC) + the app-facing management surface.
@@ -40,18 +39,41 @@ let lastDispatchBody: Record<string, unknown> | undefined;
 const seedApp = async (): Promise<void> => {
   const now = nowIso();
   await store.saveResource({
-    id: APP_ID, type: 'Application', app_id: APP_ID, created_at: now, updated_at: now,
-    name: APP, repo_path: '/app', platform: 'web', framework: 'nextjs', template: 'nextjs-web', language: 'typescript', package_manager: 'npm',
+    id: APP_ID,
+    type: 'Application',
+    app_id: APP_ID,
+    created_at: now,
+    updated_at: now,
+    name: APP,
+    repo_path: '/app',
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   } as Application);
 };
 
 // Mint an access grant directly (the OAuth flow itself is covered in mcp-oauth.test.ts). Returns the raw
 // bearer the /mcp endpoint verifies.
-const mintAccess = async (scopes: string[], owner = 'userA', clientId = 'client1', resource?: string): Promise<string> => {
+const mintAccess = async (
+  scopes: string[],
+  owner = 'userA',
+  clientId = 'client1',
+  resource?: string,
+): Promise<string> => {
   const { token, hash } = newToken();
-  await (await getBackends()).mcp.putGrant(APP_ID, {
-    kind: 'access', token_hash: hash, client_id: clientId, owner, scopes, expires_at: expiresAtIso(3600),
-    ...(resource ? { resource } : {}), created_at: nowIso(),
+  await (
+    await getBackends()
+  ).mcp.putGrant(APP_ID, {
+    kind: 'access',
+    token_hash: hash,
+    client_id: clientId,
+    owner,
+    scopes,
+    expires_at: expiresAtIso(3600),
+    ...(resource ? { resource } : {}),
+    created_at: nowIso(),
   });
   return token;
 };
@@ -91,28 +113,46 @@ beforeEach(async () => {
 afterEach(async () => {
   await server.close();
   await stub.close();
-  if (prevDir === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prevDir;
-  if (prevHost === undefined) delete process.env.FORGE_APP_CALLBACK_HOST; else process.env.FORGE_APP_CALLBACK_HOST = prevHost;
-  if (prevPort === undefined) delete process.env.FORGE_APP_CALLBACK_PORT; else process.env.FORGE_APP_CALLBACK_PORT = prevPort;
-  if (prevSvc === undefined) delete process.env.AUTH_SERVICE_TOKEN; else process.env.AUTH_SERVICE_TOKEN = prevSvc;
+  if (prevDir === undefined) delete process.env.FORGE_STATE_DIR;
+  else process.env.FORGE_STATE_DIR = prevDir;
+  if (prevHost === undefined) delete process.env.FORGE_APP_CALLBACK_HOST;
+  else process.env.FORGE_APP_CALLBACK_HOST = prevHost;
+  if (prevPort === undefined) delete process.env.FORGE_APP_CALLBACK_PORT;
+  else process.env.FORGE_APP_CALLBACK_PORT = prevPort;
+  if (prevSvc === undefined) delete process.env.AUTH_SERVICE_TOKEN;
+  else process.env.AUTH_SERVICE_TOKEN = prevSvc;
   await rm(dir, { recursive: true, force: true });
 });
 
 const rpc = (method: string, params: unknown, bearer?: string, id: number | string = 1) =>
   server.inject({
-    method: 'POST', url: '/mcp',
+    method: 'POST',
+    url: '/mcp',
     headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
     payload: { jsonrpc: '2.0', id, method, params } as object,
   });
 // The management-surface helpers present the service token (Change D). Ungated routes (`.well-known`) ignore
 // it harmlessly; the JSON-RPC `rpc` helper below deliberately does NOT send it (POST /mcp is OAuth-gated).
 const post = (url: string, payload: unknown, headers: Record<string, string> = {}) =>
-  server.inject({ method: 'POST', url, headers: { 'x-forge-service-token': SVC_TOKEN, ...headers }, payload: payload as object });
+  server.inject({
+    method: 'POST',
+    url,
+    headers: { 'x-forge-service-token': SVC_TOKEN, ...headers },
+    payload: payload as object,
+  });
 const get = (url: string, headers: Record<string, string> = {}) =>
   server.inject({ method: 'GET', url, headers: { 'x-forge-service-token': SVC_TOKEN, ...headers } });
 
 const registerTool = (over: Record<string, unknown> = {}) =>
-  post('/mcp/tools', { name: 'get_note', description: 'Read a note', input_schema: { type: 'object' }, scope: 'notes:read', family: 'read', handler_path: '/api/mcp/tools/get_note', ...over });
+  post('/mcp/tools', {
+    name: 'get_note',
+    description: 'Read a note',
+    input_schema: { type: 'object' },
+    scope: 'notes:read',
+    family: 'read',
+    handler_path: '/api/mcp/tools/get_note',
+    ...over,
+  });
 
 describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
   it('requires a valid bearer (401 with the discovery pointer)', async () => {
@@ -150,7 +190,11 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
 
     it('REGISTERING a tool pushes list_changed to every connected stream', async () => {
       const frames: string[] = [];
-      const unsub = subscribeToolListChanged(APP_ID, { write: (f) => frames.push(f), clientName: 'Claude', userAgent: 'test-agent' });
+      const unsub = subscribeToolListChanged(APP_ID, {
+        write: (f) => frames.push(f),
+        clientName: 'Claude',
+        userAgent: 'test-agent',
+      });
       try {
         await registerTool();
         expect(frames).toHaveLength(1);
@@ -165,7 +209,11 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
     it('DELETING a tool (the prune path) also pushes list_changed', async () => {
       await registerTool();
       const frames: string[] = [];
-      const unsub = subscribeToolListChanged(APP_ID, { write: (f) => frames.push(f), clientName: 'Claude', userAgent: 'test-agent' });
+      const unsub = subscribeToolListChanged(APP_ID, {
+        write: (f) => frames.push(f),
+        clientName: 'Claude',
+        userAgent: 'test-agent',
+      });
       try {
         const del = await server.inject({
           method: 'DELETE',
@@ -267,15 +315,27 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
 
     // Attribution (C3): who, which host, which tool.
     const events = await store.listAppEvents({ app_id: APP_ID, owner: 'userA', subject: 'get_note' });
-    expect(events.some((e) => e.type === 'mcp.tool_call' && (e.data as { ok?: boolean }).ok === true && (e.data as { host?: string }).host === 'client1')).toBe(true);
+    expect(
+      events.some(
+        (e) =>
+          e.type === 'mcp.tool_call' &&
+          (e.data as { ok?: boolean }).ok === true &&
+          (e.data as { host?: string }).host === 'client1',
+      ),
+    ).toBe(true);
   });
 
   it('forwards the DCR client NAME to the app handler so it can label the connection ("Connected" per AI)', async () => {
     await registerTool();
     // The client registered itself (DCR) with a human name — e.g. Claude / ChatGPT.
-    await (await getBackends()).mcp.putClient(APP_ID, {
-      client_id: 'client1', client_name: 'Claude', redirect_uris: ['https://claude.ai/api/mcp/auth_callback'],
-      token_endpoint_auth_method: 'none', created_at: nowIso(),
+    await (
+      await getBackends()
+    ).mcp.putClient(APP_ID, {
+      client_id: 'client1',
+      client_name: 'Claude',
+      redirect_uris: ['https://claude.ai/api/mcp/auth_callback'],
+      token_endpoint_auth_method: 'none',
+      created_at: nowIso(),
     });
     const bearer = await mintAccess(['notes:read']); // grant for client1
     lastDispatchBody = undefined;
@@ -295,10 +355,19 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
   });
 
   it('enforces per-tool scope against the granted token', async () => {
-    await registerTool({ name: 'send_note', scope: 'notes:write', family: 'action', handler_path: '/api/mcp/tools/get_note' });
+    await registerTool({
+      name: 'send_note',
+      scope: 'notes:write',
+      family: 'action',
+      handler_path: '/api/mcp/tools/get_note',
+    });
     const bearer = await mintAccess(['notes:read']); // lacks notes:write
     const res = await rpc('tools/call', { name: 'send_note', arguments: {} }, bearer);
-    expect(res.json().error).toMatchObject({ code: -32001, message: 'insufficient_scope', data: { required_scope: 'notes:write' } });
+    expect(res.json().error).toMatchObject({
+      code: -32001,
+      message: 'insufficient_scope',
+      data: { required_scope: 'notes:write' },
+    });
     expect(calls).not.toContain('get_note'); // never dispatched
 
     // The denial is still audited (ok:false, reason insufficient_scope).
@@ -329,9 +398,17 @@ describe('C23 — instruction versioning + proactive scheduling (C2)', () => {
   });
 
   it('schedules a proactive prompt as a C2 ScheduledJob', async () => {
-    const r = await post('/mcp/proactive', { tool: 'whats_next', every: '6h', target_path: '/api/cron/whats-next' });
+    const r = await post('/mcp/proactive', {
+      tool: 'whats_next',
+      every: '6h',
+      target_path: '/api/cron/whats-next',
+    });
     expect(r.statusCode).toBe(200);
-    expect(r.json().proactive).toMatchObject({ type: 'ScheduledJob', name: 'mcp-proactive-whats-next', schedule: 'every:6h' });
+    expect(r.json().proactive).toMatchObject({
+      type: 'ScheduledJob',
+      name: 'mcp-proactive-whats-next',
+      schedule: 'every:6h',
+    });
 
     const jobs = await store.listResources({ type: 'ScheduledJob', app_id: APP_ID });
     expect(jobs.some((j) => (j as { name?: string }).name === 'mcp-proactive-whats-next')).toBe(true);
@@ -386,8 +463,10 @@ describe('C23 — resource-identifier host split (FORGE_MCP_PUBLIC_URL)', () => 
       expect(body.resource).toBe('https://api.dorinda.ai/mcp');
       expect(body.authorization_servers).toEqual(['https://api.dorinda.ai']);
     } finally {
-      if (prevMcp === undefined) delete process.env.FORGE_MCP_PUBLIC_URL; else process.env.FORGE_MCP_PUBLIC_URL = prevMcp;
-      if (prevOauth === undefined) delete process.env.FORGE_OAUTH_PUBLIC_URL; else process.env.FORGE_OAUTH_PUBLIC_URL = prevOauth;
+      if (prevMcp === undefined) delete process.env.FORGE_MCP_PUBLIC_URL;
+      else process.env.FORGE_MCP_PUBLIC_URL = prevMcp;
+      if (prevOauth === undefined) delete process.env.FORGE_OAUTH_PUBLIC_URL;
+      else process.env.FORGE_OAUTH_PUBLIC_URL = prevOauth;
     }
   });
 
@@ -400,8 +479,10 @@ describe('C23 — resource-identifier host split (FORGE_MCP_PUBLIC_URL)', () => 
       const body = (await get('/.well-known/oauth-protected-resource')).json();
       expect(body.resource).toBe('https://legacy.example/mcp');
     } finally {
-      if (prevMcp === undefined) delete process.env.FORGE_MCP_PUBLIC_URL; else process.env.FORGE_MCP_PUBLIC_URL = prevMcp;
-      if (prevOauth === undefined) delete process.env.FORGE_OAUTH_PUBLIC_URL; else process.env.FORGE_OAUTH_PUBLIC_URL = prevOauth;
+      if (prevMcp === undefined) delete process.env.FORGE_MCP_PUBLIC_URL;
+      else process.env.FORGE_MCP_PUBLIC_URL = prevMcp;
+      if (prevOauth === undefined) delete process.env.FORGE_OAUTH_PUBLIC_URL;
+      else process.env.FORGE_OAUTH_PUBLIC_URL = prevOauth;
     }
   });
 
@@ -419,21 +500,37 @@ describe('C23 — resource-identifier host split (FORGE_MCP_PUBLIC_URL)', () => 
   it('the 401 WWW-Authenticate points at the path-suffixed protected-resource metadata', async () => {
     const unauth = await rpc('initialize', {});
     expect(unauth.statusCode).toBe(401);
-    expect(String(unauth.headers['www-authenticate'])).toContain('/.well-known/oauth-protected-resource/mcp"');
+    expect(String(unauth.headers['www-authenticate'])).toContain(
+      '/.well-known/oauth-protected-resource/mcp"',
+    );
   });
 });
 
 describe('C23 — connector (consent) management', () => {
   it('lists and revokes a user’s consent, cutting their tokens off', async () => {
     const bearer = await mintAccess(['notes:read'], 'userA', 'clientZ');
-    await (await getBackends()).mcp.putConsent(APP_ID, { client_id: 'clientZ', owner: 'userA', scopes: ['notes:read'], created_at: nowIso(), updated_at: nowIso() });
+    await (
+      await getBackends()
+    ).mcp.putConsent(APP_ID, {
+      client_id: 'clientZ',
+      owner: 'userA',
+      scopes: ['notes:read'],
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    });
 
     expect((await get('/mcp/consents?owner=userA')).json().consents).toHaveLength(1);
     await registerTool();
     // token works before revocation
-    expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, bearer)).json().result.structuredContent).toBeTruthy();
+    expect(
+      (await rpc('tools/call', { name: 'get_note', arguments: {} }, bearer)).json().result.structuredContent,
+    ).toBeTruthy();
 
-    const del = await server.inject({ method: 'DELETE', url: '/mcp/consents/clientZ?owner=userA', headers: { 'x-forge-service-token': SVC_TOKEN } });
+    const del = await server.inject({
+      method: 'DELETE',
+      url: '/mcp/consents/clientZ?owner=userA',
+      headers: { 'x-forge-service-token': SVC_TOKEN },
+    });
     expect(del.json().revoked).toBe(true);
     // the token is now dead → 401
     expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, bearer)).statusCode).toBe(401);
@@ -452,9 +549,25 @@ describe('C23 — connector (consent) management', () => {
     const bearerB = await mintAccess(['notes:read'], 'userA', 'clientTwo');
     const other = await mintAccess(['notes:read'], 'userB', 'clientOne');
     for (const client_id of ['clientOne', 'clientTwo']) {
-      await (await getBackends()).mcp.putConsent(APP_ID, { client_id, owner: 'userA', scopes: ['notes:read'], created_at: nowIso(), updated_at: nowIso() });
+      await (
+        await getBackends()
+      ).mcp.putConsent(APP_ID, {
+        client_id,
+        owner: 'userA',
+        scopes: ['notes:read'],
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      });
     }
-    await (await getBackends()).mcp.putConsent(APP_ID, { client_id: 'clientOne', owner: 'userB', scopes: ['notes:read'], created_at: nowIso(), updated_at: nowIso() });
+    await (
+      await getBackends()
+    ).mcp.putConsent(APP_ID, {
+      client_id: 'clientOne',
+      owner: 'userB',
+      scopes: ['notes:read'],
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    });
     await registerTool();
 
     // All three tokens work before teardown.
@@ -462,7 +575,11 @@ describe('C23 — connector (consent) management', () => {
       expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, b)).statusCode).toBe(200);
     }
 
-    const res = await server.inject({ method: 'DELETE', url: '/mcp/consents?owner=userA', headers: { 'x-forge-service-token': SVC_TOKEN } });
+    const res = await server.inject({
+      method: 'DELETE',
+      url: '/mcp/consents?owner=userA',
+      headers: { 'x-forge-service-token': SVC_TOKEN },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json().revoked_consents).toBe(2);
     expect((res.json().clients as string[]).sort()).toEqual(['clientOne', 'clientTwo']);
@@ -482,7 +599,11 @@ describe('C23 — connector (consent) management', () => {
     await registerTool();
     expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, orphan)).statusCode).toBe(200);
 
-    const res = await server.inject({ method: 'DELETE', url: '/mcp/consents?owner=userC', headers: { 'x-forge-service-token': SVC_TOKEN } });
+    const res = await server.inject({
+      method: 'DELETE',
+      url: '/mcp/consents?owner=userC',
+      headers: { 'x-forge-service-token': SVC_TOKEN },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json().revoked_consents).toBe(0);
     expect(res.json().revoked_grants).toBeGreaterThanOrEqual(1);
@@ -490,12 +611,26 @@ describe('C23 — connector (consent) management', () => {
   });
 
   it('requires a service token and an owner (never a blind, unauthenticated teardown)', async () => {
-    expect((await server.inject({ method: 'DELETE', url: '/mcp/consents?owner=userA' })).statusCode).toBe(401);
+    expect((await server.inject({ method: 'DELETE', url: '/mcp/consents?owner=userA' })).statusCode).toBe(
+      401,
+    );
     expect(
-      (await server.inject({ method: 'DELETE', url: '/mcp/consents?owner=userA', headers: { 'x-forge-service-token': 'wrong' } })).statusCode,
+      (
+        await server.inject({
+          method: 'DELETE',
+          url: '/mcp/consents?owner=userA',
+          headers: { 'x-forge-service-token': 'wrong' },
+        })
+      ).statusCode,
     ).toBe(401);
     expect(
-      (await server.inject({ method: 'DELETE', url: '/mcp/consents', headers: { 'x-forge-service-token': SVC_TOKEN } })).statusCode,
+      (
+        await server.inject({
+          method: 'DELETE',
+          url: '/mcp/consents',
+          headers: { 'x-forge-service-token': SVC_TOKEN },
+        })
+      ).statusCode,
     ).toBe(400);
   });
 });
@@ -508,20 +643,48 @@ describe('Change D — management routes require the x-forge-service-token', () 
     server.inject({ method, url, ...(payload !== undefined ? { payload: payload as object } : {}) });
 
   it('rejects EVERY management route with 401 when no service token is presented', async () => {
-    expect((await noToken('POST', '/mcp/tools', { name: 'get_note', scope: 'notes:read', family: 'read', handler_path: '/api/mcp/tools/get_note' })).statusCode).toBe(401);
+    expect(
+      (
+        await noToken('POST', '/mcp/tools', {
+          name: 'get_note',
+          scope: 'notes:read',
+          family: 'read',
+          handler_path: '/api/mcp/tools/get_note',
+        })
+      ).statusCode,
+    ).toBe(401);
     expect((await noToken('GET', '/mcp/tools')).statusCode).toBe(401);
     expect((await noToken('DELETE', '/mcp/tools/get_note')).statusCode).toBe(401);
     expect((await noToken('POST', '/mcp/instructions', { text: 'v1' })).statusCode).toBe(401);
     expect((await noToken('GET', '/mcp/instructions')).statusCode).toBe(401);
-    expect((await noToken('POST', '/mcp/proactive', { tool: 'whats_next', every: '6h', target_path: '/api/cron/x' })).statusCode).toBe(401);
+    expect(
+      (
+        await noToken('POST', '/mcp/proactive', {
+          tool: 'whats_next',
+          every: '6h',
+          target_path: '/api/cron/x',
+        })
+      ).statusCode,
+    ).toBe(401);
     expect((await noToken('GET', '/mcp/consents?owner=userA')).statusCode).toBe(401);
     expect((await noToken('DELETE', '/mcp/consents/clientZ?owner=userA')).statusCode).toBe(401);
   });
 
   it('rejects a WRONG service token, accepts the CORRECT one', async () => {
-    const wrong = await server.inject({ method: 'GET', url: '/mcp/tools', headers: { 'x-forge-service-token': 'not-the-token' } });
+    const wrong = await server.inject({
+      method: 'GET',
+      url: '/mcp/tools',
+      headers: { 'x-forge-service-token': 'not-the-token' },
+    });
     expect(wrong.statusCode).toBe(401);
-    const okReg = await post('/mcp/tools', { name: 'get_note', description: 'Read a note', input_schema: { type: 'object' }, scope: 'notes:read', family: 'read', handler_path: '/api/mcp/tools/get_note' });
+    const okReg = await post('/mcp/tools', {
+      name: 'get_note',
+      description: 'Read a note',
+      input_schema: { type: 'object' },
+      scope: 'notes:read',
+      family: 'read',
+      handler_path: '/api/mcp/tools/get_note',
+    });
     expect(okReg.statusCode).toBe(200);
     expect((await get('/mcp/tools')).statusCode).toBe(200);
   });
@@ -531,10 +694,15 @@ describe('Change D — management routes require the x-forge-service-token', () 
     delete process.env.AUTH_SERVICE_TOKEN;
     try {
       // Even presenting the previously-valid token is rejected: with nothing configured there is nothing to match.
-      const r = await server.inject({ method: 'GET', url: '/mcp/tools', headers: { 'x-forge-service-token': SVC_TOKEN } });
+      const r = await server.inject({
+        method: 'GET',
+        url: '/mcp/tools',
+        headers: { 'x-forge-service-token': SVC_TOKEN },
+      });
       expect(r.statusCode).toBe(401);
     } finally {
-      if (prev === undefined) delete process.env.AUTH_SERVICE_TOKEN; else process.env.AUTH_SERVICE_TOKEN = prev;
+      if (prev === undefined) delete process.env.AUTH_SERVICE_TOKEN;
+      else process.env.AUTH_SERVICE_TOKEN = prev;
     }
   });
 
@@ -552,7 +720,12 @@ describe('Change D — management routes require the x-forge-service-token', () 
 describe('Change B — per-tool securitySchemes on tools/list', () => {
   it('emits an oauth2 scheme carrying the tool scope, and noauth for a scopeless tool', async () => {
     await registerTool(); // get_note, scope notes:read
-    await registerTool({ name: 'ping_pub', scope: '', family: 'read', handler_path: '/api/mcp/tools/get_note' });
+    await registerTool({
+      name: 'ping_pub',
+      scope: '',
+      family: 'read',
+      handler_path: '/api/mcp/tools/get_note',
+    });
     const bearer = await mintAccess(['notes:read']);
     const tools = (await rpc('tools/list', {}, bearer)).json().result.tools;
     const gated = tools.find((t: { name: string }) => t.name === 'get_note');
@@ -587,12 +760,19 @@ describe('C36 — payload tracing + failure-path spans', () => {
     traceId: string;
     parentSpanId?: string;
     status: { code: number };
-    attributes: Array<{ key: string; value: { stringValue?: string; intValue?: number; boolValue?: boolean } }>;
+    attributes: Array<{
+      key: string;
+      value: { stringValue?: string; intValue?: number; boolValue?: boolean };
+    }>;
   }
   const spans = (): WireSpan[] =>
-    (exported as Array<{ resourceSpans: Array<{ scopeSpans: Array<{ spans: WireSpan[] }> }> }>)
-      .flatMap((b) => b.resourceSpans.flatMap((rs) => rs.scopeSpans.flatMap((ss) => ss.spans)));
-  const spanNamed = (name: string): WireSpan | undefined => spans().filter((s) => s.name === name).at(-1);
+    (exported as Array<{ resourceSpans: Array<{ scopeSpans: Array<{ spans: WireSpan[] }> }> }>).flatMap((b) =>
+      b.resourceSpans.flatMap((rs) => rs.scopeSpans.flatMap((ss) => ss.spans)),
+    );
+  const spanNamed = (name: string): WireSpan | undefined =>
+    spans()
+      .filter((s) => s.name === name)
+      .at(-1);
   const attr = (s: WireSpan | undefined, key: string): string | number | boolean | undefined => {
     const v = s?.attributes.find((a) => a.key === key)?.value;
     return v === undefined ? undefined : (v.stringValue ?? v.intValue ?? v.boolValue);
@@ -614,10 +794,10 @@ describe('C36 — payload tracing + failure-path spans', () => {
       }
       return realFetch(url as Parameters<typeof fetch>[0], init);
     }) as typeof fetch);
-    initOtel({ endpoint: OTLP, tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ endpoint: OTLP, tracesEndpoint: 'https://collector.example/v1/traces' });
   });
   afterEach(() => {
-    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces', }); // disable again so other tests are unaffected
+    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces' }); // disable again so other tests are unaffected
     vi.restoreAllMocks();
     delete process.env.FORGE_MCP_TRACE_PAYLOADS;
   });
@@ -674,13 +854,17 @@ describe('C36 — payload tracing + failure-path spans', () => {
 
     const input = String(attr(spanNamed('mcp.tool_call'), 'langfuse.observation.input'));
     expect(input.endsWith('…[truncated]')).toBe(true);
-    expect(Buffer.byteLength(input, 'utf8')).toBeLessThanOrEqual(8192 + Buffer.byteLength('…[truncated]', 'utf8'));
+    expect(Buffer.byteLength(input, 'utf8')).toBeLessThanOrEqual(
+      8192 + Buffer.byteLength('…[truncated]', 'utf8'),
+    );
   });
 
   it('a failing handler records the error payload as the OUTPUT on an error span (failure outcomes stay visible)', async () => {
     await registerTool({ name: 'boom', scope: '', handler_path: '/api/mcp/tools/boom' });
     const bearer = await mintAccess([]);
-    expect((await rpc('tools/call', { name: 'boom', arguments: {} }, bearer)).json().result.isError).toBe(true);
+    expect((await rpc('tools/call', { name: 'boom', arguments: {} }, bearer)).json().result.isError).toBe(
+      true,
+    );
 
     const span = spanNamed('mcp.tool_call');
     expect(span!.status.code).toBe(3); // error
@@ -721,7 +905,8 @@ describe('C36 — payload tracing + failure-path spans', () => {
       expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, wrong)).statusCode).toBe(401);
       expect(attr(spanNamed('mcp.auth_reject'), 'error.message')).toBe('resource_mismatch');
     } finally {
-      if (prev === undefined) delete process.env.FORGE_MCP_PUBLIC_URL; else process.env.FORGE_MCP_PUBLIC_URL = prev;
+      if (prev === undefined) delete process.env.FORGE_MCP_PUBLIC_URL;
+      else process.env.FORGE_MCP_PUBLIC_URL = prev;
     }
   });
 
@@ -731,9 +916,15 @@ describe('C36 — payload tracing + failure-path spans', () => {
     const edgeTrace = 'ab'.repeat(16);
     const edgeSpan = 'cd'.repeat(8);
     const res = await server.inject({
-      method: 'POST', url: '/mcp',
+      method: 'POST',
+      url: '/mcp',
       headers: { authorization: `Bearer ${bearer}`, traceparent: `00-${edgeTrace}-${edgeSpan}-01` },
-      payload: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_note', arguments: {} } } as object,
+      payload: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'get_note', arguments: {} },
+      } as object,
     });
     expect(res.json().result.structuredContent).toBeTruthy();
 
@@ -751,7 +942,8 @@ describe('Change A — RFC 8707 audience binding at /mcp', () => {
     try {
       await fn();
     } finally {
-      if (prev === undefined) delete process.env.FORGE_MCP_PUBLIC_URL; else process.env.FORGE_MCP_PUBLIC_URL = prev;
+      if (prev === undefined) delete process.env.FORGE_MCP_PUBLIC_URL;
+      else process.env.FORGE_MCP_PUBLIC_URL = prev;
     }
   };
 
@@ -762,9 +954,14 @@ describe('Change A — RFC 8707 audience binding at /mcp', () => {
       const wrong = await mintAccess(['notes:read'], 'userA', 'client1', 'https://evil.example/mcp');
       const unbound = await mintAccess(['notes:read'], 'userA', 'client1'); // no resource → back-compat
 
-      expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, good)).json().result.structuredContent).toBeTruthy();
+      expect(
+        (await rpc('tools/call', { name: 'get_note', arguments: {} }, good)).json().result.structuredContent,
+      ).toBeTruthy();
       expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, wrong)).statusCode).toBe(401);
-      expect((await rpc('tools/call', { name: 'get_note', arguments: {} }, unbound)).json().result.structuredContent).toBeTruthy();
+      expect(
+        (await rpc('tools/call', { name: 'get_note', arguments: {} }, unbound)).json().result
+          .structuredContent,
+      ).toBeTruthy();
     });
   });
 });
@@ -774,17 +971,37 @@ describe('Change A — RFC 8707 audience binding at /mcp', () => {
 // (mcp.dorinda.ai); Claude + browsers stay on api.dorinda.ai. The forwarded host is honored only when it's
 // the primary MCP host or in the FORGE_MCP_ALT_HOSTS allowlist — a spoofed host falls back to the pin.
 describe('Tier-3 — per-host MCP resource identifier (dedicated mTLS host)', () => {
-  const setEnv = (k: string, v: string | undefined) => { if (v === undefined) delete process.env[k]; else process.env[k] = v; };
+  const setEnv = (k: string, v: string | undefined) => {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  };
   // Pin the certless AS host + allowlist the dedicated mTLS alt host for the duration of fn, then restore.
-  const withHosts = async (env: { mcp?: string; alt?: string; oauth?: string }, fn: () => Promise<void>): Promise<void> => {
-    const prev = { mcp: process.env.FORGE_MCP_PUBLIC_URL, alt: process.env.FORGE_MCP_ALT_HOSTS, oauth: process.env.FORGE_OAUTH_PUBLIC_URL };
-    setEnv('FORGE_MCP_PUBLIC_URL', env.mcp); setEnv('FORGE_MCP_ALT_HOSTS', env.alt); setEnv('FORGE_OAUTH_PUBLIC_URL', env.oauth);
-    try { await fn(); } finally {
-      setEnv('FORGE_MCP_PUBLIC_URL', prev.mcp); setEnv('FORGE_MCP_ALT_HOSTS', prev.alt); setEnv('FORGE_OAUTH_PUBLIC_URL', prev.oauth);
+  const withHosts = async (
+    env: { mcp?: string; alt?: string; oauth?: string },
+    fn: () => Promise<void>,
+  ): Promise<void> => {
+    const prev = {
+      mcp: process.env.FORGE_MCP_PUBLIC_URL,
+      alt: process.env.FORGE_MCP_ALT_HOSTS,
+      oauth: process.env.FORGE_OAUTH_PUBLIC_URL,
+    };
+    setEnv('FORGE_MCP_PUBLIC_URL', env.mcp);
+    setEnv('FORGE_MCP_ALT_HOSTS', env.alt);
+    setEnv('FORGE_OAUTH_PUBLIC_URL', env.oauth);
+    try {
+      await fn();
+    } finally {
+      setEnv('FORGE_MCP_PUBLIC_URL', prev.mcp);
+      setEnv('FORGE_MCP_ALT_HOSTS', prev.alt);
+      setEnv('FORGE_OAUTH_PUBLIC_URL', prev.oauth);
     }
   };
   const wellKnown = (host: string) =>
-    server.inject({ method: 'GET', url: '/.well-known/oauth-protected-resource', headers: { 'x-forwarded-proto': 'https', 'x-forwarded-host': host } });
+    server.inject({
+      method: 'GET',
+      url: '/.well-known/oauth-protected-resource',
+      headers: { 'x-forwarded-proto': 'https', 'x-forwarded-host': host },
+    });
 
   it('advertises an ALLOWLISTED forwarded alt host as the resource id, AS issuer stays pinned to api', async () => {
     await withHosts({ mcp: 'https://api.dorinda.ai', alt: 'mcp.dorinda.ai' }, async () => {
@@ -816,11 +1033,22 @@ describe('Tier-3 — per-host MCP resource identifier (dedicated mTLS host)', ()
     await withHosts({ mcp: 'https://api.dorinda.ai', alt: 'mcp.dorinda.ai' }, async () => {
       await registerTool();
       const token = await mintAccess(['notes:read'], 'userA', 'client1', 'https://mcp.dorinda.ai/mcp');
-      const call = (host: string) => server.inject({
-        method: 'POST', url: '/mcp',
-        headers: { authorization: `Bearer ${token}`, 'x-forwarded-proto': 'https', 'x-forwarded-host': host },
-        payload: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_note', arguments: {} } } as object,
-      });
+      const call = (host: string) =>
+        server.inject({
+          method: 'POST',
+          url: '/mcp',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'x-forwarded-proto': 'https',
+            'x-forwarded-host': host,
+          },
+          payload: {
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: { name: 'get_note', arguments: {} },
+          } as object,
+        });
       // arrives via the alt host → expectedResource = https://mcp.dorinda.ai/mcp → matches the token's aud → 200
       expect((await call('mcp.dorinda.ai')).json().result.structuredContent).toBeTruthy();
       // arrives via the pinned api host → expectedResource = https://api.dorinda.ai/mcp → aud mismatch → 401
@@ -843,9 +1071,15 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
   let mcpLogs: Record<string, unknown>[];
   let exportedMetrics: unknown[];
 
-  type MetricMsg = { resourceMetrics: Array<{ scopeMetrics: Array<{ metrics: Array<{ name: string; [k: string]: unknown }> }> }> };
+  type MetricMsg = {
+    resourceMetrics: Array<{
+      scopeMetrics: Array<{ metrics: Array<{ name: string; [k: string]: unknown }> }>;
+    }>;
+  };
   const allMetrics = () =>
-    (exportedMetrics as MetricMsg[]).flatMap((b) => b.resourceMetrics.flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics)));
+    (exportedMetrics as MetricMsg[]).flatMap((b) =>
+      b.resourceMetrics.flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics)),
+    );
   const metricNamed = (name: string) => allMetrics().find((m) => m.name === name);
 
   beforeEach(() => {
@@ -861,11 +1095,11 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
       }
       return realFetch(url as Parameters<typeof fetch>[0], init);
     }) as typeof fetch);
-    initOtel({ endpoint: OTLP, tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ endpoint: OTLP, tracesEndpoint: 'https://collector.example/v1/traces' });
     _setMcpLogOverride((fields) => mcpLogs.push(fields));
   });
   afterEach(() => {
-    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces' });
     _setMcpLogOverride(undefined);
     vi.restoreAllMocks();
     delete process.env.FORGE_MCP_TRACE_PAYLOADS;
@@ -882,7 +1116,7 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
     expect(log).toBeTruthy();
     expect(log!['outcome']).toBe('ok');
     expect(typeof log!['duration_ms']).toBe('number');
-    expect((log!['duration_ms'] as number)).toBeGreaterThanOrEqual(0);
+    expect(log!['duration_ms'] as number).toBeGreaterThanOrEqual(0);
     expect(log!['app']).toBe(APP);
     expect(log!['error_class']).toBeUndefined();
     // 0.77.0: the transport line carries the user id — the per-user dashboard joins dp lines
@@ -903,7 +1137,12 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
   });
 
   it('emits a structured log line with error_class for a scope failure', async () => {
-    await registerTool({ name: 'write_note', scope: 'notes:write', family: 'action', handler_path: '/api/mcp/tools/get_note' });
+    await registerTool({
+      name: 'write_note',
+      scope: 'notes:write',
+      family: 'action',
+      handler_path: '/api/mcp/tools/get_note',
+    });
     const bearer = await mintAccess(['notes:read']);
     await rpc('tools/call', { name: 'write_note', arguments: {} }, bearer);
 
@@ -946,7 +1185,11 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
 
   it('emits a structured log for tool deregistration (mcp.tool_unregister)', async () => {
     await registerTool();
-    await server.inject({ method: 'DELETE', url: '/mcp/tools/get_note', headers: { 'x-forge-service-token': SVC_TOKEN } });
+    await server.inject({
+      method: 'DELETE',
+      url: '/mcp/tools/get_note',
+      headers: { 'x-forge-service-token': SVC_TOKEN },
+    });
 
     const log = mcpLogs.find((l) => l['event'] === 'mcp.tool_unregister');
     expect(log).toBeTruthy();
@@ -1002,7 +1245,14 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
     _resetRegistrationDebounce();
     await registerTool();
 
-    type Gauge = { gauge?: { dataPoints: Array<{ asInt: string; attributes: Array<{ key: string; value: { stringValue: string } }> }> } };
+    type Gauge = {
+      gauge?: {
+        dataPoints: Array<{
+          asInt: string;
+          attributes: Array<{ key: string; value: { stringValue: string } }>;
+        }>;
+      };
+    };
     const gauge = metricNamed('mcp.tools.registered') as Gauge | undefined;
     expect(gauge).toBeTruthy();
     // OTLP/JSON encodes int64 as a STRING (0.84.0). A JSON number was the bug: the app tier already
@@ -1015,7 +1265,11 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
   it('exports mcp.tools.registered gauge with count 0 after the last tool is deleted', async () => {
     await registerTool();
     exportedMetrics = []; // reset so the delete batch is isolated
-    await server.inject({ method: 'DELETE', url: '/mcp/tools/get_note', headers: { 'x-forge-service-token': SVC_TOKEN } });
+    await server.inject({
+      method: 'DELETE',
+      url: '/mcp/tools/get_note',
+      headers: { 'x-forge-service-token': SVC_TOKEN },
+    });
 
     type Gauge = { gauge?: { dataPoints: Array<{ asInt: number }> } };
     const gauge = metricNamed('mcp.tools.registered') as Gauge | undefined;
@@ -1039,7 +1293,7 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
   });
 
   it('does NOT export metrics when OTLP is disabled (no keys)', async () => {
-    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces' });
     exportedMetrics = [];
     await registerTool();
     const bearer = await mintAccess(['notes:read']);
@@ -1074,11 +1328,17 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
     await registerTool();
     const bearer = await mintAccess(['notes:read']);
     const edgeTrace = 'a1b2c3d4'.repeat(4);
-    const edgeSpan  = 'e5f60718'.repeat(2);
+    const edgeSpan = 'e5f60718'.repeat(2);
     const res = await server.inject({
-      method: 'POST', url: '/mcp',
+      method: 'POST',
+      url: '/mcp',
       headers: { authorization: `Bearer ${bearer}`, traceparent: `00-${edgeTrace}-${edgeSpan}-01` },
-      payload: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_note', arguments: {} } } as object,
+      payload: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'get_note', arguments: {} },
+      } as object,
     });
     expect(res.json().result._meta?.traceparent).toMatch(new RegExp(`^00-${edgeTrace}-`));
   });

@@ -7,7 +7,12 @@ import path from 'node:path';
 import { store } from '../src/storage/store';
 import { getBackends } from '../src/storage/backends';
 import { setSecret } from '../src/plugins/secrets-local/index';
-import { setEmailTransport, resetEmailTransport, type OutboundEmail, type EmailConfig } from '../src/plugins/email-smtp/index';
+import {
+  setEmailTransport,
+  resetEmailTransport,
+  type OutboundEmail,
+  type EmailConfig,
+} from '../src/plugins/email-smtp/index';
 import { setPushTransport, resetPushTransport } from '../src/plugins/webpush-vapid/index';
 import { notify } from '../src/notifications/delivery';
 import { registerNotificationRoutes } from '../src/api/notifications-routes';
@@ -34,16 +39,32 @@ const FROM = 'Acme <no-reply@acme.test>';
 function sub(endpoint: string): { endpoint: string; keys: { p256dh: string; auth: string } } {
   const { publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const jwk = publicKey.export({ format: 'jwk' }) as { x: string; y: string };
-  const raw = Buffer.concat([Buffer.from([0x04]), Buffer.from(jwk.x, 'base64url'), Buffer.from(jwk.y, 'base64url')]);
-  return { endpoint, keys: { p256dh: raw.toString('base64url'), auth: randomBytes(16).toString('base64url') } };
+  const raw = Buffer.concat([
+    Buffer.from([0x04]),
+    Buffer.from(jwk.x, 'base64url'),
+    Buffer.from(jwk.y, 'base64url'),
+  ]);
+  return {
+    endpoint,
+    keys: { p256dh: raw.toString('base64url'), auth: randomBytes(16).toString('base64url') },
+  };
 }
 
 async function seedApp(): Promise<void> {
   const now = nowIso();
   const app: Application = {
-    id: APP_ID, type: 'Application', app_id: APP_ID, created_at: now, updated_at: now,
-    name: APP, repo_path: '/app', platform: 'web', framework: 'nextjs', template: 'nextjs-web',
-    language: 'typescript', package_manager: 'npm',
+    id: APP_ID,
+    type: 'Application',
+    app_id: APP_ID,
+    created_at: now,
+    updated_at: now,
+    name: APP,
+    repo_path: '/app',
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   };
   await store.saveResource(app);
 }
@@ -117,13 +138,19 @@ describe('notify() fan-out — channels (C21)', () => {
     expect((await store.listNotifications(APP_ID, { owner: 'A' })).length).toBe(1);
   });
 
-  it('push channel fans out to every one of the owner\'s subscriptions', async () => {
+  it("push channel fans out to every one of the owner's subscriptions", async () => {
     const { owner } = await seedUser();
     await store.registerPushSubscription(APP_ID, { owner, ...sub('https://push/phone') });
     await store.registerPushSubscription(APP_ID, { owner, ...sub('https://push/laptop') });
     const pushCalls = pushSink(201);
 
-    const out = await notify(APP_ID, APP, { key: 'k', title: 'Hi', body: 'there', owner, channels: ['in_app', 'push'] });
+    const out = await notify(APP_ID, APP, {
+      key: 'k',
+      title: 'Hi',
+      body: 'there',
+      owner,
+      channels: ['in_app', 'push'],
+    });
     expect(out.notification?.key).toBe('k'); // in_app still recorded
     expect(out.delivery?.push).toEqual({ attempted: 2, sent: 2, pruned: 0, failed: 0 });
     expect(pushCalls.sort()).toEqual(['https://push/laptop', 'https://push/phone']);
@@ -144,7 +171,13 @@ describe('notify() fan-out — channels (C21)', () => {
     await configureEmail();
     const captured = emailSink();
 
-    const out = await notify(APP_ID, APP, { key: 'k', title: 'Weekly summary', body: 'You did great', owner, channels: ['email'] });
+    const out = await notify(APP_ID, APP, {
+      key: 'k',
+      title: 'Weekly summary',
+      body: 'You did great',
+      owner,
+      channels: ['email'],
+    });
     expect(out.delivery?.email).toEqual({ status: 'sent' });
     expect(captured.msg?.to).toBe(email);
     expect(captured.msg?.subject).toBe('Weekly summary');
@@ -155,7 +188,12 @@ describe('notify() fan-out — channels (C21)', () => {
   it('email skips cleanly when the owner has no account address (no crash)', async () => {
     await configureEmail();
     emailSink();
-    const out = await notify(APP_ID, APP, { key: 'k', title: 'Hi', owner: 'no-such-user', channels: ['email'] });
+    const out = await notify(APP_ID, APP, {
+      key: 'k',
+      title: 'Hi',
+      owner: 'no-such-user',
+      channels: ['email'],
+    });
     expect(out.delivery?.email).toEqual({ status: 'skipped', reason: 'no_address' });
   });
 
@@ -164,9 +202,17 @@ describe('notify() fan-out — channels (C21)', () => {
     await store.registerPushSubscription(APP_ID, { owner, ...sub('https://push/x') });
     await configureEmail();
     const captured = emailSink();
-    setPushTransport(async () => { throw new Error('network down'); });
+    setPushTransport(async () => {
+      throw new Error('network down');
+    });
 
-    const out = await notify(APP_ID, APP, { key: 'k', title: 'Important', body: 'b', owner, channels: ['in_app', 'push', 'email'] });
+    const out = await notify(APP_ID, APP, {
+      key: 'k',
+      title: 'Important',
+      body: 'b',
+      owner,
+      channels: ['in_app', 'push', 'email'],
+    });
     expect(out.notification?.key).toBe('k'); // in_app recorded despite push failure
     expect(out.delivery?.push).toEqual({ attempted: 1, sent: 0, pruned: 0, failed: 1 });
     expect(out.delivery?.email).toEqual({ status: 'sent' }); // email still went out
@@ -181,13 +227,25 @@ describe('notify() fan-out — channels (C21)', () => {
     const pushCalls = pushSink(201);
     const captured = emailSink();
 
-    const first = await notify(APP_ID, APP, { key: 'k', title: 'Once', owner, channels: ['in_app', 'push', 'email'], idempotencyKey: 'op-1' });
+    const first = await notify(APP_ID, APP, {
+      key: 'k',
+      title: 'Once',
+      owner,
+      channels: ['in_app', 'push', 'email'],
+      idempotencyKey: 'op-1',
+    });
     expect(first.delivery?.push?.sent).toBe(1);
     expect(first.delivery?.email).toEqual({ status: 'sent' });
 
     // Retry with the same idempotency key — external channels are skipped (deduped); in_app re-upserts.
     let emailCallsBefore = captured.msg?.subject;
-    const retry = await notify(APP_ID, APP, { key: 'k', title: 'Once', owner, channels: ['in_app', 'push', 'email'], idempotencyKey: 'op-1' });
+    const retry = await notify(APP_ID, APP, {
+      key: 'k',
+      title: 'Once',
+      owner,
+      channels: ['in_app', 'push', 'email'],
+      idempotencyKey: 'op-1',
+    });
     expect(retry.delivery?.deduped).toBe(true);
     expect(retry.delivery?.push).toBeUndefined();
     expect(retry.notification?.key).toBe('k'); // in_app still recorded (idempotent by key)
@@ -197,7 +255,11 @@ describe('notify() fan-out — channels (C21)', () => {
 
   it('push/email without an owner are skipped (no per-user target); in_app still records', async () => {
     const pushCalls = pushSink();
-    const out = await notify(APP_ID, APP, { key: 'k', title: 'App-scoped', channels: ['in_app', 'push', 'email'] });
+    const out = await notify(APP_ID, APP, {
+      key: 'k',
+      title: 'App-scoped',
+      channels: ['in_app', 'push', 'email'],
+    });
     expect(out.notification?.key).toBe('k');
     expect(out.delivery?.push).toEqual({ attempted: 0, sent: 0, pruned: 0, failed: 0 });
     expect(out.delivery?.email).toEqual({ status: 'skipped', reason: 'no_owner' });
@@ -232,29 +294,53 @@ describe('notification routes — C21 delivery surface', () => {
   it('POST /notifications/push/subscribe registers (dedupes by endpoint); unsubscribe removes', async () => {
     const owner = 'user-1';
     const subscription = { endpoint: 'https://push/dev1', keys: { p256dh: 'kp', auth: 'ka' } };
-    const sr = await server.inject({ method: 'POST', url: '/notifications/push/subscribe', payload: { owner, subscription } });
+    const sr = await server.inject({
+      method: 'POST',
+      url: '/notifications/push/subscribe',
+      payload: { owner, subscription },
+    });
     expect(sr.statusCode).toBe(200);
     expect(sr.json()).toEqual({ subscribed: true, endpoint: 'https://push/dev1' });
     expect((await store.listPushSubscriptions(APP_ID, owner)).length).toBe(1);
 
     // Re-subscribe same endpoint → still one (deduped).
-    await server.inject({ method: 'POST', url: '/notifications/push/subscribe', payload: { owner, subscription } });
+    await server.inject({
+      method: 'POST',
+      url: '/notifications/push/subscribe',
+      payload: { owner, subscription },
+    });
     expect((await store.listPushSubscriptions(APP_ID, owner)).length).toBe(1);
 
-    const ur = await server.inject({ method: 'POST', url: '/notifications/push/unsubscribe', payload: { owner, endpoint: 'https://push/dev1' } });
+    const ur = await server.inject({
+      method: 'POST',
+      url: '/notifications/push/unsubscribe',
+      payload: { owner, endpoint: 'https://push/dev1' },
+    });
     expect(ur.json()).toEqual({ unsubscribed: true });
     expect(await store.listPushSubscriptions(APP_ID, owner)).toEqual([]);
   });
 
   it('POST /notifications/push/subscribe rejects a malformed subscription (422)', async () => {
-    const bad = await server.inject({ method: 'POST', url: '/notifications/push/subscribe', payload: { owner: 'u', subscription: { endpoint: 'x' } } });
+    const bad = await server.inject({
+      method: 'POST',
+      url: '/notifications/push/subscribe',
+      payload: { owner: 'u', subscription: { endpoint: 'x' } },
+    });
     expect(bad.statusCode).toBe(422);
-    const noOwner = await server.inject({ method: 'POST', url: '/notifications/push/subscribe', payload: { subscription: { endpoint: 'x', keys: { p256dh: 'a', auth: 'b' } } } });
+    const noOwner = await server.inject({
+      method: 'POST',
+      url: '/notifications/push/subscribe',
+      payload: { subscription: { endpoint: 'x', keys: { p256dh: 'a', auth: 'b' } } },
+    });
     expect(noOwner.statusCode).toBe(422);
   });
 
   it('POST /notifications with no channels is unchanged — returns { notification }, no delivery block', async () => {
-    const r = await server.inject({ method: 'POST', url: '/notifications', payload: { key: 'k', title: 'Hi', owner: 'A' } });
+    const r = await server.inject({
+      method: 'POST',
+      url: '/notifications',
+      payload: { key: 'k', title: 'Hi', owner: 'A' },
+    });
     expect(r.statusCode).toBe(200);
     const body = r.json() as Record<string, unknown>;
     expect((body.notification as { key: string }).key).toBe('k');
@@ -262,7 +348,11 @@ describe('notification routes — C21 delivery surface', () => {
   });
 
   it('POST /notifications with an unknown channel is a 422', async () => {
-    const r = await server.inject({ method: 'POST', url: '/notifications', payload: { key: 'k', title: 'Hi', owner: 'A', channels: ['in_app', 'carrier-pigeon'] } });
+    const r = await server.inject({
+      method: 'POST',
+      url: '/notifications',
+      payload: { key: 'k', title: 'Hi', owner: 'A', channels: ['in_app', 'carrier-pigeon'] },
+    });
     expect(r.statusCode).toBe(422);
   });
 
@@ -270,7 +360,11 @@ describe('notification routes — C21 delivery surface', () => {
     pushSink(201);
     const owner = 'route-owner';
     await store.registerPushSubscription(APP_ID, { owner, ...sub('https://push/r1') });
-    const r = await server.inject({ method: 'POST', url: '/notifications', payload: { key: 'k', title: 'Hi', owner, channels: ['in_app', 'push'] } });
+    const r = await server.inject({
+      method: 'POST',
+      url: '/notifications',
+      payload: { key: 'k', title: 'Hi', owner, channels: ['in_app', 'push'] },
+    });
     expect(r.statusCode).toBe(200);
     const body = r.json() as { notification: { key: string }; delivery: { push: { sent: number } } };
     expect(body.notification.key).toBe('k');

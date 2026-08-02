@@ -1,4 +1,11 @@
-import { randomBytes, randomInt, scrypt as scryptCb, timingSafeEqual, createHash, type ScryptOptions } from 'node:crypto';
+import {
+  randomBytes,
+  randomInt,
+  scrypt as scryptCb,
+  timingSafeEqual,
+  createHash,
+  type ScryptOptions,
+} from 'node:crypto';
 import { readSecrets } from '../secrets-local/index';
 import { redactRecipient } from '../email-smtp/index';
 
@@ -128,7 +135,10 @@ export function hashToken(token: string): string {
 // --- constant-time service-token comparison -------------------------------------
 
 // Compare a presented service token to the configured one in constant time.
-export function serviceTokenMatches(presented: string | undefined | null, configured: string | undefined | null): boolean {
+export function serviceTokenMatches(
+  presented: string | undefined | null,
+  configured: string | undefined | null,
+): boolean {
   if (!presented || !configured) return false;
   const a = Buffer.from(presented);
   const b = Buffer.from(configured);

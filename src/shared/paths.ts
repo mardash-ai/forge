@@ -26,9 +26,7 @@ export function appsDir(): string {
 // Directory for an app. In single-app mode the name is metadata only — the app
 // always lives at ./app. In multi-app mode it lives at ./apps/<name>.
 export function appDir(name: string): string {
-  return appLayout() === 'single'
-    ? path.join(workspaceDir(), 'app')
-    : path.join(appsDir(), name);
+  return appLayout() === 'single' ? path.join(workspaceDir(), 'app') : path.join(appsDir(), name);
 }
 
 export function resourcesDir(): string {

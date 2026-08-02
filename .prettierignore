@@ -1,0 +1,17 @@
+# Build output and dependencies.
+dist/
+node_modules/
+coverage/
+console/dist/
+
+# Bundled documentation pages. Hand-authored HTML with a deliberate single-line <style> block and
+# inline SVG; reflowing it produces a large diff and no benefit, and the pages are rendered inside
+# the console's own scoped embed rather than read as source.
+src/console/docs/content/
+
+# Generated fixtures and golden files — a reformat here would make a real content change unreadable.
+tests/fixtures/
+
+# Markdown is hand-authored prose with deliberate line breaks and hand-aligned tables. Reflowing it
+# destroys the shape the author chose and gains nothing.
+*.md

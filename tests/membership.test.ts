@@ -20,7 +20,14 @@ let prev: string | undefined;
 let server: FastifyInstance;
 
 const ROLES: RoleDef[] = [
-  { key: 'owner', label: 'Owner', permissions: ['members.invite', 'members.manage_roles', 'members.remove'], rank: 100, owner_role: true, assignable: true },
+  {
+    key: 'owner',
+    label: 'Owner',
+    permissions: ['members.invite', 'members.manage_roles', 'members.remove'],
+    rank: 100,
+    owner_role: true,
+    assignable: true,
+  },
   { key: 'member', label: 'Member', permissions: [], rank: 10, owner_role: false, assignable: true },
   { key: 'viewer', label: 'Viewer', permissions: [], rank: 1, owner_role: false, assignable: true },
 ];
@@ -28,8 +35,18 @@ const ROLES: RoleDef[] = [
 const seedApp = async (): Promise<void> => {
   const now = nowIso();
   await store.saveResource({
-    id: APP_ID, type: 'Application', app_id: APP_ID, created_at: now, updated_at: now,
-    name: APP, repo_path: '/app', platform: 'web', framework: 'nextjs', template: 'nextjs-web', language: 'typescript', package_manager: 'npm',
+    id: APP_ID,
+    type: 'Application',
+    app_id: APP_ID,
+    created_at: now,
+    updated_at: now,
+    name: APP,
+    repo_path: '/app',
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   } as Application);
 };
 
@@ -45,14 +62,18 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await server.close();
-  if (prev === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prev;
+  if (prev === undefined) delete process.env.FORGE_STATE_DIR;
+  else process.env.FORGE_STATE_DIR = prev;
   await rm(dir, { recursive: true, force: true });
 });
 
-const post = (url: string, payload: unknown = {}) => server.inject({ method: 'POST', url, payload: payload as object });
-const put = (url: string, payload: unknown = {}) => server.inject({ method: 'PUT', url, payload: payload as object });
+const post = (url: string, payload: unknown = {}) =>
+  server.inject({ method: 'POST', url, payload: payload as object });
+const put = (url: string, payload: unknown = {}) =>
+  server.inject({ method: 'PUT', url, payload: payload as object });
 const get = (url: string) => server.inject({ method: 'GET', url });
-const del = (url: string, payload: unknown = {}) => server.inject({ method: 'DELETE', url, payload: payload as object });
+const del = (url: string, payload: unknown = {}) =>
+  server.inject({ method: 'DELETE', url, payload: payload as object });
 const setRoles = () => put('/roles', { roles: ROLES });
 
 describe('C31 — role registry', () => {
@@ -67,11 +88,23 @@ describe('C31 — role registry', () => {
   });
 
   it('rejects a registry without exactly one owner_role', async () => {
-    expect((await put('/roles', { roles: [{ key: 'm', permissions: [], rank: 1, owner_role: false, assignable: true }] })).statusCode).toBe(422);
-    expect((await put('/roles', { roles: [
-      { key: 'o1', permissions: [], rank: 2, owner_role: true, assignable: true },
-      { key: 'o2', permissions: [], rank: 1, owner_role: true, assignable: true },
-    ] })).statusCode).toBe(422);
+    expect(
+      (
+        await put('/roles', {
+          roles: [{ key: 'm', permissions: [], rank: 1, owner_role: false, assignable: true }],
+        })
+      ).statusCode,
+    ).toBe(422);
+    expect(
+      (
+        await put('/roles', {
+          roles: [
+            { key: 'o1', permissions: [], rank: 2, owner_role: true, assignable: true },
+            { key: 'o2', permissions: [], rank: 1, owner_role: true, assignable: true },
+          ],
+        })
+      ).statusCode,
+    ).toBe(422);
   });
 });
 
@@ -108,7 +141,12 @@ describe('C31 — groups: lazy provision + idempotent ensure (migration linchpin
   it('GET member/:owner projects role + expanded permissions; a non-member is 404 not_a_member', async () => {
     const g = (await post('/groups/ensure', { owner: 'A' })).json().group;
     const view = (await get(`/groups/${g.id}/members/A`)).json();
-    expect(view).toMatchObject({ owner: 'A', role: 'owner', is_member: true, permissions: ['members.invite', 'members.manage_roles', 'members.remove'] });
+    expect(view).toMatchObject({
+      owner: 'A',
+      role: 'owner',
+      is_member: true,
+      permissions: ['members.invite', 'members.manage_roles', 'members.remove'],
+    });
     const miss = await get(`/groups/${g.id}/members/nobody`);
     expect(miss.statusCode).toBe(404);
     expect(miss.json().error.code).toBe('not_a_member');
@@ -144,7 +182,9 @@ describe('C31 — invitations: opaque token, binding, single-use, singleton flip
 
   it('binds to the invitee hint — a wrong identity cannot accept (token_identity_mismatch)', async () => {
     const g = await makeGroup();
-    const token = (await post(`/groups/${g.id}/invitations`, { actor: 'A', invitee_hint: 'bob@x.com', role: 'member' })).json().invitation.token;
+    const token = (
+      await post(`/groups/${g.id}/invitations`, { actor: 'A', invitee_hint: 'bob@x.com', role: 'member' })
+    ).json().invitation.token;
     const wrong = await post('/invitations/accept', { token, owner: 'C' });
     expect(wrong.statusCode).toBe(403);
     expect(wrong.json().error.code).toBe('token_identity_mismatch');
@@ -155,7 +195,9 @@ describe('C31 — invitations: opaque token, binding, single-use, singleton flip
 
   it('is single-use — a second accept with the same token is invalid_token', async () => {
     const g = await makeGroup();
-    const token = (await post(`/groups/${g.id}/invitations`, { actor: 'A', invitee_hint: 'B', role: 'member' })).json().invitation.token;
+    const token = (
+      await post(`/groups/${g.id}/invitations`, { actor: 'A', invitee_hint: 'B', role: 'member' })
+    ).json().invitation.token;
     expect((await post('/invitations/accept', { token, owner: 'B' })).statusCode).toBe(200);
     const second = await post('/invitations/accept', { token, owner: 'B' });
     expect(second.statusCode).toBe(404);
@@ -164,7 +206,9 @@ describe('C31 — invitations: opaque token, binding, single-use, singleton flip
 
   it('a bad token is invalid_token; an unknown role is unknown_role', async () => {
     const g = await makeGroup();
-    expect((await post('/invitations/accept', { token: 'nope', owner: 'B' })).json().error.code).toBe('invalid_token');
+    expect((await post('/invitations/accept', { token: 'nope', owner: 'B' })).json().error.code).toBe(
+      'invalid_token',
+    );
     const bad = await post(`/groups/${g.id}/invitations`, { actor: 'A', invitee_hint: 'B', role: 'ghost' });
     expect(bad.statusCode).toBe(422);
     expect(bad.json().error.code).toBe('unknown_role');
@@ -172,23 +216,35 @@ describe('C31 — invitations: opaque token, binding, single-use, singleton flip
 
   it('already_invited returns the existing pending invitation (no fresh token); already_a_member after accept', async () => {
     const g = await makeGroup();
-    const first = await post(`/groups/${g.id}/invitations`, { actor: 'A', invitee_hint: 'B', role: 'member' });
+    const first = await post(`/groups/${g.id}/invitations`, {
+      actor: 'A',
+      invitee_hint: 'B',
+      role: 'member',
+    });
     const dup = await post(`/groups/${g.id}/invitations`, { actor: 'A', invitee_hint: 'B', role: 'member' });
     expect(dup.json().reused).toBe(true);
     expect(dup.json().invitation.id).toBe(first.json().invitation.id);
     expect(dup.json().invitation.token).toBeUndefined();
 
     await post('/invitations/accept', { token: first.json().invitation.token, owner: 'B' });
-    const member = await post(`/groups/${g.id}/invitations`, { actor: 'A', invitee_hint: 'B', role: 'member' });
+    const member = await post(`/groups/${g.id}/invitations`, {
+      actor: 'A',
+      invitee_hint: 'B',
+      role: 'member',
+    });
     expect(member.statusCode).toBe(409);
     expect(member.json().error.code).toBe('already_a_member');
   });
 
   it('revoked invitation cannot be accepted', async () => {
     const g = await makeGroup();
-    const inv = (await post(`/groups/${g.id}/invitations`, { actor: 'A', invitee_hint: 'B', role: 'member' })).json().invitation;
+    const inv = (
+      await post(`/groups/${g.id}/invitations`, { actor: 'A', invitee_hint: 'B', role: 'member' })
+    ).json().invitation;
     expect((await post(`/invitations/${inv.id}/revoke`)).json().invitation.status).toBe('revoked');
-    expect((await post('/invitations/accept', { token: inv.token, owner: 'B' })).json().error.code).toBe('invalid_token');
+    expect((await post('/invitations/accept', { token: inv.token, owner: 'B' })).json().error.code).toBe(
+      'invalid_token',
+    );
   });
 });
 
@@ -197,18 +253,28 @@ describe('C31 — permission gating on membership operations (resolved, not asse
 
   const twoMemberGroup = async () => {
     const g = (await post('/groups/ensure', { owner: 'A' })).json().group;
-    const token = (await post(`/groups/${g.id}/invitations`, { actor: 'A', invitee_hint: 'B', role: 'member' })).json().invitation.token;
+    const token = (
+      await post(`/groups/${g.id}/invitations`, { actor: 'A', invitee_hint: 'B', role: 'member' })
+    ).json().invitation.token;
     await post('/invitations/accept', { token, owner: 'B' });
     return g;
   };
 
   it('a member without members.invite cannot invite (insufficient_permission); a non-member is not_a_member', async () => {
     const g = await twoMemberGroup();
-    const denied = await post(`/groups/${g.id}/invitations`, { actor: 'B', invitee_hint: 'C', role: 'member' });
+    const denied = await post(`/groups/${g.id}/invitations`, {
+      actor: 'B',
+      invitee_hint: 'C',
+      role: 'member',
+    });
     expect(denied.statusCode).toBe(403);
     expect(denied.json().error.code).toBe('insufficient_permission');
 
-    const stranger = await post(`/groups/${g.id}/invitations`, { actor: 'Z', invitee_hint: 'C', role: 'member' });
+    const stranger = await post(`/groups/${g.id}/invitations`, {
+      actor: 'Z',
+      invitee_hint: 'C',
+      role: 'member',
+    });
     expect(stranger.statusCode).toBe(403);
     expect(stranger.json().error.code).toBe('not_a_member');
   });
@@ -229,7 +295,9 @@ describe('C31 — ≥1-owner invariant + transfer + leave + removal event', () =
 
   const twoMemberGroup = async () => {
     const g = (await post('/groups/ensure', { owner: 'A' })).json().group;
-    const token = (await post(`/groups/${g.id}/invitations`, { actor: 'A', invitee_hint: 'B', role: 'member' })).json().invitation.token;
+    const token = (
+      await post(`/groups/${g.id}/invitations`, { actor: 'A', invitee_hint: 'B', role: 'member' })
+    ).json().invitation.token;
     await post('/invitations/accept', { token, owner: 'B' });
     return g;
   };
@@ -237,13 +305,19 @@ describe('C31 — ≥1-owner invariant + transfer + leave + removal event', () =
   it('the last owner cannot be removed, demoted, or leave', async () => {
     const g = (await post('/groups/ensure', { owner: 'A' })).json().group;
     expect((await del(`/groups/${g.id}/members/A`, { actor: 'A' })).json().error.code).toBe('last_owner');
-    expect((await post(`/groups/${g.id}/members/A/role`, { actor: 'A', role: 'member' })).json().error.code).toBe('last_owner');
+    expect(
+      (await post(`/groups/${g.id}/members/A/role`, { actor: 'A', role: 'member' })).json().error.code,
+    ).toBe('last_owner');
     expect((await post(`/groups/${g.id}/leave`, { actor: 'A' })).json().error.code).toBe('last_owner');
   });
 
   it('transfer-ownership is atomic and preserves an owner; the demoted ex-owner can then leave', async () => {
     const g = await twoMemberGroup();
-    const t = await post(`/groups/${g.id}/transfer-ownership`, { actor: 'A', to_owner: 'B', demote_actor_to: 'member' });
+    const t = await post(`/groups/${g.id}/transfer-ownership`, {
+      actor: 'A',
+      to_owner: 'B',
+      demote_actor_to: 'member',
+    });
     expect(t.statusCode).toBe(200);
     expect(t.json().to).toMatchObject({ owner: 'B', role: 'owner' });
     expect(t.json().from).toMatchObject({ owner: 'A', role: 'member' });
@@ -268,12 +342,33 @@ describe('C31 — pure service: invitation expiry', () => {
   it('acceptInvitation rejects an expired token (expired_token) at the pure layer', () => {
     const state: MembershipState = emptyMembershipState();
     state.roles = ROLES;
-    state.groups['g'] = { id: 'g', singleton: true, created_at: '2020-01-01T00:00:00.000Z', updated_at: '2020-01-01T00:00:00.000Z' };
-    state.members[memberKey('g', 'A')] = { group_id: 'g', owner: 'A', role: 'owner', status: 'active', added_at: '2020-01-01T00:00:00.000Z', updated_at: '2020-01-01T00:00:00.000Z' };
-    state.invitations['i'] = {
-      id: 'i', group_id: 'g', role: 'member', invitee_hint: 'B', token_hash: hashToken('tok'),
-      status: 'pending', invited_by: 'A', created_at: '2020-01-01T00:00:00.000Z', expires_at: '2020-01-15T00:00:00.000Z',
+    state.groups['g'] = {
+      id: 'g',
+      singleton: true,
+      created_at: '2020-01-01T00:00:00.000Z',
+      updated_at: '2020-01-01T00:00:00.000Z',
     };
-    expect(() => acceptInvitation(state, { token: 'tok', owner: 'B', now: '2026-01-01T00:00:00.000Z' })).toThrowError(/expired/i);
+    state.members[memberKey('g', 'A')] = {
+      group_id: 'g',
+      owner: 'A',
+      role: 'owner',
+      status: 'active',
+      added_at: '2020-01-01T00:00:00.000Z',
+      updated_at: '2020-01-01T00:00:00.000Z',
+    };
+    state.invitations['i'] = {
+      id: 'i',
+      group_id: 'g',
+      role: 'member',
+      invitee_hint: 'B',
+      token_hash: hashToken('tok'),
+      status: 'pending',
+      invited_by: 'A',
+      created_at: '2020-01-01T00:00:00.000Z',
+      expires_at: '2020-01-15T00:00:00.000Z',
+    };
+    expect(() =>
+      acceptInvitation(state, { token: 'tok', owner: 'B', now: '2026-01-01T00:00:00.000Z' }),
+    ).toThrowError(/expired/i);
   });
 });

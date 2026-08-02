@@ -20,7 +20,12 @@ const rule = (over: Partial<PolicyRule>): PolicyRule => ({
 });
 
 // A benign, non-high-risk action (a read) so policy effects are visible without the safety floor firing.
-const read = (over: Partial<Action> = {}): Action => ({ tool: 'get_note', type: 'read', reversibility: 'reversible', ...over });
+const read = (over: Partial<Action> = {}): Action => ({
+  tool: 'get_note',
+  type: 'read',
+  reversibility: 'reversible',
+  ...over,
+});
 
 describe('C29 — actionClass + isHighRisk', () => {
   it('actionClass is a stable tool[:channel] key', () => {
@@ -42,7 +47,14 @@ describe('C29 — actionClass + isHighRisk', () => {
 
   it('the high-risk set is configurable by the app', () => {
     // Turn OFF new-contact + spending, and only flag a custom tool.
-    const spec = { tools: ['dangerous_tool'], channels: [], action_types: [], irreversible: false, spending: false, newContact: false };
+    const spec = {
+      tools: ['dangerous_tool'],
+      channels: [],
+      action_types: [],
+      irreversible: false,
+      spending: false,
+      newContact: false,
+    };
     expect(isHighRisk({ contact: 'x@new.com' }, spec)).toBe(false);
     expect(isHighRisk({ amount: 100 }, spec)).toBe(false);
     expect(isHighRisk({ tool: 'dangerous_tool' }, spec)).toBe(true);
@@ -69,7 +81,12 @@ describe('C29 — deterministic decisions', () => {
     expect(d.reason).toBe('no policy matched; default posture'); // the human "why" is kept
     expect(d).not.toHaveProperty('rule');
     // …while a rule that actually fires still returns its id, unchanged.
-    const fired = authorize(actor(), read(), [rule({ id: 'allow_reads', effect: 'allow', match: { type: ['read'] } })], { now: NOW });
+    const fired = authorize(
+      actor(),
+      read(),
+      [rule({ id: 'allow_reads', effect: 'allow', match: { type: ['read'] } })],
+      { now: NOW },
+    );
     expect(fired.rule).toBe('allow_reads');
   });
 
@@ -101,7 +118,9 @@ describe('C29 — deterministic decisions', () => {
 describe('C29 — the non-overridable safety floor', () => {
   it('a high-risk action ALWAYS returns needs-approval, even with a matching allow policy', () => {
     const send: Action = { tool: 'send_email', type: 'send', channel: 'email', contact: 'user@x.com' };
-    const allowEverything = [rule({ id: 'allow_sends', effect: 'allow', priority: 999, match: { tool: ['send_email'] } })];
+    const allowEverything = [
+      rule({ id: 'allow_sends', effect: 'allow', priority: 999, match: { tool: ['send_email'] } }),
+    ];
     const d = authorize(actor(), send, allowEverything, { now: NOW });
     expect(d.decision).toBe('needs-approval'); // the allow policy CANNOT downgrade it
     expect(d.high_risk).toBe(true);
@@ -110,13 +129,19 @@ describe('C29 — the non-overridable safety floor', () => {
 
   it('a deny policy still overrides the safety floor (deny is stricter than needs-approval)', () => {
     const pay: Action = { tool: 'pay', type: 'pay', amount: 100 };
-    const d = authorize(actor(), pay, [rule({ id: 'deny_pay', effect: 'deny', match: { type: ['pay'] } })], { now: NOW });
+    const d = authorize(actor(), pay, [rule({ id: 'deny_pay', effect: 'deny', match: { type: ['pay'] } })], {
+      now: NOW,
+    });
     expect(d.decision).toBe('deny');
   });
 
   it('spending / new-contact / irreversible each hit the floor regardless of policy', () => {
     const allow = [rule({ id: 'yolo', effect: 'allow', priority: 100, match: {} })];
-    for (const action of [{ amount: 1 } as Action, { contact: 'new@x.com' } as Action, { reversibility: 'irreversible' } as Action]) {
+    for (const action of [
+      { amount: 1 } as Action,
+      { contact: 'new@x.com' } as Action,
+      { reversibility: 'irreversible' } as Action,
+    ]) {
       expect(authorize(actor(), action, allow, { now: NOW }).decision).toBe('needs-approval');
     }
     // …but the same allow policy DOES auto-allow a plain reversible read.
@@ -129,22 +154,43 @@ describe('C29 — dimensions + scope', () => {
     // A read (no amount) never matches a max_amount rule.
     const capped = [rule({ id: 'cap', effect: 'allow', match: { type: ['transfer'], max_amount: 50 } })];
     const spec = { spending: false, newContact: false, action_types: [], channels: [], irreversible: false }; // disable the floor to isolate the rule
-    expect(authorize(actor(), { type: 'transfer', amount: 30 }, capped, { now: NOW, highRiskClasses: spec }).decision).toBe('allow');
-    expect(authorize(actor(), { type: 'transfer', amount: 80 }, capped, { now: NOW, highRiskClasses: spec }).decision).toBe('needs-approval'); // over cap → no match → default
+    expect(
+      authorize(actor(), { type: 'transfer', amount: 30 }, capped, { now: NOW, highRiskClasses: spec })
+        .decision,
+    ).toBe('allow');
+    expect(
+      authorize(actor(), { type: 'transfer', amount: 80 }, capped, { now: NOW, highRiskClasses: spec })
+        .decision,
+    ).toBe('needs-approval'); // over cap → no match → default
   });
 
   it('role, domain, and time-window conditions gate a rule', () => {
     const spec = { spending: false, newContact: false, action_types: [], channels: [], irreversible: false };
     const rules = [
-      rule({ id: 'admin_only', effect: 'allow', match: { role: ['admin'], domain: ['example.com'], time: { days: ['wed'], start: '09:00', end: '17:00' } } }),
+      rule({
+        id: 'admin_only',
+        effect: 'allow',
+        match: {
+          role: ['admin'],
+          domain: ['example.com'],
+          time: { days: ['wed'], start: '09:00', end: '17:00' },
+        },
+      }),
     ];
     const act: Action = { type: 'read', domain: 'example.com' };
     // Wednesday 12:00 UTC, role admin → allow.
-    expect(authorize(actor({ role: 'admin' }), act, rules, { now: NOW, highRiskClasses: spec }).decision).toBe('allow');
+    expect(
+      authorize(actor({ role: 'admin' }), act, rules, { now: NOW, highRiskClasses: spec }).decision,
+    ).toBe('allow');
     // Wrong role → rule doesn't apply → default needs-approval.
-    expect(authorize(actor({ role: 'member' }), act, rules, { now: NOW, highRiskClasses: spec }).decision).toBe('needs-approval');
+    expect(
+      authorize(actor({ role: 'member' }), act, rules, { now: NOW, highRiskClasses: spec }).decision,
+    ).toBe('needs-approval');
     // Outside the time window (20:00 UTC) → doesn't apply.
-    expect(authorize(actor({ role: 'admin' }), act, rules, { now: '2026-03-04T20:00:00Z', highRiskClasses: spec }).decision).toBe('needs-approval');
+    expect(
+      authorize(actor({ role: 'admin' }), act, rules, { now: '2026-03-04T20:00:00Z', highRiskClasses: spec })
+        .decision,
+    ).toBe('needs-approval');
   });
 
   it('an app-wide policy (no owner) applies to any actor; an owner policy only to that owner', () => {

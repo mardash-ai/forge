@@ -3,7 +3,13 @@ import { searchDir, searchFile } from '../../../shared/paths';
 import { nowIso } from '../../../shared/time';
 import { rankDocuments } from '../../../search/rank';
 import { docVisibleTo } from '../../../search/acl';
-import { clampLimit, clampOffset, type SearchDocument, type SearchQuery, type SearchResponse } from '../../../search/types';
+import {
+  clampLimit,
+  clampOffset,
+  type SearchDocument,
+  type SearchQuery,
+  type SearchResponse,
+} from '../../../search/types';
 import type { SearchBackend, MigratableSearchBackend } from './types';
 
 // P26 — the FILESYSTEM search backend: the legacy C19 behavior, unchanged, moved behind the
@@ -98,7 +104,10 @@ export class FsSearchBackend implements SearchBackend, MigratableSearchBackend {
     const map = await this.readMap(appId);
     let removed = 0;
     for (const [k, v] of Object.entries(map)) {
-      if ((v as { owner?: string }).owner === owner) { delete map[k]; removed += 1; }
+      if ((v as { owner?: string }).owner === owner) {
+        delete map[k];
+        removed += 1;
+      }
     }
     if (removed > 0) await this.writeMap(appId, map);
     return removed;

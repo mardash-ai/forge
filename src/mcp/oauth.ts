@@ -42,7 +42,11 @@ export function pkceChallenge(verifier: string, method: 'S256' | 'plain' = 'S256
 
 // Verify a presented code_verifier against the stored challenge. Constant-time-ish via length+equality on
 // the derived value. `S256` is required by OAuth 2.1; `plain` is accepted only when the client registered it.
-export function verifyPkce(verifier: string | undefined, challenge: string | undefined, method: 'S256' | 'plain' | undefined): boolean {
+export function verifyPkce(
+  verifier: string | undefined,
+  challenge: string | undefined,
+  method: 'S256' | 'plain' | undefined,
+): boolean {
   if (!challenge) return false; // PKCE is mandatory in OAuth 2.1 — no challenge ⇒ reject
   if (!verifier) return false;
   const m = method ?? 'S256';
@@ -63,15 +67,18 @@ export const DEFAULT_CODE_TTL_SECONDS = 60; // authorization code — very short
 export const DEFAULT_ACCESS_TTL_SECONDS = 60 * 60; // access token — 1h
 export const DEFAULT_REFRESH_TTL_SECONDS = 60 * 60 * 24 * 30; // refresh token — 30d
 
-export const codeTtlSeconds = (): number => intFromEnv('FORGE_OAUTH_CODE_TTL_SECONDS', DEFAULT_CODE_TTL_SECONDS, 10, 600);
+export const codeTtlSeconds = (): number =>
+  intFromEnv('FORGE_OAUTH_CODE_TTL_SECONDS', DEFAULT_CODE_TTL_SECONDS, 10, 600);
 // Access-token TTL. Default 1h (short — the OAuth norm; a refreshing client keeps a rolling session via
 // the 30d refresh token). Cap raised from 24h → 30d so an operator whose connector client does NOT refresh
 // mid-session (some MCP hosts ride the access token until expiry, then show the connector "unavailable"
 // until a manual reconnect) can pick a session length that fits daily use instead of forcing frequent
 // reconnects. Access tokens stay individually revocable (/oauth/revoke + verify checks revocation), so a
 // longer TTL trades a bounded, revocable exposure window for a much better connector UX.
-export const accessTtlSeconds = (): number => intFromEnv('FORGE_OAUTH_ACCESS_TTL_SECONDS', DEFAULT_ACCESS_TTL_SECONDS, 60, 60 * 60 * 24 * 30);
-export const refreshTtlSeconds = (): number => intFromEnv('FORGE_OAUTH_REFRESH_TTL_SECONDS', DEFAULT_REFRESH_TTL_SECONDS, 60, 60 * 60 * 24 * 365);
+export const accessTtlSeconds = (): number =>
+  intFromEnv('FORGE_OAUTH_ACCESS_TTL_SECONDS', DEFAULT_ACCESS_TTL_SECONDS, 60, 60 * 60 * 24 * 30);
+export const refreshTtlSeconds = (): number =>
+  intFromEnv('FORGE_OAUTH_REFRESH_TTL_SECONDS', DEFAULT_REFRESH_TTL_SECONDS, 60, 60 * 60 * 24 * 365);
 
 export function expiresAtIso(ttlSeconds: number, now: Date = new Date()): string {
   return new Date(now.getTime() + ttlSeconds * 1000).toISOString();

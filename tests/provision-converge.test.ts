@@ -8,7 +8,12 @@ import { ForgeError } from '../src/shared/errors';
 // service must never be dropped without --force.
 describe('convergeInfra — additive, non-destructive', () => {
   it('a flag-less re-provision preserves existing services AND host ports', () => {
-    const prev = { postgres: true, redis: false, secrets: ['ANTHROPIC_API_KEY'], ports: { web: 3000, postgres: 5433 } };
+    const prev = {
+      postgres: true,
+      redis: false,
+      secrets: ['ANTHROPIC_API_KEY'],
+      ports: { web: 3000, postgres: 5433 },
+    };
     const d = convergeInfra(prev, {}, 3000);
     expect(d.postgres).toBe(true); // NOT dropped
     expect(d.ports.postgres).toBe(5433); // remap preserved
@@ -77,7 +82,13 @@ describe('parseComposeInfra — recover infra from a pre-fix compose.yaml', () =
 });
 
 describe('generateCompose — host-port overrides', () => {
-  const base = { appName: 'demo', port: 3000, withPostgres: true, withRedis: false, devCommand: 'npm run dev' };
+  const base = {
+    appName: 'demo',
+    port: 3000,
+    withPostgres: true,
+    withRedis: false,
+    devCommand: 'npm run dev',
+  };
 
   it('maps the overridden host port to the fixed container port', () => {
     const yaml = generateCompose({ ...base, ports: { web: 3000, postgres: 5433 } });

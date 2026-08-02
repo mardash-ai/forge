@@ -8,7 +8,10 @@ import type { PushBackend, PushSubscriptionRecord, PushSubscriptionInput } from 
 // cheap and keeps the FS copy faithful — an operator can flip reads back to the FS backend with no data
 // loss. Selected with FORGE_PUSH_BACKEND=postgres + FORGE_PUSH_DUAL_WRITE=1.
 export class DualWritePushBackend implements PushBackend {
-  constructor(private readonly primary: PgPushBackend, private readonly secondary: FsPushBackend) {}
+  constructor(
+    private readonly primary: PgPushBackend,
+    private readonly secondary: FsPushBackend,
+  ) {}
 
   private async mirror(appId: string): Promise<void> {
     await this.secondary.importApp(appId, await this.primary.exportApp(appId));

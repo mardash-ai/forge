@@ -75,15 +75,23 @@ export function getPersonalGroup(state: MembershipState, owner: string): Group |
 }
 
 // --- role registry (PUT /roles — idempotent replace) -------------------------------------------------
-export function putRoles(state: MembershipState, roles: RoleDef[]): { state: MembershipState; result: RoleDef[] } {
-  if (!Array.isArray(roles) || roles.length === 0) throw invalidInput('`roles` must be a non-empty array of role definitions.');
+export function putRoles(
+  state: MembershipState,
+  roles: RoleDef[],
+): { state: MembershipState; result: RoleDef[] } {
+  if (!Array.isArray(roles) || roles.length === 0)
+    throw invalidInput('`roles` must be a non-empty array of role definitions.');
   const normalized: RoleDef[] = [];
   const seen = new Set<string>();
   for (const r of roles) {
-    if (!r || typeof r.key !== 'string' || r.key.length === 0) throw invalidInput('each role requires a non-empty string `key`.');
+    if (!r || typeof r.key !== 'string' || r.key.length === 0)
+      throw invalidInput('each role requires a non-empty string `key`.');
     if (seen.has(r.key)) throw invalidInput(`duplicate role key "${r.key}".`);
     seen.add(r.key);
-    if (r.permissions !== undefined && (!Array.isArray(r.permissions) || r.permissions.some((p) => typeof p !== 'string')))
+    if (
+      r.permissions !== undefined &&
+      (!Array.isArray(r.permissions) || r.permissions.some((p) => typeof p !== 'string'))
+    )
       throw invalidInput(`role "${r.key}" \`permissions\` must be an array of strings.`);
     normalized.push({
       key: r.key,
@@ -95,7 +103,8 @@ export function putRoles(state: MembershipState, roles: RoleDef[]): { state: Mem
     });
   }
   const owners = normalized.filter((r) => r.owner_role);
-  if (owners.length !== 1) throw membershipError('no_owner_role', 'exactly one role must have `owner_role: true`.');
+  if (owners.length !== 1)
+    throw membershipError('no_owner_role', 'exactly one role must have `owner_role: true`.');
   state.roles = normalized;
   return { state, result: normalized };
 }
@@ -105,10 +114,21 @@ export function putRoles(state: MembershipState, roles: RoleDef[]): { state: Mem
 // explicit POST /groups (always a distinct new group). Both dedupe on a registered external_id.
 export function provisionGroup(
   state: MembershipState,
-  input: { owner: string; external_id?: string; name?: string; now: string; newGroupId: string; dedupeOwnerSingleton: boolean },
+  input: {
+    owner: string;
+    external_id?: string;
+    name?: string;
+    now: string;
+    newGroupId: string;
+    dedupeOwnerSingleton: boolean;
+  },
 ): { state: MembershipState; result: { group: Group; created: boolean } } {
   const ownerRole = findOwnerRole(state.roles);
-  if (!ownerRole) throw membershipError('no_owner_role', 'register a role registry with an owner-role (PUT /roles) before provisioning groups.');
+  if (!ownerRole)
+    throw membershipError(
+      'no_owner_role',
+      'register a role registry with an owner-role (PUT /roles) before provisioning groups.',
+    );
   if (typeof input.owner !== 'string' || input.owner.length === 0) throw invalidInput('`owner` is required.');
 
   if (input.external_id) {
@@ -149,24 +169,42 @@ export interface InviteResult {
 }
 export function inviteMember(
   state: MembershipState,
-  input: { groupId: string; actor: string; inviteeHint: string; role: string; now: string; newInvId: string; token: string },
+  input: {
+    groupId: string;
+    actor: string;
+    inviteeHint: string;
+    role: string;
+    now: string;
+    newInvId: string;
+    token: string;
+  },
 ): { state: MembershipState; result: InviteResult } {
   const group = resolveGroup(state, input.groupId);
   if (!group) throw membershipError('unknown_group', `no group "${input.groupId}".`);
   requireActorPermission(state, group.id, input.actor, MEMBERS_INVITE);
-  if (typeof input.inviteeHint !== 'string' || input.inviteeHint.length === 0) throw invalidInput('`invitee_hint` is required.');
+  if (typeof input.inviteeHint !== 'string' || input.inviteeHint.length === 0)
+    throw invalidInput('`invitee_hint` is required.');
   const roleDef = findRole(state.roles, input.role);
-  if (!roleDef || !roleDef.assignable) throw membershipError('unknown_role', `role "${input.role}" is not an assignable role.`);
+  if (!roleDef || !roleDef.assignable)
+    throw membershipError('unknown_role', `role "${input.role}" is not an assignable role.`);
 
   // Can't invite an owner that is already an active member.
   const alreadyMember = Object.values(state.members).some(
     (m) => m.group_id === group.id && m.status === 'active' && m.owner === input.inviteeHint,
   );
-  if (alreadyMember) throw membershipError('already_a_member', `${input.inviteeHint} is already a member of group ${group.id}.`);
+  if (alreadyMember)
+    throw membershipError(
+      'already_a_member',
+      `${input.inviteeHint} is already a member of group ${group.id}.`,
+    );
 
   // Reuse an outstanding pending invitation for the same (group, invitee_hint) rather than minting a second.
   const pending = Object.values(state.invitations).find(
-    (i) => i.group_id === group.id && i.invitee_hint === input.inviteeHint && i.status === 'pending' && i.expires_at > input.now,
+    (i) =>
+      i.group_id === group.id &&
+      i.invitee_hint === input.inviteeHint &&
+      i.status === 'pending' &&
+      i.expires_at > input.now,
   );
   if (pending) return { state, result: { invitation: toInvitationView(pending), reused: true } };
 
@@ -219,7 +257,8 @@ export function acceptInvitation(
   }
   const group = state.groups[inv.group_id];
   if (!group) throw membershipError('unknown_group', `group ${inv.group_id} no longer exists.`);
-  if (activeMember(state, group.id, input.owner)) throw membershipError('already_a_member', `${input.owner} is already a member of group ${group.id}.`);
+  if (activeMember(state, group.id, input.owner))
+    throw membershipError('already_a_member', `${input.owner} is already a member of group ${group.id}.`);
 
   const member: Member = {
     group_id: group.id,
@@ -253,9 +292,14 @@ export function setMemberRole(
   const target = activeMember(state, group.id, input.owner);
   if (!target) throw membershipError('not_a_member', `${input.owner} is not a member of group ${group.id}.`);
   const roleDef = findRole(state.roles, input.role);
-  if (!roleDef || !roleDef.assignable) throw membershipError('unknown_role', `role "${input.role}" is not an assignable role.`);
+  if (!roleDef || !roleDef.assignable)
+    throw membershipError('unknown_role', `role "${input.role}" is not an assignable role.`);
   // ≥1-owner invariant: demoting the sole owner is refused (transfer ownership first).
-  if (target.role === ownerRole.key && input.role !== ownerRole.key && ownerCount(state, group.id, ownerRole.key) <= 1) {
+  if (
+    target.role === ownerRole.key &&
+    input.role !== ownerRole.key &&
+    ownerCount(state, group.id, ownerRole.key) <= 1
+  ) {
     throw membershipError('last_owner', 'cannot demote the last owner; transfer ownership first.');
   }
   target.role = input.role;
@@ -375,12 +419,18 @@ export function transferOwnership(
   const ownerRole = findOwnerRole(state.roles)!;
   const from = activeMember(state, group.id, input.actor);
   if (!from) throw membershipError('not_a_member', `${input.actor} is not a member of group ${group.id}.`);
-  if (from.role !== ownerRole.key) throw membershipError('insufficient_role', 'only an owner may transfer ownership.');
+  if (from.role !== ownerRole.key)
+    throw membershipError('insufficient_role', 'only an owner may transfer ownership.');
   const to = activeMember(state, group.id, input.toOwner);
-  if (!to) throw membershipError('not_a_member', `${input.toOwner} is not a member of group ${group.id}; invite them first.`);
+  if (!to)
+    throw membershipError(
+      'not_a_member',
+      `${input.toOwner} is not a member of group ${group.id}; invite them first.`,
+    );
   if (input.demoteActorTo !== undefined) {
     const roleDef = findRole(state.roles, input.demoteActorTo);
-    if (!roleDef || !roleDef.assignable) throw membershipError('unknown_role', `role "${input.demoteActorTo}" is not an assignable role.`);
+    if (!roleDef || !roleDef.assignable)
+      throw membershipError('unknown_role', `role "${input.demoteActorTo}" is not an assignable role.`);
   }
   // Promote the recipient FIRST so ≥1 owner always holds through the operation.
   to.role = ownerRole.key;
@@ -394,7 +444,12 @@ export function transferOwnership(
 }
 
 // --- actor permission gate (shared by the write ops) -------------------------------------------------
-function requireActorPermission(state: MembershipState, groupId: string, actor: string, token: string): Member {
+function requireActorPermission(
+  state: MembershipState,
+  groupId: string,
+  actor: string,
+  token: string,
+): Member {
   const m = activeMember(state, groupId, actor);
   if (!m) throw membershipError('not_a_member', `actor ${actor} is not a member of group ${groupId}.`);
   if (!roleHasPermission(state.roles, m.role, token)) {
@@ -415,24 +470,53 @@ export interface ResolvedMembershipCtx {
 // Resolve the caller's role/permissions/is_member for the targeted group — the authoritative context the
 // C29 enforcement point consumes (NEVER the request's `role`). `targetIdOrExternal` omitted ⇒ the caller's
 // personal group-of-one (role = owner-role, is_member = true) — the back-compat path.
-export function resolveMembership(state: MembershipState, owner: string, targetIdOrExternal?: string): ResolvedMembershipCtx {
+export function resolveMembership(
+  state: MembershipState,
+  owner: string,
+  targetIdOrExternal?: string,
+): ResolvedMembershipCtx {
   if (targetIdOrExternal) {
     const group = resolveGroup(state, targetIdOrExternal);
-    if (!group) return { group_id: targetIdOrExternal, role: undefined, permissions: [], is_member: false, personal: false };
+    if (!group)
+      return {
+        group_id: targetIdOrExternal,
+        role: undefined,
+        permissions: [],
+        is_member: false,
+        personal: false,
+      };
     const m = activeMember(state, group.id, owner);
     const role = m?.role;
-    return { group_id: group.id, role, permissions: permissionsFor(state.roles, role), is_member: !!m, personal: false };
+    return {
+      group_id: group.id,
+      role,
+      permissions: permissionsFor(state.roles, role),
+      is_member: !!m,
+      personal: false,
+    };
   }
   const ownerRole = findOwnerRole(state.roles);
   const personal = getPersonalGroup(state, owner);
   if (personal) {
     const m = activeMember(state, personal.id, owner);
     const role = m?.role ?? ownerRole?.key;
-    return { group_id: personal.id, role, permissions: permissionsFor(state.roles, role), is_member: true, personal: true };
+    return {
+      group_id: personal.id,
+      role,
+      permissions: permissionsFor(state.roles, role),
+      is_member: true,
+      personal: true,
+    };
   }
   // Not yet provisioned — the caller is the implicit sole owner-role member of their group-of-one.
   const role = ownerRole?.key;
-  return { group_id: `grp_self_${owner}`, role, permissions: permissionsFor(state.roles, role), is_member: true, personal: true };
+  return {
+    group_id: `grp_self_${owner}`,
+    role,
+    permissions: permissionsFor(state.roles, role),
+    is_member: true,
+    personal: true,
+  };
 }
 
 // A member's public projection (GET /groups/:id/members/:owner) — role + expanded permissions + status.
@@ -440,7 +524,14 @@ export function memberView(
   state: MembershipState,
   groupId: string,
   owner: string,
-): { group_id: string; owner: string; role: string; permissions: string[]; is_member: boolean; status: Member['status'] } | null {
+): {
+  group_id: string;
+  owner: string;
+  role: string;
+  permissions: string[];
+  is_member: boolean;
+  status: Member['status'];
+} | null {
   const group = resolveGroup(state, groupId);
   if (!group) return null;
   const m = state.members[memberKey(group.id, owner)];
@@ -456,12 +547,22 @@ export function memberView(
 }
 
 // The groups an identity belongs to (GET /identities/:owner/groups).
-export function groupsForOwner(state: MembershipState, owner: string): Array<{ group_id: string; name?: string; role: string; singleton: boolean }> {
+export function groupsForOwner(
+  state: MembershipState,
+  owner: string,
+): Array<{ group_id: string; name?: string; role: string; singleton: boolean }> {
   return Object.values(state.members)
     .filter((m) => m.owner === owner && m.status === 'active')
     .map((m) => {
       const g = state.groups[m.group_id];
-      return g ? { group_id: g.id, ...(g.name !== undefined ? { name: g.name } : {}), role: m.role, singleton: g.singleton } : null;
+      return g
+        ? {
+            group_id: g.id,
+            ...(g.name !== undefined ? { name: g.name } : {}),
+            role: m.role,
+            singleton: g.singleton,
+          }
+        : null;
     })
     .filter((x): x is { group_id: string; name?: string; role: string; singleton: boolean } => x !== null)
     .sort((a, b) => (a.group_id < b.group_id ? -1 : 1));

@@ -31,7 +31,10 @@ describe.skipIf(!HAS_PG)('P26 Postgres push backend — dedupe upsert, atomic cl
     const p = (await getBackends()).push;
     const first = await p.registerSubscription(APP, { owner: 'A', ...sub('https://push/1', 'old', 'olda') });
     const second = await p.registerSubscription(APP, { owner: 'A', ...sub('https://push/1', 'new', 'newa') });
-    const rows = await pool.query('SELECT count(*)::int AS n FROM forge_push_subscriptions WHERE app_id=$1 AND endpoint=$2', [APP, 'https://push/1']);
+    const rows = await pool.query(
+      'SELECT count(*)::int AS n FROM forge_push_subscriptions WHERE app_id=$1 AND endpoint=$2',
+      [APP, 'https://push/1'],
+    );
     expect(rows.rows[0].n).toBe(1);
     expect(second.keys).toEqual({ p256dh: 'new', auth: 'newa' });
     expect(second.created_at).toBe(first.created_at);
@@ -50,7 +53,9 @@ describe.skipIf(!HAS_PG)('P26 Postgres push backend — dedupe upsert, atomic cl
   it('claimDelivery is an atomic first-writer claim — one winner across a concurrent double-submit', async () => {
     const p = (await getBackends()).push;
     const now = new Date().toISOString();
-    const results = await Promise.all(Array.from({ length: 10 }, () => p.claimDelivery(APP, 'A', 'race', now)));
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => p.claimDelivery(APP, 'A', 'race', now)),
+    );
     expect(results.filter((r) => r === true).length).toBe(1);
     expect(await p.claimDelivery(APP, 'A', 'race', now)).toBe(false); // already claimed
     expect(await p.claimDelivery(APP, 'B', 'race', now)).toBe(true); // scoped by owner
@@ -84,7 +89,10 @@ describe.skipIf(!HAS_PG)('P26 Postgres push backend — dedupe upsert, atomic cl
       const results = await backfillPush(fs, pg, [APP2]);
       expect(results).toEqual([{ app: APP2, subscriptions: 2, deliveries: 1 }]);
 
-      expect((await pg.listSubscriptions(APP2, 'A'))[0]).toMatchObject({ endpoint: 'https://push/a1', keys: { p256dh: 'x', auth: 'y' } });
+      expect((await pg.listSubscriptions(APP2, 'A'))[0]).toMatchObject({
+        endpoint: 'https://push/a1',
+        keys: { p256dh: 'x', auth: 'y' },
+      });
       expect((await pg.listSubscriptions(APP2, 'B')).map((s) => s.endpoint)).toEqual(['https://push/b1']);
       expect(await pg.claimDelivery(APP2, 'A', 'op-1', new Date().toISOString())).toBe(false); // ledger carried over
     } finally {

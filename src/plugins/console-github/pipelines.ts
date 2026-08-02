@@ -119,7 +119,11 @@ export function createGitHubPipelinesProvider(opts: GhOpts): PipelinesProvider {
           checked_at: new Date().toISOString(),
         };
       } catch (e) {
-        return { ok: false, detail: (e as Error).message.slice(0, 200), checked_at: new Date().toISOString() };
+        return {
+          ok: false,
+          detail: (e as Error).message.slice(0, 200),
+          checked_at: new Date().toISOString(),
+        };
       }
     },
 
@@ -192,7 +196,9 @@ export function createGitHubPipelinesProvider(opts: GhOpts): PipelinesProvider {
           {},
           ctx.signal,
         );
-        return (body.workflow_runs ?? []).map((r) => mapRun({ ...r, repository: { full_name: `${opts.owner}/${repo}` } }, r.name));
+        return (body.workflow_runs ?? []).map((r) =>
+          mapRun({ ...r, repository: { full_name: `${opts.owner}/${repo}` } }, r.name),
+        );
       }
       const per = Math.max(3, Math.ceil(limit / Math.max(1, opts.repos.length)));
       const settled = await Promise.allSettled(
@@ -211,9 +217,7 @@ export function createGitHubPipelinesProvider(opts: GhOpts): PipelinesProvider {
       settled.forEach((r) => {
         if (r.status === 'fulfilled') runs.push(...r.value);
       });
-      return runs
-        .sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? ''))
-        .slice(0, limit);
+      return runs.sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? '')).slice(0, limit);
     },
 
     async dispatch(pipelineId, o, ctx) {

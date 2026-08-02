@@ -36,7 +36,11 @@ export type TokenRejectReason = 'invalid_token' | 'resource_mismatch';
 // match — a token minted for a DIFFERENT resource is rejected. A token with NO bound resource still
 // verifies (BACK-COMPAT: tokens issued before aud-binding, and clients that never sent `resource`, keep
 // working); and when the caller passes no expected resource, no audience check is applied.
-export async function verifyAccessToken(appId: string, rawToken: string | null, expectedResource?: string): Promise<VerifiedToken | null> {
+export async function verifyAccessToken(
+  appId: string,
+  rawToken: string | null,
+  expectedResource?: string,
+): Promise<VerifiedToken | null> {
   return (await verifyAccessTokenDetailed(appId, rawToken, expectedResource)).verified;
 }
 
@@ -52,6 +56,14 @@ export async function verifyAccessTokenDetailed(
   const grant = await mcp.getGrant(appId, 'access', hashToken(rawToken));
   if (!grant) return { verified: null, reason: 'invalid_token' };
   if (isExpired(grant.expires_at)) return { verified: null, reason: 'invalid_token' };
-  if (expectedResource && grant.resource && grant.resource !== expectedResource) return { verified: null, reason: 'resource_mismatch' };
-  return { verified: { userId: grant.owner, scopes: grant.scopes, clientId: grant.client_id, ...(grant.resource ? { resource: grant.resource } : {}) } };
+  if (expectedResource && grant.resource && grant.resource !== expectedResource)
+    return { verified: null, reason: 'resource_mismatch' };
+  return {
+    verified: {
+      userId: grant.owner,
+      scopes: grant.scopes,
+      clientId: grant.client_id,
+      ...(grant.resource ? { resource: grant.resource } : {}),
+    },
+  };
 }

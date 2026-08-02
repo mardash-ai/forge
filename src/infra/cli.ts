@@ -20,7 +20,17 @@ import { loadRepoStack, requireEnv } from './config';
 import { declaredConfigHash } from './hash';
 import { modulePins } from './pins';
 import { bootstrap, BOOTSTRAP_COMPONENTS } from './bootstrap';
-import { tfInit, tfValidate, tfFmtCheck, tfPlan, tfApply, tfDestroy, tfOutputs, tfUntaint, readBackConverged } from './terraform';
+import {
+  tfInit,
+  tfValidate,
+  tfFmtCheck,
+  tfPlan,
+  tfApply,
+  tfDestroy,
+  tfOutputs,
+  tfUntaint,
+  readBackConverged,
+} from './terraform';
 import { materializeContract, publishContract, publishDeclaredHash, fetchDeclaredHash } from './contract';
 import { runVerify, behaviourChecks, checksNeedOutputs } from './verify';
 
@@ -56,16 +66,17 @@ async function preflight(stack: Awaited<ReturnType<typeof stackFor>>, env: strin
 
 program
   .name('forge infra')
-  .description('Provision THIS repo\'s stack. The repo you are standing in is the selector — there is no --stack flag.');
+  .description(
+    "Provision THIS repo's stack. The repo you are standing in is the selector — there is no --stack flag.",
+  );
 
 program
   .command('bootstrap')
-  .description('Create what Terraform cannot hold: folder, project, billing, core APIs, state bucket, WIF pool (§3.8). Idempotent. SCOPE IT with --component — a full run re-asserts the entire foundation, which is the wrong instrument for registering one repo.')
-  .requiredOption('--env <env>')
-  .option(
-    '--component <component>',
-    `what to bootstrap: ${BOOTSTRAP_COMPONENTS.join(' | ')} (default: all)`,
+  .description(
+    'Create what Terraform cannot hold: folder, project, billing, core APIs, state bucket, WIF pool (§3.8). Idempotent. SCOPE IT with --component — a full run re-asserts the entire foundation, which is the wrong instrument for registering one repo.',
   )
+  .requiredOption('--env <env>')
+  .option('--component <component>', `what to bootstrap: ${BOOTSTRAP_COMPONENTS.join(' | ')} (default: all)`)
   .option('--repo <repo>', 'register ONE declared repo for Workload Identity instead of every repo')
   .action(async (opts) => {
     if (opts.component && !BOOTSTRAP_COMPONENTS.includes(opts.component)) {
@@ -76,7 +87,8 @@ program
       ...(opts.component ? { component: opts.component } : {}),
       ...(opts.repo ? { repo: opts.repo } : {}),
     });
-    for (const s of steps) say(`  ${s.status.toUpperCase().padEnd(7)} ${s.name}${s.detail ? ` — ${s.detail}` : ''}`);
+    for (const s of steps)
+      say(`  ${s.status.toUpperCase().padEnd(7)} ${s.name}${s.detail ? ` — ${s.detail}` : ''}`);
     say(`bootstrap: ${steps.length} steps converged (re-running is safe and expected).`);
   });
 
@@ -111,7 +123,7 @@ program
 
 program
   .command('plan')
-  .description('Plan THIS repo\'s stack. Read-only; posts the §3.5 contract gate before any provider call.')
+  .description("Plan THIS repo's stack. Read-only; posts the §3.5 contract gate before any provider call.")
   .requiredOption('--env <env>')
   .action(async (opts) => {
     const stack = await stackFor(opts.env);
@@ -125,7 +137,9 @@ program
 
 program
   .command('apply')
-  .description('Apply THIS repo\'s stack. CI-only; --local --allow-local-apply is the §3.8 bootstrap escape hatch.')
+  .description(
+    "Apply THIS repo's stack. CI-only; --local --allow-local-apply is the §3.8 bootstrap escape hatch.",
+  )
   .requiredOption('--env <env>')
   .option('--local', 'explicitly acknowledge this is not CI')
   .option('--allow-local-apply', 'second key for the §3.8 escape hatch — both flags are required')
@@ -156,7 +170,9 @@ program
     if (stack.config.publishes_contract) {
       const outputs = await tfOutputs(stack);
       const contract = await publishContract(stack, opts.env, outputs, hash);
-      say(`contract: published v${contract.platform_contract_version} → gs://${stack.config.state_bucket}/contract/${opts.env}.json`);
+      say(
+        `contract: published v${contract.platform_contract_version} → gs://${stack.config.state_bucket}/contract/${opts.env}.json`,
+      );
     }
     say('apply: converged, hash published.');
   });
@@ -171,7 +187,8 @@ program
     const published = await fetchDeclaredHash(stack, opts.env);
     say(`declared (local):    ${local}`);
     say(`published (applied): ${published ?? '(never applied)'}`);
-    if (published && published !== local) say('→ local declaration has CHANGED since the last converged apply.');
+    if (published && published !== local)
+      say('→ local declaration has CHANGED since the last converged apply.');
 
     await preflight(stack, opts.env);
     const r = await tfPlan(stack, opts.env);
@@ -196,7 +213,9 @@ program
 
 program
   .command('verify')
-  .description('Prove the stack WORKS (§3.2) — the repo-declared behaviour checks, not resource existence. CI runs this as the post-deploy gate.')
+  .description(
+    'Prove the stack WORKS (§3.2) — the repo-declared behaviour checks, not resource existence. CI runs this as the post-deploy gate.',
+  )
   .requiredOption('--env <env>')
   .action(async (opts) => {
     const stack = await stackFor(opts.env);
@@ -209,18 +228,24 @@ program
       say(`  ${r.status === 'pass' ? 'PASS' : 'FAIL'}  ${r.title} — ${r.detail}`);
       if (r.status === 'fail') failed++;
     }
-    if (results.length === 0) say('  (no verify checks declared — declare what "working" means for this stack)');
+    if (results.length === 0)
+      say('  (no verify checks declared — declare what "working" means for this stack)');
     say(`verify: ${results.length - failed}/${results.length} passed`);
     process.exit(failed === 0 ? 0 : 1);
   });
 
 program
   .command('release-image')
-  .description('CODE plane (§3.3): roll ONE Cloud Run service to a new image by digest, then PROVE IT WORKS. Infra owns the stack (and ignores image changes); THIS moves the code. Refuses before rolling unless the stack declares a behaviour check, and after the revision goes Ready runs the stack\'s verify checks — a Ready revision can still be broken (the FORGE_APP_CALLBACK_URL cutover bug). The 2a pipeline wraps it.')
+  .description(
+    "CODE plane (§3.3): roll ONE Cloud Run service to a new image by digest, then PROVE IT WORKS. Infra owns the stack (and ignores image changes); THIS moves the code. Refuses before rolling unless the stack declares a behaviour check, and after the revision goes Ready runs the stack's verify checks — a Ready revision can still be broken (the FORGE_APP_CALLBACK_URL cutover bug). The 2a pipeline wraps it.",
+  )
   .requiredOption('--env <env>')
   .requiredOption('--service <name>', 'Cloud Run service name')
   .requiredOption('--image <ref>', 'image ref — digest-pinned (R1): repo@sha256:…')
-  .option('--allow-unverified-release', 'roll WITHOUT a behaviour gate. Escape hatch only: it ships code whose only proof is that the container booted.')
+  .option(
+    '--allow-unverified-release',
+    'roll WITHOUT a behaviour gate. Escape hatch only: it ships code whose only proof is that the container booted.',
+  )
   .action(async (opts) => {
     if (!/@sha256:[0-9a-f]{64}$/.test(opts.image)) {
       fail(`image must be DIGEST-pinned (R1): got "${opts.image}"`);
@@ -243,26 +268,61 @@ program
       );
     }
     const { run } = await import('../shared/exec');
-    const r = await run('gcloud', ['run', 'services', 'update', opts.service,
-      `--project=${e.project_id}`, `--region=${e.region}`, `--image=${opts.image}`, '--quiet'],
-      { timeoutMs: 10 * 60_000, tailLines: 50 });
+    const r = await run(
+      'gcloud',
+      [
+        'run',
+        'services',
+        'update',
+        opts.service,
+        `--project=${e.project_id}`,
+        `--region=${e.region}`,
+        `--image=${opts.image}`,
+        '--quiet',
+      ],
+      { timeoutMs: 10 * 60_000, tailLines: 50 },
+    );
     if ((r.code ?? 1) !== 0) fail(`release failed:\n${r.combined.slice(-1200)}`);
     // §3.7 discipline, code-plane edition: read back the serving revision's image.
     const { capture } = await import('./exec');
-    const check = await capture('gcloud', ['run', 'services', 'describe', opts.service,
-      `--project=${e.project_id}`, `--region=${e.region}`,
-      '--format=value(spec.template.spec.containers[0].image)'], { timeoutMs: 60_000 });
+    const check = await capture(
+      'gcloud',
+      [
+        'run',
+        'services',
+        'describe',
+        opts.service,
+        `--project=${e.project_id}`,
+        `--region=${e.region}`,
+        '--format=value(spec.template.spec.containers[0].image)',
+      ],
+      { timeoutMs: 60_000 },
+    );
     const live = check.stdout.trim();
     if (live !== opts.image) fail(`read-back mismatch: serving "${live}", expected "${opts.image}"`);
     // The configured image is not the proof — the REVISION must go Ready (a bad manifest fails at
     // import with the config already updated; hit live: "Container import failed").
     let ready_ok = false;
     for (let i = 0; i < 30; i++) {
-      const ready = await capture('gcloud', ['run', 'services', 'describe', opts.service,
-        `--project=${e.project_id}`, `--region=${e.region}`,
-        '--format=value(status.conditions[0].status,status.conditions[0].message)'], { timeoutMs: 60_000 });
+      const ready = await capture(
+        'gcloud',
+        [
+          'run',
+          'services',
+          'describe',
+          opts.service,
+          `--project=${e.project_id}`,
+          `--region=${e.region}`,
+          '--format=value(status.conditions[0].status,status.conditions[0].message)',
+        ],
+        { timeoutMs: 60_000 },
+      );
       const line = ready.stdout.trim();
-      if (line.startsWith('True')) { say(`release: ${opts.service} → ${opts.image} (revision Ready ✓)`); ready_ok = true; break; }
+      if (line.startsWith('True')) {
+        say(`release: ${opts.service} → ${opts.image} (revision Ready ✓)`);
+        ready_ok = true;
+        break;
+      }
       if (/failed|error/i.test(line)) fail(`revision NOT ready: ${line}`);
       await new Promise((r) => setTimeout(r, 10_000));
     }
@@ -270,7 +330,9 @@ program
 
     // Ready ≠ working. Now make a real request.
     if (opts.allowUnverifiedRelease) {
-      say('release: behaviour gate SKIPPED (--allow-unverified-release) — this release proved only that it booted.');
+      say(
+        'release: behaviour gate SKIPPED (--allow-unverified-release) — this release proved only that it booted.',
+      );
       return;
     }
     // Deliberately WITHOUT terraform unless a check truly needs an output. The release runner has
@@ -284,7 +346,9 @@ program
       if (init.code === 0) {
         outputs = await tfOutputs(stack).catch(() => ({}) as Record<string, unknown>);
       } else {
-        say('release: terraform unavailable — resolving verify targets through public DNS instead of pinned outputs.');
+        say(
+          'release: terraform unavailable — resolving verify targets through public DNS instead of pinned outputs.',
+        );
       }
     }
     const results = await runVerify(stack, opts.env, outputs);
@@ -304,7 +368,9 @@ program
 
 program
   .command('untaint')
-  .description('Clear the tainted flag on ONE resource address. STATE bookkeeping only — touches nothing in the cloud. Exists because a partially-failed apply (e.g. a rejected IAM member AFTER service creation) leaves a healthy resource marked for pointless replacement.')
+  .description(
+    'Clear the tainted flag on ONE resource address. STATE bookkeeping only — touches nothing in the cloud. Exists because a partially-failed apply (e.g. a rejected IAM member AFTER service creation) leaves a healthy resource marked for pointless replacement.',
+  )
   .requiredOption('--env <env>')
   .requiredOption('--address <address>', 'exact terraform resource address to untaint')
   .action(async (opts) => {

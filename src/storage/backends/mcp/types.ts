@@ -25,7 +25,10 @@ export interface McpBackend {
   deleteTool(appId: string, name: string): Promise<boolean>;
 
   // instruction / training blocks (versioned; append assigns the next version)
-  appendInstructions(appId: string, input: { text: string; label?: string; created_at: string }): Promise<InstructionBlock>;
+  appendInstructions(
+    appId: string,
+    input: { text: string; label?: string; created_at: string },
+  ): Promise<InstructionBlock>;
   latestInstructions(appId: string): Promise<InstructionBlock | null>;
   getInstructions(appId: string, version: number): Promise<InstructionBlock | null>;
   listInstructions(appId: string): Promise<InstructionBlock[]>;

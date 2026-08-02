@@ -56,7 +56,11 @@ export function createGcpCredentialsProvider(opts: {
         });
         return { ok: true, detail: 'reachable', checked_at: new Date().toISOString() };
       } catch (e) {
-        return { ok: false, detail: (e as Error).message.slice(0, 200), checked_at: new Date().toISOString() };
+        return {
+          ok: false,
+          detail: (e as Error).message.slice(0, 200),
+          checked_at: new Date().toISOString(),
+        };
       }
     },
 

@@ -40,7 +40,8 @@ type Input = z.infer<typeof inputSchema>;
 export const provisionEnvironment: Capability<Input, Environment> = {
   name: 'ProvisionEnvironment',
   slug: 'provision-environment',
-  description: 'Converge a Docker Compose environment (web + optional postgres/redis) for an Application; idempotent and non-destructive.',
+  description:
+    'Converge a Docker Compose environment (web + optional postgres/redis) for an Application; idempotent and non-destructive.',
   inputSchema,
   resourceType: 'Environment',
   events: ['EnvironmentProvisioned'],
@@ -80,10 +81,13 @@ export const provisionEnvironment: Capability<Input, Environment> = {
       : [];
 
     // Converge. Throws (422) if a data-volume service would be dropped without --force.
-    const desired = convergeInfra(prev, input, appPort, legacySecrets) as ReturnType<typeof convergeInfra> & { platform_store?: string };
+    const desired = convergeInfra(prev, input, appPort, legacySecrets) as ReturnType<typeof convergeInfra> & {
+      platform_store?: string;
+    };
     // P26 — carry the platform-store choice forward convergently (this call's flag wins, else the
     // remembered value), so a flag-less re-provision never resets it.
-    const platformStore = input.platform_store ?? (prev as { platform_store?: string } | null)?.platform_store;
+    const platformStore =
+      input.platform_store ?? (prev as { platform_store?: string } | null)?.platform_store;
     if (platformStore) desired.platform_store = platformStore;
 
     const compose = generateCompose({
@@ -105,7 +109,9 @@ export const provisionEnvironment: Capability<Input, Environment> = {
     // .env.example — reflects the converged services.
     const envLines = ['# Environment for ' + app.name, `PORT=${appPort}`, 'NODE_ENV=development'];
     if (desired.postgres) {
-      envLines.push('DATABASE_URL=postgres://forge:forge@postgres:5432/' + app.name.replace(/[^a-z0-9_]/gi, '_'));
+      envLines.push(
+        'DATABASE_URL=postgres://forge:forge@postgres:5432/' + app.name.replace(/[^a-z0-9_]/gi, '_'),
+      );
     }
     if (desired.redis) envLines.push('REDIS_URL=redis://redis:6379');
     await writeFile(path.join(app.repo_path, '.env.example'), envLines.join('\n') + '\n');

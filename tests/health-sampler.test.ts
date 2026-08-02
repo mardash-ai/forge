@@ -47,9 +47,18 @@ async function startHealth(status: number, body: unknown): Promise<number> {
 async function seedApp(): Promise<Application> {
   const now = nowIso();
   const app: Application = {
-    id: APP_ID, type: 'Application', app_id: APP_ID, created_at: now, updated_at: now,
-    name: APP, repo_path: repo, platform: 'web', framework: 'nextjs', template: 'nextjs-web',
-    language: 'typescript', package_manager: 'npm',
+    id: APP_ID,
+    type: 'Application',
+    app_id: APP_ID,
+    created_at: now,
+    updated_at: now,
+    name: APP,
+    repo_path: repo,
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   };
   await store.saveResource(app);
   await writeFile(path.join(repo, 'forge.app.json'), JSON.stringify({ port: 3000 }, null, 2));
@@ -57,7 +66,13 @@ async function seedApp(): Promise<Application> {
 }
 
 beforeEach(async () => {
-  for (const k of ['FORGE_STATE_DIR', 'FORGE_APP_CALLBACK_HOST', 'FORGE_APP_CALLBACK_PORT', 'FORGE_STATUS_SAMPLE', 'FORGE_STATUS_SAMPLE_INTERVAL']) {
+  for (const k of [
+    'FORGE_STATE_DIR',
+    'FORGE_APP_CALLBACK_HOST',
+    'FORGE_APP_CALLBACK_PORT',
+    'FORGE_STATUS_SAMPLE',
+    'FORGE_STATUS_SAMPLE_INTERVAL',
+  ]) {
     saved[k] = process.env[k];
   }
   dir = await mkdtemp(path.join(tmpdir(), 'forge-sampler-'));
@@ -79,7 +94,12 @@ afterEach(async () => {
 
 describe('sampleApp — reuses probeHealth + computeStatus, records a snapshot', () => {
   it('records an operational snapshot from a healthy app', async () => {
-    const port = await startHealth(200, { status: 'ok', service: APP, time: nowIso(), checks: [{ name: 'db', status: 'ok' }] });
+    const port = await startHealth(200, {
+      status: 'ok',
+      service: APP,
+      time: nowIso(),
+      checks: [{ name: 'db', status: 'ok' }],
+    });
     process.env.FORGE_APP_CALLBACK_PORT = String(port);
     const app = await seedApp();
 
@@ -152,10 +172,16 @@ describe('uptime store — record folds + prunes so storage stays bounded', () =
     // Raw file holds only the last 2 days (window); the old day was folded away.
     const rawLines = (await readFile(uptimeRawFile(APP_ID), 'utf8')).trim().split('\n').filter(Boolean);
     expect(rawLines.length).toBe(2);
-    expect(rawLines.map((l) => (JSON.parse(l) as HealthSnapshot).at.slice(0, 10)).sort()).toEqual(['2026-07-07', '2026-07-08']);
+    expect(rawLines.map((l) => (JSON.parse(l) as HealthSnapshot).at.slice(0, 10)).sort()).toEqual([
+      '2026-07-07',
+      '2026-07-08',
+    ]);
 
     // History (as of that "today") still shows all three days — the old one from the rollup.
-    const h = await uptimeStore.getHistory(APP_ID, { windowDays: 90, now: new Date('2026-07-08T12:00:00.000Z') });
+    const h = await uptimeStore.getHistory(APP_ID, {
+      windowDays: 90,
+      now: new Date('2026-07-08T12:00:00.000Z'),
+    });
     const web = h.components.find((c) => c.name === `${APP} (web)`)!;
     const byDate = new Map(web.days.map((d) => [d.date, d.state]));
     expect(byDate.get('2026-07-03')).toBe('operational'); // rolled up

@@ -33,9 +33,18 @@ let prevKey: string | undefined;
 async function seedApp(withTheme = true): Promise<void> {
   const now = nowIso();
   const app: Application = {
-    id: `app_${APP}`, type: 'Application', app_id: `app_${APP}`, created_at: now, updated_at: now,
-    name: APP, repo_path: repo, platform: 'web', framework: 'nextjs', template: 'nextjs-web',
-    language: 'typescript', package_manager: 'npm',
+    id: `app_${APP}`,
+    type: 'Application',
+    app_id: `app_${APP}`,
+    created_at: now,
+    updated_at: now,
+    name: APP,
+    repo_path: repo,
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   };
   await store.saveResource(app);
   if (withTheme) await writeFile(path.join(repo, 'forge.theme.json'), JSON.stringify(SAMPLE_THEME, null, 2));
@@ -57,7 +66,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await server.close();
-  const restore = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
+  const restore = (k: string, v: string | undefined) =>
+    v === undefined ? delete process.env[k] : (process.env[k] = v);
   restore('FORGE_STATE_DIR', prevState);
   restore('FORGE_SECRETS_KEY', prevKey);
   await rm(dir, { recursive: true, force: true });
@@ -128,15 +138,30 @@ describe('C16 a pinned mode:dark theme carries neutral surfaces (no redundant da
   const DARK_ONLY_COLORS = {
     name: 'Nightshade',
     mode: 'dark',
-    colors: { primary: '#e0b970', background: '#16120e', surface: '#1f1a14', text: '#f5ecd9', border: '#3a3126' },
+    colors: {
+      primary: '#e0b970',
+      background: '#16120e',
+      surface: '#1f1a14',
+      text: '#f5ecd9',
+      border: '#3a3126',
+    },
   };
 
   async function seedDark(): Promise<void> {
     const now = nowIso();
     const app: Application = {
-      id: `app_${APP}`, type: 'Application', app_id: `app_${APP}`, created_at: now, updated_at: now,
-      name: APP, repo_path: repo, platform: 'web', framework: 'nextjs', template: 'nextjs-web',
-      language: 'typescript', package_manager: 'npm',
+      id: `app_${APP}`,
+      type: 'Application',
+      app_id: `app_${APP}`,
+      created_at: now,
+      updated_at: now,
+      name: APP,
+      repo_path: repo,
+      platform: 'web',
+      framework: 'nextjs',
+      template: 'nextjs-web',
+      language: 'typescript',
+      package_manager: 'npm',
     };
     await store.saveResource(app);
     await writeFile(path.join(repo, 'forge.theme.json'), JSON.stringify(DARK_ONLY_COLORS, null, 2));

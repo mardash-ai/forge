@@ -16,7 +16,14 @@ import type { OAuthGrant, Consent } from '../src/mcp/types';
 const HAS_PG = process.env.FORGE_MCP_BACKEND === 'postgres' && Boolean(process.env.FORGE_DB_URL);
 
 const grant = (over: Partial<OAuthGrant> = {}): OAuthGrant => ({
-  kind: 'access', token_hash: 'h1', client_id: 'c1', owner: 'A', scopes: ['s:read'], expires_at: new Date(Date.now() + 3600_000).toISOString(), created_at: nowIso(), ...over,
+  kind: 'access',
+  token_hash: 'h1',
+  client_id: 'c1',
+  owner: 'A',
+  scopes: ['s:read'],
+  expires_at: new Date(Date.now() + 3600_000).toISOString(),
+  created_at: nowIso(),
+  ...over,
 });
 
 describe.skipIf(!HAS_PG)('P26 Postgres MCP backend — jsonb, one-shot grants, O4, backfill', () => {
@@ -31,7 +38,13 @@ describe.skipIf(!HAS_PG)('P26 Postgres MCP backend — jsonb, one-shot grants, O
 
   it('round-trips a grant through jsonb with projected columns', async () => {
     const b = (await getBackends()).mcp;
-    const g = grant({ token_hash: 'rt1', kind: 'refresh', scopes: ['s:read', 's:write'], group_id: 'g1', visibility: 'shared' });
+    const g = grant({
+      token_hash: 'rt1',
+      kind: 'refresh',
+      scopes: ['s:read', 's:write'],
+      group_id: 'g1',
+      visibility: 'shared',
+    });
     await b.putGrant(APP, g);
     expect(await b.getGrant(APP, 'refresh', 'rt1')).toEqual(g); // exact round-trip
 
@@ -56,7 +69,13 @@ describe.skipIf(!HAS_PG)('P26 Postgres MCP backend — jsonb, one-shot grants, O
     expect(await b.revokeUserGrants(APP, 'U')).toBe(2);
     expect(await b.getGrant(APP, 'access', 'ua1')).toBeNull();
 
-    const consent: Consent = { client_id: 'cX', owner: 'U', scopes: ['s:read'], created_at: nowIso(), updated_at: nowIso() };
+    const consent: Consent = {
+      client_id: 'cX',
+      owner: 'U',
+      scopes: ['s:read'],
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    };
     await b.putConsent(APP, consent);
     await b.putGrant(APP, grant({ token_hash: 'live1', owner: 'U', client_id: 'cX' }));
     expect(await b.revokeConsent(APP, 'cX', 'U')).toBe(true);
@@ -80,12 +99,32 @@ describe.skipIf(!HAS_PG)('P26 Postgres MCP backend — jsonb, one-shot grants, O
     try {
       const APP2 = 'app_mcp_backfill';
       const fs = new FsMcpBackend();
-      await fs.putTool(APP2, { name: 't1', description: '', input_schema: { type: 'object' }, scope: 's:read', family: 'read', handler_path: '/h', created_at: nowIso(), updated_at: nowIso() });
+      await fs.putTool(APP2, {
+        name: 't1',
+        description: '',
+        input_schema: { type: 'object' },
+        scope: 's:read',
+        family: 'read',
+        handler_path: '/h',
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      });
       await fs.appendInstructions(APP2, { text: 'preamble', created_at: nowIso() });
-      await fs.putClient(APP2, { client_id: 'cli1', redirect_uris: ['https://x/cb'], token_endpoint_auth_method: 'none', created_at: nowIso() });
+      await fs.putClient(APP2, {
+        client_id: 'cli1',
+        redirect_uris: ['https://x/cb'],
+        token_endpoint_auth_method: 'none',
+        created_at: nowIso(),
+      });
 
       await ensureMcpSchema(pool);
-      for (const t of ['forge_mcp_tools', 'forge_mcp_instructions', 'forge_mcp_clients', 'forge_mcp_consents', 'forge_mcp_grants']) {
+      for (const t of [
+        'forge_mcp_tools',
+        'forge_mcp_instructions',
+        'forge_mcp_clients',
+        'forge_mcp_consents',
+        'forge_mcp_grants',
+      ]) {
         await pool.query(`DELETE FROM ${t} WHERE app_id=$1`, [APP2]);
       }
       const pg = new PgMcpBackend(pool);

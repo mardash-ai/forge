@@ -38,7 +38,10 @@ function canonicalUri(bucket: string, key: string): string {
   return '/' + [bucket, ...key.split('/')].map(encodeSegment).join('/');
 }
 function amzDate(now: Date): { amz: string; date: string } {
-  const amz = now.toISOString().replace(/[:-]/g, '').replace(/\.\d{3}/, '');
+  const amz = now
+    .toISOString()
+    .replace(/[:-]/g, '')
+    .replace(/\.\d{3}/, '');
   return { amz, date: amz.slice(0, 8) };
 }
 
@@ -49,13 +52,27 @@ export class S3Client {
   // empty-payload constant for bodyless requests). Only host + x-amz-date + x-amz-content-sha256 are
   // signed; any other header (Range, Content-Type, Content-Length) is sent UNSIGNED, which S3/MinIO
   // accept — keeping the canonical request identical across every verb.
-  private signedHeaders(method: string, bucket: string, key: string, payloadHash: string, extra: Record<string, string>, now = new Date()): Record<string, string> {
+  private signedHeaders(
+    method: string,
+    bucket: string,
+    key: string,
+    payloadHash: string,
+    extra: Record<string, string>,
+    now = new Date(),
+  ): Record<string, string> {
     const url = new URL(this.cfg.endpoint);
     const host = url.host;
     const { amz, date } = amzDate(now);
     const canonicalHeaders = `host:${host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amz}\n`;
     const signedHeaderList = 'host;x-amz-content-sha256;x-amz-date';
-    const canonicalRequest = [method, canonicalUri(bucket, key), '', canonicalHeaders, signedHeaderList, payloadHash].join('\n');
+    const canonicalRequest = [
+      method,
+      canonicalUri(bucket, key),
+      '',
+      canonicalHeaders,
+      signedHeaderList,
+      payloadHash,
+    ].join('\n');
     const scope = `${date}/${this.cfg.region}/${SERVICE}/aws4_request`;
     const stringToSign = [ALGO, amz, scope, sha256hex(canonicalRequest)].join('\n');
     const kDate = hmac(`AWS4${this.cfg.secretKey}`, date);

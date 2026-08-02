@@ -2,7 +2,13 @@ import { z } from 'zod';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Capability } from '../../core/types';
-import type { Release, ReleasePhaseRecord, Deployment, ProductionArtifacts, Verification } from '../../resources/types';
+import type {
+  Release,
+  ReleasePhaseRecord,
+  Deployment,
+  ProductionArtifacts,
+  Verification,
+} from '../../resources/types';
 import { appRefInput, resolveAppLenient, baseResource } from '../_shared';
 import { productionize } from '../productionize/index';
 import { deployCapability } from '../deploy/index';
@@ -151,7 +157,9 @@ export const releaseCapability: Capability<Input, Release> = {
         // Commit: explicit --commit, else the repo's HEAD.
         const commit = (input.commit ?? (await gitHeadCommit(repo)))?.trim();
         if (!commit) {
-          throw new Error('could not resolve the commit to release — pass --commit <sha>, or run inside a git repo (is git available?)');
+          throw new Error(
+            'could not resolve the commit to release — pass --commit <sha>, or run inside a git repo (is git available?)',
+          );
         }
         // Working-tree cleanliness only gates when we did NOT get an explicit commit (an
         // explicit --commit means the caller pinned exactly what to ship).
@@ -168,9 +176,17 @@ export const releaseCapability: Capability<Input, Release> = {
         } else {
           const owner = (input.owner ?? (await gitRemoteOwner(repo)))?.trim();
           if (!owner) {
-            throw new Error('could not resolve the GHCR owner — pass --owner <org>, or --image-ref <full ref>, or set the repo’s origin remote');
+            throw new Error(
+              'could not resolve the GHCR owner — pass --owner <org>, or --image-ref <full ref>, or set the repo’s origin remote',
+            );
           }
-          candidates = candidateImageRefs({ registry: input.registry, owner, app: app.name, commit, suffix: input.image_suffix });
+          candidates = candidateImageRefs({
+            registry: input.registry,
+            owner,
+            app: app.name,
+            commit,
+            suffix: input.image_suffix,
+          });
         }
 
         const prod = await readProduction(repo);
@@ -208,14 +224,23 @@ export const releaseCapability: Capability<Input, Release> = {
         // false (deploy runs; it is idempotent, so this only ever costs a safe reconcile).
         try {
           const cwd = workspaceDir();
-          const pin = await run('docker', ['image', 'inspect', targetPin, '--format', '{{.Id}}'], { cwd, timeoutMs: 30_000 });
+          const pin = await run('docker', ['image', 'inspect', targetPin, '--format', '{{.Id}}'], {
+            cwd,
+            timeoutMs: 30_000,
+          });
           const pinnedId = pin.code === 0 ? pin.combined.trim().split('\n')[0]?.trim() : '';
           if (!pinnedId) return false;
           const ctxArgs = input.context ? ['--context', input.context] : [];
-          const ps = await run('docker', [...ctxArgs, 'compose', '-f', composeFile, 'ps', '-q', 'web'], { cwd, timeoutMs: 30_000 });
+          const ps = await run('docker', [...ctxArgs, 'compose', '-f', composeFile, 'ps', '-q', 'web'], {
+            cwd,
+            timeoutMs: 30_000,
+          });
           const cid = ps.code === 0 ? ps.combined.trim().split('\n')[0]?.trim() : '';
           if (!cid) return false;
-          const insp = await run('docker', [...ctxArgs, 'inspect', cid, '--format', '{{.Image}}'], { cwd, timeoutMs: 30_000 });
+          const insp = await run('docker', [...ctxArgs, 'inspect', cid, '--format', '{{.Image}}'], {
+            cwd,
+            timeoutMs: 30_000,
+          });
           const runId = insp.code === 0 ? insp.combined.trim().split('\n')[0]?.trim() : '';
           return Boolean(runId && runId === pinnedId);
         } catch {
@@ -246,7 +271,11 @@ export const releaseCapability: Capability<Input, Release> = {
           }),
           ctx,
         )) as Deployment;
-        return { id: d.id, status: d.status === 'succeeded' ? 'succeeded' : 'failed', error: d.error_summary };
+        return {
+          id: d.id,
+          status: d.status === 'succeeded' ? 'succeeded' : 'failed',
+          error: d.error_summary,
+        };
       },
 
       async verify(host) {
@@ -261,12 +290,16 @@ export const releaseCapability: Capability<Input, Release> = {
             ...(input.cron_path ? { cron_path: input.cron_path } : {}),
             ...(input.expect_google !== undefined ? { expect_google: input.expect_google } : {}),
             ...(input.expect_email !== undefined ? { expect_email: input.expect_email } : {}),
-            ...(input.expect_password_signup !== undefined ? { expect_password_signup: input.expect_password_signup } : {}),
+            ...(input.expect_password_signup !== undefined
+              ? { expect_password_signup: input.expect_password_signup }
+              : {}),
             ...(input.check_refresh !== undefined ? { check_refresh: input.check_refresh } : {}),
             ...(input.verify_timeout_ms ? { timeout_ms: input.verify_timeout_ms } : {}),
             // Deploy→verify warm-up wait (bounded) so the post-deploy gate does not race the roll.
             readiness_timeout_ms: input.verify_readiness_timeout_ms,
-            ...(input.verify_readiness_interval_ms ? { readiness_interval_ms: input.verify_readiness_interval_ms } : {}),
+            ...(input.verify_readiness_interval_ms
+              ? { readiness_interval_ms: input.verify_readiness_interval_ms }
+              : {}),
           }),
           ctx,
         )) as Verification;
@@ -277,10 +310,12 @@ export const releaseCapability: Capability<Input, Release> = {
     // Drive the pipeline. runRelease throws ReleaseError at the first failing phase (prod left
     // on the last-good version); anything else is an unexpected fault — recorded the same way.
     try {
-      const outcome: ReleaseOutcome = await runRelease(
-        exec,
-        { publishMode: input.publish_mode, dryRun: input.dry_run, allowDirty: input.allow_dirty, host: input.host },
-      );
+      const outcome: ReleaseOutcome = await runRelease(exec, {
+        publishMode: input.publish_mode,
+        dryRun: input.dry_run,
+        allowDirty: input.allow_dirty,
+        host: input.host,
+      });
       resource.status = 'succeeded';
       resource.commit = outcome.commit;
       resource.image_ref = outcome.image_ref;
@@ -304,7 +339,9 @@ export const releaseCapability: Capability<Input, Release> = {
       } else {
         resource.status = 'failed';
         resource.error_summary = err instanceof Error ? err.message : String(err);
-        resource.phases = [{ phase: 'assess', status: 'failed', detail: resource.error_summary, duration_ms: 0 }];
+        resource.phases = [
+          { phase: 'assess', status: 'failed', detail: resource.error_summary, duration_ms: 0 },
+        ];
       }
     }
 
@@ -319,7 +356,12 @@ export const releaseCapability: Capability<Input, Release> = {
       app_id: app.id,
       data:
         resource.status === 'succeeded'
-          ? { commit: resource.commit, web_image_pin: resource.web_image_pin, deployment_id: resource.deployment_id, dry_run: resource.dry_run }
+          ? {
+              commit: resource.commit,
+              web_image_pin: resource.web_image_pin,
+              deployment_id: resource.deployment_id,
+              dry_run: resource.dry_run,
+            }
           : { failed_phase: resource.failed_phase, error_summary: resource.error_summary },
     });
 

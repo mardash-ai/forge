@@ -1854,7 +1854,6 @@ export const DASHBOARD_BACKGROUND_PLANE = `{
   ]
 }`;
 
-
 /**
  * Dashboard 6: Service Health (HTTP) — the RED metrics for every Cloud Run service.
  *

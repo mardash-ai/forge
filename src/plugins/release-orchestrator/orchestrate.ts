@@ -15,13 +15,7 @@
 //     prod stays on the last-good version, and the runner throws a ReleaseError naming the
 //     phase. The Capability turns that into a failed Release + a non-zero CLI exit.
 
-import {
-  needsPublish,
-  needsRepin,
-  needsDeploy,
-  toDigestPin,
-  type ReleasePhase,
-} from './plan';
+import { needsPublish, needsRepin, needsDeploy, toDigestPin, type ReleasePhase } from './plan';
 
 // What assessment observed about the world before any mutation. Read-only.
 export interface Observed {
@@ -173,16 +167,39 @@ export async function runRelease(
   // -- DRY RUN: report the plan, mutate nothing -----------------------------
   if (opts.dryRun) {
     const willPublish = needsPublish(observed.publishedDigest);
-    record('publish', willPublish ? 'ran' : 'skipped',
-      willPublish ? `WOULD publish/await ${observed.imageRef} (mode=${opts.publishMode})` : `already published @${observed.publishedDigest}`, 0);
-    const targetPin = observed.publishedDigest ? toDigestPin(observed.imageRef, observed.publishedDigest) : undefined;
+    record(
+      'publish',
+      willPublish ? 'ran' : 'skipped',
+      willPublish
+        ? `WOULD publish/await ${observed.imageRef} (mode=${opts.publishMode})`
+        : `already published @${observed.publishedDigest}`,
+      0,
+    );
+    const targetPin = observed.publishedDigest
+      ? toDigestPin(observed.imageRef, observed.publishedDigest)
+      : undefined;
     const willRepin = targetPin ? needsRepin(observed.currentPin, targetPin) : true;
-    record('repin', willRepin ? 'ran' : 'skipped',
-      targetPin ? `WOULD repin web_image=${targetPin}` : 'WOULD repin to the freshly published digest', 0);
+    record(
+      'repin',
+      willRepin ? 'ran' : 'skipped',
+      targetPin ? `WOULD repin web_image=${targetPin}` : 'WOULD repin to the freshly published digest',
+      0,
+    );
     record('deploy', 'ran', 'WOULD deploy (start-first roll + P14 drift gate)', 0);
-    record('verify', host ? 'ran' : 'skipped',
-      host ? `WOULD verify @ ${host}` : 'no host resolvable — WOULD SKIP the post-deploy gate', 0);
-    return { status: 'succeeded', commit: observed.commit, image_ref: observed.imageRef, web_image_pin: targetPin, host, phases };
+    record(
+      'verify',
+      host ? 'ran' : 'skipped',
+      host ? `WOULD verify @ ${host}` : 'no host resolvable — WOULD SKIP the post-deploy gate',
+      0,
+    );
+    return {
+      status: 'succeeded',
+      commit: observed.commit,
+      image_ref: observed.imageRef,
+      web_image_pin: targetPin,
+      host,
+      phases,
+    };
   }
 
   // -- PUBLISH: ensure the commit's image exists + resolve its digest -------
@@ -190,7 +207,12 @@ export async function runRelease(
   if (needsPublish(digest)) {
     const t = Date.now();
     digest = await guard('publish', () => exec.publish(observed.imageRef, observed));
-    record('publish', 'ran', `resolved ${observed.imageRef} → @${digest} (mode=${opts.publishMode})`, Date.now() - t);
+    record(
+      'publish',
+      'ran',
+      `resolved ${observed.imageRef} → @${digest} (mode=${opts.publishMode})`,
+      Date.now() - t,
+    );
   } else {
     record('publish', 'skipped', `image already in registry → @${digest}`, 0);
   }
@@ -212,7 +234,8 @@ export async function runRelease(
     const t = Date.now();
     const d = await guard('deploy', async () => {
       const r = await exec.deploy();
-      if (r.status !== 'succeeded') throw new Error(r.error ?? 'deploy failed (the roll kept the last-good replica serving)');
+      if (r.status !== 'succeeded')
+        throw new Error(r.error ?? 'deploy failed (the roll kept the last-good replica serving)');
       return r;
     });
     deployment_id = d.id;
@@ -233,7 +256,12 @@ export async function runRelease(
     verification_id = v.id;
     record('verify', 'ran', v.summary, Date.now() - t);
   } else {
-    record('verify', 'skipped', 'no host resolvable (pass --host or run `forge productionize --host` first) — POST-DEPLOY GATE DID NOT RUN', 0);
+    record(
+      'verify',
+      'skipped',
+      'no host resolvable (pass --host or run `forge productionize --host` first) — POST-DEPLOY GATE DID NOT RUN',
+      0,
+    );
   }
 
   return {

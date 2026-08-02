@@ -1,6 +1,13 @@
 import type { Pool, PoolClient } from 'pg';
 import { nowIso } from '../../../shared/time';
-import { clampLimit, clampOffset, type SearchDocument, type SearchQuery, type SearchResponse, type SearchHit } from '../../../search/types';
+import {
+  clampLimit,
+  clampOffset,
+  type SearchDocument,
+  type SearchQuery,
+  type SearchResponse,
+  type SearchHit,
+} from '../../../search/types';
 import type { SearchBackend, MigratableSearchBackend } from './types';
 
 // P26 (increment 2) — the POSTGRES search backend: a REAL inverted index. A `tsvector` GENERATED from
@@ -19,7 +26,13 @@ const SEL_START = '[fMark]';
 const SEL_STOP = '[/fMark]';
 const HEADLINE_OPTS = `StartSel="${SEL_START}", StopSel="${SEL_STOP}", MaxFragments=1, MaxWords=35, MinWords=1, HighlightAll=FALSE`;
 
-const ESCAPE: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const ESCAPE: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+};
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ESCAPE[c]!);
 }
@@ -86,14 +99,26 @@ export async function ensureSearchSchema(pool: Pool): Promise<void> {
 }
 
 interface DocRow {
-  owner: string; type: string; id: string; title: string; body: string | null;
-  tags: string[] | null; attrs: unknown; created_at: string | null; updated_at: string | null;
-  group_id?: string | null; visibility?: string | null;
-  shared_with?: string[] | null; shared_writers?: string[] | null;
+  owner: string;
+  type: string;
+  id: string;
+  title: string;
+  body: string | null;
+  tags: string[] | null;
+  attrs: unknown;
+  created_at: string | null;
+  updated_at: string | null;
+  group_id?: string | null;
+  visibility?: string | null;
+  shared_with?: string[] | null;
+  shared_writers?: string[] | null;
 }
 function rowToDoc(r: DocRow): SearchDocument {
   return {
-    owner: r.owner, type: r.type, id: r.id, title: r.title,
+    owner: r.owner,
+    type: r.type,
+    id: r.id,
+    title: r.title,
     ...(r.body != null ? { body: r.body } : {}),
     ...(Array.isArray(r.tags) && r.tags.length > 0 ? { tags: r.tags } : {}),
     ...(r.attrs != null ? { attrs: r.attrs as Record<string, unknown> } : {}),
@@ -102,15 +127,20 @@ function rowToDoc(r: DocRow): SearchDocument {
     // C19 ACL metadata — round-tripped so the returned/exported document mirrors what was stored (parity
     // with the FS backend). `private` + empty grant arrays are the owner-only default and are elided.
     ...(r.group_id != null ? { groupId: r.group_id } : {}),
-    ...(r.visibility != null && r.visibility !== 'private' ? { visibility: r.visibility as SearchDocument['visibility'] } : {}),
+    ...(r.visibility != null && r.visibility !== 'private'
+      ? { visibility: r.visibility as SearchDocument['visibility'] }
+      : {}),
     ...(Array.isArray(r.shared_with) && r.shared_with.length > 0 ? { sharedWith: r.shared_with } : {}),
-    ...(Array.isArray(r.shared_writers) && r.shared_writers.length > 0 ? { sharedWriters: r.shared_writers } : {}),
+    ...(Array.isArray(r.shared_writers) && r.shared_writers.length > 0
+      ? { sharedWriters: r.shared_writers }
+      : {}),
   };
 }
 
 // The columns round-tripped by index()/reindex() RETURNING and by exportApp — base fields + the C19 ACL
 // scope, so a stored doc reconstructs faithfully (parity with the FS backend, and backfill preserves ACL).
-const DOC_COLS = 'owner, type, id, title, body, tags, attrs, created_at, updated_at, group_id, visibility, shared_with, shared_writers';
+const DOC_COLS =
+  'owner, type, id, title, body, tags, attrs, created_at, updated_at, group_id, visibility, shared_with, shared_writers';
 
 // One idempotent upsert (preserves created_at across re-index, exactly like the FS normalize:
 // created_at = input ?? existing ?? now; updated_at = input ?? now). The ACL scope ($12..$15) is written
@@ -134,7 +164,11 @@ const UPSERT_SQL = `
 
 function upsertParams(appId: string, d: SearchDocument, now: string): unknown[] {
   return [
-    appId, d.owner, d.type, d.id, d.title,
+    appId,
+    d.owner,
+    d.type,
+    d.id,
+    d.title,
     d.body ?? null,
     Array.isArray(d.tags) ? d.tags : [],
     d.attrs != null ? JSON.stringify(d.attrs) : null,
@@ -160,7 +194,11 @@ export class PgSearchBackend implements SearchBackend, MigratableSearchBackend {
       await client.query('COMMIT');
       return out;
     } catch (e) {
-      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
       throw e;
     } finally {
       client.release();
@@ -218,15 +256,33 @@ export class PgSearchBackend implements SearchBackend, MigratableSearchBackend {
         AND ($4::text[] IS NULL OR type = ANY($4))
         AND ($5::text IS NULL OR (created_at IS NOT NULL AND created_at >= $5))
         AND ($6::text IS NULL OR (created_at IS NOT NULL AND created_at <= $6))`;
-    const filterParams = [appId, query.q, query.owner, types, query.date_from ?? null, query.date_to ?? null, scopeGroupId, canReadAll];
+    const filterParams = [
+      appId,
+      query.q,
+      query.owner,
+      types,
+      query.date_from ?? null,
+      query.date_to ?? null,
+      scopeGroupId,
+      canReadAll,
+    ];
 
-    const countRes = await this.pool.query<{ n: string }>(`SELECT count(*)::text AS n ${filter}`, filterParams);
+    const countRes = await this.pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n ${filter}`,
+      filterParams,
+    );
     const total = Number(countRes.rows[0]!.n);
 
     const limit = clampLimit(query.limit);
     const offset = clampOffset(query.offset);
     const rowsRes = await this.pool.query<{
-      type: string; id: string; title: string; attrs: unknown; created_at: string | null; score: number; snippet: string;
+      type: string;
+      id: string;
+      title: string;
+      attrs: unknown;
+      created_at: string | null;
+      score: number;
+      snippet: string;
     }>(
       `SELECT type, id, title, attrs, created_at,
               ts_rank(tsv, q) AS score,
@@ -251,7 +307,9 @@ export class PgSearchBackend implements SearchBackend, MigratableSearchBackend {
 
   // --- migration surface ---------------------------------------------------
   async exportApp(appId: string): Promise<SearchDocument[]> {
-    const r = await this.pool.query<DocRow>(`SELECT ${DOC_COLS} FROM forge_search_docs WHERE app_id=$1`, [appId]);
+    const r = await this.pool.query<DocRow>(`SELECT ${DOC_COLS} FROM forge_search_docs WHERE app_id=$1`, [
+      appId,
+    ]);
     return r.rows.map(rowToDoc);
   }
 
@@ -266,8 +324,10 @@ export class PgSearchBackend implements SearchBackend, MigratableSearchBackend {
     await this.pool.query('TRUNCATE forge_search_docs');
   }
   async deleteByOwner(appId: string, owner: string): Promise<number> {
-    const r = await this.pool.query('DELETE FROM forge_search_docs WHERE app_id=$1 AND owner=$2', [appId, owner]);
+    const r = await this.pool.query('DELETE FROM forge_search_docs WHERE app_id=$1 AND owner=$2', [
+      appId,
+      owner,
+    ]);
     return r.rowCount ?? 0;
   }
-
 }

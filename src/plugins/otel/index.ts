@@ -15,10 +15,10 @@ import { randomBytes } from 'node:crypto';
 // ── OTel GenAI semantic convention attribute names ─────────────────────────
 export const ATTR = {
   GEN_AI_OPERATION_NAME: 'gen_ai.operation.name',
-  GEN_AI_TOOL_NAME:       'gen_ai.tool.name',
-  GEN_AI_TOOL_ARGS:       'gen_ai.tool.input',
-  GEN_AI_TOOL_OUTPUT:     'gen_ai.tool.output',
-  GEN_AI_USAGE_INPUT_TOKENS:  'gen_ai.usage.input_tokens',
+  GEN_AI_TOOL_NAME: 'gen_ai.tool.name',
+  GEN_AI_TOOL_ARGS: 'gen_ai.tool.input',
+  GEN_AI_TOOL_OUTPUT: 'gen_ai.tool.output',
+  GEN_AI_USAGE_INPUT_TOKENS: 'gen_ai.usage.input_tokens',
   GEN_AI_USAGE_OUTPUT_TOKENS: 'gen_ai.usage.output_tokens',
   // Langfuse-native observation INPUT/OUTPUT. These are the ONLY keys here that Langfuse's OTel
   // ingest maps onto an observation's input/output panes (its highest-precedence mapping, per the
@@ -26,7 +26,7 @@ export const ATTR = {
   // `gen_ai.tool.*` keys above are NOT in that mapping — they ride along as plain attributes
   // (metadata), so a payload recorded only there never surfaces as observation input/output.
   // Values are (JSON) strings — serialize + size-cap with `capPayload()` before recording.
-  LANGFUSE_OBSERVATION_INPUT:  'langfuse.observation.input',
+  LANGFUSE_OBSERVATION_INPUT: 'langfuse.observation.input',
   LANGFUSE_OBSERVATION_OUTPUT: 'langfuse.observation.output',
   // Langfuse-native trace USER id — groups traces per user in Langfuse's Users view. Verified against
   // Langfuse v3 (langfuse/langfuse v3.224.0, packages/shared/src/server/otel/OtelIngestionProcessor.ts):
@@ -36,27 +36,27 @@ export const ATTR = {
   // `mcp.tool_call` is not the trace root once it joins the edge trace via `traceparent`.
   LANGFUSE_USER_ID: 'langfuse.user.id',
   // Additional context
-  MCP_CLIENT_USER:  'mcp.client.user',
-  MCP_CLIENT_HOST:  'mcp.client.host',
-  AUTHZ_DECISION:   'authz.decision',
-  OUTCOME:          'outcome',
-  ERROR_MESSAGE:    'error.message',
+  MCP_CLIENT_USER: 'mcp.client.user',
+  MCP_CLIENT_HOST: 'mcp.client.host',
+  AUTHZ_DECISION: 'authz.decision',
+  OUTCOME: 'outcome',
+  ERROR_MESSAGE: 'error.message',
 } as const;
 
 // ── Internal types (OTLP/HTTP JSON schema subset) ──────────────────────────
-type OtlpAttrValue =
-  | { stringValue: string }
-  | { intValue: number }
-  | { boolValue: boolean };
+type OtlpAttrValue = { stringValue: string } | { intValue: number } | { boolValue: boolean };
 
-interface OtlpAttr { key: string; value: OtlpAttrValue; }
+interface OtlpAttr {
+  key: string;
+  value: OtlpAttrValue;
+}
 
 interface OtlpSpan {
-  traceId: string;       // 16-byte hex
-  spanId: string;        // 8-byte hex
+  traceId: string; // 16-byte hex
+  spanId: string; // 8-byte hex
   parentSpanId?: string; // 8-byte hex
   name: string;
-  kind: number;          // 1=internal 2=server 3=client
+  kind: number; // 1=internal 2=server 3=client
   startTimeUnixNano: string;
   endTimeUnixNano: string;
   attributes: OtlpAttr[];
@@ -164,15 +164,18 @@ export function initOtel(cfg: OtelConfig = {}): boolean {
   return _enabled;
 }
 
-
 /** Returns true when the exporter has been initialised with valid keys. */
-export function isEnabled(): boolean { return _enabled; }
+export function isEnabled(): boolean {
+  return _enabled;
+}
 
 /**
  * Returns true when METRIC export is active. Deliberately separate from {@link isEnabled}:
  * metrics survive the absence of Langfuse credentials, tracing does not.
  */
-export function isMetricsEnabled(): boolean { return _metricsEnabled; }
+export function isMetricsEnabled(): boolean {
+  return _metricsEnabled;
+}
 
 // ── Structured MCP log ─────────────────────────────────────────────────────
 // Emits one JSON line per significant MCP event (session lifecycle, tool call).
@@ -196,7 +199,10 @@ export function _setMcpLogOverride(fn: ((fields: Record<string, unknown>) => voi
  * Callers may add: `tool`, `client`, `duration_ms`, `outcome`, `error_class`.
  */
 export function mcpLog(fields: Record<string, unknown>): void {
-  if (_mcpLogOverride) { _mcpLogOverride(fields); return; }
+  if (_mcpLogOverride) {
+    _mcpLogOverride(fields);
+    return;
+  }
   process.stdout.write(JSON.stringify(fields) + '\n');
 }
 
@@ -221,17 +227,19 @@ function toAttr(key: string, value: unknown): OtlpAttr | null {
 
 function buildPayload(spans: OtlpSpan[]): string {
   return JSON.stringify({
-    resourceSpans: [{
-      resource: {
-        attributes: [
-          { key: 'service.name', value: { stringValue: _serviceName } },
+    resourceSpans: [
+      {
+        resource: {
+          attributes: [{ key: 'service.name', value: { stringValue: _serviceName } }],
+        },
+        scopeSpans: [
+          {
+            scope: { name: '@forge/otel', version: '1.0.0' },
+            spans,
+          },
         ],
       },
-      scopeSpans: [{
-        scope: { name: '@forge/otel', version: '1.0.0' },
-        spans,
-      }],
-    }],
+    ],
   });
 }
 
@@ -260,7 +268,7 @@ function exportSpan(span: OtlpSpan): Promise<void> {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': _authHeader,
+      Authorization: _authHeader,
     },
     body,
     signal: AbortSignal.timeout(EXPORT_TIMEOUT_MS),
@@ -292,12 +300,14 @@ function toAttrStr(key: string, val: string): { key: string; value: { stringValu
 function bucketCounts(durationMs: number): string[] {
   const counts: string[] = new Array(DURATION_BUCKETS.length + 1).fill('0') as string[];
   for (let i = 0; i < DURATION_BUCKETS.length; i++) {
-    if (durationMs <= (DURATION_BUCKETS[i] ?? Infinity)) { counts[i] = '1'; return counts; }
+    if (durationMs <= (DURATION_BUCKETS[i] ?? Infinity)) {
+      counts[i] = '1';
+      return counts;
+    }
   }
   counts[DURATION_BUCKETS.length] = '1'; // overflow bucket
   return counts;
 }
-
 
 // ── Cumulative counter registry (F-16) ─────────────────────────────────────
 //
@@ -358,7 +368,11 @@ function _cumulativeHistogramPoint(
   const buckets = prev ? prev.buckets.slice() : new Array(DURATION_BUCKETS.length + 1).fill(0);
   let placed = false;
   for (let i = 0; i < DURATION_BUCKETS.length; i++) {
-    if (valueMs <= (DURATION_BUCKETS[i] ?? Infinity)) { buckets[i] = (buckets[i] ?? 0) + 1; placed = true; break; }
+    if (valueMs <= (DURATION_BUCKETS[i] ?? Infinity)) {
+      buckets[i] = (buckets[i] ?? 0) + 1;
+      placed = true;
+      break;
+    }
   }
   if (!placed) buckets[DURATION_BUCKETS.length] = (buckets[DURATION_BUCKETS.length] ?? 0) + 1;
   const next = {
@@ -394,7 +408,11 @@ export function _resetCumulativeStateForTest(): void {
 let _mx = { ok: 0, failed: 0, lastError: '', lastOkAt: '' };
 
 function noteMetricExport(ok: boolean, detail?: string): void {
-  if (ok) { _mx.ok += 1; _mx.lastOkAt = new Date().toISOString(); return; }
+  if (ok) {
+    _mx.ok += 1;
+    _mx.lastOkAt = new Date().toISOString();
+    return;
+  }
   _mx.failed += 1;
   _mx.lastError = detail ?? 'unknown';
   /*
@@ -409,33 +427,41 @@ function noteMetricExport(ok: boolean, detail?: string): void {
    * `severity` is the field Cloud Logging promotes to the entry's level, which is what makes this
    * alertable rather than just readable.
    */
-  process.stderr.write(JSON.stringify({
-    severity: 'CRITICAL',
-    event: 'otel.metric_export_failed',
-    message: 'telemetry export failed — metrics are being dropped',
-    endpoint: _metricsEndpoint,
-    failures: _mx.failed,
-    error: _mx.lastError,
-    ts: new Date().toISOString(),
-  }) + '\n');
+  process.stderr.write(
+    JSON.stringify({
+      severity: 'CRITICAL',
+      event: 'otel.metric_export_failed',
+      message: 'telemetry export failed — metrics are being dropped',
+      endpoint: _metricsEndpoint,
+      failures: _mx.failed,
+      error: _mx.lastError,
+      ts: new Date().toISOString(),
+    }) + '\n',
+  );
 }
 
 /** Same treatment for spans — see noteMetricExport. Traces had NO health signal at all before this. */
 let _sx = { ok: 0, failed: 0, lastError: '', lastOkAt: '' };
 
 function noteSpanExport(ok: boolean, detail?: string): void {
-  if (ok) { _sx.ok += 1; _sx.lastOkAt = new Date().toISOString(); return; }
+  if (ok) {
+    _sx.ok += 1;
+    _sx.lastOkAt = new Date().toISOString();
+    return;
+  }
   _sx.failed += 1;
   _sx.lastError = detail ?? 'unknown';
-  process.stderr.write(JSON.stringify({
-    severity: 'CRITICAL',
-    event: 'otel.span_export_failed',
-    message: 'telemetry export failed — spans are being dropped',
-    endpoint: _endpoint,
-    failures: _sx.failed,
-    error: _sx.lastError,
-    ts: new Date().toISOString(),
-  }) + '\n');
+  process.stderr.write(
+    JSON.stringify({
+      severity: 'CRITICAL',
+      event: 'otel.span_export_failed',
+      message: 'telemetry export failed — spans are being dropped',
+      endpoint: _endpoint,
+      failures: _sx.failed,
+      error: _sx.lastError,
+      ts: new Date().toISOString(),
+    }) + '\n',
+  );
 }
 
 /** Span export counters, for health endpoints. Never throws. */
@@ -472,10 +498,12 @@ function exportMetricsPayload(payload: unknown): Promise<void> {
 
 function metricsEnvelope(metrics: unknown[]): unknown {
   return {
-    resourceMetrics: [{
-      resource: { attributes: [{ key: 'service.name', value: { stringValue: _serviceName } }] },
-      scopeMetrics: [{ scope: { name: '@forge/otel', version: '1.0.0' }, metrics }],
-    }],
+    resourceMetrics: [
+      {
+        resource: { attributes: [{ key: 'service.name', value: { stringValue: _serviceName } }] },
+        scopeMetrics: [{ scope: { name: '@forge/otel', version: '1.0.0' }, metrics }],
+      },
+    ],
   };
 }
 
@@ -521,12 +549,14 @@ export function recordToolCallMetric(opts: {
       name: 'mcp.tool.duration_ms',
       description: 'MCP tool call duration (RED Duration)',
       histogram: {
-        dataPoints: [_cumulativeHistogramPoint(
-          'mcp.tool.duration_ms',
-          [toAttrStr('tool', opts.tool), toAttrStr('app', opts.app)],
-          opts.duration_ms,
-          t,
-        )],
+        dataPoints: [
+          _cumulativeHistogramPoint(
+            'mcp.tool.duration_ms',
+            [toAttrStr('tool', opts.tool), toAttrStr('app', opts.app)],
+            opts.duration_ms,
+            t,
+          ),
+        ],
         aggregationTemporality: 2,
       },
     },
@@ -593,14 +623,22 @@ export function recordMcpRegistrationMetric(opts: {
     {
       name: 'mcp.tools.registered',
       description: 'Current number of registered MCP tools per app',
-      gauge: { dataPoints: [{ attributes: [toAttrStr('app', opts.app)], timeUnixNano: t, asInt: String(opts.tools_count) }] },
+      gauge: {
+        dataPoints: [
+          { attributes: [toAttrStr('app', opts.app)], timeUnixNano: t, asInt: String(opts.tools_count) },
+        ],
+      },
     },
   ];
   if (opts.streams_count !== undefined) {
     metrics.push({
       name: 'mcp.streams.active',
       description: 'Current number of active MCP SSE streams per app',
-      gauge: { dataPoints: [{ attributes: [toAttrStr('app', opts.app)], timeUnixNano: t, asInt: String(opts.streams_count) }] },
+      gauge: {
+        dataPoints: [
+          { attributes: [toAttrStr('app', opts.app)], timeUnixNano: t, asInt: String(opts.streams_count) },
+        ],
+      },
     });
   }
   exportMetricsPayload(metricsEnvelope(metrics));
@@ -622,7 +660,11 @@ export function capPayload(value: unknown, capBytes: number = PAYLOAD_CAP_BYTES)
   let s: string;
   if (typeof value === 'string') s = value;
   else {
-    try { s = JSON.stringify(value) ?? String(value); } catch { s = String(value); }
+    try {
+      s = JSON.stringify(value) ?? String(value);
+    } catch {
+      s = String(value);
+    }
   }
   if (Buffer.byteLength(s, 'utf8') <= capBytes) return s;
   // Cut on the byte budget, then drop any multi-byte character broken by the cut.
@@ -766,7 +808,9 @@ export function traceparent(span: { traceId: string; spanId: string }): string {
  * `startSpan(name, { parent })`. Returns undefined when the header is missing or
  * malformed — the tier then roots a fresh trace. Never throws.
  */
-export function parentFromTraceparent(header: string | string[] | undefined | null): RemoteParent | undefined {
+export function parentFromTraceparent(
+  header: string | string[] | undefined | null,
+): RemoteParent | undefined {
   const raw = Array.isArray(header) ? header[0] : header;
   if (!raw) return undefined;
   const m = _TRACEPARENT_RE.exec(raw.trim());
@@ -776,4 +820,3 @@ export function parentFromTraceparent(header: string | string[] | undefined | nu
   if (/^0+$/.test(traceId) || /^0+$/.test(spanId)) return undefined; // all-zero IDs are invalid
   return { traceId, spanId };
 }
-

@@ -39,7 +39,7 @@ export function grantsPaidPlan(record: SubscriptionRecord, now: Date = new Date(
       // GRACE: paid entitlements persist until the paid-through boundary; then the subscriber falls to free.
       if (!record.current_period_end) return false;
       return new Date(record.current_period_end).getTime() > now.getTime();
-    case 'paused':   // §1D: trial ended with no card; read-only grace, no entitlements, not terminal
+    case 'paused': // §1D: trial ended with no card; read-only grace, no entitlements, not terminal
     case 'canceled':
     case 'none':
     default:
@@ -64,7 +64,12 @@ export function deriveEntitlements(
   record: SubscriptionRecord,
   catalog: Catalog | null,
   now: Date = new Date(),
-): { plan_key: string | null; source: SubscriptionRecord['source']; status: SubscriptionStatus; entitlements: EntitlementMap } {
+): {
+  plan_key: string | null;
+  source: SubscriptionRecord['source'];
+  status: SubscriptionStatus;
+  entitlements: EntitlementMap;
+} {
   const { plan } = effectivePlan(record, catalog, now);
   return {
     plan_key: plan?.plan_key ?? null,

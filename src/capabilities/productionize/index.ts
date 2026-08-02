@@ -140,7 +140,10 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
     const withTheme = true;
 
     // 1. Standalone Dockerfile + .dockerignore (deterministic — re-run = identical bytes).
-    await writeFile(path.join(repo, 'Dockerfile'), generateProdDockerfile({ appName: app.name, port: appPort }));
+    await writeFile(
+      path.join(repo, 'Dockerfile'),
+      generateProdDockerfile({ appName: app.name, port: appPort }),
+    );
     await writeFile(path.join(repo, '.dockerignore'), generateProdDockerignore());
 
     // 2. Ensure `output: 'standalone'` in the Next config (idempotent; never clobbers
@@ -193,7 +196,18 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
     //    now annotated (what it is + how to obtain it) from the C13 secret catalog.
     await writeFile(
       path.join(repo, '.env.prod.example'),
-      generateEnvProdExample({ appName: app.name, host: cfg.host, withPostgres, withRedis, secrets, withJobs, platformDb: withPlatformDb, blobsBackend: cfg.blobs_backend, observability: cfg.observability, mcpMtlsHost: cfg.mcp_mtls_host }),
+      generateEnvProdExample({
+        appName: app.name,
+        host: cfg.host,
+        withPostgres,
+        withRedis,
+        secrets,
+        withJobs,
+        platformDb: withPlatformDb,
+        blobsBackend: cfg.blobs_backend,
+        observability: cfg.observability,
+        mcpMtlsHost: cfg.mcp_mtls_host,
+      }),
     );
 
     // 5. PROVISIONING.md — the per-app operator runbook (C13): exactly the secrets THIS
@@ -208,9 +222,20 @@ export const productionize: Capability<Input, ProductionArtifacts> = {
     manifest.production = cfg;
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
 
-    const services = ['web', 'data-plane', ...(withPostgres || withPlatformDb ? ['postgres'] : []), ...(withRedis ? ['redis'] : [])];
+    const services = [
+      'web',
+      'data-plane',
+      ...(withPostgres || withPlatformDb ? ['postgres'] : []),
+      ...(withRedis ? ['redis'] : []),
+    ];
     const files = [
-      'Dockerfile', '.dockerignore', 'compose.prod.yaml', '.env.prod.example', PROVISIONING_FILE, THEME_FILE, found ?? 'next.config.mjs',
+      'Dockerfile',
+      '.dockerignore',
+      'compose.prod.yaml',
+      '.env.prod.example',
+      PROVISIONING_FILE,
+      THEME_FILE,
+      found ?? 'next.config.mjs',
       ...(withPlatformDb && withPostgres ? [PLATFORM_DB_INIT_FILE] : []),
     ];
 

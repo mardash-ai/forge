@@ -18,7 +18,8 @@ export interface LangfuseConfig {
  * OTLP path off `OTEL_EXPORTER_OTLP_ENDPOINT` when a dedicated host isn't given. Returns null when
  * anything is missing (→ reporting is skipped, the eval still runs). */
 export function resolveLangfuse(cfg?: Partial<LangfuseConfig>): LangfuseConfig | null {
-  const rawEndpoint = cfg?.baseUrl ?? process.env.LANGFUSE_HOST ?? process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? '';
+  const rawEndpoint =
+    cfg?.baseUrl ?? process.env.LANGFUSE_HOST ?? process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? '';
   const baseUrl = rawEndpoint.replace(/\/api\/public\/otel\/?$/, '').replace(/\/+$/, '');
   const publicKey = cfg?.publicKey ?? process.env.LANGFUSE_PUBLIC_KEY ?? '';
   const secretKey = cfg?.secretKey ?? process.env.LANGFUSE_SECRET_KEY ?? '';
@@ -33,7 +34,13 @@ export interface Reporter {
   ensureDataset(name: string, description: string): Promise<boolean>;
   ensureItem(datasetName: string, id: string, input: unknown, expectedOutput: unknown): Promise<boolean>;
   createTrace(id: string, name: string, input: unknown, output: unknown, metadata: unknown): Promise<boolean>;
-  score(traceId: string, name: string, value: number, dataType: ScoreType, comment?: string): Promise<boolean>;
+  score(
+    traceId: string,
+    name: string,
+    value: number,
+    dataType: ScoreType,
+    comment?: string,
+  ): Promise<boolean>;
   linkRun(runName: string, datasetItemId: string, traceId: string, metadata?: unknown): Promise<boolean>;
 }
 
@@ -71,6 +78,11 @@ export function makeReporter(cfg: LangfuseConfig, fetchImpl: typeof fetch = fetc
     score: (traceId, name, value, dataType, comment) =>
       post('/api/public/scores', { traceId, name, value, dataType, ...(comment ? { comment } : {}) }),
     linkRun: (runName, datasetItemId, traceId, metadata) =>
-      post('/api/public/dataset-run-items', { runName, datasetItemId, traceId, ...(metadata ? { metadata } : {}) }),
+      post('/api/public/dataset-run-items', {
+        runName,
+        datasetItemId,
+        traceId,
+        ...(metadata ? { metadata } : {}),
+      }),
   };
 }

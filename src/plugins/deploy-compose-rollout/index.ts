@@ -43,7 +43,10 @@ export function healthOf(raw: string): string {
 
 // Split `compose ps -q` / `config --services` output into a clean list.
 export function lines(s: string): string[] {
-  return s.split('\n').map((l) => l.trim()).filter(Boolean);
+  return s
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
 }
 
 // ---------------------------------------------------------------------------
@@ -111,10 +114,16 @@ export function detectDrift(states: ServiceImageState[]): Drift[] {
         service: s.service,
         pinnedRef: s.pinnedRef,
         running: s.runningImageId ? shortId(s.runningImageId) : 'absent',
-        reason: 'pinned image not present on the target (a required pull failed — is the registry authenticated?)',
+        reason:
+          'pinned image not present on the target (a required pull failed — is the registry authenticated?)',
       });
     } else if (!s.runningImageId) {
-      drifts.push({ service: s.service, pinnedRef: s.pinnedRef, running: 'absent', reason: 'no running container for the pinned service' });
+      drifts.push({
+        service: s.service,
+        pinnedRef: s.pinnedRef,
+        running: 'absent',
+        reason: 'no running container for the pinned service',
+      });
     } else if (s.runningImageId !== s.pinnedImageId) {
       drifts.push({
         service: s.service,
@@ -129,7 +138,9 @@ export function detectDrift(states: ServiceImageState[]): Drift[] {
 
 // One prominent line per drifted service for the failure/warning message.
 export function driftReport(drifts: Drift[]): string {
-  return drifts.map((d) => `  • ${d.service}: running ${d.running} vs pinned ${d.pinnedRef} — ${d.reason}`).join('\n');
+  return drifts
+    .map((d) => `  • ${d.service}: running ${d.running} vs pinned ${d.pinnedRef} — ${d.reason}`)
+    .join('\n');
 }
 
 const short = (id: string): string => id.slice(0, 12);
@@ -173,11 +184,13 @@ export async function rollout(opts: RolloutOptions, log: string[] = []): Promise
   // a top-level option (before the subcommand), so every compose call — starting with
   // `config`, which fails on an unfilled `${VAR:?}` — resolves from the documented file.
   const envArgs = envFile ? ['--env-file', envFile] : [];
-  const compose = (...args: string[]): string[] => dockerArgs(context, ['compose', '-f', composeFile, ...envArgs, ...args]);
+  const compose = (...args: string[]): string[] =>
+    dockerArgs(context, ['compose', '-f', composeFile, ...envArgs, ...args]);
   const docker = (...args: string[]): string[] => dockerArgs(context, args);
   const sh = (args: string[], timeout = 5 * 60_000): ReturnType<typeof run> =>
     run('docker', args, { cwd, timeoutMs: timeout });
-  const svcIds = async (svc: string): Promise<string[]> => lines((await sh(compose('ps', '-q', svc))).combined);
+  const svcIds = async (svc: string): Promise<string[]> =>
+    lines((await sh(compose('ps', '-q', svc))).combined);
   const ids = (): Promise<string[]> => svcIds(service);
   // The local image ID a ref resolves to ('' if the image isn't on the target daemon).
   const imageId = async (ref: string): Promise<string> => {
@@ -224,7 +237,11 @@ export async function rollout(opts: RolloutOptions, log: string[] = []): Promise
   let pulled = false;
   if (pull) {
     pulled = (await sh(compose('pull'), 10 * 60_000)).code === 0;
-    step(pulled ? '✓ pulled images' : '⚠ image pull FAILED — will verify against pinned digests before reporting success');
+    step(
+      pulled
+        ? '✓ pulled images'
+        : '⚠ image pull FAILED — will verify against pinned digests before reporting success',
+    );
   }
 
   // 2. Reconcile the non-public services in place (postgres / sidecars).
@@ -245,7 +262,10 @@ export async function rollout(opts: RolloutOptions, log: string[] = []): Promise
     const st = await stateOf(svc);
     if (st.pinnedImageId && st.runningImageId && st.runningImageId !== st.pinnedImageId) {
       const rec = await sh(compose('up', '-d', '--no-deps', '--force-recreate', svc));
-      if (rec.code !== 0) throw new Error(`force-recreate of drifted service ${svc} onto its pin failed: ${rec.tail.join(' ')}`);
+      if (rec.code !== 0)
+        throw new Error(
+          `force-recreate of drifted service ${svc} onto its pin failed: ${rec.tail.join(' ')}`,
+        );
       recreated.push(svc);
       step(`↻ recreated ${svc} onto its pinned image (was running a stale image)`);
     }
@@ -259,10 +279,28 @@ export async function rollout(opts: RolloutOptions, log: string[] = []): Promise
     const up = await sh(compose('up', '-d', service));
     if (up.code !== 0) throw new Error(`initial start of ${service} failed: ${up.tail.join(' ')}`);
     step(`✓ ${service} started (first deploy — nothing to roll)`);
-    result = { strategy: 'first-deploy', reconciled_services: others, old_container_ids: [], new_container_ids: await ids(), pulled, recreated_services: recreated, log };
+    result = {
+      strategy: 'first-deploy',
+      reconciled_services: others,
+      old_container_ids: [],
+      new_container_ids: await ids(),
+      pulled,
+      recreated_services: recreated,
+      log,
+    };
   } else {
     // 3a. Scale up: a new replica alongside the old(s), on the new image/config.
-    const scaled = await sh(compose('up', '-d', '--no-deps', '--no-recreate', '--scale', `${service}=${before.length + 1}`, service));
+    const scaled = await sh(
+      compose(
+        'up',
+        '-d',
+        '--no-deps',
+        '--no-recreate',
+        '--scale',
+        `${service}=${before.length + 1}`,
+        service,
+      ),
+    );
     if (scaled.code !== 0) throw new Error(`scale-up of ${service} failed: ${scaled.tail.join(' ')}`);
     const fresh = newContainers(before, await ids());
     if (fresh.length === 0) throw new Error(`could not identify the new ${service} replica after scale-up`);
@@ -272,7 +310,10 @@ export async function rollout(opts: RolloutOptions, log: string[] = []): Promise
     const deadline = Date.now() + timeoutMs;
     for (const id of fresh) {
       for (;;) {
-        const insp = await sh(docker('inspect', '-f', '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}', id), 30_000);
+        const insp = await sh(
+          docker('inspect', '-f', '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}', id),
+          30_000,
+        );
         const st = healthOf(insp.combined);
         if (st === 'healthy' || st === 'none') {
           step(`✓ ${short(id)} ${st === 'none' ? 'ready (no healthcheck)' : 'healthy'}`);
@@ -280,7 +321,9 @@ export async function rollout(opts: RolloutOptions, log: string[] = []): Promise
         }
         if (Date.now() >= deadline || insp.code !== 0) {
           await sh(docker('rm', '-f', ...fresh), 60_000);
-          throw new Error(`new ${service} replica never became healthy (last: ${st}) — discarded it; the old replica keeps serving`);
+          throw new Error(
+            `new ${service} replica never became healthy (last: ${st}) — discarded it; the old replica keeps serving`,
+          );
         }
         await delay(2000);
       }
@@ -298,7 +341,15 @@ export async function rollout(opts: RolloutOptions, log: string[] = []): Promise
     }
     step(`✓ removed old replica(s) — ${service} now serving on the new image`);
 
-    result = { strategy: 'rolled', reconciled_services: others, old_container_ids: before, new_container_ids: fresh, pulled, recreated_services: recreated, log };
+    result = {
+      strategy: 'rolled',
+      reconciled_services: others,
+      old_container_ids: before,
+      new_container_ids: fresh,
+      pulled,
+      recreated_services: recreated,
+      log,
+    };
   }
 
   // 4. DRIFT GATE (P14) — the running image of every digest-pinned service MUST be the
@@ -307,8 +358,11 @@ export async function rollout(opts: RolloutOptions, log: string[] = []): Promise
   if (pinnedServices.length) {
     const drifts = detectDrift(await Promise.all(pinnedServices.map(stateOf)));
     if (drifts.length) {
-      const why = pull && !pulled ? ' — the image pull failed (is the registry authenticated on the target?)' : '';
-      throw new Error(`deploy drift: the running stack does NOT match the pinned images${why}:\n${driftReport(drifts)}`);
+      const why =
+        pull && !pulled ? ' — the image pull failed (is the registry authenticated on the target?)' : '';
+      throw new Error(
+        `deploy drift: the running stack does NOT match the pinned images${why}:\n${driftReport(drifts)}`,
+      );
     }
     step(
       pull && !pulled

@@ -18,7 +18,9 @@ import { defaultNextConfig, applyStandaloneOutput } from '../src/plugins/product
 // rewrites() runs against the REAL module (not a string match).
 type Rewrite = { source: string; destination: string };
 
-async function loadConfig(source: string): Promise<{ config: { rewrites: () => Promise<Rewrite[]> }; cleanup: () => Promise<void> }> {
+async function loadConfig(
+  source: string,
+): Promise<{ config: { rewrites: () => Promise<Rewrite[]> }; cleanup: () => Promise<void> }> {
   const dir = await mkdtemp(path.join(tmpdir(), 'forge-nextcfg-'));
   const file = path.join(dir, 'next.config.mjs');
   await writeFile(file, source);
@@ -96,7 +98,7 @@ describe('generators carry the always-on /auth rewrite (P11)', () => {
     expect(cfg).not.toContain("output: 'standalone'"); // Productionize injects standalone later
   });
 
-  it('Productionize\'s fallback default config carries the rewrite AND standalone output', () => {
+  it("Productionize's fallback default config carries the rewrite AND standalone output", () => {
     const cfg = defaultNextConfig();
     expect(cfg).toContain("source: '/auth/:path*'");
     expect(cfg).toContain("'http://data-plane:3718'");

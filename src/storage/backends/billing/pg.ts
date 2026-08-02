@@ -18,13 +18,16 @@ export async function ensureBillingSchema(pool: Pool): Promise<void> {
   `);
 }
 
-interface Row { data: BillingState }
+interface Row {
+  data: BillingState;
+}
 
 function normalize(data: Partial<BillingState> | undefined): BillingState {
   return {
     catalog: data?.catalog ?? null,
     subscriptions: data?.subscriptions && typeof data.subscriptions === 'object' ? data.subscriptions : {},
-    webhook_events: data?.webhook_events && typeof data.webhook_events === 'object' ? data.webhook_events : {},
+    webhook_events:
+      data?.webhook_events && typeof data.webhook_events === 'object' ? data.webhook_events : {},
   };
 }
 
@@ -36,7 +39,10 @@ export class PgBillingBackend implements BillingBackend, MigratableBillingBacken
     return r.rows[0] ? normalize(r.rows[0].data) : emptyBillingState();
   }
 
-  async mutate<T>(appId: string, fn: (state: BillingState) => { state: BillingState; result: T }): Promise<T> {
+  async mutate<T>(
+    appId: string,
+    fn: (state: BillingState) => { state: BillingState; result: T },
+  ): Promise<T> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -45,14 +51,23 @@ export class PgBillingBackend implements BillingBackend, MigratableBillingBacken
         `INSERT INTO forge_billing (app_id, data) VALUES ($1, $2::jsonb) ON CONFLICT (app_id) DO NOTHING`,
         [appId, JSON.stringify(emptyBillingState())],
       );
-      const cur = await client.query<Row>('SELECT data FROM forge_billing WHERE app_id=$1 FOR UPDATE', [appId]);
+      const cur = await client.query<Row>('SELECT data FROM forge_billing WHERE app_id=$1 FOR UPDATE', [
+        appId,
+      ]);
       const state = normalize(cur.rows[0]?.data);
       const { state: next, result } = fn(state);
-      await client.query('UPDATE forge_billing SET data=$2::jsonb, updated_at=now() WHERE app_id=$1', [appId, JSON.stringify(next)]);
+      await client.query('UPDATE forge_billing SET data=$2::jsonb, updated_at=now() WHERE app_id=$1', [
+        appId,
+        JSON.stringify(next),
+      ]);
       await client.query('COMMIT');
       return result;
     } catch (e) {
-      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
       throw e;
     } finally {
       client.release();

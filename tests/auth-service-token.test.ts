@@ -28,16 +28,34 @@ afterAll(() => {
 async function seedAppAndJob(): Promise<Application> {
   const now = nowIso();
   const app: Application = {
-    id: 'app_cron', type: 'Application', app_id: 'app_cron', created_at: now, updated_at: now,
-    name: 'cron-app', repo_path: '/app', platform: 'web', framework: 'nextjs', template: 'nextjs-web',
-    language: 'typescript', package_manager: 'npm',
+    id: 'app_cron',
+    type: 'Application',
+    app_id: 'app_cron',
+    created_at: now,
+    updated_at: now,
+    name: 'cron-app',
+    repo_path: '/app',
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   };
   await store.saveResource(app);
   const job: ScheduledJob = {
-    id: 'job_cron', type: 'ScheduledJob', app_id: app.id, created_at: now, updated_at: now,
-    name: 'reminders', schedule: 'every:1h', target: { method: 'POST', path: '/api/cron/reminders' },
-    enabled: true, next_run_at: new Date(Date.now() - 60_000).toISOString(), last_status: 'never',
-    run_count: 0, fail_count: 0,
+    id: 'job_cron',
+    type: 'ScheduledJob',
+    app_id: app.id,
+    created_at: now,
+    updated_at: now,
+    name: 'reminders',
+    schedule: 'every:1h',
+    target: { method: 'POST', path: '/api/cron/reminders' },
+    enabled: true,
+    next_run_at: new Date(Date.now() - 60_000).toISOString(),
+    last_status: 'never',
+    run_count: 0,
+    fail_count: 0,
   };
   await store.saveResource(job);
   return app;
@@ -68,10 +86,13 @@ describe('scheduler service-token (C10 §5)', () => {
     await setSecret(app.id, 'AUTH_SERVICE_TOKEN', 's3rvice-t0ken');
 
     const calls: Array<{ url: string; headers: Record<string, string> }> = [];
-    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: { headers?: Record<string, string> }) => {
-      calls.push({ url: String(url), headers: (init?.headers ?? {}) as Record<string, string> });
-      return { ok: true, status: 200 } as Response;
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: { headers?: Record<string, string> }) => {
+        calls.push({ url: String(url), headers: (init?.headers ?? {}) as Record<string, string> });
+        return { ok: true, status: 200 } as Response;
+      }),
+    );
 
     await tick(store, new Date());
 
@@ -85,10 +106,13 @@ describe('scheduler service-token (C10 §5)', () => {
     await seedAppAndJob(); // no AUTH_SERVICE_TOKEN secret set
 
     const calls: Array<{ headers: Record<string, string> }> = [];
-    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: { headers?: Record<string, string> }) => {
-      calls.push({ headers: (init?.headers ?? {}) as Record<string, string> });
-      return { ok: true, status: 200 } as Response;
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: { headers?: Record<string, string> }) => {
+        calls.push({ headers: (init?.headers ?? {}) as Record<string, string> });
+        return { ok: true, status: 200 } as Response;
+      }),
+    );
 
     await tick(store, new Date());
 

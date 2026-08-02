@@ -1,7 +1,13 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { store } from '../storage/store';
 import { ForgeError } from '../shared/errors';
-import { APP_HEADER, SESSION_COOKIE, SERVICE_TOKEN_HEADER, verifySessionToken, parseCookies } from '../shared/session';
+import {
+  APP_HEADER,
+  SESSION_COOKIE,
+  SERVICE_TOKEN_HEADER,
+  verifySessionToken,
+  parseCookies,
+} from '../shared/session';
 import { resolveAuthConfig, resolveServiceToken, serviceTokenMatches } from '../plugins/auth-identity/index';
 import * as authStore from '../plugins/auth-identity/store';
 import {
@@ -44,7 +50,10 @@ import { resolveBillingConfig } from '../billing/config';
 // Registered on BOTH planes (like /auth, /connect). The webhook runs in an ENCAPSULATED child scope whose
 // raw-buffer body parser stays local, so it never disturbs the JSON parsing of sibling routes.
 
-export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?: () => string | undefined } = {}): void {
+export function registerBillingRoutes(
+  app: FastifyInstance,
+  opts: { defaultApp?: () => string | undefined } = {},
+): void {
   const trimmed = (v: unknown): string | undefined => {
     const s = typeof v === 'string' ? v.trim() : '';
     return s || undefined;
@@ -61,14 +70,20 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
     if (fromHeader) return fromHeader;
     return opts.defaultApp?.();
   };
-  const resolveAppId = async (req: FastifyRequest, explicit?: string): Promise<{ id: string; name: string } | null> => {
+  const resolveAppId = async (
+    req: FastifyRequest,
+    explicit?: string,
+  ): Promise<{ id: string; name: string } | null> => {
     const n = resolveAppName(req, explicit);
     if (!n) return null;
     const a = await store.findAppByName(n);
     return a && a.type === 'Application' ? { id: a.id, name: n } : null;
   };
 
-  async function sessionUser(req: FastifyRequest, appId: string): Promise<{ userId: string; email: string } | null> {
+  async function sessionUser(
+    req: FastifyRequest,
+    appId: string,
+  ): Promise<{ userId: string; email: string } | null> {
     const cfg = await resolveAuthConfig(appId);
     if (!cfg.sessionSecret) return null;
     const claims = verifySessionToken(parseCookies(req.headers.cookie)[SESSION_COOKIE], cfg.sessionSecret);
@@ -90,11 +105,21 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
 
   const errorReply = (reply: FastifyReply, e: unknown) => {
     if (e instanceof ForgeError) return reply.status(e.status).send(e.toJSON());
-    return reply.status(500).send({ error: { code: 'internal_error', message: String((e as Error)?.message ?? e), retry: 'no' } });
+    return reply
+      .status(500)
+      .send({ error: { code: 'internal_error', message: String((e as Error)?.message ?? e), retry: 'no' } });
   };
 
-  const forbidden = { error: { code: 'forbidden', message: 'you may only access your own subscription.', retry: 'needs-human' } };
-  const needAuth = { error: { code: 'unauthorized', message: 'a signed-in user (or a valid service token) is required.', retry: 'needs-human' } };
+  const forbidden = {
+    error: { code: 'forbidden', message: 'you may only access your own subscription.', retry: 'needs-human' },
+  };
+  const needAuth = {
+    error: {
+      code: 'unauthorized',
+      message: 'a signed-in user (or a valid service token) is required.',
+      retry: 'needs-human',
+    },
+  };
 
   async function hasValidServiceToken(req: FastifyRequest, appId: string): Promise<boolean> {
     const presented = serviceTokenPresented(req);
@@ -127,16 +152,30 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
   app.get('/billing/subscription', async (req, reply) => {
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
-    const resolved = await resolveSubscriber(req, app_.id, trimmed((req.query as { subscriber?: string }).subscriber));
-    if ('error' in resolved) return reply.status(resolved.error === 'forbidden' ? 403 : 401).send(resolved.error === 'forbidden' ? forbidden : needAuth);
+    const resolved = await resolveSubscriber(
+      req,
+      app_.id,
+      trimmed((req.query as { subscriber?: string }).subscriber),
+    );
+    if ('error' in resolved)
+      return reply
+        .status(resolved.error === 'forbidden' ? 403 : 401)
+        .send(resolved.error === 'forbidden' ? forbidden : needAuth);
     return reply.status(200).send(await getSubscription(app_.id, resolved.subscriber));
   });
 
   app.get('/billing/entitlements', async (req, reply) => {
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
-    const resolved = await resolveSubscriber(req, app_.id, trimmed((req.query as { subscriber?: string }).subscriber));
-    if ('error' in resolved) return reply.status(resolved.error === 'forbidden' ? 403 : 401).send(resolved.error === 'forbidden' ? forbidden : needAuth);
+    const resolved = await resolveSubscriber(
+      req,
+      app_.id,
+      trimmed((req.query as { subscriber?: string }).subscriber),
+    );
+    if ('error' in resolved)
+      return reply
+        .status(resolved.error === 'forbidden' ? 403 : 401)
+        .send(resolved.error === 'forbidden' ? forbidden : needAuth);
     return reply.status(200).send(await getEntitlementsView(app_.id, resolved.subscriber));
   });
 
@@ -145,9 +184,15 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
     if (!app_) return reply.status(404).send(unknownApp);
     const q = req.query as { subscriber?: string; key?: string };
     const key = trimmed(q.key);
-    if (!key) return reply.status(422).send({ error: { code: 'invalid_input', message: 'a `key` is required.', retry: 'change-input' } });
+    if (!key)
+      return reply
+        .status(422)
+        .send({ error: { code: 'invalid_input', message: 'a `key` is required.', retry: 'change-input' } });
     const resolved = await resolveSubscriber(req, app_.id, trimmed(q.subscriber));
-    if ('error' in resolved) return reply.status(resolved.error === 'forbidden' ? 403 : 401).send(resolved.error === 'forbidden' ? forbidden : needAuth);
+    if ('error' in resolved)
+      return reply
+        .status(resolved.error === 'forbidden' ? 403 : 401)
+        .send(resolved.error === 'forbidden' ? forbidden : needAuth);
     return reply.status(200).send(await getEntitlementView(app_.id, resolved.subscriber, key));
   });
 
@@ -182,37 +227,79 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
     const b = (req.body ?? {}) as {
-      subscriber?: string; plan_key?: string; success_url?: string; cancel_url?: string; scope_ref?: string; customer_email?: string;
-      mode?: unknown; trial_period_days?: unknown; payment_method_collection?: unknown;
+      subscriber?: string;
+      plan_key?: string;
+      success_url?: string;
+      cancel_url?: string;
+      scope_ref?: string;
+      customer_email?: string;
+      mode?: unknown;
+      trial_period_days?: unknown;
+      payment_method_collection?: unknown;
     };
     const resolved = await resolveSubscriber(req, app_.id, trimmed(b.subscriber));
-    if ('error' in resolved) return reply.status(resolved.error === 'forbidden' ? 403 : 401).send(resolved.error === 'forbidden' ? forbidden : needAuth);
+    if ('error' in resolved)
+      return reply
+        .status(resolved.error === 'forbidden' ? 403 : 401)
+        .send(resolved.error === 'forbidden' ? forbidden : needAuth);
     const planKey = trimmed(b.plan_key);
     const successUrl = trimmed(b.success_url);
     const cancelUrl = trimmed(b.cancel_url);
     if (!planKey || !successUrl || !cancelUrl) {
-      return reply.status(422).send({ error: { code: 'invalid_input', message: '`plan_key`, `success_url` and `cancel_url` are required.', retry: 'change-input' } });
+      return reply.status(422).send({
+        error: {
+          code: 'invalid_input',
+          message: '`plan_key`, `success_url` and `cancel_url` are required.',
+          retry: 'change-input',
+        },
+      });
     }
     // Subscription is the only billing mode this platform supports. Accept the app's explicit `mode`
     // (it sends "subscription") but reject anything else clearly rather than silently ignoring it.
     if (b.mode !== undefined && String(b.mode) !== 'subscription') {
-      return reply.status(422).send({ error: { code: 'invalid_input', message: '`mode` must be "subscription" (the only supported billing mode).', retry: 'change-input' } });
+      return reply.status(422).send({
+        error: {
+          code: 'invalid_input',
+          message: '`mode` must be "subscription" (the only supported billing mode).',
+          retry: 'change-input',
+        },
+      });
     }
     // Optional free trial: a positive integer day count (Stripe accepts 1–730). Absent ⇒ no trial.
     let trialPeriodDays: number | undefined;
-    if (b.trial_period_days !== undefined && b.trial_period_days !== null && String(b.trial_period_days) !== '') {
+    if (
+      b.trial_period_days !== undefined &&
+      b.trial_period_days !== null &&
+      String(b.trial_period_days) !== ''
+    ) {
       const n = Number(b.trial_period_days);
       if (!Number.isInteger(n) || n < 1 || n > 730) {
-        return reply.status(422).send({ error: { code: 'invalid_input', message: '`trial_period_days` must be an integer between 1 and 730.', retry: 'change-input' } });
+        return reply.status(422).send({
+          error: {
+            code: 'invalid_input',
+            message: '`trial_period_days` must be an integer between 1 and 730.',
+            retry: 'change-input',
+          },
+        });
       }
       trialPeriodDays = n;
     }
     // Optional payment-method collection policy. Absent ⇒ Stripe default.
     let paymentMethodCollection: 'always' | 'if_required' | undefined;
-    if (b.payment_method_collection !== undefined && b.payment_method_collection !== null && String(b.payment_method_collection) !== '') {
+    if (
+      b.payment_method_collection !== undefined &&
+      b.payment_method_collection !== null &&
+      String(b.payment_method_collection) !== ''
+    ) {
       const v = String(b.payment_method_collection);
       if (v !== 'always' && v !== 'if_required') {
-        return reply.status(422).send({ error: { code: 'invalid_input', message: '`payment_method_collection` must be "always" or "if_required".', retry: 'change-input' } });
+        return reply.status(422).send({
+          error: {
+            code: 'invalid_input',
+            message: '`payment_method_collection` must be "always" or "if_required".',
+            retry: 'change-input',
+          },
+        });
       }
       paymentMethodCollection = v;
     }
@@ -240,9 +327,15 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
     if (!app_) return reply.status(404).send(unknownApp);
     const b = (req.body ?? {}) as { subscriber?: string; return_url?: string };
     const resolved = await resolveSubscriber(req, app_.id, trimmed(b.subscriber));
-    if ('error' in resolved) return reply.status(resolved.error === 'forbidden' ? 403 : 401).send(resolved.error === 'forbidden' ? forbidden : needAuth);
+    if ('error' in resolved)
+      return reply
+        .status(resolved.error === 'forbidden' ? 403 : 401)
+        .send(resolved.error === 'forbidden' ? forbidden : needAuth);
     const returnUrl = trimmed(b.return_url);
-    if (!returnUrl) return reply.status(422).send({ error: { code: 'invalid_input', message: '`return_url` is required.', retry: 'change-input' } });
+    if (!returnUrl)
+      return reply.status(422).send({
+        error: { code: 'invalid_input', message: '`return_url` is required.', retry: 'change-input' },
+      });
     try {
       return reply.status(200).send(await createPortal(app_.id, resolved.subscriber, returnUrl));
     } catch (e) {
@@ -262,11 +355,22 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
     if (!(await hasValidServiceToken(req, app_.id))) return reply.status(401).send(needAuth);
-    const b = (req.body ?? {}) as { subscriber?: string; plan_key?: string; scope_ref?: string; customer_email?: string };
+    const b = (req.body ?? {}) as {
+      subscriber?: string;
+      plan_key?: string;
+      scope_ref?: string;
+      customer_email?: string;
+    };
     const subscriber = trimmed(b.subscriber);
     const planKey = trimmed(b.plan_key);
     if (!subscriber || !planKey) {
-      return reply.status(422).send({ error: { code: 'invalid_input', message: '`subscriber` and `plan_key` are required.', retry: 'change-input' } });
+      return reply.status(422).send({
+        error: {
+          code: 'invalid_input',
+          message: '`subscriber` and `plan_key` are required.',
+          retry: 'change-input',
+        },
+      });
     }
     try {
       const record = await createTrialingSubscriptionAtSignup({
@@ -276,7 +380,10 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
         ...(trimmed(b.scope_ref) ? { scopeRef: trimmed(b.scope_ref)! } : {}),
         ...(trimmed(b.customer_email) ? { customerEmail: trimmed(b.customer_email)! } : {}),
       });
-      await recordC3(app_.id, 'billing.trial_started', subscriber, { plan_key: planKey, trial_end: record.trial_end });
+      await recordC3(app_.id, 'billing.trial_started', subscriber, {
+        plan_key: planKey,
+        trial_end: record.trial_end,
+      });
       return reply.status(200).send(record);
     } catch (e) {
       return errorReply(reply, e);
@@ -295,7 +402,9 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
     const b = (req.body ?? {}) as { subscriber?: string };
     const subscriber = trimmed(b.subscriber) ?? trimmed((req.query as { subscriber?: string }).subscriber);
     if (!subscriber) {
-      return reply.status(422).send({ error: { code: 'invalid_input', message: 'a `subscriber` is required.', retry: 'change-input' } });
+      return reply.status(422).send({
+        error: { code: 'invalid_input', message: 'a `subscriber` is required.', retry: 'change-input' },
+      });
     }
     try {
       const out = await deleteCustomer(app_.id, subscriber);
@@ -308,7 +417,13 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
     } catch (e) {
       // A transient Stripe/store failure → 503 so the caller retries; the local row is untouched (the
       // Stripe teardown runs before the drop), so a retry re-attempts cleanly.
-      return reply.status(503).send({ error: { code: 'billing_teardown_failed', message: String((e as Error)?.message ?? e), retry: 'retry' } });
+      return reply.status(503).send({
+        error: {
+          code: 'billing_teardown_failed',
+          message: String((e as Error)?.message ?? e),
+          retry: 'retry',
+        },
+      });
     }
   });
 
@@ -336,7 +451,13 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
     const b = (req.body ?? {}) as { subscriber?: string; locked?: boolean };
     const subscriber = trimmed(b.subscriber);
     if (!subscriber || typeof b.locked !== 'boolean') {
-      return reply.status(422).send({ error: { code: 'invalid_input', message: '`subscriber` (string) and `locked` (boolean) are required.', retry: 'change-input' } });
+      return reply.status(422).send({
+        error: {
+          code: 'invalid_input',
+          message: '`subscriber` (string) and `locked` (boolean) are required.',
+          retry: 'change-input',
+        },
+      });
     }
     try {
       const out = await setAdminLock(app_.id, subscriber, b.locked);
@@ -363,7 +484,13 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
     const b = (req.body ?? {}) as { subscriber?: string; comped?: boolean; plan_key?: string };
     const subscriber = trimmed(b.subscriber);
     if (!subscriber || typeof b.comped !== 'boolean') {
-      return reply.status(422).send({ error: { code: 'invalid_input', message: '`subscriber` (string) and `comped` (boolean) are required.', retry: 'change-input' } });
+      return reply.status(422).send({
+        error: {
+          code: 'invalid_input',
+          message: '`subscriber` (string) and `comped` (boolean) are required.',
+          retry: 'change-input',
+        },
+      });
     }
     try {
       const out = await setAdminComp(app_.id, subscriber, b.comped);
@@ -381,7 +508,11 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
   const reserved = (provider: string) => async (req: FastifyRequest, reply: FastifyReply) => {
     void req;
     return reply.status(501).send({
-      error: { code: 'not_configured', message: `The ${provider} billing webhook is reserved but not implemented on this platform build.`, retry: 'no' },
+      error: {
+        code: 'not_configured',
+        message: `The ${provider} billing webhook is reserved but not implemented on this platform build.`,
+        retry: 'no',
+      },
     });
   };
   app.post('/hooks/billing/apple', reserved('Apple App Store'));
@@ -392,36 +523,54 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
   // from the RAW bytes in the sidecar — the app never sees STRIPE_WEBHOOK_SECRET or parses the event. The
   // buffer body parser is registered in THIS encapsulated child only, so sibling JSON routes are untouched.
   app.register(async (webhook) => {
-    const keepRaw = (_req: FastifyRequest, body: Buffer, done: (err: Error | null, body?: unknown) => void) => done(null, body);
+    const keepRaw = (_req: FastifyRequest, body: Buffer, done: (err: Error | null, body?: unknown) => void) =>
+      done(null, body);
     webhook.addContentTypeParser('application/json', { parseAs: 'buffer' }, keepRaw);
     webhook.addContentTypeParser('*', { parseAs: 'buffer' }, keepRaw);
 
     webhook.post('/hooks/billing/stripe', async (req, reply) => {
       const app_ = await resolveAppId(req);
       if (!app_) return reply.status(404).send(unknownApp);
-      const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(typeof req.body === 'string' ? req.body : '', 'utf8');
+      const raw = Buffer.isBuffer(req.body)
+        ? req.body
+        : Buffer.from(typeof req.body === 'string' ? req.body : '', 'utf8');
       const sig = req.headers['stripe-signature'];
       const signature = Array.isArray(sig) ? sig[0] : sig;
       try {
         const result = await handleStripeWebhook(app_.id, raw, signature, app_.name);
         if (result.outcome === 'signature_invalid') {
-          return reply.status(400).send({ error: { code: 'signature_invalid', message: 'Stripe signature verification failed.', retry: 'no' } });
+          return reply.status(400).send({
+            error: {
+              code: 'signature_invalid',
+              message: 'Stripe signature verification failed.',
+              retry: 'no',
+            },
+          });
         }
         if (result.outcome === 'processed' && result.record) {
           await recordC3(app_.id, 'billing.subscription_updated', result.record.subscriber, {
-            status: result.record.status, plan_key: result.record.plan_key, event_type: result.event_type ?? null,
+            status: result.record.status,
+            plan_key: result.record.plan_key,
+            event_type: result.event_type ?? null,
           });
         }
         return reply.status(result.status).send({ received: true, outcome: result.outcome });
       } catch (e) {
         // A transient re-fetch / store failure → 5xx so Stripe retries (idempotent on redelivery).
-        return reply.status(503).send({ error: { code: 'webhook_retry', message: String((e as Error)?.message ?? e), retry: 'retry' } });
+        return reply.status(503).send({
+          error: { code: 'webhook_retry', message: String((e as Error)?.message ?? e), retry: 'retry' },
+        });
       }
     });
   });
 
   // Best-effort C3 telemetry — never fail the billing op because the timeline write hiccuped.
-  async function recordC3(appId: string, type: string, subscriber: string, data: Record<string, unknown>): Promise<void> {
+  async function recordC3(
+    appId: string,
+    type: string,
+    subscriber: string,
+    data: Record<string, unknown>,
+  ): Promise<void> {
     try {
       await store.appendAppEvent({ app_id: appId, type, subject: subscriber, owner: subscriber, data });
     } catch {
@@ -430,4 +579,10 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
   }
 }
 
-const unknownApp = { error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } };
+const unknownApp = {
+  error: {
+    code: 'not_found',
+    message: 'unknown app (pass `app` or set FORGE_APP_NAME).',
+    retry: 'change-input',
+  },
+};

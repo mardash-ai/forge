@@ -8,7 +8,10 @@ import type { Connection, ConnectRequest } from '../../../connectors/types';
 // cutover. FORGE_CONNECTIONS_BACKEND=postgres + FORGE_CONNECTIONS_DUAL_WRITE=1. The one-shot consumeRequest
 // deletes from BOTH so a mirrored pending request can't be double-spent after a read flip.
 export class DualWriteConnectionBackend implements ConnectionBackend {
-  constructor(private readonly primary: PgConnectionBackend, private readonly secondary: FsConnectionBackend) {}
+  constructor(
+    private readonly primary: PgConnectionBackend,
+    private readonly secondary: FsConnectionBackend,
+  ) {}
 
   async putConnection(appId: string, conn: Connection): Promise<Connection> {
     const out = await this.primary.putConnection(appId, conn);

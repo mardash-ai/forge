@@ -29,7 +29,12 @@ describe('AppEvent log (C3)', () => {
   });
 
   it('appends and lists newest-first, filterable by subject', async () => {
-    await store.appendAppEvent({ app_id: 'app_x', type: 'goal.created', subject: 'g1', data: { title: 'A' } });
+    await store.appendAppEvent({
+      app_id: 'app_x',
+      type: 'goal.created',
+      subject: 'g1',
+      data: { title: 'A' },
+    });
     await store.appendAppEvent({ app_id: 'app_x', type: 'task.added', subject: 'g1', data: { task: 'T' } });
     await store.appendAppEvent({ app_id: 'app_x', type: 'goal.created', subject: 'g2' });
 
@@ -81,7 +86,9 @@ describe('AppEvent owner-scoping (C11)', () => {
     expect(aFeed.map((e) => e.subject)).toEqual(['g1']); // only A's
     expect(bFeed.map((e) => e.subject)).toEqual(['g2']); // only B's
     // The cross-owner read is EMPTY, never the other user's data.
-    expect((await store.listAppEvents({ app_id: 'app', owner: 'A' })).some((e) => e.owner === 'B')).toBe(false);
+    expect((await store.listAppEvents({ app_id: 'app', owner: 'A' })).some((e) => e.owner === 'B')).toBe(
+      false,
+    );
   });
 
   it('a query with an owner returns only that owner’s records; a subject filter composes with it', async () => {
@@ -99,7 +106,10 @@ describe('AppEvent owner-scoping (C11)', () => {
     await store.appendAppEvent({ app_id: 'app', type: 'owned', owner: 'A' });
 
     // App-scope (no owner passed) — a C10-less app / pre-C11 read is unchanged: sees everything.
-    expect((await store.listAppEvents({ app_id: 'app' })).map((e) => e.type).sort()).toEqual(['legacy', 'owned']);
+    expect((await store.listAppEvents({ app_id: 'app' })).map((e) => e.type).sort()).toEqual([
+      'legacy',
+      'owned',
+    ]);
     // Owner-scoped — a legacy (owner-less) event is not attributed to A until migrated.
     expect((await store.listAppEvents({ app_id: 'app', owner: 'A' })).map((e) => e.type)).toEqual(['owned']);
   });
@@ -118,7 +128,11 @@ describe('AppEvent owner-scoping (C11)', () => {
     await store.appendAppEvent({ app_id: 'app', type: 'already', owner: 'A' });
 
     expect(await store.assignAppEventOwner('app', 'A')).toBe(2); // only the two legacy events
-    expect((await store.listAppEvents({ app_id: 'app', owner: 'A' })).map((e) => e.type).sort()).toEqual(['already', 'legacy1', 'legacy2']);
+    expect((await store.listAppEvents({ app_id: 'app', owner: 'A' })).map((e) => e.type).sort()).toEqual([
+      'already',
+      'legacy1',
+      'legacy2',
+    ]);
     expect(await store.assignAppEventOwner('app', 'A')).toBe(0); // nothing left to claim (idempotent)
   });
 });

@@ -27,7 +27,8 @@ const S3_BLOBS = process.env.FORGE_BLOBS_BACKEND === 's3';
 // --- fixtures ---------------------------------------------------------------------------------------
 const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const png = (payload = 'forge-test-png-body'): Buffer => Buffer.concat([PNG_SIG, Buffer.from(payload)]);
-const pdf = (payload = 'the rest of a pdf'): Buffer => Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.from(payload)]);
+const pdf = (payload = 'the rest of a pdf'): Buffer =>
+  Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.from(payload)]);
 const sha256 = (b: Buffer): string => createHash('sha256').update(b).digest('hex');
 
 // Build a raw multipart/form-data body + headers for Fastify inject.
@@ -37,7 +38,9 @@ function multipart(input: {
 }): { payload: Buffer; headers: Record<string, string> } {
   const boundary = `----forgeblob${Math.random().toString(36).slice(2)}`;
   const chunks: Buffer[] = [];
-  const push = (s: string | Buffer): void => { chunks.push(Buffer.isBuffer(s) ? s : Buffer.from(s, 'utf8')); };
+  const push = (s: string | Buffer): void => {
+    chunks.push(Buffer.isBuffer(s) ? s : Buffer.from(s, 'utf8'));
+  };
   for (const [name, value] of Object.entries(input.fields ?? {})) {
     push(`--${boundary}\r\n`);
     push(`Content-Disposition: form-data; name="${name}"\r\n\r\n`);
@@ -47,13 +50,18 @@ function multipart(input: {
   if (input.file) {
     const field = input.file.field ?? 'file';
     push(`--${boundary}\r\n`);
-    push(`Content-Disposition: form-data; name="${field}"; filename="${input.file.filename ?? 'upload.bin'}"\r\n`);
+    push(
+      `Content-Disposition: form-data; name="${field}"; filename="${input.file.filename ?? 'upload.bin'}"\r\n`,
+    );
     push(`Content-Type: ${input.file.contentType ?? 'application/octet-stream'}\r\n\r\n`);
     push(input.file.data);
     push('\r\n');
   }
   push(`--${boundary}--\r\n`);
-  return { payload: Buffer.concat(chunks), headers: { 'content-type': `multipart/form-data; boundary=${boundary}` } };
+  return {
+    payload: Buffer.concat(chunks),
+    headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+  };
 }
 
 // ============================================================================
@@ -68,7 +76,12 @@ describe('C20 — magic-byte sniff (pure)', () => {
     expect(sniffMatches('application/pdf', png())).toBe(false);
     expect(sniffMatches('image/jpeg', Buffer.from([0xff, 0xd8, 0xff, 0x00]))).toBe(true);
     expect(sniffMatches('image/gif', Buffer.from('GIF89a....'))).toBe(true);
-    expect(sniffMatches('image/webp', Buffer.concat([Buffer.from('RIFF'), Buffer.from([1, 2, 3, 4]), Buffer.from('WEBP')]))).toBe(true);
+    expect(
+      sniffMatches(
+        'image/webp',
+        Buffer.concat([Buffer.from('RIFF'), Buffer.from([1, 2, 3, 4]), Buffer.from('WEBP')]),
+      ),
+    ).toBe(true);
   });
 
   it('a text type must NOT look like a known binary payload and must have no NUL byte', () => {
@@ -93,10 +106,19 @@ describe('C20 — blob store (file-backed)', () => {
     const tmp = await blobStore.prepareTemp();
     const { writeFile } = await import('node:fs/promises');
     await writeFile(tmp, data);
-    return blobStore.commit(APP, tmp, {
-      blob_id: `blob_${owner}_${Math.random().toString(36).slice(2, 8)}`,
-      owner, content_type: contentType, size: data.length, checksum: sha256(data), created_at: nowIso(),
-    }, cfg());
+    return blobStore.commit(
+      APP,
+      tmp,
+      {
+        blob_id: `blob_${owner}_${Math.random().toString(36).slice(2, 8)}`,
+        owner,
+        content_type: contentType,
+        size: data.length,
+        checksum: sha256(data),
+        created_at: nowIso(),
+      },
+      cfg(),
+    );
   };
 
   beforeEach(async () => {
@@ -106,7 +128,8 @@ describe('C20 — blob store (file-backed)', () => {
     await store.init();
   });
   afterEach(async () => {
-    if (prev === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prev;
+    if (prev === undefined) delete process.env.FORGE_STATE_DIR;
+    else process.env.FORGE_STATE_DIR = prev;
     vi.restoreAllMocks();
     await rm(dir, { recursive: true, force: true });
   });
@@ -164,7 +187,8 @@ describe('C20 — blob store (file-backed)', () => {
 
   it('ATOMICITY: a metadata-write failure ROLLS BACK the moved bytes (no orphan)', async () => {
     // Force the metadata persist to fail AFTER the bytes have been renamed into place.
-    const spy = vi.spyOn(blobStore as unknown as { writeMap: (a: string, m: unknown) => Promise<void> }, 'writeMap')
+    const spy = vi
+      .spyOn(blobStore as unknown as { writeMap: (a: string, m: unknown) => Promise<void> }, 'writeMap')
       .mockRejectedValueOnce(new Error('disk gone'));
     await expect(commitBytes('A', png('will-roll-back'))).rejects.toThrow('disk gone');
     expect(spy).toHaveBeenCalled();
@@ -207,9 +231,18 @@ describe('C20 — blob routes', () => {
   const seedApp = async (): Promise<void> => {
     const now = nowIso();
     const application: Application = {
-      id: APP_ID, type: 'Application', app_id: APP_ID, created_at: now, updated_at: now,
-      name: APP, repo_path: '/app', platform: 'web', framework: 'nextjs', template: 'nextjs-web',
-      language: 'typescript', package_manager: 'npm',
+      id: APP_ID,
+      type: 'Application',
+      app_id: APP_ID,
+      created_at: now,
+      updated_at: now,
+      name: APP,
+      repo_path: '/app',
+      platform: 'web',
+      framework: 'nextjs',
+      template: 'nextjs-web',
+      language: 'typescript',
+      package_manager: 'npm',
     };
     await store.saveResource(application);
   };
@@ -227,8 +260,15 @@ describe('C20 — blob routes', () => {
   afterEach(async () => {
     await server.close();
     vi.restoreAllMocks();
-    for (const k of ['FORGE_BLOB_MAX_BYTES', 'FORGE_BLOB_QUOTA_BYTES', 'FORGE_BLOB_QUOTA_OBJECTS', 'FORGE_BLOB_ALLOWED_TYPES']) delete process.env[k];
-    if (prev === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prev;
+    for (const k of [
+      'FORGE_BLOB_MAX_BYTES',
+      'FORGE_BLOB_QUOTA_BYTES',
+      'FORGE_BLOB_QUOTA_OBJECTS',
+      'FORGE_BLOB_ALLOWED_TYPES',
+    ])
+      delete process.env[k];
+    if (prev === undefined) delete process.env.FORGE_STATE_DIR;
+    else process.env.FORGE_STATE_DIR = prev;
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -239,10 +279,18 @@ describe('C20 — blob routes', () => {
 
   it('upload → 201 { blob_id, checksum, size }; GET round-trips the EXACT bytes', async () => {
     const data = png('round-trip-me');
-    const r = await upload({ fields: { owner: 'A', content_type: 'image/png', filename: 'pic.png' }, file: { data, contentType: 'image/png', filename: 'pic.png' } });
+    const r = await upload({
+      fields: { owner: 'A', content_type: 'image/png', filename: 'pic.png' },
+      file: { data, contentType: 'image/png', filename: 'pic.png' },
+    });
     expect(r.statusCode).toBe(201);
     const body = r.json();
-    expect(body).toMatchObject({ content_type: 'image/png', size: data.length, checksum: sha256(data), filename: 'pic.png' });
+    expect(body).toMatchObject({
+      content_type: 'image/png',
+      size: data.length,
+      checksum: sha256(data),
+      filename: 'pic.png',
+    });
     expect(typeof body.blob_id).toBe('string');
 
     const g = await server.inject({ method: 'GET', url: `/blobs/${body.blob_id}?owner=A` });
@@ -254,7 +302,10 @@ describe('C20 — blob routes', () => {
   });
 
   it('OWNER-SCOPING via the routes: B’s GET/DELETE of A’s blob is 404 (absent, not 403)', async () => {
-    const r = await upload({ fields: { owner: 'A', content_type: 'image/png' }, file: { data: png('A-only'), contentType: 'image/png' } });
+    const r = await upload({
+      fields: { owner: 'A', content_type: 'image/png' },
+      file: { data: png('A-only'), contentType: 'image/png' },
+    });
     const id = r.json().blob_id;
     expect((await server.inject({ method: 'GET', url: `/blobs/${id}?owner=B` })).statusCode).toBe(404);
     expect((await server.inject({ method: 'DELETE', url: `/blobs/${id}?owner=B` })).statusCode).toBe(404);
@@ -263,21 +314,30 @@ describe('C20 — blob routes', () => {
   });
 
   it('content-type ALLOWLIST rejects a disallowed type (415)', async () => {
-    const r = await upload({ fields: { owner: 'A', content_type: 'application/zip' }, file: { data: Buffer.from('not-a-real-zip'), contentType: 'application/zip' } });
+    const r = await upload({
+      fields: { owner: 'A', content_type: 'application/zip' },
+      file: { data: Buffer.from('not-a-real-zip'), contentType: 'application/zip' },
+    });
     expect(r.statusCode).toBe(415);
     expect(r.json().error.code).toBe('unsupported_media_type');
   });
 
   it('MAGIC-BYTE mismatch is rejected (415) even when the declared type is allowlisted', async () => {
     // Declare image/png (allowed) but send PDF bytes → content_mismatch.
-    const r = await upload({ fields: { owner: 'A', content_type: 'image/png' }, file: { data: pdf(), contentType: 'image/png' } });
+    const r = await upload({
+      fields: { owner: 'A', content_type: 'image/png' },
+      file: { data: pdf(), contentType: 'image/png' },
+    });
     expect(r.statusCode).toBe(415);
     expect(r.json().error.code).toBe('content_mismatch');
   });
 
   it('MAX-SIZE over the configured limit → 413, nothing stored', async () => {
     process.env.FORGE_BLOB_MAX_BYTES = '16'; // tiny
-    const r = await upload({ fields: { owner: 'A', content_type: 'image/png' }, file: { data: png('this is definitely more than sixteen bytes'), contentType: 'image/png' } });
+    const r = await upload({
+      fields: { owner: 'A', content_type: 'image/png' },
+      file: { data: png('this is definitely more than sixteen bytes'), contentType: 'image/png' },
+    });
     expect(r.statusCode).toBe(413);
     expect(r.json().error.code).toBe('file_too_large');
     // nothing landed for A
@@ -286,20 +346,38 @@ describe('C20 — blob routes', () => {
 
   it('per-owner QUOTA: bytes → 413, object count → 409', async () => {
     process.env.FORGE_BLOB_QUOTA_BYTES = '10';
-    const rb = await upload({ fields: { owner: 'A', content_type: 'image/png' }, file: { data: png('way over ten bytes total'), contentType: 'image/png' } });
+    const rb = await upload({
+      fields: { owner: 'A', content_type: 'image/png' },
+      file: { data: png('way over ten bytes total'), contentType: 'image/png' },
+    });
     expect(rb.statusCode).toBe(413);
     expect(rb.json().error.code).toBe('quota_bytes_exceeded');
     delete process.env.FORGE_BLOB_QUOTA_BYTES;
 
     process.env.FORGE_BLOB_QUOTA_OBJECTS = '1';
-    expect((await upload({ fields: { owner: 'C', content_type: 'image/png' }, file: { data: png('1'), contentType: 'image/png' } })).statusCode).toBe(201);
-    const ro = await upload({ fields: { owner: 'C', content_type: 'image/png' }, file: { data: png('2'), contentType: 'image/png' } });
+    expect(
+      (
+        await upload({
+          fields: { owner: 'C', content_type: 'image/png' },
+          file: { data: png('1'), contentType: 'image/png' },
+        })
+      ).statusCode,
+    ).toBe(201);
+    const ro = await upload({
+      fields: { owner: 'C', content_type: 'image/png' },
+      file: { data: png('2'), contentType: 'image/png' },
+    });
     expect(ro.statusCode).toBe(409);
     expect(ro.json().error.code).toBe('quota_objects_exceeded');
   });
 
   it('DELETE removes the blob (204) and is idempotent (second → 404)', async () => {
-    const id = (await upload({ fields: { owner: 'A', content_type: 'image/png' }, file: { data: png(), contentType: 'image/png' } })).json().blob_id;
+    const id = (
+      await upload({
+        fields: { owner: 'A', content_type: 'image/png' },
+        file: { data: png(), contentType: 'image/png' },
+      })
+    ).json().blob_id;
     expect((await server.inject({ method: 'DELETE', url: `/blobs/${id}?owner=A` })).statusCode).toBe(204);
     expect((await server.inject({ method: 'GET', url: `/blobs/${id}?owner=A` })).statusCode).toBe(404);
     expect((await server.inject({ method: 'DELETE', url: `/blobs/${id}?owner=A` })).statusCode).toBe(404);
@@ -307,57 +385,113 @@ describe('C20 — blob routes', () => {
 
   it('Range request → 206 with a partial body + Content-Range', async () => {
     const data = png('0123456789abcdef');
-    const id = (await upload({ fields: { owner: 'A', content_type: 'image/png' }, file: { data, contentType: 'image/png' } })).json().blob_id;
-    const g = await server.inject({ method: 'GET', url: `/blobs/${id}?owner=A`, headers: { range: 'bytes=0-3' } });
+    const id = (
+      await upload({
+        fields: { owner: 'A', content_type: 'image/png' },
+        file: { data, contentType: 'image/png' },
+      })
+    ).json().blob_id;
+    const g = await server.inject({
+      method: 'GET',
+      url: `/blobs/${id}?owner=A`,
+      headers: { range: 'bytes=0-3' },
+    });
     expect(g.statusCode).toBe(206);
     expect(g.headers['content-range']).toBe(`bytes 0-3/${data.length}`);
     expect(g.headers['content-length']).toBe('4');
     expect(Buffer.compare(g.rawPayload, data.subarray(0, 4))).toBe(0);
     // out-of-bounds range → 416
-    const bad = await server.inject({ method: 'GET', url: `/blobs/${id}?owner=A`, headers: { range: `bytes=${data.length + 5}-` } });
+    const bad = await server.inject({
+      method: 'GET',
+      url: `/blobs/${id}?owner=A`,
+      headers: { range: `bytes=${data.length + 5}-` },
+    });
     expect(bad.statusCode).toBe(416);
   });
 
   it('conditional GET: matching If-None-Match → 304', async () => {
     const data = png('etag-me');
-    const id = (await upload({ fields: { owner: 'A', content_type: 'image/png' }, file: { data, contentType: 'image/png' } })).json().blob_id;
-    const g = await server.inject({ method: 'GET', url: `/blobs/${id}?owner=A`, headers: { 'if-none-match': `"${sha256(data)}"` } });
+    const id = (
+      await upload({
+        fields: { owner: 'A', content_type: 'image/png' },
+        file: { data, contentType: 'image/png' },
+      })
+    ).json().blob_id;
+    const g = await server.inject({
+      method: 'GET',
+      url: `/blobs/${id}?owner=A`,
+      headers: { 'if-none-match': `"${sha256(data)}"` },
+    });
     expect(g.statusCode).toBe(304);
   });
 
   it('list returns the owner’s blobs + usage/quota, owner-scoped', async () => {
-    await upload({ fields: { owner: 'A', content_type: 'text/plain', filename: 'a.txt' }, file: { data: Buffer.from('hello text'), contentType: 'text/plain' } });
-    await upload({ fields: { owner: 'B', content_type: 'image/png' }, file: { data: png('b'), contentType: 'image/png' } });
+    await upload({
+      fields: { owner: 'A', content_type: 'text/plain', filename: 'a.txt' },
+      file: { data: Buffer.from('hello text'), contentType: 'text/plain' },
+    });
+    await upload({
+      fields: { owner: 'B', content_type: 'image/png' },
+      file: { data: png('b'), contentType: 'image/png' },
+    });
     const la = (await server.inject({ method: 'GET', url: '/blobs?owner=A' })).json();
     expect(la.blobs).toHaveLength(1);
     expect(la.blobs[0]).toMatchObject({ content_type: 'text/plain', filename: 'a.txt' });
-    expect(la.usage).toMatchObject({ count: 1, bytes: 'hello text'.length, quota_bytes: expect.any(Number), quota_objects: expect.any(Number) });
+    expect(la.usage).toMatchObject({
+      count: 1,
+      bytes: 'hello text'.length,
+      quota_bytes: expect.any(Number),
+      quota_objects: expect.any(Number),
+    });
     // B never sees A's
     expect((await server.inject({ method: 'GET', url: '/blobs?owner=B' })).json().blobs).toHaveLength(1);
   });
 
   it('validates input: missing owner → 422; missing file → 400; empty file → 400; GET without owner → 400', async () => {
-    expect((await upload({ fields: { content_type: 'image/png' }, file: { data: png(), contentType: 'image/png' } })).statusCode).toBe(422);
+    expect(
+      (
+        await upload({
+          fields: { content_type: 'image/png' },
+          file: { data: png(), contentType: 'image/png' },
+        })
+      ).statusCode,
+    ).toBe(422);
     expect((await upload({ fields: { owner: 'A', content_type: 'image/png' } })).statusCode).toBe(400); // no file part
-    expect((await upload({ fields: { owner: 'A', content_type: 'text/plain' }, file: { data: Buffer.alloc(0), contentType: 'text/plain' } })).statusCode).toBe(400); // empty
+    expect(
+      (
+        await upload({
+          fields: { owner: 'A', content_type: 'text/plain' },
+          file: { data: Buffer.alloc(0), contentType: 'text/plain' },
+        })
+      ).statusCode,
+    ).toBe(400); // empty
     expect((await server.inject({ method: 'GET', url: '/blobs/blob_whatever' })).statusCode).toBe(400); // no owner
   });
 
-  it.skipIf(S3_BLOBS)('ATOMIC on a write failure mid-upload (filesystem): a broken temp target → 400, nothing persisted (no orphan)', async () => {
-    // Force the streamed write to fail by handing the route a temp path under a non-existent directory.
-    vi.spyOn(blobStore, 'prepareTemp').mockResolvedValueOnce(path.join(dir, 'no', 'such', 'dir', 'x.tmp'));
-    const r = await upload({ fields: { owner: 'A', content_type: 'image/png' }, file: { data: png('interrupted'), contentType: 'image/png' } });
-    expect(r.statusCode).toBe(400);
-    expect(r.json().error.code).toBe('upload_aborted');
-    // nothing was stored for A
-    expect((await server.inject({ method: 'GET', url: '/blobs?owner=A' })).json().blobs).toEqual([]);
-  });
+  it.skipIf(S3_BLOBS)(
+    'ATOMIC on a write failure mid-upload (filesystem): a broken temp target → 400, nothing persisted (no orphan)',
+    async () => {
+      // Force the streamed write to fail by handing the route a temp path under a non-existent directory.
+      vi.spyOn(blobStore, 'prepareTemp').mockResolvedValueOnce(path.join(dir, 'no', 'such', 'dir', 'x.tmp'));
+      const r = await upload({
+        fields: { owner: 'A', content_type: 'image/png' },
+        file: { data: png('interrupted'), contentType: 'image/png' },
+      });
+      expect(r.statusCode).toBe(400);
+      expect(r.json().error.code).toBe('upload_aborted');
+      // nothing was stored for A
+      expect((await server.inject({ method: 'GET', url: '/blobs?owner=A' })).json().blobs).toEqual([]);
+    },
+  );
 
   it('unknown app → 404 when no default + no app field', async () => {
     const s2 = Fastify({ logger: false });
     registerBlobRoutes(s2); // no defaultApp
     await s2.ready();
-    const { payload, headers } = multipart({ fields: { owner: 'A', content_type: 'image/png' }, file: { data: png(), contentType: 'image/png' } });
+    const { payload, headers } = multipart({
+      fields: { owner: 'A', content_type: 'image/png' },
+      file: { data: png(), contentType: 'image/png' },
+    });
     expect((await s2.inject({ method: 'POST', url: '/blobs', payload, headers })).statusCode).toBe(404);
     expect((await s2.inject({ method: 'GET', url: '/blobs/blob_x?owner=A' })).statusCode).toBe(404);
     await s2.close();

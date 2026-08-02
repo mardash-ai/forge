@@ -38,7 +38,10 @@ function extractFileRefs(lines: string[]): string[] {
 }
 
 function linesMatching(lines: string[], re: RegExp): string[] {
-  return lines.filter((l) => re.test(l)).map((l) => l.trim()).slice(0, 6);
+  return lines
+    .filter((l) => re.test(l))
+    .map((l) => l.trim())
+    .slice(0, 6);
 }
 
 const MATCHERS: Matcher[] = [
@@ -120,7 +123,8 @@ const MATCHERS: Matcher[] = [
   // `next build`, or importing next/document from the App Router).
   {
     match(lines) {
-      const re = /(should not be imported outside of pages\/_document|Error occurred prerendering|no-document-import-in-page)/;
+      const re =
+        /(should not be imported outside of pages\/_document|Error occurred prerendering|no-document-import-in-page)/;
       const hits = linesMatching(lines, re);
       if (hits.length === 0) return null;
       return {
@@ -173,7 +177,8 @@ export function analyzeLines(lines: string[]): Diagnosis {
     if (d) return d;
   }
   // Fallback: return a NOISE-FILTERED tail as evidence with a generic cause.
-  const noise = /^(npm notice|npm warn|npm WARN|Attention:|You can learn more|This information|https?:\/\/|>\s|\$\s|\s*$)/;
+  const noise =
+    /^(npm notice|npm warn|npm WARN|Attention:|You can learn more|This information|https?:\/\/|>\s|\$\s|\s*$)/;
   const meaningful = lines
     .map((l) => l.trim())
     .filter((l) => l.length > 0 && !noise.test(l) && !/^at\s/.test(l));

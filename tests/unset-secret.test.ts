@@ -28,9 +28,18 @@ afterAll(() => {
 async function seedApp(name: string): Promise<Application> {
   const now = nowIso();
   const app: Application = {
-    id: `app_${name}`, type: 'Application', app_id: `app_${name}`, created_at: now, updated_at: now,
-    name, repo_path: '/app', platform: 'web', framework: 'nextjs', template: 'nextjs-web',
-    language: 'typescript', package_manager: 'npm',
+    id: `app_${name}`,
+    type: 'Application',
+    app_id: `app_${name}`,
+    created_at: now,
+    updated_at: now,
+    name,
+    repo_path: '/app',
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   };
   await store.saveResource(app);
   return app;
@@ -77,13 +86,21 @@ describe('secrets-local: unsetSecret (revoke)', () => {
 describe('UnsetSecret capability (P2)', () => {
   it('set (capability) -> unset (capability) -> inspect secrets no longer lists it', async () => {
     const app = await seedApp('demo');
-    await executeCapability('set-secret', { app: 'demo', name: 'ANTHROPIC_API_KEY', value: 'sk-ant-live' }, SYSTEM_ACTOR);
+    await executeCapability(
+      'set-secret',
+      { app: 'demo', name: 'ANTHROPIC_API_KEY', value: 'sk-ant-live' },
+      SYSTEM_ACTOR,
+    );
 
     // The Secret metadata Resource exists and is 'set'.
     let secrets = (await store.listResources({ type: 'Secret', app_id: app.id })) as Secret[];
     expect(secrets.map((s) => s.name)).toContain('ANTHROPIC_API_KEY');
 
-    const res = await executeCapability('unset-secret', { app: 'demo', name: 'ANTHROPIC_API_KEY' }, SYSTEM_ACTOR);
+    const res = await executeCapability(
+      'unset-secret',
+      { app: 'demo', name: 'ANTHROPIC_API_KEY' },
+      SYSTEM_ACTOR,
+    );
     expect((res.resource as Secret).status).toBe('unset');
     expect(JSON.stringify(res)).not.toContain('sk-ant-live'); // never returns the value
 

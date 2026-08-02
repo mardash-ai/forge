@@ -85,7 +85,8 @@ app.post('/capabilities/:slug', async (req, reply) => {
 // Resource APIs.
 app.get('/resources', async (req) => {
   const q = req.query as { type?: string; app_id?: string; owner?: string };
-  const type = q.type && (RESOURCE_TYPES as readonly string[]).includes(q.type) ? (q.type as ResourceType) : undefined;
+  const type =
+    q.type && (RESOURCE_TYPES as readonly string[]).includes(q.type) ? (q.type as ResourceType) : undefined;
   // `owner` (C11) scopes per-user resources (e.g. C1 agent-runs) to one user; omitted = app-scoped.
   const resources = await store.listResources({ type, app_id: q.app_id, owner: q.owner });
   return { resources };
@@ -94,10 +95,15 @@ app.get('/resources', async (req) => {
 app.get('/resources/:type/:id', async (req, reply) => {
   const { type, id } = req.params as { type: string; id: string };
   if (!(RESOURCE_TYPES as readonly string[]).includes(type)) {
-    return reply.status(404).send({ error: { code: 'not_found', message: `Unknown resource type "${type}".`, retry: 'change-input' } });
+    return reply.status(404).send({
+      error: { code: 'not_found', message: `Unknown resource type "${type}".`, retry: 'change-input' },
+    });
   }
   const r = await store.getResource(type as ResourceType, id);
-  if (!r) return reply.status(404).send({ error: { code: 'not_found', message: `No ${type} with id "${id}".`, retry: 'change-input' } });
+  if (!r)
+    return reply
+      .status(404)
+      .send({ error: { code: 'not_found', message: `No ${type} with id "${id}".`, retry: 'change-input' } });
   return { resource: r };
 });
 
@@ -105,7 +111,10 @@ app.get('/resources/:type/:id', async (req, reply) => {
 app.get('/resources/:id', async (req, reply) => {
   const { id } = req.params as { id: string };
   const r = await store.findResourceById(id);
-  if (!r) return reply.status(404).send({ error: { code: 'not_found', message: `No resource "${id}".`, retry: 'change-input' } });
+  if (!r)
+    return reply
+      .status(404)
+      .send({ error: { code: 'not_found', message: `No resource "${id}".`, retry: 'change-input' } });
   return { resource: r };
 });
 
@@ -204,7 +213,9 @@ app.get('/logs/:resourceId', async (req, reply) => {
     const content = await readFile(logPath(resourceId), 'utf8');
     return reply.type('text/plain').send(content);
   } catch {
-    return reply.status(404).send({ error: { code: 'not_found', message: `No log for "${resourceId}".`, retry: 'change-input' } });
+    return reply
+      .status(404)
+      .send({ error: { code: 'not_found', message: `No log for "${resourceId}".`, retry: 'change-input' } });
   }
 });
 

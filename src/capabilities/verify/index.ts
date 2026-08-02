@@ -118,7 +118,13 @@ export const verify: Capability<Input, Verification> = {
       resource_type: 'Verification',
       resource_id: resource.id,
       app_id: app.id,
-      data: { host: baseUrl, passed: report.passed, total: report.total, failed: report.failed, skipped: report.skipped },
+      data: {
+        host: baseUrl,
+        passed: report.passed,
+        total: report.total,
+        failed: report.failed,
+        skipped: report.skipped,
+      },
     });
 
     return resource;

@@ -55,11 +55,19 @@ export async function findByEmail(appId: string, email: string): Promise<StoredU
   return (await backend()).findByEmail(appId, email);
 }
 
-export async function findByProvider(appId: string, provider: Provider, providerUserId: string): Promise<StoredUser | null> {
+export async function findByProvider(
+  appId: string,
+  provider: Provider,
+  providerUserId: string,
+): Promise<StoredUser | null> {
   return (await backend()).findByProvider(appId, provider, providerUserId);
 }
 
-export async function updateUser(appId: string, userId: string, patch: UpdateUserPatch): Promise<StoredUser | null> {
+export async function updateUser(
+  appId: string,
+  userId: string,
+  patch: UpdateUserPatch,
+): Promise<StoredUser | null> {
   return (await backend()).updateUser(appId, userId, patch);
 }
 
@@ -79,7 +87,11 @@ export async function listUsers(appId: string): Promise<StoredUser[]> {
 
 // --- sessions -------------------------------------------------------------------
 
-export async function createSession(appId: string, userId: string, ttlSeconds: number): Promise<StoredSession> {
+export async function createSession(
+  appId: string,
+  userId: string,
+  ttlSeconds: number,
+): Promise<StoredSession> {
   return (await backend()).createSession(appId, userId, ttlSeconds);
 }
 
@@ -87,7 +99,11 @@ export async function getSession(appId: string, sessionId: string): Promise<Stor
   return (await backend()).getSession(appId, sessionId);
 }
 
-export async function touchSession(appId: string, sessionId: string, ttlSeconds: number): Promise<StoredSession | null> {
+export async function touchSession(
+  appId: string,
+  sessionId: string,
+  ttlSeconds: number,
+): Promise<StoredSession | null> {
   return (await backend()).touchSession(appId, sessionId, ttlSeconds);
 }
 
@@ -105,7 +121,10 @@ export async function activeSessionCount(appId: string): Promise<number> {
 
 // --- refresh tokens (P8) --------------------------------------------------------
 
-export async function putRefreshToken(appId: string, input: PutRefreshTokenInput): Promise<StoredRefreshToken> {
+export async function putRefreshToken(
+  appId: string,
+  input: PutRefreshTokenInput,
+): Promise<StoredRefreshToken> {
   return (await backend()).putRefreshToken(appId, input);
 }
 
@@ -136,11 +155,21 @@ export async function redeemRefreshToken(
 
 // --- verify / reset tokens ------------------------------------------------------
 
-export async function putVerifyToken(appId: string, tokenHash: string, userId: string, ttlSeconds: number): Promise<void> {
+export async function putVerifyToken(
+  appId: string,
+  tokenHash: string,
+  userId: string,
+  ttlSeconds: number,
+): Promise<void> {
   return (await backend()).putVerifyToken(appId, tokenHash, userId, ttlSeconds);
 }
 
-export async function putResetToken(appId: string, tokenHash: string, userId: string, ttlSeconds: number): Promise<void> {
+export async function putResetToken(
+  appId: string,
+  tokenHash: string,
+  userId: string,
+  ttlSeconds: number,
+): Promise<void> {
   return (await backend()).putResetToken(appId, tokenHash, userId, ttlSeconds);
 }
 
@@ -162,7 +191,12 @@ export async function getTwofaCode(appId: string, id: string): Promise<StoredTwo
   return (await backend()).getTwofaCode(appId, id);
 }
 
-export async function redeemTwofaCode(appId: string, id: string, presentedCodeHash: string, opts: RedeemTwofaOpts): Promise<TwofaRedeem> {
+export async function redeemTwofaCode(
+  appId: string,
+  id: string,
+  presentedCodeHash: string,
+  opts: RedeemTwofaOpts,
+): Promise<TwofaRedeem> {
   return (await backend()).redeemTwofaCode(appId, id, presentedCodeHash, opts);
 }
 

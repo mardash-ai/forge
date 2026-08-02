@@ -70,8 +70,14 @@ const stubStripe: StripeClient = {
     trialSubInputs.push(input as unknown as Record<string, unknown>);
     customers += 1;
     const trialEnd = Math.floor(Date.now() / 1000) + input.trialPeriodDays * 24 * 3600;
-    return stripeSub({ id: 'sub_trial_1', status: 'trialing', trial_end: trialEnd,
-      customer_id: input.customerId, price_id: input.priceId, metadata: input.metadata });
+    return stripeSub({
+      id: 'sub_trial_1',
+      status: 'trialing',
+      trial_end: trialEnd,
+      customer_id: input.customerId,
+      price_id: input.priceId,
+      metadata: input.metadata,
+    });
   },
   // §1E — stub resumes a paused subscription (returns active).
   resumeSubscription: async (input) => {
@@ -111,7 +117,11 @@ const CATALOG_PLANS = [
     plan_key: 'free',
     display: { name: 'Free', order: 0 },
     interval: 'month',
-    prices: { stripe: { price_id: null, currency: null }, apple: { product_id: null }, google: { product_id: null } },
+    prices: {
+      stripe: { price_id: null, currency: null },
+      apple: { product_id: null },
+      google: { product_id: null },
+    },
     entitlements: { 'feature.max_items': 10, 'feature.household': false },
     is_default: true,
   },
@@ -119,7 +129,11 @@ const CATALOG_PLANS = [
     plan_key: 'pro_month',
     display: { name: 'Pro (monthly)', order: 1 },
     interval: 'month',
-    prices: { stripe: { price_id: 'price_pro_month', currency: 'usd' }, apple: { product_id: null }, google: { product_id: null } },
+    prices: {
+      stripe: { price_id: 'price_pro_month', currency: 'usd' },
+      apple: { product_id: null },
+      google: { product_id: null },
+    },
     entitlements: { 'feature.max_items': 1000, 'feature.household': true },
     is_default: false,
   },
@@ -127,7 +141,11 @@ const CATALOG_PLANS = [
     plan_key: 'pro_year',
     display: { name: 'Pro (yearly)', order: 2 },
     interval: 'year',
-    prices: { stripe: { price_id: 'price_pro_year', currency: 'usd' }, apple: { product_id: null }, google: { product_id: null } },
+    prices: {
+      stripe: { price_id: 'price_pro_year', currency: 'usd' },
+      apple: { product_id: null },
+      google: { product_id: null },
+    },
     entitlements: { 'feature.max_items': 1000, 'feature.household': true },
     is_default: false,
   },
@@ -136,7 +154,11 @@ const CATALOG_PLANS = [
     display: { name: 'Enterprise' },
     interval: 'month',
     // Catalog-valid but NOT purchasable — no stripe price id yet.
-    prices: { stripe: { price_id: null, currency: null }, apple: { product_id: null }, google: { product_id: null } },
+    prices: {
+      stripe: { price_id: null, currency: null },
+      apple: { product_id: null },
+      google: { product_id: null },
+    },
     entitlements: { 'feature.max_items': 100000, 'feature.household': true },
     is_default: false,
   },
@@ -145,15 +167,28 @@ const CATALOG_PLANS = [
 const seedApp = async (): Promise<void> => {
   const now = nowIso();
   await store.saveResource({
-    id: APP_ID, type: 'Application', app_id: APP_ID, created_at: now, updated_at: now,
-    name: APP, repo_path: '/app', platform: 'web', framework: 'nextjs', template: 'nextjs-web', language: 'typescript', package_manager: 'npm',
+    id: APP_ID,
+    type: 'Application',
+    app_id: APP_ID,
+    created_at: now,
+    updated_at: now,
+    name: APP,
+    repo_path: '/app',
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   } as Application);
 };
 
 const signIn = async (email = 'payer@demo.test'): Promise<{ userId: string; cookie: string }> => {
   const user = await authStore.createUser(APP_ID, { email, email_verified: true });
   const session = await authStore.createSession(APP_ID, user.id, 3600);
-  const token = signSessionToken({ userId: user.id, email: user.email, sessionId: session.id }, SESSION_SECRET);
+  const token = signSessionToken(
+    { userId: user.id, email: user.email, sessionId: session.id },
+    SESSION_SECRET,
+  );
   return { userId: user.id, cookie: `forge_session=${token}` };
 };
 
@@ -164,7 +199,8 @@ const configureStripe = async (): Promise<void> => {
 
 const seedCatalog = async (): Promise<void> => {
   const res = await server.inject({
-    method: 'PUT', url: '/billing/catalog',
+    method: 'PUT',
+    url: '/billing/catalog',
     headers: { 'x-forge-service-token': SERVICE_TOKEN },
     payload: { plans: CATALOG_PLANS },
   });
@@ -172,13 +208,17 @@ const seedCatalog = async (): Promise<void> => {
 };
 
 // Deliver a signed Stripe webhook event to the sidecar (RAW bytes + a real signature header).
-async function deliverEvent(event: Record<string, unknown>, opts: { secret?: string; badSig?: boolean } = {}) {
+async function deliverEvent(
+  event: Record<string, unknown>,
+  opts: { secret?: string; badSig?: boolean } = {},
+) {
   const raw = JSON.stringify(event);
   const header = opts.badSig
     ? `t=${Math.floor(Date.now() / 1000)},v1=deadbeef`
     : computeStripeSignatureHeader(raw, opts.secret ?? WEBHOOK_SECRET);
   return server.inject({
-    method: 'POST', url: '/hooks/billing/stripe',
+    method: 'POST',
+    url: '/hooks/billing/stripe',
     headers: { 'content-type': 'application/json', 'stripe-signature': header },
     payload: raw,
   });
@@ -213,8 +253,10 @@ afterEach(async () => {
   await server.close();
   resetStripeClient();
   await (await getBackends()).billing.__truncateAllForTests?.();
-  if (prevDir === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prevDir;
-  if (prevKey === undefined) delete process.env.FORGE_SECRETS_KEY; else process.env.FORGE_SECRETS_KEY = prevKey;
+  if (prevDir === undefined) delete process.env.FORGE_STATE_DIR;
+  else process.env.FORGE_STATE_DIR = prevDir;
+  if (prevKey === undefined) delete process.env.FORGE_SECRETS_KEY;
+  else process.env.FORGE_SECRETS_KEY = prevKey;
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -238,7 +280,8 @@ describe('C33 — entitlement derivation (grace + free default)', () => {
   const catalog: Catalog = { plans: CATALOG_PLANS as unknown as Catalog['plans'], updated_at: nowIso() };
   const base = (over: Partial<SubscriptionRecord>): SubscriptionRecord => ({
     ...noneRecord(APP_ID, 'u1', 'free', nowIso()),
-    plan_key: 'pro_month', source: 'stripe',
+    plan_key: 'pro_month',
+    source: 'stripe',
     provider_refs: { ...emptyProviderRefs(), stripe_subscription_id: 'sub_1' },
     ...over,
   });
@@ -289,7 +332,12 @@ describe('C33 — entitlement derivation (grace + free default)', () => {
 
   it('single-key read reports source plan vs default + a null value for an unknown key', () => {
     const paid = deriveEntitlement(base({ status: 'active' }), catalog, 'feature.max_items');
-    expect(paid).toMatchObject({ key: 'feature.max_items', value: 1000, source: 'plan', plan_key: 'pro_month' });
+    expect(paid).toMatchObject({
+      key: 'feature.max_items',
+      value: 1000,
+      source: 'plan',
+      plan_key: 'pro_month',
+    });
     const free = deriveEntitlement(base({ status: 'canceled' }), catalog, 'feature.max_items');
     expect(free).toMatchObject({ value: 10, source: 'default', plan_key: 'free' });
     const unknown = deriveEntitlement(base({ status: 'active' }), catalog, 'feature.nope');
@@ -316,19 +364,33 @@ describe('C33 — catalog validation', () => {
 
   it('rejects a catalog without exactly one is_default plan (422)', async () => {
     const twoDefaults = CATALOG_PLANS.map((p) => ({ ...p, is_default: true }));
-    const res = await server.inject({ method: 'PUT', url: '/billing/catalog', headers: { 'x-forge-service-token': SERVICE_TOKEN }, payload: { plans: twoDefaults } });
+    const res = await server.inject({
+      method: 'PUT',
+      url: '/billing/catalog',
+      headers: { 'x-forge-service-token': SERVICE_TOKEN },
+      payload: { plans: twoDefaults },
+    });
     expect(res.statusCode).toBe(422);
     expect(res.json().error.code).toBe('invalid_catalog');
   });
 
   it('rejects duplicate plan_keys (422)', async () => {
     const dup = [CATALOG_PLANS[0], { ...CATALOG_PLANS[1], plan_key: 'free' }];
-    const res = await server.inject({ method: 'PUT', url: '/billing/catalog', headers: { 'x-forge-service-token': SERVICE_TOKEN }, payload: { plans: dup } });
+    const res = await server.inject({
+      method: 'PUT',
+      url: '/billing/catalog',
+      headers: { 'x-forge-service-token': SERVICE_TOKEN },
+      payload: { plans: dup },
+    });
     expect(res.statusCode).toBe(422);
   });
 
   it('catalog WRITE requires the service token (a browser cannot rewrite pricing)', async () => {
-    const res = await server.inject({ method: 'PUT', url: '/billing/catalog', payload: { plans: CATALOG_PLANS } });
+    const res = await server.inject({
+      method: 'PUT',
+      url: '/billing/catalog',
+      payload: { plans: CATALOG_PLANS },
+    });
     expect(res.statusCode).toBe(401);
   });
 
@@ -362,7 +424,12 @@ describe('C33 — graceful degradation when unconfigured', () => {
   it('checkout degrades to 503 billing_not_configured (never a crash)', async () => {
     await seedCatalog();
     const { cookie } = await signIn();
-    const res = await server.inject({ method: 'POST', url: '/billing/checkout', headers: { cookie }, payload: { plan_key: 'pro_month', success_url: 'https://app/s', cancel_url: 'https://app/c' } });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/billing/checkout',
+      headers: { cookie },
+      payload: { plan_key: 'pro_month', success_url: 'https://app/s', cancel_url: 'https://app/c' },
+    });
     expect(res.statusCode).toBe(503);
     expect(res.json().error.code).toBe('billing_not_configured');
   });
@@ -370,7 +437,11 @@ describe('C33 — graceful degradation when unconfigured', () => {
   it('an unconfigured webhook (no signing secret) is a 200 no-op, not a crash', async () => {
     // Stripe key set but no webhook secret → cannot trust payloads → no-op.
     await setSecret(APP_ID, 'STRIPE_SECRET_KEY', 'sk_test_x');
-    const res = await deliverEvent({ id: 'evt_x', type: 'customer.subscription.updated', data: { object: { id: 'sub_123' } } });
+    const res = await deliverEvent({
+      id: 'evt_x',
+      type: 'customer.subscription.updated',
+      data: { object: { id: 'sub_123' } },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json().outcome).toBe('not_configured');
   });
@@ -381,18 +452,40 @@ describe('C33 — checkout + portal (Stripe web ops)', () => {
     await configureStripe();
     await seedCatalog();
     const { userId, cookie } = await signIn();
-    const res = await server.inject({ method: 'POST', url: '/billing/checkout', headers: { cookie }, payload: { plan_key: 'pro_month', success_url: 'https://app/s', cancel_url: 'https://app/c', scope_ref: 'household:42' } });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/billing/checkout',
+      headers: { cookie },
+      payload: {
+        plan_key: 'pro_month',
+        success_url: 'https://app/s',
+        cancel_url: 'https://app/c',
+        scope_ref: 'household:42',
+      },
+    });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ url: 'https://checkout.stripe.test/session/cs_test_1', session_id: 'cs_test_1' });
+    expect(res.json()).toMatchObject({
+      url: 'https://checkout.stripe.test/session/cs_test_1',
+      session_id: 'cs_test_1',
+    });
     // Stripe Tax on, correct price, subscriber as client_reference_id + metadata.
-    expect(checkoutInputs[0]).toMatchObject({ priceId: 'price_pro_month', taxEnabled: true, clientReferenceId: userId });
+    expect(checkoutInputs[0]).toMatchObject({
+      priceId: 'price_pro_month',
+      taxEnabled: true,
+      clientReferenceId: userId,
+    });
     expect((checkoutInputs[0]!.metadata as Record<string, string>).scope_ref).toBe('household:42');
     // The customer was created + REMEMBERED (echo-only scope_ref stored) so the portal works before any webhook.
     const rec = await (await getBackends()).billing.read(APP_ID);
     expect(rec.subscriptions[userId]!.provider_refs.stripe_customer_id).toBe('cus_test_1');
     expect(rec.subscriptions[userId]!.scope_ref).toBe('household:42');
     // A second checkout REUSES the customer (no new create).
-    await server.inject({ method: 'POST', url: '/billing/checkout', headers: { cookie }, payload: { plan_key: 'pro_year', success_url: 'https://app/s', cancel_url: 'https://app/c' } });
+    await server.inject({
+      method: 'POST',
+      url: '/billing/checkout',
+      headers: { cookie },
+      payload: { plan_key: 'pro_year', success_url: 'https://app/s', cancel_url: 'https://app/c' },
+    });
     expect(customers).toBe(1);
     expect(checkoutInputs[1]).toMatchObject({ customerId: 'cus_test_1', priceId: 'price_pro_year' });
   });
@@ -402,21 +495,39 @@ describe('C33 — checkout + portal (Stripe web ops)', () => {
     await seedCatalog();
     const { cookie } = await signIn();
     const res = await server.inject({
-      method: 'POST', url: '/billing/checkout', headers: { cookie },
+      method: 'POST',
+      url: '/billing/checkout',
+      headers: { cookie },
       // The EXACT shape dorinda-api sends on a card-required-trial checkout.
-      payload: { plan_key: 'pro_month', success_url: 'https://app/s', cancel_url: 'https://app/c', mode: 'subscription', trial_period_days: 30, payment_method_collection: 'always' },
+      payload: {
+        plan_key: 'pro_month',
+        success_url: 'https://app/s',
+        cancel_url: 'https://app/c',
+        mode: 'subscription',
+        trial_period_days: 30,
+        payment_method_collection: 'always',
+      },
     });
     expect(res.statusCode).toBe(200);
     // The trial length + card-required policy reach the Stripe boundary → subscription_data.trial_period_days
     // + payment_method_collection, so Stripe yields a `trialing` (not immediately `active`) subscription.
-    expect(checkoutInputs[0]).toMatchObject({ priceId: 'price_pro_month', trialPeriodDays: 30, paymentMethodCollection: 'always' });
+    expect(checkoutInputs[0]).toMatchObject({
+      priceId: 'price_pro_month',
+      trialPeriodDays: 30,
+      paymentMethodCollection: 'always',
+    });
   });
 
   it('checkout without trial fields stays backward-compatible (no trial, fields omitted)', async () => {
     await configureStripe();
     await seedCatalog();
     const { cookie } = await signIn();
-    await server.inject({ method: 'POST', url: '/billing/checkout', headers: { cookie }, payload: { plan_key: 'pro_month', success_url: 'https://app/s', cancel_url: 'https://app/c' } });
+    await server.inject({
+      method: 'POST',
+      url: '/billing/checkout',
+      headers: { cookie },
+      payload: { plan_key: 'pro_month', success_url: 'https://app/s', cancel_url: 'https://app/c' },
+    });
     expect(checkoutInputs[0]!.trialPeriodDays).toBeUndefined();
     expect(checkoutInputs[0]!.paymentMethodCollection).toBeUndefined();
   });
@@ -426,8 +537,19 @@ describe('C33 — checkout + portal (Stripe web ops)', () => {
     await seedCatalog();
     const { cookie } = await signIn();
     const base = { plan_key: 'pro_month', success_url: 'https://app/s', cancel_url: 'https://app/c' };
-    for (const bad of [{ trial_period_days: 0 }, { trial_period_days: 3.5 }, { trial_period_days: 9999 }, { mode: 'payment' }, { payment_method_collection: 'sometimes' }]) {
-      const res = await server.inject({ method: 'POST', url: '/billing/checkout', headers: { cookie }, payload: { ...base, ...bad } });
+    for (const bad of [
+      { trial_period_days: 0 },
+      { trial_period_days: 3.5 },
+      { trial_period_days: 9999 },
+      { mode: 'payment' },
+      { payment_method_collection: 'sometimes' },
+    ]) {
+      const res = await server.inject({
+        method: 'POST',
+        url: '/billing/checkout',
+        headers: { cookie },
+        payload: { ...base, ...bad },
+      });
       expect(res.statusCode).toBe(422);
       expect(res.json().error.code).toBe('invalid_input');
     }
@@ -439,7 +561,12 @@ describe('C33 — checkout + portal (Stripe web ops)', () => {
     await configureStripe();
     await seedCatalog();
     const { cookie } = await signIn();
-    const res = await server.inject({ method: 'POST', url: '/billing/checkout', headers: { cookie }, payload: { plan_key: 'nope', success_url: 'https://app/s', cancel_url: 'https://app/c' } });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/billing/checkout',
+      headers: { cookie },
+      payload: { plan_key: 'nope', success_url: 'https://app/s', cancel_url: 'https://app/c' },
+    });
     expect(res.statusCode).toBe(422);
     expect(res.json().error.code).toBe('unknown_plan');
   });
@@ -448,7 +575,12 @@ describe('C33 — checkout + portal (Stripe web ops)', () => {
     await configureStripe();
     await seedCatalog();
     const { cookie } = await signIn();
-    const res = await server.inject({ method: 'POST', url: '/billing/checkout', headers: { cookie }, payload: { plan_key: 'enterprise', success_url: 'https://app/s', cancel_url: 'https://app/c' } });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/billing/checkout',
+      headers: { cookie },
+      payload: { plan_key: 'enterprise', success_url: 'https://app/s', cancel_url: 'https://app/c' },
+    });
     expect(res.statusCode).toBe(422);
     expect(res.json().error.code).toBe('price_unconfigured');
   });
@@ -456,7 +588,12 @@ describe('C33 — checkout + portal (Stripe web ops)', () => {
   it('portal for a subscriber with no customer yet → 404 not_a_customer', async () => {
     await configureStripe();
     const { cookie } = await signIn();
-    const res = await server.inject({ method: 'POST', url: '/billing/portal', headers: { cookie }, payload: { return_url: 'https://app/account' } });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/billing/portal',
+      headers: { cookie },
+      payload: { return_url: 'https://app/account' },
+    });
     expect(res.statusCode).toBe(404);
     expect(res.json().error.code).toBe('not_a_customer');
   });
@@ -465,8 +602,18 @@ describe('C33 — checkout + portal (Stripe web ops)', () => {
     await configureStripe();
     await seedCatalog();
     const { cookie } = await signIn();
-    await server.inject({ method: 'POST', url: '/billing/checkout', headers: { cookie }, payload: { plan_key: 'pro_month', success_url: 'https://app/s', cancel_url: 'https://app/c' } });
-    const res = await server.inject({ method: 'POST', url: '/billing/portal', headers: { cookie }, payload: { return_url: 'https://app/account' } });
+    await server.inject({
+      method: 'POST',
+      url: '/billing/checkout',
+      headers: { cookie },
+      payload: { plan_key: 'pro_month', success_url: 'https://app/s', cancel_url: 'https://app/c' },
+    });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/billing/portal',
+      headers: { cookie },
+      payload: { return_url: 'https://app/account' },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json().url).toBe('https://portal.stripe.test/p/1');
   });
@@ -475,7 +622,11 @@ describe('C33 — checkout + portal (Stripe web ops)', () => {
 describe('C33 — owner/subscriber trust model', () => {
   it('a session user may only read their OWN subscription (403 on a mismatched subscriber)', async () => {
     const { cookie } = await signIn();
-    const res = await server.inject({ method: 'GET', url: '/billing/subscription?subscriber=someone_else', headers: { cookie } });
+    const res = await server.inject({
+      method: 'GET',
+      url: '/billing/subscription?subscriber=someone_else',
+      headers: { cookie },
+    });
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe('forbidden');
   });
@@ -486,7 +637,11 @@ describe('C33 — owner/subscriber trust model', () => {
   });
 
   it('a SERVICE-token read may act for a passed subscriber (background check)', async () => {
-    const res = await server.inject({ method: 'GET', url: '/billing/subscription?subscriber=user_bg', headers: { 'x-forge-service-token': SERVICE_TOKEN } });
+    const res = await server.inject({
+      method: 'GET',
+      url: '/billing/subscription?subscriber=user_bg',
+      headers: { 'x-forge-service-token': SERVICE_TOKEN },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ subscriber: 'user_bg', status: 'none' });
   });
@@ -509,14 +664,29 @@ describe('C33 — webhook: signature verify + idempotent + out-of-order converge
     const { userId, cookie } = await signIn();
     defaultSub = stripeSub({ metadata: { subscriber: userId, app: APP_ID, plan_key: 'pro_month' } });
 
-    const res = await deliverEvent({ id: 'evt_100', type: 'customer.subscription.updated', data: { object: { id: 'sub_123' } } });
+    const res = await deliverEvent({
+      id: 'evt_100',
+      type: 'customer.subscription.updated',
+      data: { object: { id: 'sub_123' } },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json().outcome).toBe('processed');
 
     // The canonical record now reads active/pro with the Stripe handles filled + the entitlements derived.
     const sub = await server.inject({ method: 'GET', url: '/billing/subscription', headers: { cookie } });
-    expect(sub.json()).toMatchObject({ subscriber: userId, status: 'active', source: 'stripe', plan_key: 'pro_month', currency: 'usd', cancel_at_period_end: false });
-    expect(sub.json().provider_refs).toMatchObject({ stripe_subscription_id: 'sub_123', stripe_price_id: 'price_pro_month', stripe_customer_id: 'cus_test_1' });
+    expect(sub.json()).toMatchObject({
+      subscriber: userId,
+      status: 'active',
+      source: 'stripe',
+      plan_key: 'pro_month',
+      currency: 'usd',
+      cancel_at_period_end: false,
+    });
+    expect(sub.json().provider_refs).toMatchObject({
+      stripe_subscription_id: 'sub_123',
+      stripe_price_id: 'price_pro_month',
+      stripe_customer_id: 'cus_test_1',
+    });
     const ent = await server.inject({ method: 'GET', url: '/billing/entitlements', headers: { cookie } });
     expect(ent.json()).toMatchObject({ status: 'active', plan_key: 'pro_month' });
     expect(ent.json().entitlements['feature.household']).toBe(true);
@@ -528,13 +698,26 @@ describe('C33 — webhook: signature verify + idempotent + out-of-order converge
     const { userId, cookie } = await signIn();
     const trialEnd = Math.floor(Date.now() / 1000) + 30 * 24 * 3600;
     // Stripe now reports the subscription as trialing (the outcome of a trial_period_days checkout).
-    defaultSub = stripeSub({ status: 'trialing', trial_end: trialEnd, metadata: { subscriber: userId, app: APP_ID, plan_key: 'pro_month' } });
+    defaultSub = stripeSub({
+      status: 'trialing',
+      trial_end: trialEnd,
+      metadata: { subscriber: userId, app: APP_ID, plan_key: 'pro_month' },
+    });
 
-    const res = await deliverEvent({ id: 'evt_trial', type: 'customer.subscription.created', data: { object: { id: 'sub_123' } } });
+    const res = await deliverEvent({
+      id: 'evt_trial',
+      type: 'customer.subscription.created',
+      data: { object: { id: 'sub_123' } },
+    });
     expect(res.json().outcome).toBe('processed');
 
     const sub = await server.inject({ method: 'GET', url: '/billing/subscription', headers: { cookie } });
-    expect(sub.json()).toMatchObject({ subscriber: userId, status: 'trialing', source: 'stripe', plan_key: 'pro_month' });
+    expect(sub.json()).toMatchObject({
+      subscriber: userId,
+      status: 'trialing',
+      source: 'stripe',
+      plan_key: 'pro_month',
+    });
     expect(sub.json().trial_end).toBe(new Date(trialEnd * 1000).toISOString());
     // A trial grants the ACTIVE plan's entitlements (trialing → active map).
     const ent = await server.inject({ method: 'GET', url: '/billing/entitlements', headers: { cookie } });
@@ -544,7 +727,10 @@ describe('C33 — webhook: signature verify + idempotent + out-of-order converge
 
   it('a BAD signature is a 400 signature_invalid and writes nothing', async () => {
     await configureStripe();
-    const res = await deliverEvent({ id: 'evt_bad', type: 'customer.subscription.updated', data: { object: { id: 'sub_123' } } }, { badSig: true });
+    const res = await deliverEvent(
+      { id: 'evt_bad', type: 'customer.subscription.updated', data: { object: { id: 'sub_123' } } },
+      { badSig: true },
+    );
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('signature_invalid');
     const state = await (await getBackends()).billing.read(APP_ID);
@@ -556,7 +742,11 @@ describe('C33 — webhook: signature verify + idempotent + out-of-order converge
     await configureStripe();
     const uid = 'user_dedupe';
     defaultSub = stripeSub({ metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' } });
-    const evt = { id: 'evt_dupe', type: 'customer.subscription.updated', data: { object: { id: 'sub_123' } } };
+    const evt = {
+      id: 'evt_dupe',
+      type: 'customer.subscription.updated',
+      data: { object: { id: 'sub_123' } },
+    };
     const first = await deliverEvent(evt);
     expect(first.json().outcome).toBe('processed');
     const replay = await deliverEvent(evt);
@@ -566,7 +756,11 @@ describe('C33 — webhook: signature verify + idempotent + out-of-order converge
 
   it('unknown event types are ignored (200), never an error', async () => {
     await configureStripe();
-    const res = await deliverEvent({ id: 'evt_unknown', type: 'charge.dispute.created', data: { object: {} } });
+    const res = await deliverEvent({
+      id: 'evt_unknown',
+      type: 'charge.dispute.created',
+      data: { object: {} },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json().outcome).toBe('ignored');
   });
@@ -576,8 +770,16 @@ describe('C33 — webhook: signature verify + idempotent + out-of-order converge
     const uid = 'user_ooo';
     // Two canonical snapshots for the same subscriber: an OLD (active) and a NEW (canceled) state.
     const fields = (status: SubscriptionRecord['status']) => ({
-      subscriber: uid, app: APP_ID, plan_key: 'pro_month', status, source: 'stripe' as const,
-      current_period_end: null, cancel_at_period_end: false, trial_end: null, currency: 'usd', scope_ref: null,
+      subscriber: uid,
+      app: APP_ID,
+      plan_key: 'pro_month',
+      status,
+      source: 'stripe' as const,
+      current_period_end: null,
+      cancel_at_period_end: false,
+      trial_end: null,
+      currency: 'usd',
+      scope_ref: null,
       provider_refs: { ...emptyProviderRefs(), stripe_subscription_id: 'sub_123' },
     });
     // Apply the NEWER snapshot first (higher version), then a STALE older snapshot (lower version).
@@ -586,7 +788,11 @@ describe('C33 — webhook: signature verify + idempotent + out-of-order converge
     const stale = await applyCanonicalSubscription(APP_ID, fields('active'), 1000);
     expect(stale.applied).toBe(false); // the stale re-fetch is dropped
     // The store still holds the NEWER (canceled) state.
-    const sub = await server.inject({ method: 'GET', url: '/billing/subscription?subscriber=user_ooo', headers: { 'x-forge-service-token': SERVICE_TOKEN } });
+    const sub = await server.inject({
+      method: 'GET',
+      url: '/billing/subscription?subscriber=user_ooo',
+      headers: { 'x-forge-service-token': SERVICE_TOKEN },
+    });
     expect(sub.json().status).toBe('canceled');
   });
 
@@ -594,12 +800,30 @@ describe('C33 — webhook: signature verify + idempotent + out-of-order converge
     await configureStripe();
     const uid = 'user_conv';
     // First event observes the sub as active…
-    defaultSub = stripeSub({ status: 'active', metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' } });
-    await deliverEvent({ id: 'evt_a', type: 'customer.subscription.created', data: { object: { id: 'sub_123' } } });
+    defaultSub = stripeSub({
+      status: 'active',
+      metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' },
+    });
+    await deliverEvent({
+      id: 'evt_a',
+      type: 'customer.subscription.created',
+      data: { object: { id: 'sub_123' } },
+    });
     // …then Stripe's truth becomes past_due; a later event re-fetches THAT (not whatever the event carried).
-    defaultSub = stripeSub({ status: 'past_due', metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' } });
-    await deliverEvent({ id: 'evt_b', type: 'invoice.payment_failed', data: { object: { subscription: 'sub_123' } } });
-    const sub = await server.inject({ method: 'GET', url: '/billing/subscription?subscriber=user_conv', headers: { 'x-forge-service-token': SERVICE_TOKEN } });
+    defaultSub = stripeSub({
+      status: 'past_due',
+      metadata: { subscriber: uid, app: APP_ID, plan_key: 'pro_month' },
+    });
+    await deliverEvent({
+      id: 'evt_b',
+      type: 'invoice.payment_failed',
+      data: { object: { subscription: 'sub_123' } },
+    });
+    const sub = await server.inject({
+      method: 'GET',
+      url: '/billing/subscription?subscriber=user_conv',
+      headers: { 'x-forge-service-token': SERVICE_TOKEN },
+    });
     expect(sub.json().status).toBe('past_due');
   });
 });
@@ -607,7 +831,11 @@ describe('C33 — webhook: signature verify + idempotent + out-of-order converge
 describe('C33 — reserved provider webhooks (adapters deferred)', () => {
   it('apple + google webhooks are reserved → 501 not_configured', async () => {
     for (const provider of ['apple', 'google']) {
-      const res = await server.inject({ method: 'POST', url: `/hooks/billing/${provider}`, payload: { any: 'thing' } });
+      const res = await server.inject({
+        method: 'POST',
+        url: `/hooks/billing/${provider}`,
+        payload: { any: 'thing' },
+      });
       expect(res.statusCode).toBe(501);
       expect(res.json().error.code).toBe('not_configured');
     }
@@ -628,7 +856,8 @@ describe('C33 §1B — POST /billing/trial (no-card trialing subscription at sig
     const { userId, cookie } = await signIn();
 
     const res = await server.inject({
-      method: 'POST', url: '/billing/trial',
+      method: 'POST',
+      url: '/billing/trial',
       headers: { 'x-forge-service-token': SERVICE_TOKEN },
       payload: { subscriber: userId, plan_key: 'pro_month', customer_email: 'payer@demo.test' },
     });
@@ -656,7 +885,9 @@ describe('C33 §1B — POST /billing/trial (no-card trialing subscription at sig
     await seedCatalog();
     const { cookie } = await signIn();
     const res = await server.inject({
-      method: 'POST', url: '/billing/trial', headers: { cookie },
+      method: 'POST',
+      url: '/billing/trial',
+      headers: { cookie },
       payload: { subscriber: 'someone', plan_key: 'pro_month' },
     });
     expect(res.statusCode).toBe(401);
@@ -666,7 +897,12 @@ describe('C33 §1B — POST /billing/trial (no-card trialing subscription at sig
     await configureStripe();
     await seedCatalog();
     for (const bad of [{ plan_key: 'pro_month' }, { subscriber: 'u' }, {}]) {
-      const res = await server.inject({ method: 'POST', url: '/billing/trial', headers: { 'x-forge-service-token': SERVICE_TOKEN }, payload: bad });
+      const res = await server.inject({
+        method: 'POST',
+        url: '/billing/trial',
+        headers: { 'x-forge-service-token': SERVICE_TOKEN },
+        payload: bad,
+      });
       expect(res.statusCode).toBe(422);
     }
   });
@@ -674,7 +910,8 @@ describe('C33 §1B — POST /billing/trial (no-card trialing subscription at sig
   it('degrades to 503 when Stripe is not configured', async () => {
     await seedCatalog();
     const res = await server.inject({
-      method: 'POST', url: '/billing/trial',
+      method: 'POST',
+      url: '/billing/trial',
       headers: { 'x-forge-service-token': SERVICE_TOKEN },
       payload: { subscriber: 'u1', plan_key: 'pro_month' },
     });
@@ -690,10 +927,17 @@ describe('C33 §1D — paused status (trial ended, no card, read-only grace)', (
     const { userId, cookie } = await signIn();
 
     // Stripe reports the subscription paused (trial ended, no card added).
-    defaultSub = stripeSub({ status: 'paused', trial_end: null,
-      metadata: { subscriber: userId, app: APP_ID, plan_key: 'pro_month' } });
+    defaultSub = stripeSub({
+      status: 'paused',
+      trial_end: null,
+      metadata: { subscriber: userId, app: APP_ID, plan_key: 'pro_month' },
+    });
 
-    const res = await deliverEvent({ id: 'evt_paused', type: 'customer.subscription.updated', data: { object: { id: 'sub_123' } } });
+    const res = await deliverEvent({
+      id: 'evt_paused',
+      type: 'customer.subscription.updated',
+      data: { object: { id: 'sub_123' } },
+    });
     expect(res.json().outcome).toBe('processed');
 
     const sub = await server.inject({ method: 'GET', url: '/billing/subscription', headers: { cookie } });
@@ -716,7 +960,8 @@ describe('C33 §1E — setup_intent.succeeded / payment_method.attached (card ad
 
     // Seed a paused subscription record with a known customer id.
     const pausedSub = stripeSub({
-      id: 'sub_123', status: 'paused',
+      id: 'sub_123',
+      status: 'paused',
       customer_id: 'cus_test_1',
       metadata: { subscriber: userId, app: APP_ID, plan_key: 'pro_month' },
     });
@@ -724,14 +969,19 @@ describe('C33 §1E — setup_intent.succeeded / payment_method.attached (card ad
     defaultSub = pausedSub;
 
     // First establish the paused state in our store via a subscription webhook.
-    await deliverEvent({ id: 'evt_p1', type: 'customer.subscription.updated', data: { object: { id: 'sub_123' } } });
+    await deliverEvent({
+      id: 'evt_p1',
+      type: 'customer.subscription.updated',
+      data: { object: { id: 'sub_123' } },
+    });
     let sub = await server.inject({ method: 'GET', url: '/billing/subscription', headers: { cookie } });
     expect(sub.json().status).toBe('paused');
 
     // After our stub's resumeSubscription is called, the subscription becomes active.
     // (The stub already updates subs map + defaultSub when resume is called.)
     const res = await deliverEvent({
-      id: 'evt_si', type: 'setup_intent.succeeded',
+      id: 'evt_si',
+      type: 'setup_intent.succeeded',
       data: { object: { id: 'seti_1', customer: 'cus_test_1', payment_method: 'pm_1', status: 'succeeded' } },
     });
     expect(res.statusCode).toBe(200);
@@ -752,15 +1002,22 @@ describe('C33 §1E — setup_intent.succeeded / payment_method.attached (card ad
     const { userId, cookie } = await signIn();
 
     const pausedSub = stripeSub({
-      id: 'sub_456', status: 'paused', customer_id: 'cus_test_1',
+      id: 'sub_456',
+      status: 'paused',
+      customer_id: 'cus_test_1',
       metadata: { subscriber: userId, app: APP_ID, plan_key: 'pro_month' },
     });
     subs.set('sub_456', pausedSub);
     defaultSub = pausedSub;
-    await deliverEvent({ id: 'evt_p2', type: 'customer.subscription.updated', data: { object: { id: 'sub_456' } } });
+    await deliverEvent({
+      id: 'evt_p2',
+      type: 'customer.subscription.updated',
+      data: { object: { id: 'sub_456' } },
+    });
 
     const res = await deliverEvent({
-      id: 'evt_pm', type: 'payment_method.attached',
+      id: 'evt_pm',
+      type: 'payment_method.attached',
       data: { object: { id: 'pm_2', customer: 'cus_test_1' } },
     });
     expect(res.statusCode).toBe(200);
@@ -777,15 +1034,23 @@ describe('C33 §1E — setup_intent.succeeded / payment_method.attached (card ad
     const { userId } = await signIn();
     const trialEnd = Math.floor(Date.now() / 1000) + 7 * 24 * 3600;
     const trialSub = stripeSub({
-      id: 'sub_789', status: 'trialing', trial_end: trialEnd, customer_id: 'cus_test_1',
+      id: 'sub_789',
+      status: 'trialing',
+      trial_end: trialEnd,
+      customer_id: 'cus_test_1',
       metadata: { subscriber: userId, app: APP_ID, plan_key: 'pro_month' },
     });
     subs.set('sub_789', trialSub);
     defaultSub = trialSub;
-    await deliverEvent({ id: 'evt_t1', type: 'customer.subscription.created', data: { object: { id: 'sub_789' } } });
+    await deliverEvent({
+      id: 'evt_t1',
+      type: 'customer.subscription.created',
+      data: { object: { id: 'sub_789' } },
+    });
 
     await deliverEvent({
-      id: 'evt_si2', type: 'setup_intent.succeeded',
+      id: 'evt_si2',
+      type: 'setup_intent.succeeded',
       data: { object: { id: 'seti_2', customer: 'cus_test_1', payment_method: 'pm_3', status: 'succeeded' } },
     });
     // No resume called — the subscription is trialing, not paused.
@@ -795,7 +1060,8 @@ describe('C33 §1E — setup_intent.succeeded / payment_method.attached (card ad
   it('setup_intent.succeeded with unknown customer → 200 ignored', async () => {
     await configureStripe();
     const res = await deliverEvent({
-      id: 'evt_si3', type: 'setup_intent.succeeded',
+      id: 'evt_si3',
+      type: 'setup_intent.succeeded',
       data: { object: { id: 'seti_3', customer: 'cus_nobody', payment_method: 'pm_x' } },
     });
     expect(res.statusCode).toBe(200);
@@ -810,13 +1076,16 @@ describe('C33 §1F — customer.subscription.trial_will_end webhook (T-2 reminde
     const { userId } = await signIn();
     const trialEnd = Math.floor(Date.now() / 1000) + 2 * 24 * 3600; // 2 days from now
     defaultSub = stripeSub({
-      id: 'sub_t2', status: 'trialing', trial_end: trialEnd,
+      id: 'sub_t2',
+      status: 'trialing',
+      trial_end: trialEnd,
       customer_id: 'cus_test_1',
       metadata: { subscriber: userId, app: APP_ID, plan_key: 'pro_month' },
     });
 
     const res = await deliverEvent({
-      id: 'evt_twe', type: 'customer.subscription.trial_will_end',
+      id: 'evt_twe',
+      type: 'customer.subscription.trial_will_end',
       data: { object: { id: 'sub_t2' } },
     });
     expect(res.statusCode).toBe(200);
@@ -837,24 +1106,53 @@ describe('C33 — admin account lockout (POST /billing/admin/lock — forge-side
   // Seed an ACTIVE paid subscription (the paying-customer case) keyed to `subscriber`.
   const seedActive = async (subscriber: string) => {
     await configureStripe();
-    defaultSub = stripeSub({ status: 'active', metadata: { subscriber, app: APP_ID, plan_key: 'pro_month' } });
+    defaultSub = stripeSub({
+      status: 'active',
+      metadata: { subscriber, app: APP_ID, plan_key: 'pro_month' },
+    });
     subs.set('sub_123', defaultSub);
-    await applyCanonicalSubscription(APP_ID, {
-      subscriber, app: APP_ID, plan_key: 'pro_month', status: 'active', source: 'stripe',
-      current_period_end: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
-      cancel_at_period_end: false, trial_end: null, currency: 'usd', scope_ref: null,
-      provider_refs: { ...emptyProviderRefs(), stripe_customer_id: 'cus_test_1', stripe_subscription_id: 'sub_123', stripe_price_id: 'price_pro_month' },
-    }, 1000);
+    await applyCanonicalSubscription(
+      APP_ID,
+      {
+        subscriber,
+        app: APP_ID,
+        plan_key: 'pro_month',
+        status: 'active',
+        source: 'stripe',
+        current_period_end: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
+        cancel_at_period_end: false,
+        trial_end: null,
+        currency: 'usd',
+        scope_ref: null,
+        provider_refs: {
+          ...emptyProviderRefs(),
+          stripe_customer_id: 'cus_test_1',
+          stripe_subscription_id: 'sub_123',
+          stripe_price_id: 'price_pro_month',
+        },
+      },
+      1000,
+    );
   };
-  const lock = (subscriber: string, locked: boolean) => server.inject({
-    method: 'POST', url: '/billing/admin/lock', headers: { 'x-forge-service-token': SERVICE_TOKEN }, payload: { subscriber, locked },
-  });
-  const readSub = (subscriber: string) => server.inject({
-    method: 'GET', url: `/billing/subscription?subscriber=${subscriber}`, headers: { 'x-forge-service-token': SERVICE_TOKEN },
-  });
-  const readEnt = (subscriber: string) => server.inject({
-    method: 'GET', url: `/billing/entitlements?subscriber=${subscriber}`, headers: { 'x-forge-service-token': SERVICE_TOKEN },
-  });
+  const lock = (subscriber: string, locked: boolean) =>
+    server.inject({
+      method: 'POST',
+      url: '/billing/admin/lock',
+      headers: { 'x-forge-service-token': SERVICE_TOKEN },
+      payload: { subscriber, locked },
+    });
+  const readSub = (subscriber: string) =>
+    server.inject({
+      method: 'GET',
+      url: `/billing/subscription?subscriber=${subscriber}`,
+      headers: { 'x-forge-service-token': SERVICE_TOKEN },
+    });
+  const readEnt = (subscriber: string) =>
+    server.inject({
+      method: 'GET',
+      url: `/billing/entitlements?subscriber=${subscriber}`,
+      headers: { 'x-forge-service-token': SERVICE_TOKEN },
+    });
 
   it('lock reproduces the EXACT trial-expired state (status paused → entitlement falls to the free/default plan)', async () => {
     await seedCatalog();
@@ -862,7 +1160,12 @@ describe('C33 — admin account lockout (POST /billing/admin/lock — forge-side
     expect((await readEnt('user_lock')).json()).toMatchObject({ status: 'active', plan_key: 'pro_month' });
     const res = await lock('user_lock', true);
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ locked: true, changed: true, status: 'paused', had_subscription: true });
+    expect(res.json()).toMatchObject({
+      locked: true,
+      changed: true,
+      status: 'paused',
+      had_subscription: true,
+    });
     expect((await readSub('user_lock')).json().status).toBe('paused');
     expect((await readEnt('user_lock')).json()).toMatchObject({ status: 'paused', plan_key: 'free' });
   });
@@ -892,9 +1195,17 @@ describe('C33 — admin account lockout (POST /billing/admin/lock — forge-side
     await seedCatalog();
     await seedActive('user_sticky');
     await lock('user_sticky', true);
-    const rec = await server.inject({ method: 'POST', url: '/billing/reconcile', headers: { 'x-forge-service-token': SERVICE_TOKEN } });
+    const rec = await server.inject({
+      method: 'POST',
+      url: '/billing/reconcile',
+      headers: { 'x-forge-service-token': SERVICE_TOKEN },
+    });
     expect(rec.statusCode).toBe(200);
-    await deliverEvent({ id: 'evt_sticky', type: 'customer.subscription.updated', data: { object: { id: 'sub_123' } } });
+    await deliverEvent({
+      id: 'evt_sticky',
+      type: 'customer.subscription.updated',
+      data: { object: { id: 'sub_123' } },
+    });
     expect((await readSub('user_sticky')).json().status).toBe('paused'); // still locked
   });
 
@@ -907,7 +1218,11 @@ describe('C33 — admin account lockout (POST /billing/admin/lock — forge-side
   });
 
   it('requires a service token (end-users cannot lock accounts)', async () => {
-    const res = await server.inject({ method: 'POST', url: '/billing/admin/lock', payload: { subscriber: 'x', locked: true } });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/billing/admin/lock',
+      payload: { subscriber: 'x', locked: true },
+    });
     expect(res.statusCode).toBe(401);
   });
 });
@@ -918,30 +1233,40 @@ describe('C33 — admin COMP overlay (permanent full access) + lock interplay', 
 
   // Seed a subscription-of-record in `trialing` (the no-card signup state) with a Stripe sub id.
   const seedTrialingRecord = async () => {
-    await applyCanonicalSubscription(APP_ID, {
-      subscriber: SUBSCRIBER,
-      app: APP_ID,
-      plan_key: 'pro_month',
-      status: 'trialing',
-      source: 'stripe',
-      current_period_end: null,
-      cancel_at_period_end: false,
-      trial_end: new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString(),
-      currency: 'usd',
-      scope_ref: null,
-      provider_refs: { ...emptyProviderRefs(), stripe_subscription_id: 'sub_comp_1', stripe_customer_id: 'cus_comp_1' },
-    }, Date.now());
+    await applyCanonicalSubscription(
+      APP_ID,
+      {
+        subscriber: SUBSCRIBER,
+        app: APP_ID,
+        plan_key: 'pro_month',
+        status: 'trialing',
+        source: 'stripe',
+        current_period_end: null,
+        cancel_at_period_end: false,
+        trial_end: new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString(),
+        currency: 'usd',
+        scope_ref: null,
+        provider_refs: {
+          ...emptyProviderRefs(),
+          stripe_subscription_id: 'sub_comp_1',
+          stripe_customer_id: 'cus_comp_1',
+        },
+      },
+      Date.now(),
+    );
   };
 
   const adminComp = (comped: boolean) =>
     server.inject({
-      method: 'POST', url: '/billing/admin/comp',
+      method: 'POST',
+      url: '/billing/admin/comp',
       headers: { 'x-forge-service-token': SERVICE_TOKEN },
       payload: { subscriber: SUBSCRIBER, comped },
     });
   const adminLock = (locked: boolean) =>
     server.inject({
-      method: 'POST', url: '/billing/admin/lock',
+      method: 'POST',
+      url: '/billing/admin/lock',
       headers: { 'x-forge-service-token': SERVICE_TOKEN },
       payload: { subscriber: SUBSCRIBER, locked },
     });
@@ -956,7 +1281,13 @@ describe('C33 — admin COMP overlay (permanent full access) + lock interplay', 
     await seedTrialingRecord();
     const res = await adminComp(true);
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ subscriber: SUBSCRIBER, comped: true, changed: true, status: 'active', had_subscription: true });
+    expect(res.json()).toMatchObject({
+      subscriber: SUBSCRIBER,
+      comped: true,
+      changed: true,
+      status: 'active',
+      had_subscription: true,
+    });
     const rec = await readRecord();
     expect(rec.status).toBe('active');
     expect(rec.admin_comped_at).toBeTruthy();
@@ -972,11 +1303,19 @@ describe('C33 — admin COMP overlay (permanent full access) + lock interplay', 
     await seedTrialingRecord();
     await adminComp(true);
     // Stripe now says the underlying subscription is PAUSED (trial ended, no card) …
-    subs.set('sub_comp_1', stripeSub({ id: 'sub_comp_1', status: 'paused', customer_id: 'cus_comp_1',
-      metadata: { subscriber: SUBSCRIBER, app: APP_ID, plan_key: 'pro_month' } }));
+    subs.set(
+      'sub_comp_1',
+      stripeSub({
+        id: 'sub_comp_1',
+        status: 'paused',
+        customer_id: 'cus_comp_1',
+        metadata: { subscriber: SUBSCRIBER, app: APP_ID, plan_key: 'pro_month' },
+      }),
+    );
     // … and delivers the trial-end webhook.
     const res = await deliverEvent({
-      id: 'evt_comp_paused', type: 'customer.subscription.updated',
+      id: 'evt_comp_paused',
+      type: 'customer.subscription.updated',
       data: { object: { id: 'sub_comp_1', status: 'paused' } },
     });
     expect(res.statusCode).toBe(200);
@@ -992,8 +1331,15 @@ describe('C33 — admin COMP overlay (permanent full access) + lock interplay', 
     await configureStripe();
     await seedTrialingRecord();
     await adminComp(true);
-    subs.set('sub_comp_1', stripeSub({ id: 'sub_comp_1', status: 'paused', customer_id: 'cus_comp_1',
-      metadata: { subscriber: SUBSCRIBER, app: APP_ID, plan_key: 'pro_month' } }));
+    subs.set(
+      'sub_comp_1',
+      stripeSub({
+        id: 'sub_comp_1',
+        status: 'paused',
+        customer_id: 'cus_comp_1',
+        metadata: { subscriber: SUBSCRIBER, app: APP_ID, plan_key: 'pro_month' },
+      }),
+    );
     const res = await adminComp(false);
     expect(res.statusCode).toBe(200);
     // The saved prev was `trialing`, but the re-reconcile against (stub) Stripe reports the truth: paused.
@@ -1026,11 +1372,20 @@ describe('C33 — admin COMP overlay (permanent full access) + lock interplay', 
     await seedCatalog();
     const res = await adminComp(true);
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ comped: true, changed: true, status: 'active', had_subscription: false });
+    expect(res.json()).toMatchObject({
+      comped: true,
+      changed: true,
+      status: 'active',
+      had_subscription: false,
+    });
   });
 
   it('service token required (401 without)', async () => {
-    const res = await server.inject({ method: 'POST', url: '/billing/admin/comp', payload: { subscriber: SUBSCRIBER, comped: true } });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/billing/admin/comp',
+      payload: { subscriber: SUBSCRIBER, comped: true },
+    });
     expect(res.statusCode).toBe(401);
   });
 });

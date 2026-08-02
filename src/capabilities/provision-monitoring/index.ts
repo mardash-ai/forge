@@ -22,8 +22,13 @@ const inputSchema = z.object({
   dir: z
     .string()
     .optional()
-    .describe('Target directory for the stack files — set this to the canonical host path (prod: ~/projects/dorinda-grafana). Default <workspace>/monitoring.'),
-  project_name: z.string().default('dorinda-grafana').describe('Compose project name (convention: maps to the public domain, e.g. grafana.dorinda.ai)'),
+    .describe(
+      'Target directory for the stack files — set this to the canonical host path (prod: ~/projects/dorinda-grafana). Default <workspace>/monitoring.',
+    ),
+  project_name: z
+    .string()
+    .default('dorinda-grafana')
+    .describe('Compose project name (convention: maps to the public domain, e.g. grafana.dorinda.ai)'),
   public_host: z
     .string()
     .optional()
@@ -42,7 +47,9 @@ const inputSchema = z.object({
   langfuse_otlp_b64: z
     .string()
     .optional()
-    .describe('base64("pk:sk") of the C37 Langfuse key pair — the collector trace auth. Preserved if already in the env file.'),
+    .describe(
+      'base64("pk:sk") of the C37 Langfuse key pair — the collector trace auth. Preserved if already in the env file.',
+    ),
   smtp_host: z.string().optional().describe('SMTP host:port for Grafana alert email (optional)'),
   smtp_user: z.string().optional(),
   smtp_password: z.string().optional(),
@@ -51,14 +58,22 @@ const inputSchema = z.object({
     .string()
     .optional()
     .describe('PUBLIC Langfuse UI base for browser deep links (default https://monitor.dorinda.ai)'),
-  langfuse_project_id: z.string().optional().describe('Langfuse project id for deep links (default forge-default)'),
+  langfuse_project_id: z
+    .string()
+    .optional()
+    .describe('Langfuse project id for deep links (default forge-default)'),
   app_db_network: z
     .string()
     .optional()
-    .describe('App stack docker network the postgres container lives on (enables the User Experience dashboard; grafana joins it)'),
+    .describe(
+      'App stack docker network the postgres container lives on (enables the User Experience dashboard; grafana joins it)',
+    ),
   app_db_host: z.string().optional().describe('Postgres container name/host on that network'),
   app_db_port: z.number().int().positive().optional().describe('Postgres port (default 5432)'),
-  app_db_database: z.string().optional().describe('Database holding forge_identity_users (e.g. forge_platform)'),
+  app_db_database: z
+    .string()
+    .optional()
+    .describe('Database holding forge_identity_users (e.g. forge_platform)'),
   app_db_user: z.string().optional().describe('SELECT-only role (default grafana_ro)'),
   app_db_app_id: z.string().optional().describe('app_id scoping the user picker query (default dorinda-api)'),
   app_db_password: z
@@ -66,14 +81,23 @@ const inputSchema = z.object({
     .optional()
     .describe('Password of the SELECT-only role. Preserved if already in the env file.'),
   env_file: z.string().default('.env').describe('Env filename inside the stack dir (compose --env-file)'),
-  health_url: z.string().url().optional().describe('Override the health-probe URL (default derived from host/port)'),
+  health_url: z
+    .string()
+    .url()
+    .optional()
+    .describe('Override the health-probe URL (default derived from host/port)'),
   context: z.string().optional().describe('docker --context for a remote daemon'),
   skip_deploy: z.boolean().default(false).describe('Generate files only; do not pull/up (dry provision)'),
   regenerate_secrets: z
     .boolean()
     .default(false)
     .describe('Force NEW secrets even if an env file exists — rotates the Grafana admin password'),
-  health_timeout_ms: z.number().int().positive().default(240_000).describe('How long to wait for grafana to serve'),
+  health_timeout_ms: z
+    .number()
+    .int()
+    .positive()
+    .default(240_000)
+    .describe('How long to wait for grafana to serve'),
 });
 
 type Input = z.infer<typeof inputSchema>;
@@ -205,7 +229,10 @@ export const provisionMonitoring: Capability<Input, MonitoringStack> = {
       // --force-recreate: compose does NOT hash inline `configs.content` into the service
       // fingerprint, so a re-provision with changed dashboards/rules would silently keep the
       // old containers serving stale configs (observed live 2026-07-26). Volumes persist.
-      const up = await run('docker', [...composeArgs, 'up', '-d', '--force-recreate'], { cwd: dir, timeoutMs: 10 * 60_000 });
+      const up = await run('docker', [...composeArgs, 'up', '-d', '--force-recreate'], {
+        cwd: dir,
+        timeoutMs: 10 * 60_000,
+      });
       if (up.code !== 0) throw new Error(`docker compose up failed:\n${up.tail}`);
       deployed = true;
     }
@@ -224,12 +251,13 @@ export const provisionMonitoring: Capability<Input, MonitoringStack> = {
 
     // 5. Register the MonitoringStack (upsert — at most one). Producers export to the INTERNAL
     //    OTLP endpoint on the shared networks. Never store secrets on the resource.
-    const grafanaUrl = input.public_host ? `https://${input.public_host}` : `http://localhost:${input.ui_port}`;
+    const grafanaUrl = input.public_host
+      ? `https://${input.public_host}`
+      : `http://localhost:${input.ui_port}`;
     const status: MonitoringStack['status'] = deployed && !reachable ? 'unreachable' : 'configured';
     const checked_at = nowIso();
     const existing = (await ctx.store.listResources({ type: 'MonitoringStack' }))[0] as
-      | MonitoringStack
-      | undefined;
+      MonitoringStack | undefined;
 
     const fields = {
       otlp_endpoint: MONITORING_OTLP_ENDPOINT,

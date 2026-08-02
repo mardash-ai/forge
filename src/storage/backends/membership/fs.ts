@@ -49,7 +49,10 @@ export class FsMembershipBackend implements MembershipBackend, MigratableMembers
     return this.readState(appId);
   }
 
-  async mutate<T>(appId: string, fn: (state: MembershipState) => { state: MembershipState; result: T }): Promise<T> {
+  async mutate<T>(
+    appId: string,
+    fn: (state: MembershipState) => { state: MembershipState; result: T },
+  ): Promise<T> {
     return this.withLock(appId, async () => {
       const state = await this.readState(appId);
       const { state: next, result } = fn(state);

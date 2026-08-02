@@ -29,7 +29,11 @@ export async function test(appDir: string, logFile: string): Promise<TestOutput>
 
 function parseCounts(output: string): { passed: number; failed: number; skipped: number } {
   // Vitest: "      Tests  1 passed (1)" / "Tests  2 failed | 1 passed (3)"
-  const testsLine = output.split('\n').reverse().find((l) => /^\s*Tests\s+/.test(l)) ?? '';
+  const testsLine =
+    output
+      .split('\n')
+      .reverse()
+      .find((l) => /^\s*Tests\s+/.test(l)) ?? '';
   const passed = Number(testsLine.match(/(\d+)\s+passed/)?.[1] ?? 0);
   const failed = Number(testsLine.match(/(\d+)\s+failed/)?.[1] ?? 0);
   const skipped = Number(testsLine.match(/(\d+)\s+skipped/)?.[1] ?? 0);

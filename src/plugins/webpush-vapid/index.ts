@@ -110,11 +110,18 @@ export function generateVapidKeys(): { publicKey: string; privateJwk: PrivateJwk
 
 // Sign the ES256 VAPID JWT for one send. `aud` is the push-service ORIGIN; `exp` is bounded (12h); `sub`
 // is the contact URI. The signature is raw R||S (JOSE `ieee-p1363`), not DER — what JWS ES256 requires.
-export function signVapidJwt(audience: string, vapid: VapidConfig, nowSeconds = Math.floor(Date.now() / 1000)): string {
+export function signVapidJwt(
+  audience: string,
+  vapid: VapidConfig,
+  nowSeconds = Math.floor(Date.now() / 1000),
+): string {
   const header = { typ: 'JWT', alg: 'ES256' };
   const payload = { aud: audience, exp: nowSeconds + 12 * 60 * 60, sub: vapid.subject };
   const signingInput = `${b64url(Buffer.from(JSON.stringify(header)))}.${b64url(Buffer.from(JSON.stringify(payload)))}`;
-  const key = createPrivateKey({ format: 'jwk', key: vapid.privateJwk as unknown as Record<string, unknown> });
+  const key = createPrivateKey({
+    format: 'jwk',
+    key: vapid.privateJwk as unknown as Record<string, unknown>,
+  });
   const signature = sign('sha256', Buffer.from(signingInput), { key, dsaEncoding: 'ieee-p1363' });
   return `${signingInput}.${b64url(signature)}`;
 }
@@ -142,7 +149,12 @@ export function encryptWebPushPayload(sub: WebPushSubscription, payload: Buffer)
   // ECDH shared secret (the X coordinate, 32 bytes).
   const uaKey = createPublicKey({
     format: 'jwk',
-    key: { kty: 'EC', crv: 'P-256', x: b64url(uaPublic.subarray(1, 33)), y: b64url(uaPublic.subarray(33, 65)) },
+    key: {
+      kty: 'EC',
+      crv: 'P-256',
+      x: b64url(uaPublic.subarray(1, 33)),
+      y: b64url(uaPublic.subarray(33, 65)),
+    },
   });
   const ecdhSecret = diffieHellman({ privateKey: asPair.privateKey, publicKey: uaKey });
 
@@ -152,8 +164,12 @@ export function encryptWebPushPayload(sub: WebPushSubscription, payload: Buffer)
 
   // RFC 8188 — derive the CEK + nonce from a random salt.
   const salt = randomBytes(16);
-  const cek = Buffer.from(hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: aes128gcm\0', 'utf8'), 16));
-  const nonce = Buffer.from(hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: nonce\0', 'utf8'), 12));
+  const cek = Buffer.from(
+    hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: aes128gcm\0', 'utf8'), 16),
+  );
+  const nonce = Buffer.from(
+    hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: nonce\0', 'utf8'), 12),
+  );
 
   // One record: plaintext || 0x02 (last-record delimiter). AES-128-GCM appends the 16-byte tag.
   const recordSize = 4096;
@@ -173,7 +189,11 @@ export function encryptWebPushPayload(sub: WebPushSubscription, payload: Buffer)
 // The transport contract: POST the encrypted body to the endpoint and return the HTTP status. Swappable
 // so tests inject a capture sink (no socket) and a future transport can slot in without touching the
 // Capability. It NEVER sees plaintext or the VAPID private key — only the finished ciphertext + headers.
-export type PushTransport = (endpoint: string, headers: Record<string, string>, body: Buffer) => Promise<{ statusCode: number }>;
+export type PushTransport = (
+  endpoint: string,
+  headers: Record<string, string>,
+  body: Buffer,
+) => Promise<{ statusCode: number }>;
 
 const httpPushTransport: PushTransport = async (endpoint, headers, body) => {
   const res = await fetch(endpoint, {
@@ -210,7 +230,12 @@ export async function sendWebPush(
     body = encryptWebPushPayload(sub, typeof payload === 'string' ? Buffer.from(payload, 'utf8') : payload);
     audience = new URL(sub.endpoint).origin;
   } catch (e) {
-    return { ok: false, statusCode: 0, expired: false, error: `encryption failed: ${String((e as Error)?.message ?? e)}` };
+    return {
+      ok: false,
+      statusCode: 0,
+      expired: false,
+      error: `encryption failed: ${String((e as Error)?.message ?? e)}`,
+    };
   }
   const headers: Record<string, string> = {
     authorization: buildVapidAuthHeader(audience, vapid),
@@ -224,7 +249,12 @@ export async function sendWebPush(
     ({ statusCode } = await getPushTransport()(sub.endpoint, headers, body));
   } catch (e) {
     // A network/transport error — transient, not a gone subscription.
-    return { ok: false, statusCode: 0, expired: false, error: `push request failed: ${String((e as Error)?.message ?? e)}` };
+    return {
+      ok: false,
+      statusCode: 0,
+      expired: false,
+      error: `push request failed: ${String((e as Error)?.message ?? e)}`,
+    };
   }
   const ok = statusCode >= 200 && statusCode < 300;
   const expired = statusCode === 404 || statusCode === 410; // subscription no longer valid → prune

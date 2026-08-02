@@ -94,7 +94,9 @@ export interface StripeClient {
   createTrialingSubscription(input: CreateTrialingSubscriptionInput): Promise<StripeSubscription>;
   // §1E — resume a paused subscription after a card has been added at conversion. Idempotent — an
   // already-active / already-canceled subscription resolves to `{ resumed: false }`.
-  resumeSubscription(input: ResumeSubscriptionInput): Promise<{ resumed: boolean; subscription: StripeSubscription | null }>;
+  resumeSubscription(
+    input: ResumeSubscriptionInput,
+  ): Promise<{ resumed: boolean; subscription: StripeSubscription | null }>;
   // Re-fetch the CANONICAL subscription (idempotent reconciliation input). null when it no longer exists.
   retrieveSubscription(secretKey: string, subscriptionId: string): Promise<StripeSubscription | null>;
   // Cancel a subscription NOW (administrative teardown). Idempotent — a subscription that is already gone
@@ -219,9 +221,9 @@ function normalizeSubscription(sub: Stripe.Subscription): StripeSubscription {
     current_period_end: typeof periodEnd === 'number' ? periodEnd : null,
     cancel_at_period_end: Boolean(sub.cancel_at_period_end),
     trial_end: typeof sub.trial_end === 'number' ? sub.trial_end : null,
-    customer_id: typeof customer === 'string' ? customer : customer?.id ?? null,
+    customer_id: typeof customer === 'string' ? customer : (customer?.id ?? null),
     price_id: price?.id ?? null,
-    currency: price?.currency ?? ((sub as unknown as { currency?: string }).currency ?? null),
+    currency: price?.currency ?? (sub as unknown as { currency?: string }).currency ?? null,
     metadata: (sub.metadata as Record<string, string> | null) ?? {},
   };
 }
@@ -333,7 +335,8 @@ export const sdkStripeClient: StripeClient = {
       return { canceled: true };
     } catch (err) {
       // Already canceled / never existed (404) → nothing to do (idempotent teardown), not an error.
-      if (err instanceof Stripe.errors.StripeInvalidRequestError && err.statusCode === 404) return { canceled: false };
+      if (err instanceof Stripe.errors.StripeInvalidRequestError && err.statusCode === 404)
+        return { canceled: false };
       throw err;
     }
   },
@@ -344,7 +347,8 @@ export const sdkStripeClient: StripeClient = {
       return { deleted: Boolean((res as { deleted?: boolean }).deleted) };
     } catch (err) {
       // Already deleted / unknown customer (404) → treat as done (idempotent teardown), not an error.
-      if (err instanceof Stripe.errors.StripeInvalidRequestError && err.statusCode === 404) return { deleted: false };
+      if (err instanceof Stripe.errors.StripeInvalidRequestError && err.statusCode === 404)
+        return { deleted: false };
       throw err;
     }
   },

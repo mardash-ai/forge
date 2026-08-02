@@ -71,19 +71,34 @@ export async function seedEvalTenant(
  * passes the app DB URL (generic apps that don't gate on membership skip it entirely). Returns the
  * ensured group id, or null when the app has no local group for the owner (nothing to sync).
  */
-export async function provisionTenantGroup(appId: string, ownerId: string, appDbUrl: string): Promise<string | null> {
+export async function provisionTenantGroup(
+  appId: string,
+  ownerId: string,
+  appDbUrl: string,
+): Promise<string | null> {
   const db = new Client({ connectionString: appDbUrl });
   let groupId: string | null = null;
   try {
     await db.connect();
-    const r = await db.query('SELECT group_id FROM group_members WHERE person_id = $1 ORDER BY added_at ASC LIMIT 1', [ownerId]);
+    const r = await db.query(
+      'SELECT group_id FROM group_members WHERE person_id = $1 ORDER BY added_at ASC LIMIT 1',
+      [ownerId],
+    );
     groupId = r.rows[0] ? String((r.rows[0] as { group_id: unknown }).group_id) : null;
   } finally {
     await db.end().catch(() => {});
   }
   if (!groupId) return null;
-  await (await getBackends()).membership.mutate(appId, (s) =>
-    provisionGroup(s, { owner: ownerId, external_id: groupId!, now: nowIso(), newGroupId: newId('grp'), dedupeOwnerSingleton: true }),
+  await (
+    await getBackends()
+  ).membership.mutate(appId, (s) =>
+    provisionGroup(s, {
+      owner: ownerId,
+      external_id: groupId!,
+      now: nowIso(),
+      newGroupId: newId('grp'),
+      dedupeOwnerSingleton: true,
+    }),
   );
   return groupId;
 }

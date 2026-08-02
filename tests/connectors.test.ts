@@ -9,7 +9,12 @@ import { registerConnectRoutes } from '../src/api/connect-routes';
 import { setSecret, openValue } from '../src/plugins/secrets-local/index';
 import * as authStore from '../src/plugins/auth-identity/store';
 import { signSessionToken } from '../src/shared/session';
-import { setOutboundOAuthClient, resetOutboundOAuthClient, type OutboundOAuthClient, type TokenSet } from '../src/connectors/oauth-client';
+import {
+  setOutboundOAuthClient,
+  resetOutboundOAuthClient,
+  type OutboundOAuthClient,
+  type TokenSet,
+} from '../src/connectors/oauth-client';
 import { resolveProvider, availableProviders } from '../src/connectors/config';
 import { getFreshAccessToken } from '../src/connectors/service';
 import { connectionsFile } from '../src/shared/paths';
@@ -57,8 +62,18 @@ const stubClient: OutboundOAuthClient = {
 const seedApp = async (): Promise<void> => {
   const now = nowIso();
   await store.saveResource({
-    id: APP_ID, type: 'Application', app_id: APP_ID, created_at: now, updated_at: now,
-    name: APP, repo_path: '/app', platform: 'web', framework: 'nextjs', template: 'nextjs-web', language: 'typescript', package_manager: 'npm',
+    id: APP_ID,
+    type: 'Application',
+    app_id: APP_ID,
+    created_at: now,
+    updated_at: now,
+    name: APP,
+    repo_path: '/app',
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   } as Application);
 };
 
@@ -66,7 +81,10 @@ const seedApp = async (): Promise<void> => {
 const signIn = async (email = 'user@demo.test'): Promise<{ userId: string; cookie: string }> => {
   const user = await authStore.createUser(APP_ID, { email, email_verified: true });
   const session = await authStore.createSession(APP_ID, user.id, 3600);
-  const token = signSessionToken({ userId: user.id, email: user.email, sessionId: session.id }, SESSION_SECRET);
+  const token = signSessionToken(
+    { userId: user.id, email: user.email, sessionId: session.id },
+    SESSION_SECRET,
+  );
   return { userId: user.id, cookie: `forge_session=${token}` };
 };
 
@@ -88,7 +106,13 @@ beforeEach(async () => {
   exchanges = [];
   refreshes = [];
   revokes = [];
-  nextExchange = { access_token: 'google-access-1', refresh_token: 'google-refresh-1', expires_in: 3600, scope: 'openid email https://www.googleapis.com/auth/gmail.send', account_label: 'user@gmail.test' };
+  nextExchange = {
+    access_token: 'google-access-1',
+    refresh_token: 'google-refresh-1',
+    expires_in: 3600,
+    scope: 'openid email https://www.googleapis.com/auth/gmail.send',
+    account_label: 'user@gmail.test',
+  };
   nextRefresh = { access_token: 'google-access-2', refresh_token: 'google-refresh-2', expires_in: 3600 };
   setOutboundOAuthClient(stubClient);
 
@@ -100,20 +124,33 @@ beforeEach(async () => {
 afterEach(async () => {
   await server.close();
   resetOutboundOAuthClient();
-  if ((await getBackends()).connections.__truncateAllForTests) await (await getBackends()).connections.__truncateAllForTests!();
-  if (prevDir === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prevDir;
-  if (prevKey === undefined) delete process.env.FORGE_SECRETS_KEY; else process.env.FORGE_SECRETS_KEY = prevKey;
+  if ((await getBackends()).connections.__truncateAllForTests)
+    await (
+      await getBackends()
+    ).connections.__truncateAllForTests!();
+  if (prevDir === undefined) delete process.env.FORGE_STATE_DIR;
+  else process.env.FORGE_STATE_DIR = prevDir;
+  if (prevKey === undefined) delete process.env.FORGE_SECRETS_KEY;
+  else process.env.FORGE_SECRETS_KEY = prevKey;
   await rm(dir, { recursive: true, force: true });
 });
 
 // Drive start → capture state → callback. Returns the callback response.
 async function connect(cookie: string, opts: { scopes?: string; return_to?: string } = {}) {
   const qs = new URLSearchParams(opts as Record<string, string>).toString();
-  const start = await server.inject({ method: 'GET', url: `/connect/google/start${qs ? `?${qs}` : ''}`, headers: { cookie } });
+  const start = await server.inject({
+    method: 'GET',
+    url: `/connect/google/start${qs ? `?${qs}` : ''}`,
+    headers: { cookie },
+  });
   expect(start.statusCode).toBe(302);
   const loc = new URL(start.headers.location as string);
   const state = loc.searchParams.get('state')!;
-  const cb = await server.inject({ method: 'GET', url: `/connect/google/callback?code=auth-code-xyz&state=${encodeURIComponent(state)}`, headers: { cookie } });
+  const cb = await server.inject({
+    method: 'GET',
+    url: `/connect/google/callback?code=auth-code-xyz&state=${encodeURIComponent(state)}`,
+    headers: { cookie },
+  });
   return { start, state, cb, authorizeUrl: loc };
 }
 
@@ -198,7 +235,11 @@ describe('C24 — connect handshake', () => {
     await configureGoogle();
     const { cookie } = await signIn();
     const { state } = await connect(cookie);
-    const replay = await server.inject({ method: 'GET', url: `/connect/google/callback?code=x&state=${encodeURIComponent(state)}`, headers: { cookie } });
+    const replay = await server.inject({
+      method: 'GET',
+      url: `/connect/google/callback?code=x&state=${encodeURIComponent(state)}`,
+      headers: { cookie },
+    });
     expect(replay.statusCode).toBe(302);
     expect(replay.headers.location).toContain('connect_error=invalid_state');
   });
@@ -207,10 +248,18 @@ describe('C24 — connect handshake', () => {
     await configureGoogle();
     const a = await signIn('a@demo.test');
     const b = await signIn('b@demo.test');
-    const start = await server.inject({ method: 'GET', url: '/connect/google/start', headers: { cookie: a.cookie } });
+    const start = await server.inject({
+      method: 'GET',
+      url: '/connect/google/start',
+      headers: { cookie: a.cookie },
+    });
     const state = new URL(start.headers.location as string).searchParams.get('state')!;
     // User B tries to complete A's pending request.
-    const cb = await server.inject({ method: 'GET', url: `/connect/google/callback?code=c&state=${encodeURIComponent(state)}`, headers: { cookie: b.cookie } });
+    const cb = await server.inject({
+      method: 'GET',
+      url: `/connect/google/callback?code=c&state=${encodeURIComponent(state)}`,
+      headers: { cookie: b.cookie },
+    });
     expect(cb.headers.location).toContain('connect_error=owner_mismatch');
     expect(exchanges).toHaveLength(0);
   });
@@ -236,7 +285,11 @@ describe('C24 — management (list / disconnect)', () => {
     expect(res.statusCode).toBe(200);
     const list = res.json().connections as Array<Record<string, unknown>>;
     expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ provider: 'google', status: 'connected', account_label: 'user@gmail.test' });
+    expect(list[0]).toMatchObject({
+      provider: 'google',
+      status: 'connected',
+      account_label: 'user@gmail.test',
+    });
     expect(JSON.stringify(list[0])).not.toMatch(/sealed|access_token|google-access/);
   });
 
@@ -267,7 +320,11 @@ describe('C24 — management (list / disconnect)', () => {
   it('GET /connect with a valid service token but NO owner is refused (401)', async () => {
     await configureGoogle();
     await setSecret(APP_ID, 'AUTH_SERVICE_TOKEN', 'svc-token-123');
-    const res = await server.inject({ method: 'GET', url: '/connect', headers: { 'x-forge-service-token': 'svc-token-123' } });
+    const res = await server.inject({
+      method: 'GET',
+      url: '/connect',
+      headers: { 'x-forge-service-token': 'svc-token-123' },
+    });
     expect(res.statusCode).toBe(401);
   });
 
@@ -350,7 +407,9 @@ describe('C24 — DELETE /connect (disconnect every provider; account teardown)'
     expect(res.json()).toMatchObject({ providers: [], disconnected: 0 }); // tore down its OWN (nothing)
     expect(revokes).toHaveLength(0);
     // The victim's grant is untouched.
-    expect(await (await getBackends()).connections.getConnection(APP_ID, victim.userId, 'google')).not.toBeNull();
+    expect(
+      await (await getBackends()).connections.getConnection(APP_ID, victim.userId, 'google'),
+    ).not.toBeNull();
   });
 
   it('refuses an unauthenticated call, and a service token with NO owner (never a blind teardown)', async () => {
@@ -358,18 +417,22 @@ describe('C24 — DELETE /connect (disconnect every provider; account teardown)'
     await setSecret(APP_ID, 'AUTH_SERVICE_TOKEN', 'svc-token-123');
     expect((await server.inject({ method: 'DELETE', url: '/connect' })).statusCode).toBe(401);
     expect(
-      (await server.inject({
-        method: 'DELETE',
-        url: '/connect',
-        headers: { 'x-forge-service-token': 'svc-token-123' },
-      })).statusCode,
+      (
+        await server.inject({
+          method: 'DELETE',
+          url: '/connect',
+          headers: { 'x-forge-service-token': 'svc-token-123' },
+        })
+      ).statusCode,
     ).toBe(401);
     expect(
-      (await server.inject({
-        method: 'DELETE',
-        url: '/connect?owner=someone',
-        headers: { 'x-forge-service-token': 'wrong-token' },
-      })).statusCode,
+      (
+        await server.inject({
+          method: 'DELETE',
+          url: '/connect?owner=someone',
+          headers: { 'x-forge-service-token': 'wrong-token' },
+        })
+      ).statusCode,
     ).toBe(401);
   });
 });
@@ -379,7 +442,12 @@ describe('C24 — broker (fresh access token + auto-refresh)', () => {
     await configureGoogle();
     const { cookie } = await signIn();
     await connect(cookie);
-    const res = await server.inject({ method: 'POST', url: '/connect/google/token', headers: { cookie }, payload: {} });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/connect/google/token',
+      headers: { cookie },
+      payload: {},
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json().access_token).toBe('google-access-1');
     expect(refreshes).toHaveLength(0);
@@ -394,7 +462,12 @@ describe('C24 — broker (fresh access token + auto-refresh)', () => {
     const conn = (await b.getConnection(APP_ID, userId, 'google'))!;
     await b.putConnection(APP_ID, { ...conn, access_expires_at: new Date(Date.now() - 1000).toISOString() });
 
-    const res = await server.inject({ method: 'POST', url: '/connect/google/token', headers: { cookie }, payload: {} });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/connect/google/token',
+      headers: { cookie },
+      payload: {},
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json().access_token).toBe('google-access-2');
     expect(refreshes).toHaveLength(1);
@@ -402,7 +475,12 @@ describe('C24 — broker (fresh access token + auto-refresh)', () => {
     const after = (await b.getConnection(APP_ID, userId, 'google'))!;
     expect(await openValue(after.access_sealed)).toBe('google-access-2');
     expect(await openValue(after.refresh_sealed!)).toBe('google-refresh-2');
-    const res2 = await server.inject({ method: 'POST', url: '/connect/google/token', headers: { cookie }, payload: {} });
+    const res2 = await server.inject({
+      method: 'POST',
+      url: '/connect/google/token',
+      headers: { cookie },
+      payload: {},
+    });
     expect(res2.json().access_token).toBe('google-access-2');
     expect(refreshes).toHaveLength(1);
   });
@@ -434,7 +512,12 @@ describe('C24 — broker (fresh access token + auto-refresh)', () => {
     const conn = (await b.getConnection(APP_ID, userId, 'google'))!;
     expect(conn.refresh_sealed).toBeUndefined();
     await b.putConnection(APP_ID, { ...conn, access_expires_at: new Date(Date.now() - 1000).toISOString() });
-    const res = await server.inject({ method: 'POST', url: '/connect/google/token', headers: { cookie }, payload: {} });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/connect/google/token',
+      headers: { cookie },
+      payload: {},
+    });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe('reconnect_required');
     expect((await b.getConnection(APP_ID, userId, 'google'))!.status).toBe('expired');
@@ -447,8 +530,18 @@ describe('C24 — broker (fresh access token + auto-refresh)', () => {
     const b = (await getBackends()).connections;
     const conn = (await b.getConnection(APP_ID, userId, 'google'))!;
     await b.putConnection(APP_ID, { ...conn, access_expires_at: new Date(Date.now() - 1000).toISOString() });
-    setOutboundOAuthClient({ ...stubClient, refresh: async () => { throw new Error('invalid_grant'); } });
-    const res = await server.inject({ method: 'POST', url: '/connect/google/token', headers: { cookie }, payload: {} });
+    setOutboundOAuthClient({
+      ...stubClient,
+      refresh: async () => {
+        throw new Error('invalid_grant');
+      },
+    });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/connect/google/token',
+      headers: { cookie },
+      payload: {},
+    });
     expect(res.statusCode).toBe(409);
     expect((await b.getConnection(APP_ID, userId, 'google'))!.status).toBe('expired');
   });
@@ -457,7 +550,12 @@ describe('C24 — broker (fresh access token + auto-refresh)', () => {
     await configureGoogle();
     const { cookie } = await signIn();
     await connect(cookie);
-    const res = await server.inject({ method: 'POST', url: '/connect/google/token', headers: { cookie }, payload: { require_scope: 'https://www.googleapis.com/auth/drive' } });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/connect/google/token',
+      headers: { cookie },
+      payload: { require_scope: 'https://www.googleapis.com/auth/drive' },
+    });
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe('insufficient_scope');
   });
@@ -465,7 +563,12 @@ describe('C24 — broker (fresh access token + auto-refresh)', () => {
   it('the broker for a user with no connection is a clean 404', async () => {
     await configureGoogle();
     const { cookie } = await signIn();
-    const res = await server.inject({ method: 'POST', url: '/connect/google/token', headers: { cookie }, payload: {} });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/connect/google/token',
+      headers: { cookie },
+      payload: {},
+    });
     expect(res.statusCode).toBe(404);
     expect(res.json().error.code).toBe('not_found');
   });
@@ -475,7 +578,11 @@ describe('C24 — broker owner/auth model', () => {
   it('an unauthenticated broker call is refused (owner is NEVER client-passed)', async () => {
     await configureGoogle();
     // No session, no service token — even passing an owner in the body must not work.
-    const res = await server.inject({ method: 'POST', url: '/connect/google/token', payload: { owner: 'someone' } });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/connect/google/token',
+      payload: { owner: 'someone' },
+    });
     expect(res.statusCode).toBe(401);
   });
 
@@ -498,14 +605,24 @@ describe('C24 — broker owner/auth model', () => {
   it('a service-token call must pass an owner', async () => {
     await configureGoogle();
     await setSecret(APP_ID, 'AUTH_SERVICE_TOKEN', 'svc-token-123');
-    const res = await server.inject({ method: 'POST', url: '/connect/google/token', headers: { 'x-forge-service-token': 'svc-token-123' }, payload: {} });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/connect/google/token',
+      headers: { 'x-forge-service-token': 'svc-token-123' },
+      payload: {},
+    });
     expect(res.statusCode).toBe(422);
   });
 
   it('a wrong service token is refused', async () => {
     await configureGoogle();
     await setSecret(APP_ID, 'AUTH_SERVICE_TOKEN', 'svc-token-123');
-    const res = await server.inject({ method: 'POST', url: '/connect/google/token', headers: { 'x-forge-service-token': 'nope' }, payload: { owner: 'u' } });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/connect/google/token',
+      headers: { 'x-forge-service-token': 'nope' },
+      payload: { owner: 'u' },
+    });
     expect(res.statusCode).toBe(401);
   });
 });

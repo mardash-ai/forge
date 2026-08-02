@@ -36,7 +36,12 @@ export async function backfillIdentity(
   for (const app of appIds) {
     const snap = await from.exportApp(app);
     await to.importApp(app, snap);
-    results.push({ app, users: snap.users.length, sessions: snap.sessions.length, refresh_tokens: snap.refresh_tokens.length });
+    results.push({
+      app,
+      users: snap.users.length,
+      sessions: snap.sessions.length,
+      refresh_tokens: snap.refresh_tokens.length,
+    });
   }
   return results;
 }

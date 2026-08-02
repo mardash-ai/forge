@@ -15,10 +15,16 @@ import {
 // (or a dedicated one when the app has no DB). Pure string generation — runs on both backends.
 
 const base: ProdComposeOptions = {
-  appName: 'demo', port: 3000, host: 'demo.example.com', readinessPath: '/api/health',
+  appName: 'demo',
+  port: 3000,
+  host: 'demo.example.com',
+  readinessPath: '/api/health',
   webImage: 'ghcr.io/x/demo-app@sha256:' + 'a'.repeat(64),
   dataPlaneImage: 'ghcr.io/mardash-ai/forge-data-plane@sha256:' + 'b'.repeat(64),
-  withPostgres: false, withRedis: false, secrets: [], certResolver: 'letsencrypt',
+  withPostgres: false,
+  withRedis: false,
+  secrets: [],
+  certResolver: 'letsencrypt',
 };
 
 // Extract the `data-plane:` service block for focused assertions.
@@ -52,7 +58,9 @@ describe('P26 platform-db compose wiring', () => {
     const pg = postgresBlock(c);
     // the app's own role/db stays; the platform role/db is created by the mounted first-init script
     expect(pg).toContain('POSTGRES_USER=forge');
-    expect(pg).toContain('FORGE_PLATFORM_DB_PASSWORD=${FORGE_PLATFORM_DB_PASSWORD:?set FORGE_PLATFORM_DB_PASSWORD in .env.prod}');
+    expect(pg).toContain(
+      'FORGE_PLATFORM_DB_PASSWORD=${FORGE_PLATFORM_DB_PASSWORD:?set FORGE_PLATFORM_DB_PASSWORD in .env.prod}',
+    );
     expect(pg).toContain(`/docker-entrypoint-initdb.d/${PLATFORM_DB_INIT_FILE}:ro`);
   });
 
@@ -61,18 +69,33 @@ describe('P26 platform-db compose wiring', () => {
     const pg = postgresBlock(c);
     expect(pg).toContain(`POSTGRES_USER=${PLATFORM_DB_ROLE}`);
     expect(pg).toContain(`POSTGRES_DB=${PLATFORM_DB_NAME}`);
-    expect(pg).toContain('POSTGRES_PASSWORD=${FORGE_PLATFORM_DB_PASSWORD:?set FORGE_PLATFORM_DB_PASSWORD in .env.prod}');
+    expect(pg).toContain(
+      'POSTGRES_PASSWORD=${FORGE_PLATFORM_DB_PASSWORD:?set FORGE_PLATFORM_DB_PASSWORD in .env.prod}',
+    );
     expect(pg).not.toContain(PLATFORM_DB_INIT_FILE); // no script — entrypoint initializes it directly
     // web still depends on postgres being healthy
     expect(c).toMatch(/web:[\s\S]*?depends_on:[\s\S]*?postgres:\n\s+condition: service_healthy/);
   });
 
   it('.env.prod.example documents FORGE_PLATFORM_DB_PASSWORD when platformDb', () => {
-    const env = generateEnvProdExample({ appName: 'demo', host: 'demo.example.com', withPostgres: true, withRedis: false, secrets: [], platformDb: true });
+    const env = generateEnvProdExample({
+      appName: 'demo',
+      host: 'demo.example.com',
+      withPostgres: true,
+      withRedis: false,
+      secrets: [],
+      platformDb: true,
+    });
     expect(env).toContain('FORGE_PLATFORM_DB_PASSWORD=change-me');
     expect(env).toContain(PLATFORM_DB_NAME);
     // off by default
-    const envOff = generateEnvProdExample({ appName: 'demo', host: 'demo.example.com', withPostgres: true, withRedis: false, secrets: [] });
+    const envOff = generateEnvProdExample({
+      appName: 'demo',
+      host: 'demo.example.com',
+      withPostgres: true,
+      withRedis: false,
+      secrets: [],
+    });
     expect(envOff).not.toContain('FORGE_PLATFORM_DB_PASSWORD');
   });
 

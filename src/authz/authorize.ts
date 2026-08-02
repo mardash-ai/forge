@@ -40,8 +40,15 @@ export function isHighRisk(action: Action, spec: HighRiskSpec = DEFAULT_HIGH_RIS
   if (spec.action_types && action.type !== undefined && spec.action_types.includes(action.type)) return true;
   if (spec.channels && action.channel !== undefined && spec.channels.includes(action.channel)) return true;
   if ((spec.irreversible ?? true) && action.reversibility === 'irreversible') return true;
-  if ((spec.spending ?? true) && typeof action.amount === 'number' && action.amount > (spec.minAmount ?? 0)) return true;
-  if ((spec.newContact ?? true) && action.contact !== undefined && action.contact !== '' && action.contact_known !== true) return true;
+  if ((spec.spending ?? true) && typeof action.amount === 'number' && action.amount > (spec.minAmount ?? 0))
+    return true;
+  if (
+    (spec.newContact ?? true) &&
+    action.contact !== undefined &&
+    action.contact !== '' &&
+    action.contact_known !== true
+  )
+    return true;
   return false;
 }
 
@@ -165,7 +172,12 @@ function privateLeak(caller: string, action: Action): 'private-resource' | null 
 //      the decision carries NO `rule` (nothing fired — `rule` names only a rule that actually fired).
 // Role matching + permission gating (step 3) use the RESOLVED role/permissions when membership is present,
 // NEVER the request's `role`. With NO membership + NO resource scope this is byte-identical to pre-C31.
-export function authorize(actor: Actor, action: Action, policies: PolicyRule[], opts: AuthorizeOptions = {}): AuthzDecision {
+export function authorize(
+  actor: Actor,
+  action: Action,
+  policies: PolicyRule[],
+  opts: AuthorizeOptions = {},
+): AuthzDecision {
   const now = opts.now ?? action.at ?? new Date().toISOString();
   const spec = opts.highRiskClasses ?? DEFAULT_HIGH_RISK;
   const cls = actionClass(action);
@@ -184,17 +196,38 @@ export function authorize(actor: Actor, action: Action, policies: PolicyRule[], 
 
   // 0a. NOT-A-MEMBER floor — targeting a group you don't belong to (personal group-of-one is exempt).
   if (m && !m.personal && !m.is_member) {
-    return { decision: 'deny', rule: 'not-a-member', reason: 'caller is not a member of the targeted group', high_risk: highRisk, action_class: cls, ...resolved };
+    return {
+      decision: 'deny',
+      rule: 'not-a-member',
+      reason: 'caller is not a member of the targeted group',
+      high_risk: highRisk,
+      action_class: cls,
+      ...resolved,
+    };
   }
   // 0b. PRIVATE-LEAK floor — the caller is not entitled to the targeted resource.
   const leak = privateLeak(actor.owner, action);
   if (leak) {
-    return { decision: 'deny', rule: leak, reason: 'caller is not entitled to the targeted resource (private-leak floor)', high_risk: highRisk, action_class: cls, ...resolved };
+    return {
+      decision: 'deny',
+      rule: leak,
+      reason: 'caller is not entitled to the targeted resource (private-leak floor)',
+      high_risk: highRisk,
+      action_class: cls,
+      ...resolved,
+    };
   }
 
   const deny = applicable.find((p) => p.effect === 'deny');
   if (deny) {
-    return { decision: 'deny', rule: deny.id, reason: deny.reason ?? 'denied by policy', high_risk: highRisk, action_class: cls, ...resolved };
+    return {
+      decision: 'deny',
+      rule: deny.id,
+      reason: deny.reason ?? 'denied by policy',
+      high_risk: highRisk,
+      action_class: cls,
+      ...resolved,
+    };
   }
   if (highRisk) {
     return {

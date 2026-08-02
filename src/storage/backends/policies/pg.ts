@@ -26,7 +26,9 @@ export async function ensurePolicySchema(pool: Pool): Promise<void> {
   `);
 }
 
-interface PolicyRow { data: PolicyRule }
+interface PolicyRow {
+  data: PolicyRule;
+}
 
 const UPSERT_SQL = `
   INSERT INTO forge_policies (app_id, id, owner, effect, priority, data, created_at, updated_at, group_id, visibility)
@@ -36,7 +38,18 @@ const UPSERT_SQL = `
     created_at=EXCLUDED.created_at, updated_at=EXCLUDED.updated_at, group_id=EXCLUDED.group_id, visibility=EXCLUDED.visibility`;
 
 function upsertParams(appId: string, p: PolicyRule): unknown[] {
-  return [appId, p.id, p.owner ?? null, p.effect, p.priority, JSON.stringify(p), p.created_at ?? null, p.updated_at ?? null, p.group_id ?? null, p.visibility ?? 'private'];
+  return [
+    appId,
+    p.id,
+    p.owner ?? null,
+    p.effect,
+    p.priority,
+    JSON.stringify(p),
+    p.created_at ?? null,
+    p.updated_at ?? null,
+    p.group_id ?? null,
+    p.visibility ?? 'private',
+  ];
 }
 
 export class PgPolicyBackend implements PolicyBackend, MigratablePolicyBackend {
@@ -48,7 +61,10 @@ export class PgPolicyBackend implements PolicyBackend, MigratablePolicyBackend {
   }
 
   async get(appId: string, id: string): Promise<PolicyRule | null> {
-    const r = await this.pool.query<PolicyRow>('SELECT data FROM forge_policies WHERE app_id=$1 AND id=$2', [appId, id]);
+    const r = await this.pool.query<PolicyRow>('SELECT data FROM forge_policies WHERE app_id=$1 AND id=$2', [
+      appId,
+      id,
+    ]);
     return r.rows[0] ? r.rows[0].data : null;
   }
 
@@ -58,7 +74,11 @@ export class PgPolicyBackend implements PolicyBackend, MigratablePolicyBackend {
     const r =
       opts.owner === undefined
         ? await this.pool.query('DELETE FROM forge_policies WHERE app_id=$1 AND id=$2', [appId, id])
-        : await this.pool.query('DELETE FROM forge_policies WHERE app_id=$1 AND id=$2 AND owner=$3', [appId, id, opts.owner]);
+        : await this.pool.query('DELETE FROM forge_policies WHERE app_id=$1 AND id=$2 AND owner=$3', [
+            appId,
+            id,
+            opts.owner,
+          ]);
     return (r.rowCount ?? 0) > 0;
   }
 
@@ -86,7 +106,11 @@ export class PgPolicyBackend implements PolicyBackend, MigratablePolicyBackend {
       for (const p of policies) await client.query(UPSERT_SQL, upsertParams(appId, p));
       await client.query('COMMIT');
     } catch (e) {
-      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
       throw e;
     } finally {
       client.release();

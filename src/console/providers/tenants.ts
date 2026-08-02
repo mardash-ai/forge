@@ -155,7 +155,11 @@ export interface TenantProvider {
   getAccount(ctx: ProviderContext, owner: string): Promise<TenantDetail>;
 
   setComp(ctx: ProviderContext, owner: string, comped: boolean): Promise<{ status: string; comped: boolean }>;
-  setLocked(ctx: ProviderContext, owner: string, locked: boolean): Promise<{ status: string; locked: boolean }>;
+  setLocked(
+    ctx: ProviderContext,
+    owner: string,
+    locked: boolean,
+  ): Promise<{ status: string; locked: boolean }>;
 
   /**
    * Erase an account. `confirmEmail` MUST match the account on file.

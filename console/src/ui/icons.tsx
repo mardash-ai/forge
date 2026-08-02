@@ -43,11 +43,31 @@ export function SvgDefs() {
         </linearGradient>
 
         {/* THE HATCH. The one mark in this system that means "not known". */}
-        <pattern id="fg-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <pattern
+          id="fg-hatch"
+          width="6"
+          height="6"
+          patternUnits="userSpaceOnUse"
+          patternTransform="rotate(45)"
+        >
           <line x1="0" y1="0" x2="0" y2="6" style={{ stroke: 'var(--unknown-line)' }} strokeWidth="1.4" />
         </pattern>
-        <pattern id="fg-hatch-ember" width="3" height="3" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="0" y2="3" style={{ stroke: 'var(--ember-core)' }} strokeWidth="0.9" opacity="0.6" />
+        <pattern
+          id="fg-hatch-ember"
+          width="3"
+          height="3"
+          patternUnits="userSpaceOnUse"
+          patternTransform="rotate(45)"
+        >
+          <line
+            x1="0"
+            y1="0"
+            x2="0"
+            y2="3"
+            style={{ stroke: 'var(--ember-core)' }}
+            strokeWidth="0.9"
+            opacity="0.6"
+          />
         </pattern>
       </defs>
     </svg>
@@ -92,15 +112,7 @@ export function LogoMark({ size = 26 }: { size?: number }) {
         {/* the boundary between what is known and what is not: the sharpest line in the product */}
         <path d="M2 26 L26 2" stroke="var(--bg-inset)" strokeWidth="1.6" />
       </g>
-      <rect
-        x="2"
-        y="2"
-        width="24"
-        height="24"
-        rx="6.5"
-        stroke="var(--line-strong)"
-        strokeWidth="1"
-      />
+      <rect x="2" y="2" width="24" height="24" rx="6.5" stroke="var(--line-strong)" strokeWidth="1" />
     </svg>
   );
 }
@@ -385,7 +397,13 @@ export type StatusTone = 'ok' | 'warn' | 'crit' | 'info' | 'neutral' | 'unknown'
 export function StatusGlyph({ tone, size = 10 }: { tone: StatusTone; size?: number }) {
   const fill = `var(--${tone})`;
   const s = size;
-  const common = { width: s, height: s, viewBox: '0 0 12 12', 'aria-hidden': true, focusable: 'false' as const };
+  const common = {
+    width: s,
+    height: s,
+    viewBox: '0 0 12 12',
+    'aria-hidden': true,
+    focusable: 'false' as const,
+  };
 
   if (tone === 'unknown') {
     return (
@@ -460,7 +478,14 @@ export type EmptyKind = 'all-clear' | 'no-results' | 'unconfigured' | 'blind';
 export function EmptyPlate({ kind }: { kind: EmptyKind }) {
   const w = 76;
   const h = 52;
-  const box = { width: w, height: h, viewBox: '0 0 76 52', fill: 'none', 'aria-hidden': true, focusable: 'false' as const };
+  const box = {
+    width: w,
+    height: h,
+    viewBox: '0 0 76 52',
+    fill: 'none',
+    'aria-hidden': true,
+    focusable: 'false' as const,
+  };
 
   if (kind === 'all-clear') {
     // A settled baseline. Nothing above it.
@@ -483,7 +508,16 @@ export function EmptyPlate({ kind }: { kind: EmptyKind }) {
     return (
       <svg {...box}>
         <rect x="0" y="6" width="76" height="40" fill="url(#fg-hatch)" opacity="0.55" />
-        <rect x="22" y="12" width="32" height="28" rx="3" fill="var(--bg-surface)" stroke="var(--line-strong)" strokeWidth="1.5" />
+        <rect
+          x="22"
+          y="12"
+          width="32"
+          height="28"
+          rx="3"
+          fill="var(--bg-surface)"
+          stroke="var(--line-strong)"
+          strokeWidth="1.5"
+        />
       </svg>
     );
   }
@@ -494,7 +528,17 @@ export function EmptyPlate({ kind }: { kind: EmptyKind }) {
         <path d="M8 26H30" stroke="var(--line-strong)" strokeWidth="1.5" strokeLinecap="round" />
         <path d="M46 26H68" stroke="var(--line-strong)" strokeWidth="1.5" strokeLinecap="round" />
         <rect x="30" y="19" width="5" height="14" rx="1.5" fill="var(--warn)" />
-        <rect x="41" y="19" width="5" height="14" rx="1.5" fill="none" stroke="var(--warn)" strokeWidth="1.5" strokeDasharray="2.5 2.2" />
+        <rect
+          x="41"
+          y="19"
+          width="5"
+          height="14"
+          rx="1.5"
+          fill="none"
+          stroke="var(--warn)"
+          strokeWidth="1.5"
+          strokeDasharray="2.5 2.2"
+        />
       </svg>
     );
   }
@@ -503,9 +547,25 @@ export function EmptyPlate({ kind }: { kind: EmptyKind }) {
   return (
     <svg {...box}>
       <rect x="6" y="8" width="64" height="36" rx="4" fill="url(#fg-hatch)" />
-      <rect x="6" y="8" width="64" height="36" rx="4" fill="none" stroke="var(--unknown)" strokeWidth="1.4" strokeDasharray="4 3" />
+      <rect
+        x="6"
+        y="8"
+        width="64"
+        height="36"
+        rx="4"
+        fill="none"
+        stroke="var(--unknown)"
+        strokeWidth="1.4"
+        strokeDasharray="4 3"
+      />
       <path d="M24 26H52" stroke="var(--bg-surface)" strokeWidth="6" strokeLinecap="round" />
-      <path d="M24 26H52" stroke="var(--unknown)" strokeWidth="1.6" strokeLinecap="round" strokeDasharray="3 3.5" />
+      <path
+        d="M24 26H52"
+        stroke="var(--unknown)"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeDasharray="3 3.5"
+      />
     </svg>
   );
 }
@@ -548,7 +608,18 @@ export function ProvenanceGlyph({ source, size = 11 }: { source: 'declared' | 'd
 
 export function ChevronDown({ size = 12 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden focusable="false">
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      focusable="false"
+    >
       <path d="M3 4.5 6 7.5 9 4.5" />
     </svg>
   );
@@ -556,7 +627,19 @@ export function ChevronDown({ size = 12 }: { size?: number }) {
 
 export function ExternalGlyph({ size = 11 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden focusable="false" style={{ flex: '0 0 auto', opacity: 0.6 }}>
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.4}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      focusable="false"
+      style={{ flex: '0 0 auto', opacity: 0.6 }}
+    >
       <path d="M4.6 2.4H9.6V7.4" />
       <path d="M9.6 2.4 4.2 7.8" />
       <path d="M9.1 6.9v2.7H2.4V2.9h2.7" />

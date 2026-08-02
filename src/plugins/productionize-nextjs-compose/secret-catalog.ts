@@ -49,7 +49,8 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     // P32 — this value is interpolated into the DATABASE_URL connection string, so it MUST be URL-safe.
     // Use hex (0-9a-f), never `openssl rand -base64` — a `/`, `+`, or `=` in the password breaks the URL
     // parser (ERR_INVALID_URL). Hex-32 = 128 bits of entropy.
-    obtain: 'Generate a URL-safe random password (hex — no `/ + =`); use the SAME value the DB was initialized with.',
+    obtain:
+      'Generate a URL-safe random password (hex — no `/ + =`); use the SAME value the DB was initialized with.',
     generate: 'openssl rand -hex 32',
   },
   FORGE_SECRETS_KEY: {
@@ -57,7 +58,8 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     capability: 'C5 · Secrets vault (master key)',
     requirement: 'required',
     what: 'Master key the data-plane sidecar uses to DECRYPT the app’s C5 secrets vault at rest.',
-    requires_note: 'Required whenever the app uses any secret or the agent runtime (C1). Use the SAME key the secrets were sealed under — rotating it orphans the vault.',
+    requires_note:
+      'Required whenever the app uses any secret or the agent runtime (C1). Use the SAME key the secrets were sealed under — rotating it orphans the vault.',
     obtain: 'Generate once, store securely, reuse across deploys.',
     generate: 'openssl rand -base64 32',
   },
@@ -66,7 +68,8 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     capability: 'C1 · Agent runtime (model access)',
     requirement: 'conditional',
     what: 'Anthropic API key the agent runtime uses to call the model.',
-    requires_note: 'Required only if the app uses C1 agent-run; without it agent-run degrades detectably (503).',
+    requires_note:
+      'Required only if the app uses C1 agent-run; without it agent-run degrades detectably (503).',
     obtain: 'Create a key at the Anthropic Console (console.anthropic.com → API Keys).',
   },
   AUTH_SESSION_SECRET: {
@@ -74,7 +77,8 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     capability: 'C10 · Identity/Auth (session signing)',
     requirement: 'conditional',
     what: 'HMAC key that SIGNS and VERIFIES the `forge_session` access token (P8).',
-    requires_note: 'Required for C10 auth. Without it sign-in is cleanly unavailable (503). The SAME value must reach both the data-plane (signs) and the app (verifies).',
+    requires_note:
+      'Required for C10 auth. Without it sign-in is cleanly unavailable (503). The SAME value must reach both the data-plane (signs) and the app (verifies).',
     obtain: 'Generate a strong random secret; keep it stable (rotating it invalidates all live sessions).',
     generate: 'openssl rand -base64 48',
     // The session-signing key: an empty value silently logs every user out on deploy, so a
@@ -90,7 +94,8 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     // P36 — this is REQUIRED, not merely optional, once the app declares scheduled jobs: Traefik routes all
     // `/api/*` publicly, so an UNSET token means cron endpoints are open and the scheduler fires bare,
     // unauthenticated POSTs. productionize makes it deploy-required (`${VAR:?…}`) when jobs are declared.
-    requires_note: 'Required when the app declares scheduled cron jobs (`forge.jobs.json` → `/api/cron/*`). Unset with jobs declared ⇒ the deploy FAILS loudly (P36); with no jobs it is unneeded.',
+    requires_note:
+      'Required when the app declares scheduled cron jobs (`forge.jobs.json` → `/api/cron/*`). Unset with jobs declared ⇒ the deploy FAILS loudly (P36); with no jobs it is unneeded.',
     obtain: 'Generate a high-entropy random token.',
     generate: 'openssl rand -hex 32',
     // NOTE (P36): deploy-required status is scoped to apps that declare cron jobs — productionize forces the
@@ -102,7 +107,8 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     capability: 'C10 · Identity/Auth (Google sign-in)',
     requirement: 'optional',
     what: 'OAuth 2.0 Web client ID for "Continue with Google".',
-    requires_note: 'Optional — enables Google sign-in (no email dependency). Needs BOTH GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET; either alone leaves Google disabled.',
+    requires_note:
+      'Optional — enables Google sign-in (no email dependency). Needs BOTH GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET; either alone leaves Google disabled.',
     obtain:
       'Google Cloud Console → APIs & Services → Credentials → Create credentials → OAuth client ID → type "Web application". Add the Authorized redirect URI `https://<host>/auth/google/callback`. Copy the Client ID (ends in `.apps.googleusercontent.com`).',
   },
@@ -111,15 +117,18 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     capability: 'C10 · Identity/Auth (Google sign-in)',
     requirement: 'optional',
     what: 'OAuth 2.0 Web client secret paired with GOOGLE_CLIENT_ID.',
-    requires_note: 'Optional — enables Google sign-in. Needs BOTH creds; either alone leaves Google disabled.',
-    obtain: 'From the same Google Cloud OAuth 2.0 Web client as GOOGLE_CLIENT_ID (shown once on creation; you can add a new secret later).',
+    requires_note:
+      'Optional — enables Google sign-in. Needs BOTH creds; either alone leaves Google disabled.',
+    obtain:
+      'From the same Google Cloud OAuth 2.0 Web client as GOOGLE_CLIENT_ID (shown once on creation; you can add a new secret later).',
   },
   SMTP_URL: {
     name: 'SMTP_URL',
     capability: 'C12 · Transactional email',
     requirement: 'optional',
     what: 'SMTP connection URL used to send email (verify / password-reset links).',
-    requires_note: 'Optional — enables email/password SIGN-UP + verification + password reset (C10 relies on C12 for these). Unset ⇒ email/password signup is blocked cleanly (503); Google sign-in still works if configured.',
+    requires_note:
+      'Optional — enables email/password SIGN-UP + verification + password reset (C10 relies on C12 for these). Unset ⇒ email/password signup is blocked cleanly (503); Google sign-in still works if configured.',
     obtain:
       'Obtain SMTP credentials from your provider (e.g. an app password / API-SMTP creds). Format: `smtp://USER:PASSWORD@HOST:PORT` (URL-encode reserved chars in the password).',
   },
@@ -128,7 +137,8 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     capability: 'C12 · Transactional email',
     requirement: 'optional',
     what: 'The From address (and optional display name) outbound email is sent as.',
-    requires_note: 'Optional — paired with SMTP_URL; required for email delivery to work. Use a domain you’re authorized to send from.',
+    requires_note:
+      'Optional — paired with SMTP_URL; required for email delivery to work. Use a domain you’re authorized to send from.',
     obtain: 'Choose an address on a domain you control, e.g. `Acme <no-reply@acme.example>`.',
   },
   GOOGLE_CONNECT_CLIENT_ID: {
@@ -136,7 +146,8 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     capability: 'C24 · Connectors (Google outbound OAuth)',
     requirement: 'optional',
     what: 'OAuth 2.0 Web client ID for CONNECTING a user’s Google account (Gmail send + Calendar read) — the app acting AS the user.',
-    requires_note: 'Optional — enables users to connect Google via `/connect/google`. DISTINCT from GOOGLE_CLIENT_ID (C10 sign-in): use a client whose consent screen requests the Gmail/Calendar scopes. Needs BOTH GOOGLE_CONNECT_CLIENT_ID and GOOGLE_CONNECT_CLIENT_SECRET; either alone leaves the connector unconfigured (clean 503).',
+    requires_note:
+      'Optional — enables users to connect Google via `/connect/google`. DISTINCT from GOOGLE_CLIENT_ID (C10 sign-in): use a client whose consent screen requests the Gmail/Calendar scopes. Needs BOTH GOOGLE_CONNECT_CLIENT_ID and GOOGLE_CONNECT_CLIENT_SECRET; either alone leaves the connector unconfigured (clean 503).',
     obtain:
       'Google Cloud Console → APIs & Services → Credentials → Create credentials → OAuth client ID → type "Web application". Add the Authorized redirect URI `https://<host>/connect/google/callback`. Enable the Gmail API + Google Calendar API for the project, and add the scopes `.../auth/gmail.send` + `.../auth/calendar.readonly` on the OAuth consent screen. Copy the Client ID (ends in `.apps.googleusercontent.com`).',
   },
@@ -145,24 +156,30 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     capability: 'C24 · Connectors (Google outbound OAuth)',
     requirement: 'optional',
     what: 'OAuth 2.0 Web client secret paired with GOOGLE_CONNECT_CLIENT_ID.',
-    requires_note: 'Optional — enables the Google connector. Needs BOTH creds; either alone leaves the connector unconfigured. Sealed into the app’s C5 vault (or injected as env) — never committed.',
-    obtain: 'From the same Google Cloud OAuth 2.0 Web client as GOOGLE_CONNECT_CLIENT_ID (shown once on creation; you can add a new secret later).',
+    requires_note:
+      'Optional — enables the Google connector. Needs BOTH creds; either alone leaves the connector unconfigured. Sealed into the app’s C5 vault (or injected as env) — never committed.',
+    obtain:
+      'From the same Google Cloud OAuth 2.0 Web client as GOOGLE_CONNECT_CLIENT_ID (shown once on creation; you can add a new secret later).',
   },
   STRIPE_SECRET_KEY: {
     name: 'STRIPE_SECRET_KEY',
     capability: 'C-billing · Stripe (subscriptions/checkout)',
     requirement: 'conditional',
     what: 'Stripe secret API key (`sk_test_…` / `sk_live_…`) the data-plane billing sidecar uses to call Stripe — create customers, trialing subscriptions, and Checkout sessions.',
-    requires_note: 'Required for an app that uses billing. Without it the sidecar reports billing not-configured and every checkout/trial-start returns a clean 503 (billingNotConfigured). Wired into the DATA-PLANE only — the web tier proxies /billing/* and never calls Stripe, so the secret key never needs to reach it.',
-    obtain: 'Stripe Dashboard → Developers → API keys → Secret key (use the TEST key while testing). It is a server-side secret — never expose it in the browser bundle.',
+    requires_note:
+      'Required for an app that uses billing. Without it the sidecar reports billing not-configured and every checkout/trial-start returns a clean 503 (billingNotConfigured). Wired into the DATA-PLANE only — the web tier proxies /billing/* and never calls Stripe, so the secret key never needs to reach it.',
+    obtain:
+      'Stripe Dashboard → Developers → API keys → Secret key (use the TEST key while testing). It is a server-side secret — never expose it in the browser bundle.',
   },
   STRIPE_WEBHOOK_SECRET: {
     name: 'STRIPE_WEBHOOK_SECRET',
     capability: 'C-billing · Stripe (webhook verification)',
     requirement: 'conditional',
     what: 'Signing secret (`whsec_…`) the data-plane uses to VERIFY the signature of Stripe webhook events delivered to `/hooks/billing/stripe`.',
-    requires_note: 'Paired with STRIPE_SECRET_KEY. Without it trials/checkouts still start, but webhook events cannot be verified, so the subscription lifecycle (trial_will_end, conversion, cancellation, invoice.paid/failed) never updates. Wired into the DATA-PLANE only.',
-    obtain: 'Stripe Dashboard → Developers → Webhooks → add an endpoint at `https://<host>/hooks/billing/stripe`, then reveal that endpoint’s Signing secret (`whsec_…`).',
+    requires_note:
+      'Paired with STRIPE_SECRET_KEY. Without it trials/checkouts still start, but webhook events cannot be verified, so the subscription lifecycle (trial_will_end, conversion, cancellation, invoice.paid/failed) never updates. Wired into the DATA-PLANE only.',
+    obtain:
+      'Stripe Dashboard → Developers → Webhooks → add an endpoint at `https://<host>/hooks/billing/stripe`, then reveal that endpoint’s Signing secret (`whsec_…`).',
   },
 };
 

@@ -109,7 +109,10 @@ describe('runRelease — fail-safe: any phase failure aborts before the next mut
         throw new Error('GHCR timeout');
       },
     });
-    await expect(runRelease(exec, baseOpts)).rejects.toMatchObject({ name: 'ReleaseError', phase: 'publish' });
+    await expect(runRelease(exec, baseOpts)).rejects.toMatchObject({
+      name: 'ReleaseError',
+      phase: 'publish',
+    });
     expect(calls).toMatchObject({ repin: 0, deploy: 0, verify: 0 });
   });
 

@@ -20,7 +20,8 @@ type Input = z.infer<typeof inputSchema>;
 export const explainFailure: Capability<Input, Analysis> = {
   name: 'ExplainFailure',
   slug: 'explain-failure',
-  description: 'Analyze a failed Build/TestRun/CheckRun (or a log path) and produce a compact Analysis Resource.',
+  description:
+    'Analyze a failed Build/TestRun/CheckRun (or a log path) and produce a compact Analysis Resource.',
   inputSchema,
   resourceType: 'Analysis',
   events: ['AnalysisCreated'],

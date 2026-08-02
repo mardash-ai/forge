@@ -44,7 +44,9 @@ function unsupportedRoute(channel: string, provider: string): ForgeError {
     code: 'unsupported_channel',
     message:
       `Sending on channel "${channel}" via provider "${provider}" is not implemented. ` +
-      `Supported: ${supportedRoutes().map((r) => `${r.channel}/${r.provider}`).join(', ')}.`,
+      `Supported: ${supportedRoutes()
+        .map((r) => `${r.channel}/${r.provider}`)
+        .join(', ')}.`,
     status: 400,
     retry: 'change-input',
     details: { channel, provider, supported: supportedRoutes() },

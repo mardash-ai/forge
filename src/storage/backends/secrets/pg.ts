@@ -47,7 +47,10 @@ export class PgSecretsBackend implements SecretsBackend, MigratableSecretsBacken
   }
 
   async listNames(appId: string): Promise<string[]> {
-    const r = await this.pool.query<{ name: string }>('SELECT name FROM forge_secrets WHERE app_id=$1 ORDER BY name ASC', [appId]);
+    const r = await this.pool.query<{ name: string }>(
+      'SELECT name FROM forge_secrets WHERE app_id=$1 ORDER BY name ASC',
+      [appId],
+    );
     return r.rows.map((row) => row.name);
   }
 
@@ -62,11 +65,18 @@ export class PgSecretsBackend implements SecretsBackend, MigratableSecretsBacken
       await client.query('BEGIN');
       await client.query('DELETE FROM forge_secrets WHERE app_id=$1', [appId]);
       for (const [name, sealed] of Object.entries(vault)) {
-        await client.query('INSERT INTO forge_secrets (app_id, name, iv, tag, data) VALUES ($1,$2,$3,$4,$5)', [appId, name, sealed.iv, sealed.tag, sealed.data]);
+        await client.query(
+          'INSERT INTO forge_secrets (app_id, name, iv, tag, data) VALUES ($1,$2,$3,$4,$5)',
+          [appId, name, sealed.iv, sealed.tag, sealed.data],
+        );
       }
       await client.query('COMMIT');
     } catch (e) {
-      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
       throw e;
     } finally {
       client.release();

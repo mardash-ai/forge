@@ -133,7 +133,9 @@ async function tokenRequest(provider: ProviderDescriptor, body: URLSearchParams)
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
-    throw new Error(`${provider.id} token endpoint failed: ${res.status}${detail ? ` ${detail.slice(0, 200)}` : ''}`);
+    throw new Error(
+      `${provider.id} token endpoint failed: ${res.status}${detail ? ` ${detail.slice(0, 200)}` : ''}`,
+    );
   }
   const tok = (await res.json()) as {
     access_token?: string;

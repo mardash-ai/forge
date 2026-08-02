@@ -7,7 +7,10 @@ import type { AnyResource, ResourceType, BaseResource } from '../../../resources
 // mirrors to the filesystem, so an operator can flip reads back with no data loss. Resources are keyed
 // by (type, id), so the mirror is faithful. FORGE_RESOURCES_BACKEND=postgres + FORGE_RESOURCES_DUAL_WRITE=1.
 export class DualWriteResourceBackend implements ResourceBackend {
-  constructor(private readonly primary: PgResourceBackend, private readonly secondary: FsResourceBackend) {}
+  constructor(
+    private readonly primary: PgResourceBackend,
+    private readonly secondary: FsResourceBackend,
+  ) {}
 
   get<T extends AnyResource = AnyResource>(type: ResourceType, id: string): Promise<T | null> {
     return this.primary.get<T>(type, id);

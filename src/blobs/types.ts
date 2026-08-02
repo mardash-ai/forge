@@ -95,7 +95,10 @@ export function blobConfig(): BlobConfig {
   const allowedRaw = process.env.FORGE_BLOB_ALLOWED_TYPES;
   const allowedTypes = new Set(
     allowedRaw && allowedRaw.trim() !== ''
-      ? allowedRaw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+      ? allowedRaw
+          .split(',')
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean)
       : DEFAULT_ALLOWED_TYPES,
   );
   return {
@@ -120,15 +123,53 @@ interface BinarySignature {
 
 const BINARY_SIGNATURES: BinarySignature[] = [
   // PNG — 89 50 4E 47 0D 0A 1A 0A
-  { type: 'image/png', test: (b) => b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 && b[4] === 0x0d && b[5] === 0x0a && b[6] === 0x1a && b[7] === 0x0a },
+  {
+    type: 'image/png',
+    test: (b) =>
+      b.length >= 8 &&
+      b[0] === 0x89 &&
+      b[1] === 0x50 &&
+      b[2] === 0x4e &&
+      b[3] === 0x47 &&
+      b[4] === 0x0d &&
+      b[5] === 0x0a &&
+      b[6] === 0x1a &&
+      b[7] === 0x0a,
+  },
   // JPEG — FF D8 FF
   { type: 'image/jpeg', test: (b) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
   // GIF — "GIF87a" / "GIF89a"
-  { type: 'image/gif', test: (b) => b.length >= 6 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38 && (b[4] === 0x37 || b[4] === 0x39) && b[5] === 0x61 },
+  {
+    type: 'image/gif',
+    test: (b) =>
+      b.length >= 6 &&
+      b[0] === 0x47 &&
+      b[1] === 0x49 &&
+      b[2] === 0x46 &&
+      b[3] === 0x38 &&
+      (b[4] === 0x37 || b[4] === 0x39) &&
+      b[5] === 0x61,
+  },
   // WEBP — "RIFF" <4-byte size> "WEBP"
-  { type: 'image/webp', test: (b) => b.length >= 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50 },
+  {
+    type: 'image/webp',
+    test: (b) =>
+      b.length >= 12 &&
+      b[0] === 0x52 &&
+      b[1] === 0x49 &&
+      b[2] === 0x46 &&
+      b[3] === 0x46 &&
+      b[8] === 0x57 &&
+      b[9] === 0x45 &&
+      b[10] === 0x42 &&
+      b[11] === 0x50,
+  },
   // PDF — "%PDF-"
-  { type: 'application/pdf', test: (b) => b.length >= 5 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46 && b[4] === 0x2d },
+  {
+    type: 'application/pdf',
+    test: (b) =>
+      b.length >= 5 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46 && b[4] === 0x2d,
+  },
 ];
 
 const SNIFFABLE_TEXT_TYPES = new Set(['text/plain', 'text/markdown']);
@@ -156,7 +197,11 @@ export function sniffMatches(declared: string, head: Buffer): boolean {
 
 export type Retry = 'no' | 'change-input' | 'backoff';
 
-export function blobError(code: string, message: string, retry: Retry = 'no'): {
+export function blobError(
+  code: string,
+  message: string,
+  retry: Retry = 'no',
+): {
   error: { code: string; message: string; retry: Retry };
 } {
   return { error: { code, message, retry } };

@@ -101,9 +101,7 @@ export function parseComposeInfra(compose: string, appPort: number): PrevInfra {
   if (pg !== undefined) ports.postgres = pg;
   if (rd !== undefined) ports.redis = rd;
 
-  const secrets = [
-    ...compose.matchAll(/^\s*-\s*([A-Za-z_][A-Za-z0-9_]*)=\$\{[A-Za-z_][A-Za-z0-9_]*:-\}/gm),
-  ]
+  const secrets = [...compose.matchAll(/^\s*-\s*([A-Za-z_][A-Za-z0-9_]*)=\$\{[A-Za-z_][A-Za-z0-9_]*:-\}/gm)]
     .map((m) => m[1])
     .filter((s): s is string => Boolean(s));
 

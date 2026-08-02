@@ -28,10 +28,10 @@ export async function evaluatePolicies(ctx: PolicyContext): Promise<void> {
   // Policy: target platform/framework must be a supported, implemented concept.
   if (ctx.platform && ctx.framework) {
     if (!isSupported(ctx.platform, ctx.framework)) {
-      throw policyBlocked(
-        `Unsupported platform/framework: ${ctx.platform}/${ctx.framework}.`,
-        { platform: ctx.platform, framework: ctx.framework },
-      );
+      throw policyBlocked(`Unsupported platform/framework: ${ctx.platform}/${ctx.framework}.`, {
+        platform: ctx.platform,
+        framework: ctx.framework,
+      });
     }
     if (!isImplemented(ctx.platform, ctx.framework)) {
       throw policyBlocked(

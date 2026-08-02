@@ -19,7 +19,13 @@ export interface TimelineInput {
 }
 
 const outcomeOf = (r: PipelineRun): TimelineEvent['outcome'] =>
-  r.status !== 'completed' ? 'neutral' : r.conclusion === 'success' ? 'ok' : r.conclusion === 'failure' ? 'failed' : 'neutral';
+  r.status !== 'completed'
+    ? 'neutral'
+    : r.conclusion === 'success'
+      ? 'ok'
+      : r.conclusion === 'failure'
+        ? 'failed'
+        : 'neutral';
 
 export function buildTimeline(input: TimelineInput): TimelineEvent[] {
   const events: TimelineEvent[] = [];

@@ -291,9 +291,11 @@ export function registerStatusRoutes(
 ): void {
   const planeLabel = opts.planeLabel ?? 'Forge platform';
 
-  async function build(
-    reqApp: { id: string; name: string; repoPath: string },
-  ): Promise<{ theme: Theme; report: StatusReport; history: HistoryReport; incidents: Incident[] }> {
+  async function build(reqApp: {
+    id: string;
+    name: string;
+    repoPath: string;
+  }): Promise<{ theme: Theme; report: StatusReport; history: HistoryReport; incidents: Incident[] }> {
     const [theme, manifest, history, incidents] = await Promise.all([
       resolveThemeForApp(reqApp.id),
       loadManifest(reqApp.repoPath),
@@ -325,7 +327,13 @@ export function registerStatusRoutes(
   app.get('/status.json', async (req, reply: FastifyReply) => {
     const resolved = await resolveApp(req, opts.defaultApp);
     if (!resolved) {
-      return reply.code(404).send({ error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } });
+      return reply.code(404).send({
+        error: {
+          code: 'not_found',
+          message: 'unknown app (pass `app` or set FORGE_APP_NAME).',
+          retry: 'change-input',
+        },
+      });
     }
     const { report, history, incidents } = await build(resolved);
     // Additive: the Phase-1 fields (overall/banner/components/checked_at) are
@@ -335,7 +343,12 @@ export function registerStatusRoutes(
     return reply
       .code(200)
       .header('cache-control', 'no-store')
-      .send({ app: resolved.name, ...report, uptime: uptimeJson(report, history), incidents: incidentsJson(incidents) });
+      .send({
+        app: resolved.name,
+        ...report,
+        uptime: uptimeJson(report, history),
+        incidents: incidentsJson(incidents),
+      });
   });
 }
 

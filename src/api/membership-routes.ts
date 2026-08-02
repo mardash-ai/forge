@@ -53,14 +53,23 @@ import { hasValidServiceToken } from '../shared/service-auth';
 //   POST   /groups/:id/leave                       { app?, actor }                           -> { left, member }  (sole owner -> 409 last_owner)
 //
 // `app` is the Application NAME; it defaults to the server's own app (data-plane: FORGE_APP_NAME).
-export function registerMembershipRoutes(app: FastifyInstance, opts: { defaultApp?: () => string | undefined } = {}): void {
+export function registerMembershipRoutes(
+  app: FastifyInstance,
+  opts: { defaultApp?: () => string | undefined } = {},
+): void {
   const resolveAppId = async (name?: string): Promise<string | null> => {
     const n = name ?? opts.defaultApp?.();
     if (!n) return null;
     const a = await store.findAppByName(n);
     return a && a.type === 'Application' ? a.id : null;
   };
-  const unknownApp = { error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } };
+  const unknownApp = {
+    error: {
+      code: 'not_found',
+      message: 'unknown app (pass `app` or set FORGE_APP_NAME).',
+      retry: 'change-input',
+    },
+  };
   const invalid = (message: string) => ({ error: { code: 'invalid_input', message, retry: 'change-input' } });
 
   // Wrap a handler so a thrown ForgeError (the membership failure vocabulary) serializes to its status —
@@ -77,30 +86,41 @@ export function registerMembershipRoutes(app: FastifyInstance, opts: { defaultAp
     };
 
   // === role registry ===============================================================================
-  app.put('/roles', guard(async (req, reply) => {
-    const b = (req.body ?? {}) as { app?: string; roles?: RoleDef[] };
-    const app_id = await resolveAppId(b.app);
-    if (!app_id) return reply.status(404).send(unknownApp);
-    const roles = await (await getBackends()).membership.mutate(app_id, (s) => putRoles(s, b.roles as RoleDef[]));
-    return reply.status(200).send({ roles });
-  }));
+  app.put(
+    '/roles',
+    guard(async (req, reply) => {
+      const b = (req.body ?? {}) as { app?: string; roles?: RoleDef[] };
+      const app_id = await resolveAppId(b.app);
+      if (!app_id) return reply.status(404).send(unknownApp);
+      const roles = await (
+        await getBackends()
+      ).membership.mutate(app_id, (s) => putRoles(s, b.roles as RoleDef[]));
+      return reply.status(200).send({ roles });
+    }),
+  );
 
-  app.get('/roles', guard(async (req, reply) => {
-    const q = req.query as { app?: string };
-    const app_id = await resolveAppId(q.app);
-    if (!app_id) return reply.status(404).send(unknownApp);
-    const state = await (await getBackends()).membership.read(app_id);
-    return { roles: state.roles };
-  }));
+  app.get(
+    '/roles',
+    guard(async (req, reply) => {
+      const q = req.query as { app?: string };
+      const app_id = await resolveAppId(q.app);
+      if (!app_id) return reply.status(404).send(unknownApp);
+      const state = await (await getBackends()).membership.read(app_id);
+      return { roles: state.roles };
+    }),
+  );
 
   // === groups ======================================================================================
   const provision = (dedupeOwnerSingleton: boolean) =>
     guard(async (req, reply) => {
       const b = (req.body ?? {}) as { app?: string; owner?: string; external_id?: string; name?: string };
-      if (!b.owner || typeof b.owner !== 'string') return reply.status(422).send(invalid('a group requires a string `owner`.'));
+      if (!b.owner || typeof b.owner !== 'string')
+        return reply.status(422).send(invalid('a group requires a string `owner`.'));
       const app_id = await resolveAppId(b.app);
       if (!app_id) return reply.status(404).send(unknownApp);
-      const result = await (await getBackends()).membership.mutate(app_id, (s) =>
+      const result = await (
+        await getBackends()
+      ).membership.mutate(app_id, (s) =>
         provisionGroup(s, {
           owner: b.owner!,
           ...(b.external_id ? { external_id: b.external_id } : {}),
@@ -116,150 +136,269 @@ export function registerMembershipRoutes(app: FastifyInstance, opts: { defaultAp
   app.post('/groups/ensure', provision(true));
   app.post('/groups', provision(false));
 
-  app.get('/groups/:id', guard(async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const q = req.query as { app?: string };
-    const app_id = await resolveAppId(q.app);
-    if (!app_id) return reply.status(404).send(unknownApp);
-    const state = await (await getBackends()).membership.read(app_id);
-    const group = resolveGroup(state, id);
-    if (!group) return reply.status(404).send({ error: { code: 'unknown_group', message: `no group "${id}".`, retry: 'change-input' } });
-    return { group };
-  }));
+  app.get(
+    '/groups/:id',
+    guard(async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const q = req.query as { app?: string };
+      const app_id = await resolveAppId(q.app);
+      if (!app_id) return reply.status(404).send(unknownApp);
+      const state = await (await getBackends()).membership.read(app_id);
+      const group = resolveGroup(state, id);
+      if (!group)
+        return reply
+          .status(404)
+          .send({ error: { code: 'unknown_group', message: `no group "${id}".`, retry: 'change-input' } });
+      return { group };
+    }),
+  );
 
-  app.get('/groups/:id/members', guard(async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const q = req.query as { app?: string };
-    const app_id = await resolveAppId(q.app);
-    if (!app_id) return reply.status(404).send(unknownApp);
-    const state = await (await getBackends()).membership.read(app_id);
-    const group = resolveGroup(state, id);
-    if (!group) return reply.status(404).send({ error: { code: 'unknown_group', message: `no group "${id}".`, retry: 'change-input' } });
-    const items = Object.values(state.members).filter((m) => m.group_id === group.id && m.status === 'active');
-    return { items, total: items.length };
-  }));
+  app.get(
+    '/groups/:id/members',
+    guard(async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const q = req.query as { app?: string };
+      const app_id = await resolveAppId(q.app);
+      if (!app_id) return reply.status(404).send(unknownApp);
+      const state = await (await getBackends()).membership.read(app_id);
+      const group = resolveGroup(state, id);
+      if (!group)
+        return reply
+          .status(404)
+          .send({ error: { code: 'unknown_group', message: `no group "${id}".`, retry: 'change-input' } });
+      const items = Object.values(state.members).filter(
+        (m) => m.group_id === group.id && m.status === 'active',
+      );
+      return { items, total: items.length };
+    }),
+  );
 
-  app.get('/groups/:id/members/:owner', guard(async (req, reply) => {
-    const { id, owner } = req.params as { id: string; owner: string };
-    const q = req.query as { app?: string };
-    const app_id = await resolveAppId(q.app);
-    if (!app_id) return reply.status(404).send(unknownApp);
-    const state = await (await getBackends()).membership.read(app_id);
-    const view = memberView(state, id, owner);
-    if (!view || view.status !== 'active') return reply.status(404).send({ error: { code: 'not_a_member', message: `${owner} is not a member of group ${id}.`, retry: 'change-input' } });
-    return view;
-  }));
+  app.get(
+    '/groups/:id/members/:owner',
+    guard(async (req, reply) => {
+      const { id, owner } = req.params as { id: string; owner: string };
+      const q = req.query as { app?: string };
+      const app_id = await resolveAppId(q.app);
+      if (!app_id) return reply.status(404).send(unknownApp);
+      const state = await (await getBackends()).membership.read(app_id);
+      const view = memberView(state, id, owner);
+      if (!view || view.status !== 'active')
+        return reply.status(404).send({
+          error: {
+            code: 'not_a_member',
+            message: `${owner} is not a member of group ${id}.`,
+            retry: 'change-input',
+          },
+        });
+      return view;
+    }),
+  );
 
-  app.get('/identities/:owner/groups', guard(async (req, reply) => {
-    const { owner } = req.params as { owner: string };
-    const q = req.query as { app?: string };
-    const app_id = await resolveAppId(q.app);
-    if (!app_id) return reply.status(404).send(unknownApp);
-    const state = await (await getBackends()).membership.read(app_id);
-    const items = groupsForOwner(state, owner);
-    return { items, total: items.length };
-  }));
+  app.get(
+    '/identities/:owner/groups',
+    guard(async (req, reply) => {
+      const { owner } = req.params as { owner: string };
+      const q = req.query as { app?: string };
+      const app_id = await resolveAppId(q.app);
+      if (!app_id) return reply.status(404).send(unknownApp);
+      const state = await (await getBackends()).membership.read(app_id);
+      const items = groupsForOwner(state, owner);
+      return { items, total: items.length };
+    }),
+  );
 
   // === invitations =================================================================================
-  app.post('/groups/:id/invitations', guard(async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const b = (req.body ?? {}) as { app?: string; actor?: string; invitee_hint?: string; role?: string };
-    if (!b.actor || typeof b.actor !== 'string') return reply.status(422).send(invalid('an invitation requires a string `actor`.'));
-    if (!b.invitee_hint || typeof b.invitee_hint !== 'string') return reply.status(422).send(invalid('an invitation requires a string `invitee_hint`.'));
-    if (!b.role || typeof b.role !== 'string') return reply.status(422).send(invalid('an invitation requires a string `role`.'));
-    const app_id = await resolveAppId(b.app);
-    if (!app_id) return reply.status(404).send(unknownApp);
-    const token = mintToken();
-    const result = await (await getBackends()).membership.mutate(app_id, (s) =>
-      inviteMember(s, { groupId: id, actor: b.actor!, inviteeHint: b.invitee_hint!, role: b.role!, now: nowIso(), newInvId: newId('inv'), token }),
-    );
-    // The raw token rides the invitation object ONCE, on mint. A reused (already-pending) invitation has no
-    // fresh token — the consumer revokes + re-invites to rotate.
-    const invitation = result.reused ? result.invitation : { ...result.invitation, token: result.token };
-    return reply.status(200).send({ invitation, ...(result.reused ? { reused: true } : {}) });
-  }));
+  app.post(
+    '/groups/:id/invitations',
+    guard(async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = (req.body ?? {}) as { app?: string; actor?: string; invitee_hint?: string; role?: string };
+      if (!b.actor || typeof b.actor !== 'string')
+        return reply.status(422).send(invalid('an invitation requires a string `actor`.'));
+      if (!b.invitee_hint || typeof b.invitee_hint !== 'string')
+        return reply.status(422).send(invalid('an invitation requires a string `invitee_hint`.'));
+      if (!b.role || typeof b.role !== 'string')
+        return reply.status(422).send(invalid('an invitation requires a string `role`.'));
+      const app_id = await resolveAppId(b.app);
+      if (!app_id) return reply.status(404).send(unknownApp);
+      const token = mintToken();
+      const result = await (
+        await getBackends()
+      ).membership.mutate(app_id, (s) =>
+        inviteMember(s, {
+          groupId: id,
+          actor: b.actor!,
+          inviteeHint: b.invitee_hint!,
+          role: b.role!,
+          now: nowIso(),
+          newInvId: newId('inv'),
+          token,
+        }),
+      );
+      // The raw token rides the invitation object ONCE, on mint. A reused (already-pending) invitation has no
+      // fresh token — the consumer revokes + re-invites to rotate.
+      const invitation = result.reused ? result.invitation : { ...result.invitation, token: result.token };
+      return reply.status(200).send({ invitation, ...(result.reused ? { reused: true } : {}) });
+    }),
+  );
 
-  app.get('/groups/:id/invitations', guard(async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const q = req.query as { app?: string };
-    const app_id = await resolveAppId(q.app);
-    if (!app_id) return reply.status(404).send(unknownApp);
-    const state = await (await getBackends()).membership.read(app_id);
-    const group = resolveGroup(state, id);
-    if (!group) return reply.status(404).send({ error: { code: 'unknown_group', message: `no group "${id}".`, retry: 'change-input' } });
-    const items = Object.values(state.invitations).filter((i) => i.group_id === group.id).map(toInvitationView);
-    return { items, total: items.length };
-  }));
+  app.get(
+    '/groups/:id/invitations',
+    guard(async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const q = req.query as { app?: string };
+      const app_id = await resolveAppId(q.app);
+      if (!app_id) return reply.status(404).send(unknownApp);
+      const state = await (await getBackends()).membership.read(app_id);
+      const group = resolveGroup(state, id);
+      if (!group)
+        return reply
+          .status(404)
+          .send({ error: { code: 'unknown_group', message: `no group "${id}".`, retry: 'change-input' } });
+      const items = Object.values(state.invitations)
+        .filter((i) => i.group_id === group.id)
+        .map(toInvitationView);
+      return { items, total: items.length };
+    }),
+  );
 
-  app.post('/invitations/:id/revoke', guard(async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const b = (req.body ?? {}) as { app?: string };
-    const app_id = await resolveAppId(b.app);
-    if (!app_id) return reply.status(404).send(unknownApp);
-    const invitation = await (await getBackends()).membership.mutate(app_id, (s) => revokeInvitation(s, { id, now: nowIso() }));
-    return reply.status(200).send({ invitation });
-  }));
+  app.post(
+    '/invitations/:id/revoke',
+    guard(async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = (req.body ?? {}) as { app?: string };
+      const app_id = await resolveAppId(b.app);
+      if (!app_id) return reply.status(404).send(unknownApp);
+      const invitation = await (
+        await getBackends()
+      ).membership.mutate(app_id, (s) => revokeInvitation(s, { id, now: nowIso() }));
+      return reply.status(200).send({ invitation });
+    }),
+  );
 
-  app.post('/invitations/accept', guard(async (req, reply) => {
-    const b = (req.body ?? {}) as { app?: string; token?: string; owner?: string; invitee_hint?: string };
-    if (!b.token || typeof b.token !== 'string') return reply.status(422).send(invalid('accept requires a string `token`.'));
-    if (!b.owner || typeof b.owner !== 'string') return reply.status(422).send(invalid('accept requires a string `owner`.'));
-    const app_id = await resolveAppId(b.app);
-    if (!app_id) return reply.status(404).send(unknownApp);
-    const result = await (await getBackends()).membership.mutate(app_id, (s) =>
-      acceptInvitation(s, { token: b.token!, owner: b.owner!, ...(b.invitee_hint !== undefined ? { inviteeHint: b.invitee_hint } : {}), now: nowIso() }),
-    );
-    return reply.status(200).send(result);
-  }));
+  app.post(
+    '/invitations/accept',
+    guard(async (req, reply) => {
+      const b = (req.body ?? {}) as { app?: string; token?: string; owner?: string; invitee_hint?: string };
+      if (!b.token || typeof b.token !== 'string')
+        return reply.status(422).send(invalid('accept requires a string `token`.'));
+      if (!b.owner || typeof b.owner !== 'string')
+        return reply.status(422).send(invalid('accept requires a string `owner`.'));
+      const app_id = await resolveAppId(b.app);
+      if (!app_id) return reply.status(404).send(unknownApp);
+      const result = await (
+        await getBackends()
+      ).membership.mutate(app_id, (s) =>
+        acceptInvitation(s, {
+          token: b.token!,
+          owner: b.owner!,
+          ...(b.invitee_hint !== undefined ? { inviteeHint: b.invitee_hint } : {}),
+          now: nowIso(),
+        }),
+      );
+      return reply.status(200).send(result);
+    }),
+  );
 
   // === member role management + removal ============================================================
-  app.post('/groups/:id/members/:owner/role', guard(async (req, reply) => {
-    const { id, owner } = req.params as { id: string; owner: string };
-    const b = (req.body ?? {}) as { app?: string; actor?: string; role?: string };
-    if (!b.actor || typeof b.actor !== 'string') return reply.status(422).send(invalid('a role change requires a string `actor`.'));
-    if (!b.role || typeof b.role !== 'string') return reply.status(422).send(invalid('a role change requires a string `role`.'));
-    const app_id = await resolveAppId(b.app);
-    if (!app_id) return reply.status(404).send(unknownApp);
-    const member = await (await getBackends()).membership.mutate(app_id, (s) => setMemberRole(s, { groupId: id, actor: b.actor!, owner, role: b.role!, now: nowIso() }));
-    return reply.status(200).send({ member });
-  }));
+  app.post(
+    '/groups/:id/members/:owner/role',
+    guard(async (req, reply) => {
+      const { id, owner } = req.params as { id: string; owner: string };
+      const b = (req.body ?? {}) as { app?: string; actor?: string; role?: string };
+      if (!b.actor || typeof b.actor !== 'string')
+        return reply.status(422).send(invalid('a role change requires a string `actor`.'));
+      if (!b.role || typeof b.role !== 'string')
+        return reply.status(422).send(invalid('a role change requires a string `role`.'));
+      const app_id = await resolveAppId(b.app);
+      if (!app_id) return reply.status(404).send(unknownApp);
+      const member = await (
+        await getBackends()
+      ).membership.mutate(app_id, (s) =>
+        setMemberRole(s, { groupId: id, actor: b.actor!, owner, role: b.role!, now: nowIso() }),
+      );
+      return reply.status(200).send({ member });
+    }),
+  );
 
-  app.delete('/groups/:id/members/:owner', guard(async (req, reply) => {
-    const { id, owner } = req.params as { id: string; owner: string };
-    const b = (req.body ?? {}) as { app?: string; actor?: string };
-    if (!b.actor || typeof b.actor !== 'string') return reply.status(422).send(invalid('a member removal requires a string `actor`.'));
-    const app_id = await resolveAppId(b.app);
-    if (!app_id) return reply.status(404).send(unknownApp);
-    const { member, group } = await (await getBackends()).membership.mutate(app_id, (s) => removeMember(s, { groupId: id, actor: b.actor!, owner }));
-    // The platform NEVER touches app rows — it emits a fact (via C3) + returns cleanly; the consumer decides
-    // resource disposition (reassign/delete/leave-as-is).
-    await store.appendAppEvent({ app_id, type: 'membership.removed', subject: group.id, owner, data: { group_id: group.id, removed_owner: owner, actor: b.actor, role: member.role, via: 'remove' } });
-    return reply.status(200).send({ removed: true, member });
-  }));
+  app.delete(
+    '/groups/:id/members/:owner',
+    guard(async (req, reply) => {
+      const { id, owner } = req.params as { id: string; owner: string };
+      const b = (req.body ?? {}) as { app?: string; actor?: string };
+      if (!b.actor || typeof b.actor !== 'string')
+        return reply.status(422).send(invalid('a member removal requires a string `actor`.'));
+      const app_id = await resolveAppId(b.app);
+      if (!app_id) return reply.status(404).send(unknownApp);
+      const { member, group } = await (
+        await getBackends()
+      ).membership.mutate(app_id, (s) => removeMember(s, { groupId: id, actor: b.actor!, owner }));
+      // The platform NEVER touches app rows — it emits a fact (via C3) + returns cleanly; the consumer decides
+      // resource disposition (reassign/delete/leave-as-is).
+      await store.appendAppEvent({
+        app_id,
+        type: 'membership.removed',
+        subject: group.id,
+        owner,
+        data: { group_id: group.id, removed_owner: owner, actor: b.actor, role: member.role, via: 'remove' },
+      });
+      return reply.status(200).send({ removed: true, member });
+    }),
+  );
 
-  app.post('/groups/:id/transfer-ownership', guard(async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const b = (req.body ?? {}) as { app?: string; actor?: string; to_owner?: string; demote_actor_to?: string };
-    if (!b.actor || typeof b.actor !== 'string') return reply.status(422).send(invalid('transfer requires a string `actor`.'));
-    if (!b.to_owner || typeof b.to_owner !== 'string') return reply.status(422).send(invalid('transfer requires a string `to_owner`.'));
-    const app_id = await resolveAppId(b.app);
-    if (!app_id) return reply.status(404).send(unknownApp);
-    const result = await (await getBackends()).membership.mutate(app_id, (s) =>
-      transferOwnership(s, { groupId: id, actor: b.actor!, toOwner: b.to_owner!, ...(b.demote_actor_to !== undefined ? { demoteActorTo: b.demote_actor_to } : {}), now: nowIso() }),
-    );
-    return reply.status(200).send(result);
-  }));
+  app.post(
+    '/groups/:id/transfer-ownership',
+    guard(async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = (req.body ?? {}) as {
+        app?: string;
+        actor?: string;
+        to_owner?: string;
+        demote_actor_to?: string;
+      };
+      if (!b.actor || typeof b.actor !== 'string')
+        return reply.status(422).send(invalid('transfer requires a string `actor`.'));
+      if (!b.to_owner || typeof b.to_owner !== 'string')
+        return reply.status(422).send(invalid('transfer requires a string `to_owner`.'));
+      const app_id = await resolveAppId(b.app);
+      if (!app_id) return reply.status(404).send(unknownApp);
+      const result = await (
+        await getBackends()
+      ).membership.mutate(app_id, (s) =>
+        transferOwnership(s, {
+          groupId: id,
+          actor: b.actor!,
+          toOwner: b.to_owner!,
+          ...(b.demote_actor_to !== undefined ? { demoteActorTo: b.demote_actor_to } : {}),
+          now: nowIso(),
+        }),
+      );
+      return reply.status(200).send(result);
+    }),
+  );
 
-  app.post('/groups/:id/leave', guard(async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const b = (req.body ?? {}) as { app?: string; actor?: string };
-    if (!b.actor || typeof b.actor !== 'string') return reply.status(422).send(invalid('leave requires a string `actor`.'));
-    const app_id = await resolveAppId(b.app);
-    if (!app_id) return reply.status(404).send(unknownApp);
-    const { member, group } = await (await getBackends()).membership.mutate(app_id, (s) => leaveGroup(s, { groupId: id, actor: b.actor! }));
-    await store.appendAppEvent({ app_id, type: 'membership.removed', subject: group.id, owner: b.actor, data: { group_id: group.id, removed_owner: b.actor, actor: b.actor, role: member.role, via: 'leave' } });
-    return reply.status(200).send({ left: true, member });
-  }));
+  app.post(
+    '/groups/:id/leave',
+    guard(async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = (req.body ?? {}) as { app?: string; actor?: string };
+      if (!b.actor || typeof b.actor !== 'string')
+        return reply.status(422).send(invalid('leave requires a string `actor`.'));
+      const app_id = await resolveAppId(b.app);
+      if (!app_id) return reply.status(404).send(unknownApp);
+      const { member, group } = await (
+        await getBackends()
+      ).membership.mutate(app_id, (s) => leaveGroup(s, { groupId: id, actor: b.actor! }));
+      await store.appendAppEvent({
+        app_id,
+        type: 'membership.removed',
+        subject: group.id,
+        owner: b.actor,
+        data: { group_id: group.id, removed_owner: b.actor, actor: b.actor, role: member.role, via: 'leave' },
+      });
+      return reply.status(200).send({ left: true, member });
+    }),
+  );
 
   // === administrative membership teardown (account closure / right-to-be-forgotten) ================
   // Remove an identity from the ENTIRE graph: groups it solely occupies are DELETED; in shared groups it
@@ -269,32 +408,49 @@ export function registerMembershipRoutes(app: FastifyInstance, opts: { defaultAp
   //
   //   DELETE /identities/:owner/memberships          { app? }  (SERVICE token)
   //     -> { owner, groups_deleted:[id], memberships_removed:[{group_id,role}], promotions:[{group_id,promoted_owner}], removed_rows }
-  app.delete('/identities/:owner/memberships', guard(async (req, reply) => {
-    const { owner } = req.params as { owner: string };
-    const b = (req.body ?? {}) as { app?: string };
-    const app_id = await resolveAppId(b.app);
-    if (!app_id) return reply.status(404).send(unknownApp);
-    if (!(await hasValidServiceToken(req, app_id))) {
-      return reply.status(401).send({ error: { code: 'unauthorized', message: 'a valid service token is required for this administrative operation.', retry: 'needs-human' } });
-    }
-    const result = await (await getBackends()).membership.mutate(app_id, (s) => teardownMember(s, { owner, now: nowIso() }));
-    // Emit membership.removed for each shared-group removal (same fact the DELETE-member route emits), so a
-    // consumer's timeline/derivations react identically whether one member left or an account was torn down.
-    for (const removed of result.removed_members) {
-      await store.appendAppEvent({
-        app_id,
-        type: 'membership.removed',
-        subject: removed.group_id,
+  app.delete(
+    '/identities/:owner/memberships',
+    guard(async (req, reply) => {
+      const { owner } = req.params as { owner: string };
+      const b = (req.body ?? {}) as { app?: string };
+      const app_id = await resolveAppId(b.app);
+      if (!app_id) return reply.status(404).send(unknownApp);
+      if (!(await hasValidServiceToken(req, app_id))) {
+        return reply.status(401).send({
+          error: {
+            code: 'unauthorized',
+            message: 'a valid service token is required for this administrative operation.',
+            retry: 'needs-human',
+          },
+        });
+      }
+      const result = await (
+        await getBackends()
+      ).membership.mutate(app_id, (s) => teardownMember(s, { owner, now: nowIso() }));
+      // Emit membership.removed for each shared-group removal (same fact the DELETE-member route emits), so a
+      // consumer's timeline/derivations react identically whether one member left or an account was torn down.
+      for (const removed of result.removed_members) {
+        await store.appendAppEvent({
+          app_id,
+          type: 'membership.removed',
+          subject: removed.group_id,
+          owner,
+          data: {
+            group_id: removed.group_id,
+            removed_owner: owner,
+            actor: owner,
+            role: removed.role,
+            via: 'teardown',
+          },
+        });
+      }
+      return reply.status(200).send({
         owner,
-        data: { group_id: removed.group_id, removed_owner: owner, actor: owner, role: removed.role, via: 'teardown' },
+        groups_deleted: result.groups_deleted,
+        memberships_removed: result.removed_members,
+        promotions: result.promotions,
+        removed_rows: result.removed_rows,
       });
-    }
-    return reply.status(200).send({
-      owner,
-      groups_deleted: result.groups_deleted,
-      memberships_removed: result.removed_members,
-      promotions: result.promotions,
-      removed_rows: result.removed_rows,
-    });
-  }));
+    }),
+  );
 }

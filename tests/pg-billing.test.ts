@@ -17,19 +17,44 @@ import { nowIso } from '../src/shared/time';
 // backend is selected (`test:pg`); skipped on the default filesystem run.
 const HAS_PG = process.env.FORGE_BILLING_BACKEND === 'postgres' && Boolean(process.env.FORGE_DB_URL);
 
-function record(subscriber: string, status: SubscriptionRecord['status'], version: number): SubscriptionRecord {
+function record(
+  subscriber: string,
+  status: SubscriptionRecord['status'],
+  version: number,
+): SubscriptionRecord {
   const now = nowIso();
   return {
-    subscriber, app: 'x', plan_key: 'pro_month', status, source: 'stripe',
-    current_period_end: null, cancel_at_period_end: false, trial_end: null, currency: 'usd', scope_ref: null,
+    subscriber,
+    app: 'x',
+    plan_key: 'pro_month',
+    status,
+    source: 'stripe',
+    current_period_end: null,
+    cancel_at_period_end: false,
+    trial_end: null,
+    currency: 'usd',
+    scope_ref: null,
     provider_refs: { ...emptyProviderRefs(), stripe_subscription_id: 'sub_1' },
-    version, created_at: now, updated_at: now,
+    version,
+    created_at: now,
+    updated_at: now,
   };
 }
 
 const CATALOG: Catalog = {
   plans: [
-    { plan_key: 'free', display: { name: 'Free' }, interval: 'month', prices: { stripe: { price_id: null, currency: null }, apple: { product_id: null }, google: { product_id: null } }, entitlements: { a: 1 }, is_default: true },
+    {
+      plan_key: 'free',
+      display: { name: 'Free' },
+      interval: 'month',
+      prices: {
+        stripe: { price_id: null, currency: null },
+        apple: { product_id: null },
+        google: { product_id: null },
+      },
+      entitlements: { a: 1 },
+      is_default: true,
+    },
   ],
   updated_at: nowIso(),
 };
@@ -49,13 +74,19 @@ describe.skipIf(!HAS_PG)('P26 Postgres billing backend — jsonb document, seria
     expect(await b.read(APP)).toEqual(emptyBillingState());
 
     await b.mutate(APP, (s) => ({ state: { ...s, catalog: CATALOG }, result: undefined }));
-    await b.mutate(APP, (s) => ({ state: { ...s, subscriptions: { u1: record('u1', 'active', 1) } }, result: undefined }));
+    await b.mutate(APP, (s) => ({
+      state: { ...s, subscriptions: { u1: record('u1', 'active', 1) } },
+      result: undefined,
+    }));
 
     const state = await b.read(APP);
     expect(state.catalog?.plans[0]!.plan_key).toBe('free');
     expect(state.subscriptions.u1!.status).toBe('active');
 
-    const n = await pool.query<{ n: string }>('SELECT count(*)::text AS n FROM forge_billing WHERE app_id=$1', [APP]);
+    const n = await pool.query<{ n: string }>(
+      'SELECT count(*)::text AS n FROM forge_billing WHERE app_id=$1',
+      [APP],
+    );
     expect(Number(n.rows[0]!.n)).toBe(1); // one document row per app
   });
 
@@ -63,7 +94,10 @@ describe.skipIf(!HAS_PG)('P26 Postgres billing backend — jsonb document, seria
     const APP2 = 'app_pg_billing_guard';
     const b = (await getBackends()).billing;
     // Apply v5, then attempt a stale v3 — the stale write must not overwrite.
-    await b.mutate(APP2, (s) => ({ state: { ...s, subscriptions: { u: record('u', 'canceled', 5) } }, result: undefined }));
+    await b.mutate(APP2, (s) => ({
+      state: { ...s, subscriptions: { u: record('u', 'canceled', 5) } },
+      result: undefined,
+    }));
     await b.mutate(APP2, (s) => {
       const existing = s.subscriptions.u;
       if (existing && 3 < existing.version) return { state: s, result: false };
@@ -79,12 +113,22 @@ describe.skipIf(!HAS_PG)('P26 Postgres billing backend — jsonb document, seria
     try {
       const APP3 = 'app_billing_backfill';
       const fs = new FsBillingBackend();
-      await fs.mutate(APP3, (s) => ({ state: { ...s, catalog: CATALOG, subscriptions: { u1: record('u1', 'active', 1) }, webhook_events: { evt_1: { id: 'evt_1', type: 't', received_at: nowIso() } } }, result: undefined }));
+      await fs.mutate(APP3, (s) => ({
+        state: {
+          ...s,
+          catalog: CATALOG,
+          subscriptions: { u1: record('u1', 'active', 1) },
+          webhook_events: { evt_1: { id: 'evt_1', type: 't', received_at: nowIso() } },
+        },
+        result: undefined,
+      }));
 
       await ensureBillingSchema(pool);
       await pool.query('DELETE FROM forge_billing WHERE app_id=$1', [APP3]);
       const pg = new PgBillingBackend(pool);
-      expect(await backfillBilling(fs, pg, [APP3])).toEqual([{ app: APP3, plans: 1, subscriptions: 1, webhook_events: 1 }]);
+      expect(await backfillBilling(fs, pg, [APP3])).toEqual([
+        { app: APP3, plans: 1, subscriptions: 1, webhook_events: 1 },
+      ]);
 
       const state = await pg.read(APP3);
       expect(state.catalog?.plans[0]!.plan_key).toBe('free');

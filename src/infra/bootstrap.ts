@@ -22,10 +22,15 @@ export interface BootstrapStep {
 }
 
 /** Side-effect gcloud call — merged output is fine for error reporting. */
-async function gcloud(args: string[], opts: { allowFail?: boolean } = {}): Promise<{ code: number; output: string }> {
+async function gcloud(
+  args: string[],
+  opts: { allowFail?: boolean } = {},
+): Promise<{ code: number; output: string }> {
   const r = await run('gcloud', [...args, '--quiet'], { timeoutMs: 5 * 60 * 1000, tailLines: 100 });
   if ((r.code ?? 1) !== 0 && !opts.allowFail) {
-    throw new Error(`gcloud ${args.slice(0, 4).join(' ')}… failed (exit ${r.code}):\n${r.combined.slice(-1500)}`);
+    throw new Error(
+      `gcloud ${args.slice(0, 4).join(' ')}… failed (exit ${r.code}):\n${r.combined.slice(-1500)}`,
+    );
   }
   return { code: r.code ?? 1, output: r.combined };
 }
@@ -144,27 +149,35 @@ export async function bootstrap(
   let folderId: string | undefined;
   if (wants('project') && cfg.kind === 'foundation' && cfg.folder && cfg.org_id) {
     const list = await gcloudRead([
-      'resource-manager', 'folders', 'list',
+      'resource-manager',
+      'folders',
+      'list',
       `--organization=${cfg.org_id}`,
       `--filter=displayName=${cfg.folder}`,
       '--format=value(name)',
     ]);
     folderId = list.stdout.trim().split('\n').filter(Boolean)[0]?.replace('folders/', '');
     if (folderId && !/^\d+$/.test(folderId)) {
-      throw new Error(`folder lookup returned a non-numeric id "${folderId}" — refusing to use it as a parent`);
+      throw new Error(
+        `folder lookup returned a non-numeric id "${folderId}" — refusing to use it as a parent`,
+      );
     }
     if (folderId) {
       step(`folder "${cfg.folder}"`, 'exists', `folders/${folderId}`);
     } else {
       await gcloud([
-        'resource-manager', 'folders', 'create',
+        'resource-manager',
+        'folders',
+        'create',
         `--display-name=${cfg.folder}`,
         `--organization=${cfg.org_id}`,
       ]);
       // §3.7 in miniature: do NOT parse create's output (async operation + progress lines make it
       // junk) — re-READ the actual state. The first live bootstrap failed exactly here.
       const reread = await gcloudRead([
-        'resource-manager', 'folders', 'list',
+        'resource-manager',
+        'folders',
+        'list',
         `--organization=${cfg.org_id}`,
         `--filter=displayName=${cfg.folder}`,
         '--format=value(name)',
@@ -181,7 +194,9 @@ export async function bootstrap(
   // The project must EXIST for anything else to work, so it is verified even when scoped away —
   // but it is only created, billed and API-enabled when this component is in scope.
   // ── 2. Project ─────────────────────────────────────────────────────────────────────
-  const exists = await gcloud(['projects', 'describe', e.project_id, '--format=value(projectId)'], { allowFail: true });
+  const exists = await gcloud(['projects', 'describe', e.project_id, '--format=value(projectId)'], {
+    allowFail: true,
+  });
   if (exists.code === 0) {
     step(`project ${e.project_id}`, 'exists');
   } else {
@@ -204,7 +219,13 @@ export async function bootstrap(
 
   // ── 3. Billing ─────────────────────────────────────────────────────────────────────
   if (wants('project') && cfg.kind === 'foundation' && cfg.billing_account) {
-    const b = await gcloudRead(['billing', 'projects', 'describe', e.project_id, '--format=value(billingAccountName)']);
+    const b = await gcloudRead([
+      'billing',
+      'projects',
+      'describe',
+      e.project_id,
+      '--format=value(billingAccountName)',
+    ]);
     if (b.stdout.includes(cfg.billing_account)) {
       step('billing link', 'exists', cfg.billing_account);
     } else {
@@ -222,14 +243,20 @@ export async function bootstrap(
   // ── 5. State bucket — versioned, uniform access, in the foundation project ─────────
   //   (component: state)
   if (wants('state') && cfg.kind === 'foundation') {
-    const bkt = await gcloud(['storage', 'buckets', 'describe', `gs://${cfg.state_bucket}`, '--format=value(name)'], {
-      allowFail: true,
-    });
+    const bkt = await gcloud(
+      ['storage', 'buckets', 'describe', `gs://${cfg.state_bucket}`, '--format=value(name)'],
+      {
+        allowFail: true,
+      },
+    );
     if (bkt.code === 0) {
       step(`state bucket gs://${cfg.state_bucket}`, 'exists');
     } else {
       await gcloud([
-        'storage', 'buckets', 'create', `gs://${cfg.state_bucket}`,
+        'storage',
+        'buckets',
+        'create',
+        `gs://${cfg.state_bucket}`,
         `--project=${e.project_id}`,
         `--location=${e.region}`,
         '--uniform-bucket-level-access',
@@ -244,21 +271,43 @@ export async function bootstrap(
   if (wants('identity') && cfg.kind === 'foundation' && cfg.github) {
     const proj = e.project_id;
     const pool = await gcloud(
-      ['iam', 'workload-identity-pools', 'describe', WIF_POOL_ID, `--project=${proj}`, '--location=global', '--format=value(name)'],
+      [
+        'iam',
+        'workload-identity-pools',
+        'describe',
+        WIF_POOL_ID,
+        `--project=${proj}`,
+        '--location=global',
+        '--format=value(name)',
+      ],
       { allowFail: true },
     );
     if (pool.code === 0) step(`WIF pool ${WIF_POOL_ID}`, 'exists');
     else {
       await gcloud([
-        'iam', 'workload-identity-pools', 'create', WIF_POOL_ID,
-        `--project=${proj}`, '--location=global', '--display-name=GitHub Actions CI',
+        'iam',
+        'workload-identity-pools',
+        'create',
+        WIF_POOL_ID,
+        `--project=${proj}`,
+        '--location=global',
+        '--display-name=GitHub Actions CI',
       ]);
       step(`WIF pool ${WIF_POOL_ID}`, 'created');
     }
 
     const provider = await gcloud(
-      ['iam', 'workload-identity-pools', 'providers', 'describe', WIF_PROVIDER_ID,
-        `--project=${proj}`, '--location=global', `--workload-identity-pool=${WIF_POOL_ID}`, '--format=value(name)'],
+      [
+        'iam',
+        'workload-identity-pools',
+        'providers',
+        'describe',
+        WIF_PROVIDER_ID,
+        `--project=${proj}`,
+        '--location=global',
+        `--workload-identity-pool=${WIF_POOL_ID}`,
+        '--format=value(name)',
+      ],
       { allowFail: true },
     );
     if (provider.code === 0) step(`WIF provider ${WIF_PROVIDER_ID}`, 'exists');
@@ -266,8 +315,14 @@ export async function bootstrap(
       // Condition restricts federation to THIS github org — mandatory; an unconditioned provider
       // would let any GitHub repo on the planet mint tokens against the pool.
       await gcloud([
-        'iam', 'workload-identity-pools', 'providers', 'create-oidc', WIF_PROVIDER_ID,
-        `--project=${proj}`, '--location=global', `--workload-identity-pool=${WIF_POOL_ID}`,
+        'iam',
+        'workload-identity-pools',
+        'providers',
+        'create-oidc',
+        WIF_PROVIDER_ID,
+        `--project=${proj}`,
+        '--location=global',
+        `--workload-identity-pool=${WIF_POOL_ID}`,
         '--issuer-uri=https://token.actions.githubusercontent.com',
         '--attribute-mapping=google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner',
         `--attribute-condition=assertion.repository_owner=='${cfg.github.owner}'`,
@@ -277,17 +332,37 @@ export async function bootstrap(
     }
 
     const sa = deployerSaEmail(proj);
-    const saExists = await gcloud(['iam', 'service-accounts', 'describe', sa, `--project=${proj}`], { allowFail: true });
+    const saExists = await gcloud(['iam', 'service-accounts', 'describe', sa, `--project=${proj}`], {
+      allowFail: true,
+    });
     if (saExists.code === 0) step(`deployer SA ${sa}`, 'exists');
     else {
-      await gcloud(['iam', 'service-accounts', 'create', 'forge-deployer', `--project=${proj}`, '--display-name=forge infra CI deployer']);
+      await gcloud([
+        'iam',
+        'service-accounts',
+        'create',
+        'forge-deployer',
+        `--project=${proj}`,
+        '--display-name=forge infra CI deployer',
+      ]);
       step(`deployer SA ${sa}`, 'created');
     }
 
     for (const role of DEPLOYER_ROLES) {
-      await gcloud(['projects', 'add-iam-policy-binding', proj, `--member=serviceAccount:${sa}`, `--role=${role}`, '--condition=None']);
+      await gcloud([
+        'projects',
+        'add-iam-policy-binding',
+        proj,
+        `--member=serviceAccount:${sa}`,
+        `--role=${role}`,
+        '--condition=None',
+      ]);
     }
-    step(`deployer roles (${DEPLOYER_ROLES.length})`, 'updated', 'curated list in bootstrap.ts — NOT roles/editor');
+    step(
+      `deployer roles (${DEPLOYER_ROLES.length})`,
+      'updated',
+      'curated list in bootstrap.ts — NOT roles/editor',
+    );
 
     const projNumRead = await gcloudRead(['projects', 'describe', proj, '--format=value(projectNumber)']);
     const projNum = projNumRead.stdout.trim();
@@ -296,7 +371,11 @@ export async function bootstrap(
     const repos = options.repo ? [options.repo] : cfg.github.repos;
     for (const repo of repos) {
       await gcloud([
-        'iam', 'service-accounts', 'add-iam-policy-binding', sa, `--project=${proj}`,
+        'iam',
+        'service-accounts',
+        'add-iam-policy-binding',
+        sa,
+        `--project=${proj}`,
         '--role=roles/iam.workloadIdentityUser',
         `--member=principalSet://iam.googleapis.com/projects/${projNum}/locations/global/workloadIdentityPools/${WIF_POOL_ID}/attribute.repository/${cfg.github.owner}/${repo}`,
       ]);

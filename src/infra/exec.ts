@@ -13,7 +13,11 @@ export interface CaptureResult {
   stderr: string;
 }
 
-export function capture(command: string, args: string[], opts: { timeoutMs?: number } = {}): Promise<CaptureResult> {
+export function capture(
+  command: string,
+  args: string[],
+  opts: { timeoutMs?: number } = {},
+): Promise<CaptureResult> {
   return new Promise((resolve, reject) => {
     const p = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';

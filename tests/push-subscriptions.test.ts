@@ -9,7 +9,10 @@ import { store } from '../src/storage/store';
 let dir: string;
 let prev: string | undefined;
 
-const sub = (endpoint: string, p256dh = 'BPp256dhkey', auth = 'authsecret') => ({ endpoint, keys: { p256dh, auth } });
+const sub = (endpoint: string, p256dh = 'BPp256dhkey', auth = 'authsecret') => ({
+  endpoint,
+  keys: { p256dh, auth },
+});
 
 beforeEach(async () => {
   prev = process.env.FORGE_STATE_DIR;
@@ -39,8 +42,14 @@ describe('Push subscription store (C21)', () => {
   });
 
   it('dedupes by endpoint — re-registering the same endpoint UPDATES in place (one row), preserves created_at', async () => {
-    const first = await store.registerPushSubscription('a', { owner: 'A', ...sub('https://push/1', 'oldkey', 'oldauth') });
-    const second = await store.registerPushSubscription('a', { owner: 'A', ...sub('https://push/1', 'newkey', 'newauth') });
+    const first = await store.registerPushSubscription('a', {
+      owner: 'A',
+      ...sub('https://push/1', 'oldkey', 'oldauth'),
+    });
+    const second = await store.registerPushSubscription('a', {
+      owner: 'A',
+      ...sub('https://push/1', 'newkey', 'newauth'),
+    });
     const list = await store.listPushSubscriptions('a', 'A');
     expect(list.length).toBe(1); // no duplicate
     expect(list[0]!.keys).toEqual({ p256dh: 'newkey', auth: 'newauth' }); // updated
@@ -50,7 +59,10 @@ describe('Push subscription store (C21)', () => {
   it('a person may hold MANY devices (distinct endpoints all list)', async () => {
     await store.registerPushSubscription('a', { owner: 'A', ...sub('https://push/phone') });
     await store.registerPushSubscription('a', { owner: 'A', ...sub('https://push/laptop') });
-    expect((await store.listPushSubscriptions('a', 'A')).map((s) => s.endpoint).sort()).toEqual(['https://push/laptop', 'https://push/phone']);
+    expect((await store.listPushSubscriptions('a', 'A')).map((s) => s.endpoint).sort()).toEqual([
+      'https://push/laptop',
+      'https://push/phone',
+    ]);
   });
 
   it('scopes per owner — user A never sees user B (even the same endpoint string is per-owner via list)', async () => {

@@ -112,7 +112,13 @@ describe('SendEmail capability (C12)', () => {
 
     const { capability, resource } = await executeCapability(
       'send-email',
-      { app: 'demo', to: 'jane.roe@example.com', subject: 'Hello', text: 'Plain body', html: '<p>Rich body</p>' },
+      {
+        app: 'demo',
+        to: 'jane.roe@example.com',
+        subject: 'Hello',
+        text: 'Plain body',
+        html: '<p>Rich body</p>',
+      },
       SYSTEM_ACTOR,
     );
     const delivery = resource as EmailDelivery;
@@ -163,7 +169,12 @@ describe('SendEmail capability (C12)', () => {
 
     const { resource } = await executeCapability(
       'send-email',
-      { app: 'demo', to: 'user@example.com', template: 'verify-email', data: { url: 'https://acme.test/verify?token=abc123', product: 'Acme' } },
+      {
+        app: 'demo',
+        to: 'user@example.com',
+        template: 'verify-email',
+        data: { url: 'https://acme.test/verify?token=abc123', product: 'Acme' },
+      },
       SYSTEM_ACTOR,
     );
     const delivery = resource as EmailDelivery;
@@ -183,7 +194,12 @@ describe('SendEmail capability (C12)', () => {
     const captured = sink();
     await executeCapability(
       'send-email',
-      { app: 'demo', to: 'user@example.com', template: 'reset-password', data: { url: 'https://acme.test/reset?token=xyz' } },
+      {
+        app: 'demo',
+        to: 'user@example.com',
+        template: 'reset-password',
+        data: { url: 'https://acme.test/reset?token=xyz' },
+      },
       SYSTEM_ACTOR,
     );
     expect(captured.msg?.subject).toBe('Reset your password');
@@ -199,10 +215,18 @@ describe('SendEmail capability (C12)', () => {
     });
 
     await expect(
-      executeCapability('send-email', { app: 'demo', to: 'user@example.com', subject: 'Hi', text: 'body' }, SYSTEM_ACTOR),
+      executeCapability(
+        'send-email',
+        { app: 'demo', to: 'user@example.com', subject: 'Hi', text: 'body' },
+        SYSTEM_ACTOR,
+      ),
     ).rejects.toMatchObject({ code: 'dependency_unavailable', status: 503 });
     await expect(
-      executeCapability('send-email', { app: 'demo', to: 'user@example.com', subject: 'Hi', text: 'body' }, SYSTEM_ACTOR),
+      executeCapability(
+        'send-email',
+        { app: 'demo', to: 'user@example.com', subject: 'Hi', text: 'body' },
+        SYSTEM_ACTOR,
+      ),
     ).rejects.toBeInstanceOf(ForgeError);
 
     // Degradation, not a crash: threw a typed ForgeError, never invoked the transport, persisted nothing.
@@ -214,7 +238,11 @@ describe('SendEmail capability (C12)', () => {
     const app = await seedApp('demo');
     await setSecret(app.id, 'SMTP_URL', SMTP_URL); // EMAIL_FROM intentionally missing
     await expect(
-      executeCapability('send-email', { app: 'demo', to: 'user@example.com', subject: 'Hi', text: 'body' }, SYSTEM_ACTOR),
+      executeCapability(
+        'send-email',
+        { app: 'demo', to: 'user@example.com', subject: 'Hi', text: 'body' },
+        SYSTEM_ACTOR,
+      ),
     ).rejects.toMatchObject({ code: 'dependency_unavailable', details: { missing: ['EMAIL_FROM'] } });
   });
 
@@ -248,14 +276,22 @@ describe('SendEmail capability (C12)', () => {
     const app = await seedApp('demo');
     await configure(app);
     await expect(
-      executeCapability('send-email', { app: 'demo', to: 'user@example.com', text: 'orphan body, no subject' }, SYSTEM_ACTOR),
+      executeCapability(
+        'send-email',
+        { app: 'demo', to: 'user@example.com', text: 'orphan body, no subject' },
+        SYSTEM_ACTOR,
+      ),
     ).rejects.toMatchObject({ code: 'invalid_input', status: 422 });
     await expect(
-      executeCapability('send-email', { app: 'demo', to: 'user@example.com', template: 'verify-email', data: {} }, SYSTEM_ACTOR),
+      executeCapability(
+        'send-email',
+        { app: 'demo', to: 'user@example.com', template: 'verify-email', data: {} },
+        SYSTEM_ACTOR,
+      ),
     ).rejects.toMatchObject({ code: 'invalid_input', status: 422 });
   });
 
-  it('defaults the app to FORGE_APP_NAME so an internal caller needn\'t pass it', async () => {
+  it("defaults the app to FORGE_APP_NAME so an internal caller needn't pass it", async () => {
     const app = await seedApp('sidecar-app');
     await configure(app);
     process.env.FORGE_APP_NAME = 'sidecar-app';
@@ -277,7 +313,10 @@ describe('email-smtp plugin', () => {
 
     process.env.SMTP_URL = 'smtp://env-host:25';
     process.env.EMAIL_FROM = 'env <e@env.test>';
-    expect(await resolveEmailConfig(app.id)).toEqual({ ok: true, config: { smtpUrl: 'smtp://env-host:25', from: 'env <e@env.test>' } });
+    expect(await resolveEmailConfig(app.id)).toEqual({
+      ok: true,
+      config: { smtpUrl: 'smtp://env-host:25', from: 'env <e@env.test>' },
+    });
 
     await setSecret(app.id, 'SMTP_URL', SMTP_URL);
     await setSecret(app.id, 'EMAIL_FROM', FROM);
@@ -323,7 +362,10 @@ describe('email-smtp plugin', () => {
   });
 
   it('renderTemplate escapes HTML in interpolated data (no injection)', () => {
-    const out = renderTemplate('verify-email', { url: 'https://x/y?a=1&b=2', product: '<script>evil</script>' });
+    const out = renderTemplate('verify-email', {
+      url: 'https://x/y?a=1&b=2',
+      product: '<script>evil</script>',
+    });
     expect(out.html).not.toContain('<script>evil</script>');
     expect(out.html).toContain('&lt;script&gt;');
     expect(out.html).toContain('a=1&amp;b=2');
@@ -331,8 +373,20 @@ describe('email-smtp plugin', () => {
   });
 
   it('parseSmtpUrl handles smtp/smtps, ports, and credentials', () => {
-    expect(parseSmtpUrl('smtp://u:p@h:2525')).toEqual({ secure: false, host: 'h', port: 2525, user: 'u', pass: 'p' });
-    expect(parseSmtpUrl('smtps://h')).toEqual({ secure: true, host: 'h', port: 465, user: undefined, pass: undefined });
+    expect(parseSmtpUrl('smtp://u:p@h:2525')).toEqual({
+      secure: false,
+      host: 'h',
+      port: 2525,
+      user: 'u',
+      pass: 'p',
+    });
+    expect(parseSmtpUrl('smtps://h')).toEqual({
+      secure: true,
+      host: 'h',
+      port: 465,
+      user: undefined,
+      pass: undefined,
+    });
     expect(parseSmtpUrl('smtp://h')).toMatchObject({ secure: false, port: 587 });
     expect(() => parseSmtpUrl('http://h')).toThrow(/scheme/);
   });
@@ -366,7 +420,13 @@ describe('email-smtp plugin', () => {
   });
 
   it('buildMimeMessage emits a single part when only one body is present', () => {
-    const raw = buildMimeMessage({ from: 'a@x.test', to: 'b@x.test', subject: 'S', text: 'only', messageId: '<m@x>' });
+    const raw = buildMimeMessage({
+      from: 'a@x.test',
+      to: 'b@x.test',
+      subject: 'S',
+      text: 'only',
+      messageId: '<m@x>',
+    });
     expect(raw).toContain('Content-Type: text/plain; charset=UTF-8');
     expect(raw).not.toContain('multipart/alternative');
   });

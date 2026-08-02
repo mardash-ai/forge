@@ -153,12 +153,27 @@ export function Card({
               </div>
             )}
             {title && (
-              <h2 style={{ fontSize: 'var(--t-title)', lineHeight: 'var(--lh-title)', fontWeight: 600, letterSpacing: '-0.01em' }}>
+              <h2
+                style={{
+                  fontSize: 'var(--t-title)',
+                  lineHeight: 'var(--lh-title)',
+                  fontWeight: 600,
+                  letterSpacing: '-0.01em',
+                }}
+              >
                 {title}
               </h2>
             )}
             {subtitle && (
-              <p style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: '17px', marginTop: 3, maxWidth: '96ch' }}>
+              <p
+                style={{
+                  color: 'var(--text-muted)',
+                  fontSize: 12,
+                  lineHeight: '17px',
+                  marginTop: 3,
+                  maxWidth: '96ch',
+                }}
+              >
                 {subtitle}
               </p>
             )}
@@ -357,7 +372,9 @@ export function Empty({
       </div>
       <p style={{ color: 'var(--text-primary)', fontWeight: 500, fontSize: 13.5 }}>{title}</p>
       {detail && (
-        <p style={{ fontSize: 12.5, lineHeight: '19px', marginTop: 6, maxWidth: 480, marginInline: 'auto' }}>{detail}</p>
+        <p style={{ fontSize: 12.5, lineHeight: '19px', marginTop: 6, maxWidth: 480, marginInline: 'auto' }}>
+          {detail}
+        </p>
       )}
       {action && <div style={{ marginTop: 14 }}>{action}</div>}
     </div>
@@ -525,7 +542,16 @@ export function StatTile({
         {value}
       </div>
       {detail && (
-        <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div
+          style={{
+            fontSize: 12,
+            color: 'var(--text-faint)',
+            marginTop: 1,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
           {detail}
         </div>
       )}
@@ -539,7 +565,15 @@ export function StatTile({
  * number the whole screen exists to refuse. The hatch says "this track has no end we know of",
  * which is the true statement.
  */
-export function Meter({ used, limit, tone }: { used: number | null; limit: number | null; tone: StatusTone }) {
+export function Meter({
+  used,
+  limit,
+  tone,
+}: {
+  used: number | null;
+  limit: number | null;
+  tone: StatusTone;
+}) {
   const known = used !== null && limit !== null && limit > 0;
   const pct = known ? Math.min(100, Math.max(0, (used / limit) * 100)) : 0;
   return (
@@ -675,7 +709,9 @@ export function Series({
       >
         <span className="mono">peak {max.toPrecision(3)}</span>
         {missing > 0 ? (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--unknown-text)' }}>
+          <span
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--unknown-text)' }}
+          >
             <StatusGlyph tone="unknown" size={9} />
             {missing} of {n} intervals returned no sample — hatched, not drawn as zero
           </span>

@@ -4,7 +4,16 @@ import { getBackends } from '../storage/backends';
 import { newId } from '../shared/ids';
 import { nowIso } from '../shared/time';
 import { authorize } from '../authz/authorize';
-import type { Actor, Action, PolicyRule, PolicyEffect, PolicyMatch, HighRiskSpec, Decision, ResolvedMembership } from '../authz/types';
+import type {
+  Actor,
+  Action,
+  PolicyRule,
+  PolicyEffect,
+  PolicyMatch,
+  HighRiskSpec,
+  Decision,
+  ResolvedMembership,
+} from '../authz/types';
 import { resolveMembership, getPersonalGroup, provisionGroup } from '../membership/service';
 
 // C29 — the authorization/policy HTTP surface. Registered on BOTH planes (control: policy config; data:
@@ -43,24 +52,40 @@ const AUTHZ_APPROVAL = 'authz.approval';
 const POLICY_SET = 'policy.set';
 const POLICY_REMOVED = 'policy.removed';
 
-export function registerAuthzRoutes(app: FastifyInstance, opts: { defaultApp?: () => string | undefined } = {}): void {
+export function registerAuthzRoutes(
+  app: FastifyInstance,
+  opts: { defaultApp?: () => string | undefined } = {},
+): void {
   const resolveAppId = async (name?: string): Promise<string | null> => {
     const n = name ?? opts.defaultApp?.();
     if (!n) return null;
     const a = await store.findAppByName(n);
     return a && a.type === 'Application' ? a.id : null;
   };
-  const unknownApp = { error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } };
+  const unknownApp = {
+    error: {
+      code: 'not_found',
+      message: 'unknown app (pass `app` or set FORGE_APP_NAME).',
+      retry: 'change-input',
+    },
+  };
   const invalid = (message: string) => ({ error: { code: 'invalid_input', message, retry: 'change-input' } });
 
   // === POST /authorize — the deterministic decision (+ C3 audit) ===================================
   app.post('/authorize', async (req, reply) => {
     const b = (req.body ?? {}) as {
-      app?: string; owner?: string; role?: string; group_id?: string;
-      action?: Action; default_decision?: Decision; high_risk?: HighRiskSpec;
+      app?: string;
+      owner?: string;
+      role?: string;
+      group_id?: string;
+      action?: Action;
+      default_decision?: Decision;
+      high_risk?: HighRiskSpec;
     };
-    if (!b.owner || typeof b.owner !== 'string') return reply.status(400).send(invalid('authorize requires a string `owner`.'));
-    if (!b.action || typeof b.action !== 'object') return reply.status(400).send(invalid('authorize requires an `action` object.'));
+    if (!b.owner || typeof b.owner !== 'string')
+      return reply.status(400).send(invalid('authorize requires a string `owner`.'));
+    if (!b.action || typeof b.action !== 'object')
+      return reply.status(400).send(invalid('authorize requires an `action` object.'));
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
 
@@ -75,7 +100,12 @@ export function registerAuthzRoutes(app: FastifyInstance, opts: { defaultApp?: (
         // Lazy auto-provision the group-of-one on first sight of an identity, so the resolved group_id is
         // real + stable. Idempotent thereafter (the read-only branch below).
         await backends.membership.mutate(app_id, (s) =>
-          provisionGroup(s, { owner: b.owner!, now: nowIso(), newGroupId: newId('grp'), dedupeOwnerSingleton: true }),
+          provisionGroup(s, {
+            owner: b.owner!,
+            now: nowIso(),
+            newGroupId: newId('grp'),
+            dedupeOwnerSingleton: true,
+          }),
         );
         membership = resolveMembership(await backends.membership.read(app_id), b.owner, undefined);
       } else {
@@ -107,7 +137,9 @@ export function registerAuthzRoutes(app: FastifyInstance, opts: { defaultApp?: (
         rule: decision.rule,
         high_risk: decision.high_risk,
         action: b.action,
-        ...(membership ? { group_id: decision.group_id, role: decision.role, is_member: decision.is_member } : {}),
+        ...(membership
+          ? { group_id: decision.group_id, role: decision.role, is_member: decision.is_member }
+          : {}),
       },
     });
 
@@ -125,8 +157,10 @@ export function registerAuthzRoutes(app: FastifyInstance, opts: { defaultApp?: (
 
   app.post('/policies', async (req, reply) => {
     const b = (req.body ?? {}) as Partial<PolicyRule> & { app?: string };
-    if (!b.effect || !EFFECTS.includes(b.effect)) return reply.status(422).send(invalid(`a policy requires \`effect\` (one of ${EFFECTS.join(', ')}).`));
-    if (b.match !== undefined && (typeof b.match !== 'object' || Array.isArray(b.match))) return reply.status(422).send(invalid('`match` must be an object.'));
+    if (!b.effect || !EFFECTS.includes(b.effect))
+      return reply.status(422).send(invalid(`a policy requires \`effect\` (one of ${EFFECTS.join(', ')}).`));
+    if (b.match !== undefined && (typeof b.match !== 'object' || Array.isArray(b.match)))
+      return reply.status(422).send(invalid('`match` must be an object.'));
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
 
@@ -165,7 +199,10 @@ export function registerAuthzRoutes(app: FastifyInstance, opts: { defaultApp?: (
     const app_id = await resolveAppId(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
     const policy = await (await getBackends()).policy.get(app_id, id);
-    if (!policy) return reply.status(404).send({ error: { code: 'not_found', message: `no policy "${id}".`, retry: 'change-input' } });
+    if (!policy)
+      return reply
+        .status(404)
+        .send({ error: { code: 'not_found', message: `no policy "${id}".`, retry: 'change-input' } });
     return { policy };
   });
 
@@ -193,18 +230,27 @@ export function registerAuthzRoutes(app: FastifyInstance, opts: { defaultApp?: (
   // === Progressive autonomy — record + count approvals of a staged action class ===================
   app.post('/authz/approvals', async (req, reply) => {
     const b = (req.body ?? {}) as { app?: string; owner?: string; action_class?: string };
-    if (!b.owner || typeof b.owner !== 'string') return reply.status(400).send(invalid('an approval requires a string `owner`.'));
-    if (!b.action_class || typeof b.action_class !== 'string') return reply.status(400).send(invalid('an approval requires a string `action_class`.'));
+    if (!b.owner || typeof b.owner !== 'string')
+      return reply.status(400).send(invalid('an approval requires a string `owner`.'));
+    if (!b.action_class || typeof b.action_class !== 'string')
+      return reply.status(400).send(invalid('an approval requires a string `action_class`.'));
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
-    await store.appendAppEvent({ app_id, type: AUTHZ_APPROVAL, subject: b.action_class, owner: b.owner, data: { action_class: b.action_class } });
+    await store.appendAppEvent({
+      app_id,
+      type: AUTHZ_APPROVAL,
+      subject: b.action_class,
+      owner: b.owner,
+      data: { action_class: b.action_class },
+    });
     return reply.status(200).send({ recorded: true });
   });
 
   app.get('/authz/approvals', async (req, reply) => {
     const q = req.query as { app?: string; owner?: string; action_class?: string; threshold?: string };
     if (!q.owner) return reply.status(400).send(invalid('an approvals query requires an `owner`.'));
-    if (!q.action_class) return reply.status(400).send(invalid('an approvals query requires an `action_class`.'));
+    if (!q.action_class)
+      return reply.status(400).send(invalid('an approvals query requires an `action_class`.'));
     const app_id = await resolveAppId(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
     const events = await store.listAppEvents({ app_id, owner: q.owner, subject: q.action_class, limit: 500 });

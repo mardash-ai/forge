@@ -69,10 +69,14 @@ describe('SetupObservability capability', () => {
 
   it('upserts — a second call updates rather than duplicates the resource', async () => {
     await executeCapability('setup-observability', INPUT, SYSTEM_ACTOR);
-    await executeCapability('setup-observability', {
-      ...INPUT,
-      endpoint: 'http://langfuse-web:3000/api/public/otel',
-    }, SYSTEM_ACTOR);
+    await executeCapability(
+      'setup-observability',
+      {
+        ...INPUT,
+        endpoint: 'http://langfuse-web:3000/api/public/otel',
+      },
+      SYSTEM_ACTOR,
+    );
 
     const all = await store.listResources({ type: 'ObservabilityStack' });
     expect(all).toHaveLength(1);
@@ -119,7 +123,7 @@ describe('otel plugin: initOtel', () => {
   // Save / restore the module-level state between tests via the public API.
   const prevPub = process.env.LANGFUSE_PUBLIC_KEY;
   const prevSec = process.env.LANGFUSE_SECRET_KEY;
-  const prevEp  = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  const prevEp = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 
   afterEach(() => {
     delete process.env.LANGFUSE_PUBLIC_KEY;
@@ -157,10 +161,10 @@ describe('otel plugin: initOtel', () => {
   // Restore after all init tests
   afterEach(() => {
     // disable again so other tests aren't affected by a stray enabled state
-    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces' });
     if (prevPub !== undefined) process.env.LANGFUSE_PUBLIC_KEY = prevPub;
     if (prevSec !== undefined) process.env.LANGFUSE_SECRET_KEY = prevSec;
-    if (prevEp  !== undefined) process.env.OTEL_EXPORTER_OTLP_ENDPOINT = prevEp;
+    if (prevEp !== undefined) process.env.OTEL_EXPORTER_OTLP_ENDPOINT = prevEp;
   });
 });
 
@@ -173,7 +177,7 @@ describe('otel plugin: SpanContext + startSpan', () => {
 
   it('child span inherits parent trace id', () => {
     const parent = startSpan('parent.op');
-    const child  = startSpan('child.op', { parent });
+    const child = startSpan('child.op', { parent });
     expect(child.traceId).toBe(parent.traceId);
     expect(child.spanId).not.toBe(parent.spanId);
   });
@@ -186,15 +190,18 @@ describe('otel plugin: SpanContext + startSpan', () => {
 
   it('end() does not throw whether tracing is enabled or disabled', () => {
     // disabled path
-    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces' });
     expect(() => startSpan('noop.op').end('ok')).not.toThrow();
 
     // enabled path (no real network — exportSpan fires-and-forgets)
-    initOtel({ endpoint: 'http://127.0.0.1:19998/api/public/otel', tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({
+      endpoint: 'http://127.0.0.1:19998/api/public/otel',
+      tracesEndpoint: 'https://collector.example/v1/traces',
+    });
     expect(() => startSpan('live.op').end('ok')).not.toThrow();
 
     // clean up
-    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces' });
   });
 });
 
@@ -245,17 +252,21 @@ describe('otel plugin: withSpan', () => {
 
   it('propagates errors and does not swallow them', async () => {
     await expect(
-      withSpan('error.op', {}, async (_span) => { throw new Error('boom'); }),
+      withSpan('error.op', {}, async (_span) => {
+        throw new Error('boom');
+      }),
     ).rejects.toThrow('boom');
   });
 
   it('end() is called automatically even on error (no secondary throw from tracing)', async () => {
     // The end() call in withSpan must not produce a secondary throw when tracing
     // is disabled.
-    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces' });
     let caught: Error | undefined;
     try {
-      await withSpan('auto-end.op', {}, async () => { throw new Error('expected'); });
+      await withSpan('auto-end.op', {}, async () => {
+        throw new Error('expected');
+      });
     } catch (e) {
       caught = e as Error;
     }
@@ -304,7 +315,9 @@ describe('otel plugin: capPayload (C36 payload capture)', () => {
     const big = 'x'.repeat(PAYLOAD_CAP_BYTES * 3);
     const capped = capPayload(big);
     expect(capped.endsWith('…[truncated]')).toBe(true);
-    expect(Buffer.byteLength(capped, 'utf8')).toBeLessThanOrEqual(PAYLOAD_CAP_BYTES + Buffer.byteLength('…[truncated]', 'utf8'));
+    expect(Buffer.byteLength(capped, 'utf8')).toBeLessThanOrEqual(
+      PAYLOAD_CAP_BYTES + Buffer.byteLength('…[truncated]', 'utf8'),
+    );
     // Under the cap → untouched, no suffix.
     expect(capPayload('y'.repeat(100))).toBe('y'.repeat(100));
   });
@@ -349,17 +362,21 @@ describe('otel plugin: RED metric attribute keys', () => {
 
   afterEach(() => {
     globalThis.fetch = realFetch;
-    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces', });
+    initOtel({ tracesEndpoint: 'https://collector.example/v1/traces' });
   });
 
   function attrKeys(body: string): Set<string> {
     const keys = new Set<string>();
     const payload = JSON.parse(body) as {
-      resourceMetrics: { scopeMetrics: { metrics: {
-        sum?: { dataPoints: { attributes: { key: string }[] }[] };
-        histogram?: { dataPoints: { attributes: { key: string }[] }[] };
-        gauge?: { dataPoints: { attributes: { key: string }[] }[] };
-      }[] }[] }[];
+      resourceMetrics: {
+        scopeMetrics: {
+          metrics: {
+            sum?: { dataPoints: { attributes: { key: string }[] }[] };
+            histogram?: { dataPoints: { attributes: { key: string }[] }[] };
+            gauge?: { dataPoints: { attributes: { key: string }[] }[] };
+          }[];
+        }[];
+      }[];
     };
     for (const rm of payload.resourceMetrics)
       for (const sm of rm.scopeMetrics)
@@ -381,7 +398,13 @@ describe('otel plugin: RED metric attribute keys', () => {
   });
 
   it('error counter keeps the same schema plus error.class', () => {
-    recordToolCallMetric({ tool: 'track', app: 'dorinda-api', outcome: 'error', duration_ms: 5, error_class: 'unknown_tool' });
+    recordToolCallMetric({
+      tool: 'track',
+      app: 'dorinda-api',
+      outcome: 'error',
+      duration_ms: 5,
+      error_class: 'unknown_tool',
+    });
     const keys = attrKeys(bodies[0]!);
     expect(keys).toContain('tool');
     expect(keys).toContain('error.class');
@@ -404,11 +427,22 @@ describe('otel plugin: RED metric attribute keys', () => {
 // Metrics go to a plain OTLP collector that takes unauthenticated writes; they have nothing to do
 // with Langfuse credentials. These tests exist so that coupling can never come back.
 describe('metrics are independent of Langfuse credentials — 0.79.25', () => {
-  const KEYS = ['OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT',
-                'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS'];
+  const KEYS = [
+    'OTEL_EXPORTER_OTLP_ENDPOINT',
+    'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT',
+    'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT',
+    'OTEL_EXPORTER_OTLP_HEADERS',
+  ];
   const saved: Record<string, string | undefined> = {};
-  beforeEach(() => { KEYS.forEach((k) => { saved[k] = process.env[k]; delete process.env[k]; }); });
-  afterEach(() => { KEYS.forEach((k) => (saved[k] === undefined ? delete process.env[k] : (process.env[k] = saved[k]!))); });
+  beforeEach(() => {
+    KEYS.forEach((k) => {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    });
+  });
+  afterEach(() => {
+    KEYS.forEach((k) => (saved[k] === undefined ? delete process.env[k] : (process.env[k] = saved[k]!)));
+  });
 
   it('enables BOTH tracing and metrics from an endpoint alone (the production shape)', () => {
     // Before 0.84.0 this asserted tracing was OFF here — which was the bug, not the contract.
@@ -438,9 +472,12 @@ describe('metrics are independent of Langfuse credentials — 0.79.25', () => {
   });
 
   it('keeps tracing and metrics both on when keys AND endpoint are present', () => {
-    expect(initOtel({
-      endpoint: 'https://collector.example', tracesEndpoint: 'https://collector.example/v1/traces',
-    })).toBe(true);
+    expect(
+      initOtel({
+        endpoint: 'https://collector.example',
+        tracesEndpoint: 'https://collector.example/v1/traces',
+      }),
+    ).toBe(true);
     expect(isEnabled()).toBe(true);
     expect(isMetricsEnabled()).toBe(true);
   });
@@ -451,13 +488,20 @@ describe('metrics are independent of Langfuse credentials — 0.79.25', () => {
 // Sending `Authorization: ` on every export is at best meaningless and at worst rejected — and
 // because failures were swallowed, it would be invisible either way.
 describe('metrics export sends no empty Authorization — 0.79.26', () => {
-  const KEYS = ['OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS'];
+  const KEYS = [
+    'OTEL_EXPORTER_OTLP_ENDPOINT',
+    'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT',
+    'OTEL_EXPORTER_OTLP_HEADERS',
+  ];
   const saved: Record<string, string | undefined> = {};
   let calls: Array<{ url: string; headers: Record<string, string> }> = [];
   const realFetch = globalThis.fetch;
 
   beforeEach(() => {
-    KEYS.forEach((k) => { saved[k] = process.env[k]; delete process.env[k]; });
+    KEYS.forEach((k) => {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    });
     calls = [];
     globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
       calls.push({ url: String(url), headers: (init?.headers ?? {}) as Record<string, string> });
@@ -507,14 +551,24 @@ describe('metrics export sends no empty Authorization — 0.79.26', () => {
 // 31-tool surface emitted 31 identical gauges and left the store permanently empty while the
 // collector returned 200 to the app.
 describe('registration gauge does not duplicate itself in one batch — 0.79.27', () => {
-  const KEYS = ['OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS'];
+  const KEYS = [
+    'OTEL_EXPORTER_OTLP_ENDPOINT',
+    'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT',
+    'OTEL_EXPORTER_OTLP_HEADERS',
+  ];
   const saved: Record<string, string | undefined> = {};
   let posts = 0;
   const realFetch = globalThis.fetch;
   beforeEach(() => {
-    KEYS.forEach((k) => { saved[k] = process.env[k]; delete process.env[k]; });
+    KEYS.forEach((k) => {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    });
     posts = 0;
-    globalThis.fetch = (async () => { posts += 1; return new Response('{}', { status: 200 }); }) as typeof fetch;
+    globalThis.fetch = (async () => {
+      posts += 1;
+      return new Response('{}', { status: 200 });
+    }) as typeof fetch;
   });
   afterEach(() => {
     globalThis.fetch = realFetch;

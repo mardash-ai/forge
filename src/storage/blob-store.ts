@@ -134,7 +134,12 @@ export class BlobStore implements BlobBackend, MigratableBlobBackend {
   //   - metadata write fail → the just-moved byte file is removed, then the error propagates (507/503).
   // The caller MUST have already validated size/allowlist/magic BEFORE calling — commit only owns quota
   // + the atomic move. `tmpPath` must be from prepareTemp(appId) (same dir as the final file).
-  async commit(appId: string, tmpPath: string, meta: BlobMetadata, config: BlobConfig): Promise<CommitResult> {
+  async commit(
+    appId: string,
+    tmpPath: string,
+    meta: BlobMetadata,
+    config: BlobConfig,
+  ): Promise<CommitResult> {
     return this.withLock(appId, async () => {
       const map = await this.readMap(appId);
       const usage = this.ownerUsage(map, meta.owner);
@@ -198,7 +203,9 @@ export class BlobStore implements BlobBackend, MigratableBlobBackend {
   // (hence owner scoping + in-bounds range) has already been resolved by the route via get().
   async openRange(appId: string, blobId: string, range?: { start: number; end: number }): Promise<Readable> {
     const filePath = this.bytesFile(appId, blobId);
-    return range ? createReadStream(filePath, { start: range.start, end: range.end }) : createReadStream(filePath);
+    return range
+      ? createReadStream(filePath, { start: range.start, end: range.end })
+      : createReadStream(filePath);
   }
 
   // --- migration surface ---------------------------------------------------

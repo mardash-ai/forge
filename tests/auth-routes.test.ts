@@ -36,7 +36,10 @@ function setCookie(res: { headers: Record<string, unknown> }, name: string): str
   const line = arr.find((c) => c.startsWith(`${name}=`));
   return line;
 }
-function cookieValue(res: { cookies: Array<{ name: string; value: string }> }, name: string): string | undefined {
+function cookieValue(
+  res: { cookies: Array<{ name: string; value: string }> },
+  name: string,
+): string | undefined {
   return res.cookies.find((c) => c.name === name)?.value;
 }
 function linkToken(kind: 'verify' | 'reset'): string {
@@ -48,20 +51,43 @@ function linkToken(kind: 'verify' | 'reset'): string {
 
 // Full email/password onboarding → a logged-in response carrying BOTH cookies.
 async function signupVerifyLogin(email = 'jane@example.com', password = 'correct horse battery') {
-  await server.inject({ method: 'POST', url: '/auth/signup', headers: FORM, payload: form({ email, password }) });
+  await server.inject({
+    method: 'POST',
+    url: '/auth/signup',
+    headers: FORM,
+    payload: form({ email, password }),
+  });
   await server.inject({ method: 'GET', url: `/auth/verify?token=${linkToken('verify')}`, headers: HDR });
-  return server.inject({ method: 'POST', url: '/auth/login', headers: FORM, payload: form({ email, password }) });
+  return server.inject({
+    method: 'POST',
+    url: '/auth/login',
+    headers: FORM,
+    payload: form({ email, password }),
+  });
 }
 function refreshWith(refresh: string) {
-  return server.inject({ method: 'POST', url: '/auth/refresh', headers: { ...HDR, cookie: `forge_refresh=${refresh}` } });
+  return server.inject({
+    method: 'POST',
+    url: '/auth/refresh',
+    headers: { ...HDR, cookie: `forge_refresh=${refresh}` },
+  });
 }
 
 async function seedApp(): Promise<Application> {
   const now = nowIso();
   const a: Application = {
-    id: `app_${APP}`, type: 'Application', app_id: `app_${APP}`, created_at: now, updated_at: now,
-    name: APP, repo_path: '/app', platform: 'web', framework: 'nextjs', template: 'nextjs-web',
-    language: 'typescript', package_manager: 'npm',
+    id: `app_${APP}`,
+    type: 'Application',
+    app_id: `app_${APP}`,
+    created_at: now,
+    updated_at: now,
+    name: APP,
+    repo_path: '/app',
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   };
   await store.saveResource(a);
   return a;
@@ -85,7 +111,16 @@ beforeEach(async () => {
   dir = await mkdtemp(path.join(tmpdir(), 'forge-authroutes-'));
   process.env.FORGE_STATE_DIR = dir;
   delete process.env.FORGE_APP_NAME;
-  for (const n of ['AUTH_SESSION_SECRET', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'AUTH_SERVICE_TOKEN', 'SMTP_URL', 'EMAIL_FROM', 'FORGE_AUTH_PUBLIC_URL', 'FORGE_AUTH_INSECURE_COOKIES']) {
+  for (const n of [
+    'AUTH_SESSION_SECRET',
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET',
+    'AUTH_SERVICE_TOKEN',
+    'SMTP_URL',
+    'EMAIL_FROM',
+    'FORGE_AUTH_PUBLIC_URL',
+    'FORGE_AUTH_INSECURE_COOKIES',
+  ]) {
     delete process.env[n];
   }
   await store.init();
@@ -114,14 +149,24 @@ describe('email/password: signup → verify → login → session (cross-request
     await configureSessionAndEmail();
 
     // Sign up.
-    const signup = await server.inject({ method: 'POST', url: '/auth/signup', headers: FORM, payload: form({ email: 'jane@example.com', password: 'correct horse battery' }) });
+    const signup = await server.inject({
+      method: 'POST',
+      url: '/auth/signup',
+      headers: FORM,
+      payload: form({ email: 'jane@example.com', password: 'correct horse battery' }),
+    });
     expect(signup.statusCode).toBe(200);
     expect(signup.body).toContain('Check your email');
     expect(emails.length).toBe(1);
     expect(emails[0]!.subject).toBe('Verify your email address');
 
     // Cannot log in before verifying.
-    const early = await server.inject({ method: 'POST', url: '/auth/login', headers: FORM, payload: form({ email: 'jane@example.com', password: 'correct horse battery' }) });
+    const early = await server.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: FORM,
+      payload: form({ email: 'jane@example.com', password: 'correct horse battery' }),
+    });
     expect(early.statusCode).toBe(403);
     expect(early.body).toContain('verify your email');
 
@@ -136,7 +181,12 @@ describe('email/password: signup → verify → login → session (cross-request
     expect(reused.statusCode).toBe(400);
 
     // Log in → session cookie with httpOnly + Secure + SameSite.
-    const login = await server.inject({ method: 'POST', url: '/auth/login', headers: FORM, payload: form({ email: 'jane@example.com', password: 'correct horse battery' }) });
+    const login = await server.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: FORM,
+      payload: form({ email: 'jane@example.com', password: 'correct horse battery' }),
+    });
     expect(login.statusCode).toBe(303);
     const cookieLine = setCookie(login, 'forge_session')!;
     expect(cookieLine).toContain('HttpOnly');
@@ -146,7 +196,11 @@ describe('email/password: signup → verify → login → session (cross-request
     expect(sessionToken.length).toBeGreaterThan(20);
 
     // Cross-request: the accessor returns the identity for the cookie.
-    const me = await server.inject({ method: 'GET', url: '/auth/session', headers: { ...HDR, cookie: `forge_session=${sessionToken}` } });
+    const me = await server.inject({
+      method: 'GET',
+      url: '/auth/session',
+      headers: { ...HDR, cookie: `forge_session=${sessionToken}` },
+    });
     expect(me.statusCode).toBe(200);
     expect(me.json()).toMatchObject({ email: 'jane@example.com' });
     expect(me.json().userId).toBeTruthy();
@@ -156,10 +210,19 @@ describe('email/password: signup → verify → login → session (cross-request
     expect(anon.statusCode).toBe(401);
 
     // Sign out revokes the server session; the SAME cookie is now dead.
-    const out = await server.inject({ method: 'POST', url: '/auth/logout', headers: { ...FORM, cookie: `forge_session=${sessionToken}` }, payload: '' });
+    const out = await server.inject({
+      method: 'POST',
+      url: '/auth/logout',
+      headers: { ...FORM, cookie: `forge_session=${sessionToken}` },
+      payload: '',
+    });
     expect(out.statusCode).toBe(303);
     expect(setCookie(out, 'forge_session')).toContain('Max-Age=0');
-    const afterOut = await server.inject({ method: 'GET', url: '/auth/session', headers: { ...HDR, cookie: `forge_session=${sessionToken}` } });
+    const afterOut = await server.inject({
+      method: 'GET',
+      url: '/auth/session',
+      headers: { ...HDR, cookie: `forge_session=${sessionToken}` },
+    });
     expect(afterOut.statusCode).toBe(401);
   });
 
@@ -167,7 +230,7 @@ describe('email/password: signup → verify → login → session (cross-request
   // browser's session cookie holds. With no way to sign OUT and come back to the same authorize
   // request, a user reconnecting a connector silently rebound their AI to the wrong account
   // (observed live). Logout therefore honors a same-origin `next` — and only a same-origin one.
-  it('logout honors a same-origin `next` (the consent screen\'s switch-account escape hatch)', async () => {
+  it("logout honors a same-origin `next` (the consent screen's switch-account escape hatch)", async () => {
     await configureSessionAndEmail();
     const back = await server.inject({
       method: 'GET',
@@ -182,7 +245,11 @@ describe('email/password: signup → verify → login → session (cross-request
   it('logout `next` cannot be turned into an open redirect', async () => {
     await configureSessionAndEmail();
     for (const evil of ['https://evil.test/steal', '//evil.test/steal', '/\\evil.test']) {
-      const out = await server.inject({ method: 'GET', url: '/auth/logout?next=' + encodeURIComponent(evil), headers: HDR });
+      const out = await server.inject({
+        method: 'GET',
+        url: '/auth/logout?next=' + encodeURIComponent(evil),
+        headers: HDR,
+      });
       expect(out.headers.location).not.toContain('evil.test');
     }
     // No `next` at all keeps the historical destination.
@@ -194,7 +261,11 @@ describe('email/password: signup → verify → login → session (cross-request
     await configureSessionAndEmail();
     // A protocol-relative / backslash target is neutralized to "/".
     for (const evil of ['//evil.com', '/\\evil.com', 'https://evil.com']) {
-      const pg = await server.inject({ method: 'GET', url: `/auth/login?next=${encodeURIComponent(evil)}`, headers: HDR });
+      const pg = await server.inject({
+        method: 'GET',
+        url: `/auth/login?next=${encodeURIComponent(evil)}`,
+        headers: HDR,
+      });
       expect(pg.body).toContain('name="next" value="/"');
       expect(pg.body).not.toContain(evil.replace(/&/g, '&amp;'));
     }
@@ -202,14 +273,29 @@ describe('email/password: signup → verify → login → session (cross-request
 
   it('rejects a wrong password with 401 and never reveals the account', async () => {
     await configureSessionAndEmail();
-    await server.inject({ method: 'POST', url: '/auth/signup', headers: FORM, payload: form({ email: 'jane@example.com', password: 'correct horse battery' }) });
+    await server.inject({
+      method: 'POST',
+      url: '/auth/signup',
+      headers: FORM,
+      payload: form({ email: 'jane@example.com', password: 'correct horse battery' }),
+    });
     const token = linkToken('verify');
     await server.inject({ method: 'GET', url: `/auth/verify?token=${token}`, headers: HDR });
-    const bad = await server.inject({ method: 'POST', url: '/auth/login', headers: FORM, payload: form({ email: 'jane@example.com', password: 'WRONG' }) });
+    const bad = await server.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: FORM,
+      payload: form({ email: 'jane@example.com', password: 'WRONG' }),
+    });
     expect(bad.statusCode).toBe(401);
     expect(bad.body).toContain('Incorrect email or password');
     // An unknown email gives the same 401 (no user enumeration).
-    const unknown = await server.inject({ method: 'POST', url: '/auth/login', headers: FORM, payload: form({ email: 'nobody@example.com', password: 'whatever12' }) });
+    const unknown = await server.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: FORM,
+      payload: form({ email: 'nobody@example.com', password: 'whatever12' }),
+    });
     expect(unknown.statusCode).toBe(401);
     expect(unknown.body).toContain('Incorrect email or password');
   });
@@ -218,40 +304,92 @@ describe('email/password: signup → verify → login → session (cross-request
 describe('password reset (self-service, single-use, revokes sessions)', () => {
   it('request → reset link → new password works, old fails, old sessions killed', async () => {
     await configureSessionAndEmail();
-    await server.inject({ method: 'POST', url: '/auth/signup', headers: FORM, payload: form({ email: 'jane@example.com', password: 'original-pass-1' }) });
+    await server.inject({
+      method: 'POST',
+      url: '/auth/signup',
+      headers: FORM,
+      payload: form({ email: 'jane@example.com', password: 'original-pass-1' }),
+    });
     await server.inject({ method: 'GET', url: `/auth/verify?token=${linkToken('verify')}`, headers: HDR });
-    const login = await server.inject({ method: 'POST', url: '/auth/login', headers: FORM, payload: form({ email: 'jane@example.com', password: 'original-pass-1' }) });
+    const login = await server.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: FORM,
+      payload: form({ email: 'jane@example.com', password: 'original-pass-1' }),
+    });
     const oldCookie = cookieValue(login, 'forge_session')!;
 
     // Request reset (identical response regardless of existence).
     emails = [];
-    const forgot = await server.inject({ method: 'POST', url: '/auth/forgot', headers: FORM, payload: form({ email: 'jane@example.com' }) });
+    const forgot = await server.inject({
+      method: 'POST',
+      url: '/auth/forgot',
+      headers: FORM,
+      payload: form({ email: 'jane@example.com' }),
+    });
     expect(forgot.statusCode).toBe(200);
     expect(forgot.body).toContain('If an account exists');
     expect(emails[0]!.subject).toBe('Reset your password');
 
     // Set a new password.
     const rtoken = linkToken('reset');
-    const reset = await server.inject({ method: 'POST', url: '/auth/reset', headers: FORM, payload: form({ token: rtoken, password: 'brand-new-pass-2' }) });
+    const reset = await server.inject({
+      method: 'POST',
+      url: '/auth/reset',
+      headers: FORM,
+      payload: form({ token: rtoken, password: 'brand-new-pass-2' }),
+    });
     expect(reset.statusCode).toBe(303);
 
     // A used reset token is rejected.
-    const reuse = await server.inject({ method: 'POST', url: '/auth/reset', headers: FORM, payload: form({ token: rtoken, password: 'yet-another-3' }) });
+    const reuse = await server.inject({
+      method: 'POST',
+      url: '/auth/reset',
+      headers: FORM,
+      payload: form({ token: rtoken, password: 'yet-another-3' }),
+    });
     expect(reuse.statusCode).toBe(400);
 
     // New password logs in; old password fails.
-    expect((await server.inject({ method: 'POST', url: '/auth/login', headers: FORM, payload: form({ email: 'jane@example.com', password: 'brand-new-pass-2' }) })).statusCode).toBe(303);
-    expect((await server.inject({ method: 'POST', url: '/auth/login', headers: FORM, payload: form({ email: 'jane@example.com', password: 'original-pass-1' }) })).statusCode).toBe(401);
+    expect(
+      (
+        await server.inject({
+          method: 'POST',
+          url: '/auth/login',
+          headers: FORM,
+          payload: form({ email: 'jane@example.com', password: 'brand-new-pass-2' }),
+        })
+      ).statusCode,
+    ).toBe(303);
+    expect(
+      (
+        await server.inject({
+          method: 'POST',
+          url: '/auth/login',
+          headers: FORM,
+          payload: form({ email: 'jane@example.com', password: 'original-pass-1' }),
+        })
+      ).statusCode,
+    ).toBe(401);
 
     // The pre-reset session was revoked.
-    const me = await server.inject({ method: 'GET', url: '/auth/session', headers: { ...HDR, cookie: `forge_session=${oldCookie}` } });
+    const me = await server.inject({
+      method: 'GET',
+      url: '/auth/session',
+      headers: { ...HDR, cookie: `forge_session=${oldCookie}` },
+    });
     expect(me.statusCode).toBe(401);
   });
 
   it('forgot for an unknown email still returns the neutral page and sends nothing', async () => {
     await configureSessionAndEmail();
     emails = [];
-    const forgot = await server.inject({ method: 'POST', url: '/auth/forgot', headers: FORM, payload: form({ email: 'ghost@example.com' }) });
+    const forgot = await server.inject({
+      method: 'POST',
+      url: '/auth/forgot',
+      headers: FORM,
+      payload: form({ email: 'ghost@example.com' }),
+    });
     expect(forgot.statusCode).toBe(200);
     expect(forgot.body).toContain('If an account exists');
     expect(emails.length).toBe(0);
@@ -266,7 +404,12 @@ describe('Google OAuth (stubbed provider)', () => {
     setOAuthProvider({
       authorizeUrl: ({ state, redirectUri, clientId }) =>
         `https://accounts.google.test/auth?client_id=${clientId}&state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`,
-      exchangeCode: async () => ({ providerUserId: 'g-sub-123', email: 'oauth@example.com', emailVerified: true, name: 'OAuth User' }),
+      exchangeCode: async () => ({
+        providerUserId: 'g-sub-123',
+        email: 'oauth@example.com',
+        emailVerified: true,
+        name: 'OAuth User',
+      }),
     });
   });
 
@@ -286,7 +429,11 @@ describe('Google OAuth (stubbed provider)', () => {
     expect(cb.statusCode).toBe(303);
     const sessionToken = cookieValue(cb, 'forge_session')!;
     expect(sessionToken).toBeTruthy();
-    const me = await server.inject({ method: 'GET', url: '/auth/session', headers: { ...HDR, cookie: `forge_session=${sessionToken}` } });
+    const me = await server.inject({
+      method: 'GET',
+      url: '/auth/session',
+      headers: { ...HDR, cookie: `forge_session=${sessionToken}` },
+    });
     expect(me.json()).toMatchObject({ email: 'oauth@example.com' });
   });
 
@@ -305,7 +452,11 @@ describe('Google OAuth (stubbed provider)', () => {
 
   it('P37: the SIGNED state survives WITHOUT the cookie (nested MCP-connect: /auth/google on api.<host>, callback on app.<host>)', async () => {
     // Carry a `next` (the /oauth/authorize URL) as the real connect flow does.
-    const authorize = await server.inject({ method: 'GET', url: '/auth/google?next=%2Foauth%2Fauthorize%3Fclient_id%3Dx', headers: HDR });
+    const authorize = await server.inject({
+      method: 'GET',
+      url: '/auth/google?next=%2Foauth%2Fauthorize%3Fclient_id%3Dx',
+      headers: HDR,
+    });
     const state = new URL(String(authorize.headers.location)).searchParams.get('state')!;
     // The callback arrives on the OTHER host — NO forge_oauth_state cookie is present.
     const cb = await server.inject({
@@ -338,7 +489,12 @@ describe('graceful degradation (§7) — unconfigured pieces are detectable, nev
     // Email configured but NO AUTH_SESSION_SECRET.
     await setSecret(appId, 'SMTP_URL', 'smtp://u:p@mail.test:587');
     await setSecret(appId, 'EMAIL_FROM', 'Demo <no-reply@demo.test>');
-    const login = await server.inject({ method: 'POST', url: '/auth/login', headers: FORM, payload: form({ email: 'a@b.com', password: 'whatever12' }) });
+    const login = await server.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: FORM,
+      payload: form({ email: 'a@b.com', password: 'whatever12' }),
+    });
     expect(login.statusCode).toBe(503);
     expect(login.body).toContain('unavailable');
   });
@@ -355,7 +511,12 @@ describe('graceful degradation (§7) — unconfigured pieces are detectable, nev
 
   it('no email configured → email/pw signup is blocked cleanly (503), no user created', async () => {
     await setSecret(appId, 'AUTH_SESSION_SECRET', 'the-session-signing-secret'); // session yes, email NO
-    const signup = await server.inject({ method: 'POST', url: '/auth/signup', headers: FORM, payload: form({ email: 'jane@example.com', password: 'correct horse battery' }) });
+    const signup = await server.inject({
+      method: 'POST',
+      url: '/auth/signup',
+      headers: FORM,
+      payload: form({ email: 'jane@example.com', password: 'correct horse battery' }),
+    });
     expect(signup.statusCode).toBe(503);
     expect(signup.body).toContain('unavailable');
     // No account was persisted.
@@ -375,10 +536,20 @@ describe('secret hygiene — the password is never returned, stored in plaintext
   it('keeps the plaintext out of responses, the store, and the event log', async () => {
     await configureSessionAndEmail();
     const PW = 'Sup3rS3cretPlaintext!';
-    const signup = await server.inject({ method: 'POST', url: '/auth/signup', headers: FORM, payload: form({ email: 'jane@example.com', password: PW }) });
+    const signup = await server.inject({
+      method: 'POST',
+      url: '/auth/signup',
+      headers: FORM,
+      payload: form({ email: 'jane@example.com', password: PW }),
+    });
     expect(signup.body).not.toContain(PW);
     await server.inject({ method: 'GET', url: `/auth/verify?token=${linkToken('verify')}`, headers: HDR });
-    const login = await server.inject({ method: 'POST', url: '/auth/login', headers: FORM, payload: form({ email: 'jane@example.com', password: PW }) });
+    const login = await server.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: FORM,
+      payload: form({ email: 'jane@example.com', password: PW }),
+    });
     expect(login.body).not.toContain(PW);
     // The stored session token in the cookie is not the password, and the account
     // record on disk holds only a scrypt hash — never the plaintext.
@@ -408,14 +579,24 @@ describe('secret hygiene — the password is never returned, stored in plaintext
 describe('owner migration hook (§8)', () => {
   it('seeds an owner (verified) who can immediately sign in; response is redacted', async () => {
     await configureSessionAndEmail();
-    const seed = await server.inject({ method: 'POST', url: '/auth/admin/seed-owner', headers: FORM, payload: form({ email: 'owner@example.com', password: 'owner-pass-123' }) });
+    const seed = await server.inject({
+      method: 'POST',
+      url: '/auth/admin/seed-owner',
+      headers: FORM,
+      payload: form({ email: 'owner@example.com', password: 'owner-pass-123' }),
+    });
     expect(seed.statusCode).toBe(200);
     const body = seed.json();
     expect(body.owner).toMatchObject({ is_owner: true, email_verified: true, has_password: true });
     expect(body.owner.email).toBe('o***@example.com'); // redacted
     expect(JSON.stringify(body)).not.toContain('owner-pass-123');
     // Owner logs in immediately (already verified — no email step).
-    const login = await server.inject({ method: 'POST', url: '/auth/login', headers: FORM, payload: form({ email: 'owner@example.com', password: 'owner-pass-123' }) });
+    const login = await server.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: FORM,
+      payload: form({ email: 'owner@example.com', password: 'owner-pass-123' }),
+    });
     expect(login.statusCode).toBe(303);
     expect(cookieValue(login, 'forge_session')).toBeTruthy();
   });
@@ -458,7 +639,11 @@ describe('P8 — short-lived access + revocable, rotating refresh', () => {
     expect(r2).not.toBe(r1); // rotated — opaque tokens always differ
     expect(s2).toBeTruthy();
     // The freshly-minted access token verifies for a live session.
-    const me = await server.inject({ method: 'GET', url: '/auth/session', headers: { ...HDR, cookie: `forge_session=${s2}` } });
+    const me = await server.inject({
+      method: 'GET',
+      url: '/auth/session',
+      headers: { ...HDR, cookie: `forge_session=${s2}` },
+    });
     expect(me.statusCode).toBe(200);
     expect(me.json()).toMatchObject({ email: 'jane@example.com' });
   });
@@ -503,7 +688,12 @@ describe('P8 — short-lived access + revocable, rotating refresh', () => {
     const login = await signupVerifyLogin();
     const r1 = cookieValue(login, 'forge_refresh')!;
     const s1 = cookieValue(login, 'forge_session')!;
-    const out = await server.inject({ method: 'POST', url: '/auth/logout', headers: { ...FORM, cookie: `forge_session=${s1}; forge_refresh=${r1}` }, payload: '' });
+    const out = await server.inject({
+      method: 'POST',
+      url: '/auth/logout',
+      headers: { ...FORM, cookie: `forge_session=${s1}; forge_refresh=${r1}` },
+      payload: '',
+    });
     expect(out.statusCode).toBe(303);
     expect(setCookie(out, 'forge_session')).toContain('Max-Age=0');
     expect(setCookie(out, 'forge_refresh')).toContain('Max-Age=0');
@@ -515,7 +705,11 @@ describe('P8 — short-lived access + revocable, rotating refresh', () => {
     const login = await signupVerifyLogin();
     const r1 = cookieValue(login, 'forge_refresh')!;
     // No forge_session presented — logout must still kill the session via the refresh record.
-    const out = await server.inject({ method: 'GET', url: '/auth/logout', headers: { ...HDR, cookie: `forge_refresh=${r1}` } });
+    const out = await server.inject({
+      method: 'GET',
+      url: '/auth/logout',
+      headers: { ...HDR, cookie: `forge_refresh=${r1}` },
+    });
     expect(out.statusCode).toBe(303);
     expect((await refreshWith(r1)).statusCode).toBe(401);
   });
@@ -525,8 +719,18 @@ describe('P8 — short-lived access + revocable, rotating refresh', () => {
     const login = await signupVerifyLogin('jane@example.com', 'original-pass-1');
     const r1 = cookieValue(login, 'forge_refresh')!;
     emails = [];
-    await server.inject({ method: 'POST', url: '/auth/forgot', headers: FORM, payload: form({ email: 'jane@example.com' }) });
-    const reset = await server.inject({ method: 'POST', url: '/auth/reset', headers: FORM, payload: form({ token: linkToken('reset'), password: 'brand-new-pass-2' }) });
+    await server.inject({
+      method: 'POST',
+      url: '/auth/forgot',
+      headers: FORM,
+      payload: form({ email: 'jane@example.com' }),
+    });
+    const reset = await server.inject({
+      method: 'POST',
+      url: '/auth/reset',
+      headers: FORM,
+      payload: form({ token: linkToken('reset'), password: 'brand-new-pass-2' }),
+    });
     expect(reset.statusCode).toBe(303);
     expect((await refreshWith(r1)).statusCode).toBe(401);
   });
@@ -543,17 +747,32 @@ describe('P9 — the multi-app control plane scopes /auth without a sidecar', ()
     registerAuthRoutes(cp);
     await cp.ready();
     try {
-      const bare = await cp.inject({ method: 'POST', url: '/auth/login', headers: FORM, payload: form({ email: 'jane@example.com', password: 'correct horse battery' }) });
+      const bare = await cp.inject({
+        method: 'POST',
+        url: '/auth/login',
+        headers: FORM,
+        payload: form({ email: 'jane@example.com', password: 'correct horse battery' }),
+      });
       expect(bare.statusCode).toBe(404);
 
       // The X-Forge-App header a dev proxy sets scopes it → login succeeds.
-      const viaHeader = await cp.inject({ method: 'POST', url: '/auth/login', headers: { ...FORM, 'x-forge-app': APP }, payload: form({ email: 'jane@example.com', password: 'correct horse battery' }) });
+      const viaHeader = await cp.inject({
+        method: 'POST',
+        url: '/auth/login',
+        headers: { ...FORM, 'x-forge-app': APP },
+        payload: form({ email: 'jane@example.com', password: 'correct horse battery' }),
+      });
       expect(viaHeader.statusCode).toBe(303);
       expect(cookieValue(viaHeader, 'forge_session')).toBeTruthy();
       expect(cookieValue(viaHeader, 'forge_refresh')).toBeTruthy();
 
       // A ?app= query on the rewrite destination also scopes it, even for a POST.
-      const viaQuery = await cp.inject({ method: 'POST', url: `/auth/login?app=${APP}`, headers: FORM, payload: form({ email: 'jane@example.com', password: 'correct horse battery' }) });
+      const viaQuery = await cp.inject({
+        method: 'POST',
+        url: `/auth/login?app=${APP}`,
+        headers: FORM,
+        payload: form({ email: 'jane@example.com', password: 'correct horse battery' }),
+      });
       expect(viaQuery.statusCode).toBe(303);
     } finally {
       await cp.close();

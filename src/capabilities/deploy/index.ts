@@ -55,7 +55,8 @@ export function resolveWorkspacePath(workspace: string, arg: string): string {
 export const deployCapability: Capability<Input, Deployment> = {
   name: 'Deploy',
   slug: 'deploy',
-  description: 'Zero-downtime deploy of the app’s production stack (start-first roll) and record a Deployment.',
+  description:
+    'Zero-downtime deploy of the app’s production stack (start-first roll) and record a Deployment.',
   inputSchema,
   resourceType: 'Deployment',
   events: ['DeploymentStarted', 'DeploymentCompleted', 'DeploymentRolledBack'],

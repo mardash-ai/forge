@@ -43,7 +43,10 @@ describe.skipIf(!HAS_PG)('P26 Postgres identity backend — security + O4 group-
     const u = await id.createUser(APP, { email: 'grp@example.com', password_hash: 'h' });
     expect(u.personal_group_id).toBeTruthy();
 
-    const groups = await pool.query('SELECT id, kind FROM forge_identity_groups WHERE app_id=$1 AND id=$2', [APP, u.personal_group_id]);
+    const groups = await pool.query('SELECT id, kind FROM forge_identity_groups WHERE app_id=$1 AND id=$2', [
+      APP,
+      u.personal_group_id,
+    ]);
     expect(groups.rows[0]).toMatchObject({ id: u.personal_group_id, kind: 'personal' });
 
     const scope = await id.getUserScope(APP, u.id);
@@ -57,7 +60,10 @@ describe.skipIf(!HAS_PG)('P26 Postgres identity backend — security + O4 group-
     const u = await id.createUser(APP, { email: 'tok@example.com', password_hash: 'h' });
     const { token, hash } = newToken();
     await id.putVerifyToken(APP, hash, u.id, 3600);
-    const r = await pool.query<{ id: string }>('SELECT id FROM forge_identity_verify_tokens WHERE app_id=$1', [APP]);
+    const r = await pool.query<{ id: string }>(
+      'SELECT id FROM forge_identity_verify_tokens WHERE app_id=$1',
+      [APP],
+    );
     const ids = r.rows.map((x) => x.id);
     expect(ids).toContain(hash);
     expect(ids).not.toContain(token);
@@ -71,7 +77,10 @@ describe.skipIf(!HAS_PG)('P26 Postgres identity backend — security + O4 group-
     try {
       const fs = new FsIdentityBackend();
       const APP2 = 'app_backfill';
-      const u = await fs.createUser(APP2, { email: 'bf@example.com', password_hash: await hashPassword('pw') });
+      const u = await fs.createUser(APP2, {
+        email: 'bf@example.com',
+        password_hash: await hashPassword('pw'),
+      });
       const s = await fs.createSession(APP2, u.id, 3600);
       await fs.putRefreshToken(APP2, { tokenHash: 'rt_bf', userId: u.id, sessionId: s.id, ttlSeconds: 3600 });
 
@@ -96,7 +105,11 @@ describe.skipIf(!HAS_PG)('P26 Postgres identity backend — security + O4 group-
 
   it('refresh rotation runs in a single transaction (P27): concurrent redeem of one token yields exactly one success', async () => {
     const id = (await getBackends()).identity;
-    const u = await id.createUser(APP, { email: 'rot@example.com', password_hash: 'h', email_verified: true });
+    const u = await id.createUser(APP, {
+      email: 'rot@example.com',
+      password_hash: 'h',
+      email_verified: true,
+    });
     const s = await id.createSession(APP, u.id, 3600);
     await id.putRefreshToken(APP, { tokenHash: 'rt_a', userId: u.id, sessionId: s.id, ttlSeconds: 3600 });
     const OPTS = { refreshTtlSeconds: 3600, sessionTtlSeconds: 3600, graceSeconds: 0 };

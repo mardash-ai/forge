@@ -15,14 +15,29 @@ const HAS_PG = process.env.FORGE_CONNECTIONS_BACKEND === 'postgres' && Boolean(p
 const sealed = (s: string) => ({ iv: `iv-${s}`, tag: `tag-${s}`, data: `data-${s}` });
 
 const conn = (over: Partial<Connection> = {}): Connection => ({
-  owner: 'A', provider: 'google', access_sealed: sealed('a'), refresh_sealed: sealed('r'),
-  access_expires_at: new Date(Date.now() + 3600_000).toISOString(), scopes: ['openid', 'email'],
-  status: 'connected', account_label: 'a@gmail.test', connected_at: nowIso(), updated_at: nowIso(), ...over,
+  owner: 'A',
+  provider: 'google',
+  access_sealed: sealed('a'),
+  refresh_sealed: sealed('r'),
+  access_expires_at: new Date(Date.now() + 3600_000).toISOString(),
+  scopes: ['openid', 'email'],
+  status: 'connected',
+  account_label: 'a@gmail.test',
+  connected_at: nowIso(),
+  updated_at: nowIso(),
+  ...over,
 });
 
 const request = (over: Partial<ConnectRequest> = {}): ConnectRequest => ({
-  state: 'st1', owner: 'A', provider: 'google', code_verifier: 'verifier', redirect_uri: 'https://x/callback',
-  scopes: ['openid'], created_at: nowIso(), expires_at: new Date(Date.now() + 600_000).toISOString(), ...over,
+  state: 'st1',
+  owner: 'A',
+  provider: 'google',
+  code_verifier: 'verifier',
+  redirect_uri: 'https://x/callback',
+  scopes: ['openid'],
+  created_at: nowIso(),
+  expires_at: new Date(Date.now() + 600_000).toISOString(),
+  ...over,
 });
 
 describe.skipIf(!HAS_PG)('P26 Postgres connector-vault backend — jsonb, one-shot requests, backfill', () => {
@@ -65,8 +80,14 @@ describe.skipIf(!HAS_PG)('P26 Postgres connector-vault backend — jsonb, one-sh
 
   it('pruneExpiredRequests drops only stale pending requests', async () => {
     const b = (await getBackends()).connections;
-    await b.putRequest(APP, request({ state: 'fresh', expires_at: new Date(Date.now() + 600_000).toISOString() }));
-    await b.putRequest(APP, request({ state: 'stale', expires_at: new Date(Date.now() - 1000).toISOString() }));
+    await b.putRequest(
+      APP,
+      request({ state: 'fresh', expires_at: new Date(Date.now() + 600_000).toISOString() }),
+    );
+    await b.putRequest(
+      APP,
+      request({ state: 'stale', expires_at: new Date(Date.now() - 1000).toISOString() }),
+    );
     expect(await b.pruneExpiredRequests(APP, nowIso())).toBe(1);
     expect(await b.consumeRequest(APP, 'stale')).toBeNull();
     expect((await b.consumeRequest(APP, 'fresh'))?.state).toBe('fresh');

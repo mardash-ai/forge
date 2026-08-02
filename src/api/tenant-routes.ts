@@ -19,9 +19,12 @@ async function resolveAppId(
   defaultApp?: () => string | undefined,
 ): Promise<{ id: string; name: string } | null> {
   const n =
-    (typeof (req.query as { app?: string })?.app === 'string' && (req.query as { app?: string }).app!.trim()) ||
+    (typeof (req.query as { app?: string })?.app === 'string' &&
+      (req.query as { app?: string }).app!.trim()) ||
     (typeof (req.body as { app?: string })?.app === 'string' && (req.body as { app?: string }).app!.trim()) ||
-    (Array.isArray(req.headers[APP_HEADER]) ? (req.headers[APP_HEADER] as string[])[0] : (req.headers[APP_HEADER] as string | undefined)) ||
+    (Array.isArray(req.headers[APP_HEADER])
+      ? (req.headers[APP_HEADER] as string[])[0]
+      : (req.headers[APP_HEADER] as string | undefined)) ||
     defaultApp?.();
   if (!n) return null;
   const a = await store.findAppByName(String(n));
@@ -74,12 +77,18 @@ export function registerTenantRoutes(
 
     const app_ = await resolveAppId(req, opts.defaultApp);
     if (!app_) {
-      return reply.status(404).send({ error: { code: 'unknown_app', message: 'unknown app.', retry: 'needs-human' } });
+      return reply
+        .status(404)
+        .send({ error: { code: 'unknown_app', message: 'unknown app.', retry: 'needs-human' } });
     }
     const app_id = app_.id;
     if (!(await hasValidServiceToken(req, app_id))) {
       return reply.status(401).send({
-        error: { code: 'unauthorized', message: 'a valid service token is required for tenant teardown.', retry: 'needs-human' },
+        error: {
+          code: 'unauthorized',
+          message: 'a valid service token is required for tenant teardown.',
+          retry: 'needs-human',
+        },
       });
     }
 
@@ -155,7 +164,9 @@ export function registerTenantRoutes(
     await step('blobs', () => b.blobs.deleteByOwner(app_id, owner));
     await step('app_events', () => b.events.deleteByOwner(app_id, owner));
     await step('memberships', async () => {
-      await (await getBackends()).membership.mutate(app_id, (st) => teardownMember(st, { owner, now: nowIso() }));
+      await (
+        await getBackends()
+      ).membership.mutate(app_id, (st) => teardownMember(st, { owner, now: nowIso() }));
       return true;
     });
     await step('identity', async () => {

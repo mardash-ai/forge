@@ -1,5 +1,9 @@
 import { invalidInput } from '../../shared/errors';
-import { isDigestPinned, normalizeReadinessPath, DEFAULT_MCP_MTLS_TLS_OPTIONS } from '../../plugins/productionize-nextjs-compose/index';
+import {
+  isDigestPinned,
+  normalizeReadinessPath,
+  DEFAULT_MCP_MTLS_TLS_OPTIONS,
+} from '../../plugins/productionize-nextjs-compose/index';
 
 // Pure convergence logic for Productionize (C8).
 //
@@ -81,13 +85,15 @@ export function convergeProduction(prev: PrevProduction, flags: ProductionFlags)
     );
   }
 
-  const readiness_path = normalizeReadinessPath(flags.readiness_path ?? prev.readiness_path ?? DEFAULT_READINESS);
+  const readiness_path = normalizeReadinessPath(
+    flags.readiness_path ?? prev.readiness_path ?? DEFAULT_READINESS,
+  );
 
   // web image — app-specific; no safe default. Flag > persisted. Must be digest-pinned (R1).
   const web_image = (flags.web_image ?? prev.web_image ?? '').trim();
   if (!web_image) {
     throw invalidInput(
-      'Productionize needs the app\'s production web image. Pass --web-image <ref@sha256:...> (the digest CI published for this app). It is remembered after the first run.',
+      "Productionize needs the app's production web image. Pass --web-image <ref@sha256:...> (the digest CI published for this app). It is remembered after the first run.",
       { field: 'web_image' },
     );
   }
@@ -99,7 +105,12 @@ export function convergeProduction(prev: PrevProduction, flags: ProductionFlags)
   }
 
   // data-plane image — flag > persisted > platform env default. Must be digest-pinned (R1).
-  const data_plane_image = (flags.data_plane_image ?? prev.data_plane_image ?? flags.data_plane_image_env ?? '').trim();
+  const data_plane_image = (
+    flags.data_plane_image ??
+    prev.data_plane_image ??
+    flags.data_plane_image_env ??
+    ''
+  ).trim();
   if (!data_plane_image) {
     throw invalidInput(
       'Productionize needs the Forge data-plane image to pin into the sidecar. Pass --data-plane-image <ref@sha256:...>, or set FORGE_DATA_PLANE_IMAGE on the control plane. It is remembered after the first run.',
@@ -113,7 +124,8 @@ export function convergeProduction(prev: PrevProduction, flags: ProductionFlags)
     );
   }
 
-  const cert_resolver = (flags.cert_resolver ?? prev.cert_resolver ?? DEFAULT_CERT_RESOLVER).trim() || DEFAULT_CERT_RESOLVER;
+  const cert_resolver =
+    (flags.cert_resolver ?? prev.cert_resolver ?? DEFAULT_CERT_RESOLVER).trim() || DEFAULT_CERT_RESOLVER;
 
   // P33 — blob backend: flag > persisted > filesystem default. Carried forward convergently.
   const blobs_backend: BlobsBackend = flags.blobs_backend ?? prev.blobs_backend ?? DEFAULT_BLOBS_BACKEND;
@@ -130,7 +142,13 @@ export function convergeProduction(prev: PrevProduction, flags: ProductionFlags)
     DEFAULT_MCP_MTLS_TLS_OPTIONS;
 
   return {
-    host, readiness_path, web_image, data_plane_image, cert_resolver, blobs_backend, observability,
+    host,
+    readiness_path,
+    web_image,
+    data_plane_image,
+    cert_resolver,
+    blobs_backend,
+    observability,
     ...(mcp_mtls_host ? { mcp_mtls_host, mcp_mtls_tls_options } : {}),
   };
 }

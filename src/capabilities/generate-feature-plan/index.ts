@@ -13,9 +13,29 @@ type Input = z.infer<typeof inputSchema>;
 // deterministic, no model call). e.g. "Add projects and tasks" -> [projects, tasks]
 function extractEntities(goal: string): string[] {
   const stop = new Set([
-    'add', 'create', 'build', 'make', 'implement', 'support', 'to', 'a', 'an', 'the',
-    'and', 'for', 'with', 'of', 'in', 'on', 'feature', 'features', 'page', 'pages',
-    'forge', 'os', 'app',
+    'add',
+    'create',
+    'build',
+    'make',
+    'implement',
+    'support',
+    'to',
+    'a',
+    'an',
+    'the',
+    'and',
+    'for',
+    'with',
+    'of',
+    'in',
+    'on',
+    'feature',
+    'features',
+    'page',
+    'pages',
+    'forge',
+    'os',
+    'app',
   ]);
   const words = goal
     .toLowerCase()
@@ -31,7 +51,8 @@ function extractEntities(goal: string): string[] {
 export const generateFeaturePlan: Capability<Input, Plan> = {
   name: 'GenerateFeaturePlan',
   slug: 'generate-feature-plan',
-  description: 'Produce a deterministic Plan (resources, files, capability sequence, validation, risks) for a Goal.',
+  description:
+    'Produce a deterministic Plan (resources, files, capability sequence, validation, risks) for a Goal.',
   inputSchema,
   resourceType: 'Plan',
   events: ['PlanCreated'],
@@ -55,13 +76,7 @@ export const generateFeaturePlan: Capability<Input, Plan> = {
       goal: input.goal,
       proposed_resources: nice.map((e) => `${e} (domain entity for ${app.name})`),
       proposed_files,
-      capability_sequence: [
-        'GenerateFeaturePlan (this)',
-        'Lint',
-        'Build',
-        'Test',
-        'Inspect routes',
-      ],
+      capability_sequence: ['GenerateFeaturePlan (this)', 'Lint', 'Build', 'Test', 'Inspect routes'],
       validation_steps: [
         `forge lint --app ${app.name}`,
         `forge build --app ${app.name}`,

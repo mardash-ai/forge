@@ -33,10 +33,17 @@ const rawPublicFromJwk = (jwk: { x: string; y: string }): Buffer =>
 
 // A browser-side subscription keypair: returns the subscription shape (p256dh/auth) + the UA private key
 // object needed to DECRYPT what the server encrypts to it.
-function makeUaSubscription(endpoint: string): { sub: WebPushSubscription; uaPrivate: KeyObject; authSecret: Buffer } {
+function makeUaSubscription(endpoint: string): {
+  sub: WebPushSubscription;
+  uaPrivate: KeyObject;
+  authSecret: Buffer;
+} {
   const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const jwk = publicKey.export({ format: 'jwk' }) as { x: string; y: string };
-  const authSecret = Buffer.from(generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ format: 'jwk' }).d as string, 'base64url').subarray(0, 16);
+  const authSecret = Buffer.from(
+    generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ format: 'jwk' }).d as string,
+    'base64url',
+  ).subarray(0, 16);
   return {
     sub: { endpoint, keys: { p256dh: b64url(rawPublicFromJwk(jwk)), auth: b64url(authSecret) } },
     uaPrivate: privateKey,
@@ -56,14 +63,23 @@ function decryptWebPush(body: Buffer, uaPrivate: KeyObject, authSecret: Buffer):
   const uaPublic = rawPublicFromJwk(uaJwk);
   const asKey = createPublicKey({
     format: 'jwk',
-    key: { kty: 'EC', crv: 'P-256', x: b64url(asPublic.subarray(1, 33)), y: b64url(asPublic.subarray(33, 65)) },
+    key: {
+      kty: 'EC',
+      crv: 'P-256',
+      x: b64url(asPublic.subarray(1, 33)),
+      y: b64url(asPublic.subarray(33, 65)),
+    },
   });
   const ecdhSecret = diffieHellman({ privateKey: uaPrivate, publicKey: asKey });
 
   const keyInfo = Buffer.concat([Buffer.from('WebPush: info\0', 'utf8'), uaPublic, asPublic]);
   const ikm = Buffer.from(hkdfSync('sha256', ecdhSecret, authSecret, keyInfo, 32));
-  const cek = Buffer.from(hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: aes128gcm\0', 'utf8'), 16));
-  const nonce = Buffer.from(hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: nonce\0', 'utf8'), 12));
+  const cek = Buffer.from(
+    hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: aes128gcm\0', 'utf8'), 16),
+  );
+  const nonce = Buffer.from(
+    hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: nonce\0', 'utf8'), 12),
+  );
 
   const tag = ciphertext.subarray(ciphertext.length - 16);
   const ct = ciphertext.subarray(0, ciphertext.length - 16);
@@ -106,13 +122,22 @@ describe('webpush-vapid — VAPID keypair + JWT (RFC 8292)', () => {
       format: 'jwk',
       key: { kty: 'EC', crv: 'P-256', x: b64url(rawPub.subarray(1, 33)), y: b64url(rawPub.subarray(33, 65)) },
     });
-    const ok = verify('sha256', Buffer.from(`${h}.${p}`), { key: pubKey, dsaEncoding: 'ieee-p1363' }, fromB64url(s!));
+    const ok = verify(
+      'sha256',
+      Buffer.from(`${h}.${p}`),
+      { key: pubKey, dsaEncoding: 'ieee-p1363' },
+      fromB64url(s!),
+    );
     expect(ok).toBe(true);
   });
 
   it('buildVapidAuthHeader is `vapid t=<jwt>, k=<public key>`', () => {
     const { publicKey, privateJwk } = generateVapidKeys();
-    const header = buildVapidAuthHeader('https://push.example', { publicKey, privateJwk, subject: 'mailto:a@b.test' });
+    const header = buildVapidAuthHeader('https://push.example', {
+      publicKey,
+      privateJwk,
+      subject: 'mailto:a@b.test',
+    });
     const m = header.match(/^vapid t=([^,]+), k=(.+)$/);
     expect(m).toBeTruthy();
     expect(m![2]).toBe(publicKey);
@@ -123,7 +148,11 @@ describe('webpush-vapid — VAPID keypair + JWT (RFC 8292)', () => {
 describe('webpush-vapid — payload encryption (RFC 8291 aes128gcm)', () => {
   it('encrypts a payload that DECRYPTS back to the original with the subscription private key', () => {
     const { sub, uaPrivate, authSecret } = makeUaSubscription('https://push.example/abc');
-    const plaintext = JSON.stringify({ title: 'Goal is cold', body: 'g1 has been quiet', data: { url: '/goals/g1' } });
+    const plaintext = JSON.stringify({
+      title: 'Goal is cold',
+      body: 'g1 has been quiet',
+      data: { url: '/goals/g1' },
+    });
     const body = encryptWebPushPayload(sub, Buffer.from(plaintext, 'utf8'));
 
     // Header shape: salt(16) | rs(4) | idlen(1)=65 | keyid(65) | ciphertext(+16 tag).
@@ -176,7 +205,9 @@ describe('webpush-vapid — send classification (swappable transport, no socket)
     setPushTransport(async () => ({ statusCode: 500 }));
     expect(await sendWebPush(sub, 'x', vapid)).toMatchObject({ ok: false, expired: false, statusCode: 500 });
 
-    setPushTransport(async () => { throw new Error('ECONNRESET'); });
+    setPushTransport(async () => {
+      throw new Error('ECONNRESET');
+    });
     const res = await sendWebPush(sub, 'x', vapid);
     expect(res.ok).toBe(false);
     expect(res.expired).toBe(false);

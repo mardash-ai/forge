@@ -13,7 +13,11 @@ import {
   normalizeReadinessPath,
   type ProdComposeOptions,
 } from '../src/plugins/productionize-nextjs-compose/index';
-import { describeSecret, requirementLabel, SECRET_CATALOG } from '../src/plugins/productionize-nextjs-compose/secret-catalog';
+import {
+  describeSecret,
+  requirementLabel,
+  SECRET_CATALOG,
+} from '../src/plugins/productionize-nextjs-compose/secret-catalog';
 import { ForgeError } from '../src/shared/errors';
 import { deployCapability } from '../src/capabilities/deploy/index';
 
@@ -48,12 +52,17 @@ describe('convergeProduction — required inputs + digest pins (R1) + convergenc
   });
 
   it('requires a web image', () => {
-    expect(() => convergeProduction({}, { host: 'app.example.com', data_plane_image: DP })).toThrow(ForgeError);
+    expect(() => convergeProduction({}, { host: 'app.example.com', data_plane_image: DP })).toThrow(
+      ForgeError,
+    );
   });
 
   it('rejects a non-digest-pinned web image (R1 — no bare tag/latest)', () => {
     expect(() =>
-      convergeProduction({}, { host: 'app.example.com', web_image: 'ghcr.io/o/app:latest', data_plane_image: DP }),
+      convergeProduction(
+        {},
+        { host: 'app.example.com', web_image: 'ghcr.io/o/app:latest', data_plane_image: DP },
+      ),
     ).toThrow(ForgeError);
   });
 
@@ -63,7 +72,10 @@ describe('convergeProduction — required inputs + digest pins (R1) + convergenc
 
   it('rejects a non-digest-pinned data-plane image (R1)', () => {
     expect(() =>
-      convergeProduction({}, { host: 'app.example.com', web_image: WEB, data_plane_image: 'ghcr.io/o/dp:0.11.0' }),
+      convergeProduction(
+        {},
+        { host: 'app.example.com', web_image: WEB, data_plane_image: 'ghcr.io/o/dp:0.11.0' },
+      ),
     ).toThrow(ForgeError);
   });
 
@@ -99,7 +111,12 @@ describe('convergeProduction — required inputs + digest pins (R1) + convergenc
     expect(convergeProduction({}, ok).blobs_backend).toBe('filesystem');
     expect(convergeProduction({}, { ...ok, blobs_backend: 's3' }).blobs_backend).toBe('s3');
     // persisted s3 survives a flag-less re-run
-    expect(convergeProduction({ host: 'app.example.com', web_image: WEB, data_plane_image: DP, blobs_backend: 's3' }, {}).blobs_backend).toBe('s3');
+    expect(
+      convergeProduction(
+        { host: 'app.example.com', web_image: WEB, data_plane_image: DP, blobs_backend: 's3' },
+        {},
+      ).blobs_backend,
+    ).toBe('s3');
   });
 
   it('a flag overrides the persisted value', () => {
@@ -116,13 +133,19 @@ describe('convergeProduction — required inputs + digest pins (R1) + convergenc
     expect(set.mcp_mtls_host).toBe('mcp.example.com');
     expect(set.mcp_mtls_tls_options).toBe('openai-mtls@file'); // default tls.options ref
     // A flag-less re-run recovers BOTH from the persisted block.
-    const rerun = convergeProduction({ ...ok, mcp_mtls_host: 'mcp.example.com', mcp_mtls_tls_options: 'openai-mtls@file' }, {});
+    const rerun = convergeProduction(
+      { ...ok, mcp_mtls_host: 'mcp.example.com', mcp_mtls_tls_options: 'openai-mtls@file' },
+      {},
+    );
     expect(rerun.mcp_mtls_host).toBe('mcp.example.com');
     expect(rerun.mcp_mtls_tls_options).toBe('openai-mtls@file');
   });
 
   it('mcp_mtls_tls_options can be overridden and an explicitly-empty mcp_mtls_host clears the wiring', () => {
-    const custom = convergeProduction({}, { ...ok, mcp_mtls_host: 'mcp.example.com', mcp_mtls_tls_options: 'my-mtls@file' });
+    const custom = convergeProduction(
+      {},
+      { ...ok, mcp_mtls_host: 'mcp.example.com', mcp_mtls_tls_options: 'my-mtls@file' },
+    );
     expect(custom.mcp_mtls_tls_options).toBe('my-mtls@file');
     // Clearing: an explicit empty flag beats the persisted host (and drops the orphaned tls options too).
     const cleared = convergeProduction({ ...ok, mcp_mtls_host: 'mcp.example.com' }, { mcp_mtls_host: '' });
@@ -261,7 +284,10 @@ describe('generateProdCompose — Traefik + healthcheck + stop_grace + data-plan
   });
 
   it('keeps the optional sign-in ALTERNATIVES (Google/SMTP) defined-but-empty, not fail-loud', () => {
-    const yaml = generateProdCompose({ ...base, secrets: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SMTP_URL', 'EMAIL_FROM'] });
+    const yaml = generateProdCompose({
+      ...base,
+      secrets: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SMTP_URL', 'EMAIL_FROM'],
+    });
     // Their absence only disables one method — they must NOT abort the deploy.
     for (const n of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SMTP_URL', 'EMAIL_FROM']) {
       expect(yaml).toContain(`- ${n}=\${${n}:-}`);
@@ -318,7 +344,10 @@ describe('generateProdCompose — Traefik + healthcheck + stop_grace + data-plan
   });
 
   it('does not double-emit a provider var the app also declared (P34 dedup)', () => {
-    const dp = serviceBlock(generateProdCompose({ ...base, secrets: ['AUTH_SESSION_SECRET', 'GOOGLE_CLIENT_ID'] }), 'data-plane');
+    const dp = serviceBlock(
+      generateProdCompose({ ...base, secrets: ['AUTH_SESSION_SECRET', 'GOOGLE_CLIENT_ID'] }),
+      'data-plane',
+    );
     const occurrences = dp.split('\n').filter((l) => l.includes('GOOGLE_CLIENT_ID=')).length;
     expect(occurrences).toBe(1);
   });
@@ -412,7 +441,10 @@ describe('generateProdCompose — Traefik + healthcheck + stop_grace + data-plan
   });
 
   it('forces AUTH_SERVICE_TOKEN deploy-required even when it was declared as an optional secret + jobs exist (P36)', () => {
-    const dp = serviceBlock(generateProdCompose({ ...base, withJobs: true, secrets: ['AUTH_SERVICE_TOKEN'] }), 'data-plane');
+    const dp = serviceBlock(
+      generateProdCompose({ ...base, withJobs: true, secrets: ['AUTH_SERVICE_TOKEN'] }),
+      'data-plane',
+    );
     expect(dp).toContain('- AUTH_SERVICE_TOKEN=${AUTH_SERVICE_TOKEN:?');
     // exactly one line (declared + forced must not double-emit)
     expect(dp.split('\n').filter((l) => l.includes('AUTH_SERVICE_TOKEN=')).length).toBe(1);
@@ -480,7 +512,11 @@ describe('generateProdCompose — Traefik + healthcheck + stop_grace + data-plan
   });
 
   it('emits neither the mTLS router nor the OAuth TTL when the app does not use hosted auth', () => {
-    const yaml = generateProdCompose({ ...base, secrets: ['ANTHROPIC_API_KEY'], mcpMtlsHost: 'mcp.example.com' });
+    const yaml = generateProdCompose({
+      ...base,
+      secrets: ['ANTHROPIC_API_KEY'],
+      mcpMtlsHost: 'mcp.example.com',
+    });
     expect(yaml).not.toContain('traefik.http.routers.mcp.');
     expect(yaml).not.toContain('FORGE_OAUTH_ACCESS_TTL_SECONDS');
     expect(yaml).not.toContain('FORGE_MCP_ALT_HOSTS');
@@ -507,7 +543,9 @@ describe('generateProdCompose — Traefik + healthcheck + stop_grace + data-plan
     expect(generateProdCompose({ ...base, withJobs: true, secrets: ['ANTHROPIC_API_KEY'] })).toBe(
       generateProdCompose({ ...base, withJobs: true, secrets: ['ANTHROPIC_API_KEY'] }),
     );
-    expect(generateProdCompose({ ...base, secrets: ['AUTH_SESSION_SECRET'], mcpMtlsHost: 'mcp.example.com' })).toBe(
+    expect(
+      generateProdCompose({ ...base, secrets: ['AUTH_SESSION_SECRET'], mcpMtlsHost: 'mcp.example.com' }),
+    ).toBe(
       generateProdCompose({ ...base, secrets: ['AUTH_SESSION_SECRET'], mcpMtlsHost: 'mcp.example.com' }),
     );
   });
@@ -631,9 +669,15 @@ describe('generateEnvProdExample — documents .env.prod without real values', (
 // so an operator knows what each value is, which capability needs it, and how to set it.
 describe('secret catalog (C13) — every required value is described', () => {
   const REQUIRED_ROSTER = [
-    'POSTGRES_PASSWORD', 'FORGE_SECRETS_KEY', 'ANTHROPIC_API_KEY',
-    'AUTH_SESSION_SECRET', 'AUTH_SERVICE_TOKEN', 'GOOGLE_CLIENT_ID',
-    'GOOGLE_CLIENT_SECRET', 'SMTP_URL', 'EMAIL_FROM',
+    'POSTGRES_PASSWORD',
+    'FORGE_SECRETS_KEY',
+    'ANTHROPIC_API_KEY',
+    'AUTH_SESSION_SECRET',
+    'AUTH_SERVICE_TOKEN',
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET',
+    'SMTP_URL',
+    'EMAIL_FROM',
   ];
   it('covers the whole required roster with capability + what + obtain', () => {
     for (const name of REQUIRED_ROSTER) {
@@ -661,7 +705,10 @@ describe('secret catalog (C13) — every required value is described', () => {
 describe('generateEnvProdExample — now annotates each secret (C13)', () => {
   it('precedes each declared secret with what-it-is + how-to-obtain, keeps the assignable line', () => {
     const env = generateEnvProdExample({
-      appName: 'acme', host: 'app.example.com', withPostgres: true, withRedis: false,
+      appName: 'acme',
+      host: 'app.example.com',
+      withPostgres: true,
+      withRedis: false,
       secrets: ['GOOGLE_CLIENT_ID', 'SMTP_URL'],
     });
     expect(env).toContain('# GOOGLE_CLIENT_ID —');
@@ -676,7 +723,10 @@ describe('generateEnvProdExample — now annotates each secret (C13)', () => {
 
   it('surfaces the auto-wired Stripe secrets when the app uses billing (P41)', () => {
     const env = generateEnvProdExample({
-      appName: 'acme', host: 'app.example.com', withPostgres: true, withRedis: false,
+      appName: 'acme',
+      host: 'app.example.com',
+      withPostgres: true,
+      withRedis: false,
       secrets: ['STRIPE_PRICE_PERSONAL_MONTH'],
     });
     // usesBilling is marked by the declared STRIPE_PRICE_*; the two undeclared provider secrets are surfaced.
@@ -690,20 +740,28 @@ describe('generateEnvProdExample — now annotates each secret (C13)', () => {
   // identifier + issuer origin) alongside its user-facing P38 siblings when the app uses hosted auth.
   it('documents the split-host public URLs incl. FORGE_MCP_PUBLIC_URL when the app uses auth (C23)', () => {
     const env = generateEnvProdExample({
-      appName: 'acme', host: 'app.example.com', withPostgres: false, withRedis: false,
+      appName: 'acme',
+      host: 'app.example.com',
+      withPostgres: false,
+      withRedis: false,
       secrets: ['AUTH_SESSION_SECRET'],
     });
     expect(env).toContain('FORGE_MCP_PUBLIC_URL=');
     expect(env).toContain('# FORGE_MCP_PUBLIC_URL — the MCP OAuth resource identifier + issuer origin');
     expect(env).toContain('FORGE_MCP_ALT_HOSTS=');
-    expect(env).toContain('# FORGE_MCP_ALT_HOSTS — comma-separated ADDITIONAL hostnames allowed to appear as the MCP resource');
+    expect(env).toContain(
+      '# FORGE_MCP_ALT_HOSTS — comma-separated ADDITIONAL hostnames allowed to appear as the MCP resource',
+    );
     expect(env).toContain('FORGE_AUTH_PUBLIC_URL=');
     expect(env).toContain('FORGE_OAUTH_PUBLIC_URL=');
   });
 
   it('does NOT document the split-host public URLs for an app that does not use auth (C23)', () => {
     const env = generateEnvProdExample({
-      appName: 'acme', host: 'app.example.com', withPostgres: false, withRedis: false,
+      appName: 'acme',
+      host: 'app.example.com',
+      withPostgres: false,
+      withRedis: false,
       secrets: ['ANTHROPIC_API_KEY'],
     });
     expect(env).not.toContain('FORGE_MCP_PUBLIC_URL');
@@ -715,7 +773,10 @@ describe('generateEnvProdExample — now annotates each secret (C13)', () => {
   // documented alongside it: 8h default because connector hosts may not refresh mid-session.
   it('documents FORGE_OAUTH_ACCESS_TTL_SECONDS (8h; connectors may not refresh mid-session) for auth apps', () => {
     const env = generateEnvProdExample({
-      appName: 'acme', host: 'app.example.com', withPostgres: false, withRedis: false,
+      appName: 'acme',
+      host: 'app.example.com',
+      withPostgres: false,
+      withRedis: false,
       secrets: ['AUTH_SESSION_SECRET'],
     });
     expect(env).toContain('FORGE_OAUTH_ACCESS_TTL_SECONDS=');
@@ -725,8 +786,12 @@ describe('generateEnvProdExample — now annotates each secret (C13)', () => {
 
   it('notes the FORGE_MCP_ALT_HOSTS default when the app declares a dedicated mTLS MCP host', () => {
     const env = generateEnvProdExample({
-      appName: 'acme', host: 'api.example.com', withPostgres: false, withRedis: false,
-      secrets: ['AUTH_SESSION_SECRET'], mcpMtlsHost: 'mcp.example.com',
+      appName: 'acme',
+      host: 'api.example.com',
+      withPostgres: false,
+      withRedis: false,
+      secrets: ['AUTH_SESSION_SECRET'],
+      mcpMtlsHost: 'mcp.example.com',
     });
     expect(env).toContain('dedicated mTLS MCP host `mcp.example.com`');
     expect(env).toContain('already defaults');
@@ -763,7 +828,10 @@ describe('generateProvisioningRunbook — per-app operator runbook (C13)', () =>
   });
 
   it('marks a declared method as configured (P34 wording)', () => {
-    const md = generateProvisioningRunbook({ ...base, secrets: ['AUTH_SESSION_SECRET', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'] });
+    const md = generateProvisioningRunbook({
+      ...base,
+      secrets: ['AUTH_SESSION_SECRET', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],
+    });
     expect(md).toContain('_(declared as a secret)_');
     // Google is declared; SMTP is not — but with P34 there is no `--secret` re-declare snippet at all.
     expect(md).not.toContain('--secret');

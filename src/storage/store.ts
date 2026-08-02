@@ -42,7 +42,9 @@ export class Store {
     return (await getBackends()).resources.findById(id);
   }
 
-  async listResources(filter: { type?: ResourceType; app_id?: string; owner?: string } = {}): Promise<AnyResource[]> {
+  async listResources(
+    filter: { type?: ResourceType; app_id?: string; owner?: string } = {},
+  ): Promise<AnyResource[]> {
     return (await getBackends()).resources.list(filter);
   }
 
@@ -77,7 +79,9 @@ export class Store {
     return event;
   }
 
-  async listEvents(filter: { app_id?: string; resource_id?: string; limit?: number } = {}): Promise<ForgeEvent[]> {
+  async listEvents(
+    filter: { app_id?: string; resource_id?: string; limit?: number } = {},
+  ): Promise<ForgeEvent[]> {
     let raw: string;
     try {
       raw = await readFile(eventsFile(), 'utf8');
@@ -110,13 +114,23 @@ export class Store {
     data?: Record<string, unknown>;
   }): Promise<AppEvent> {
     const { events } = await getBackends();
-    return events.append(input.app_id, { type: input.type, subject: input.subject, owner: input.owner, data: input.data });
+    return events.append(input.app_id, {
+      type: input.type,
+      subject: input.subject,
+      owner: input.owner,
+      data: input.data,
+    });
   }
 
   // The per-app feed, newest-first, optionally filtered to a single subject and/or `owner` (C11).
   // An owner-scoped read returns ONLY that owner's events; omitted = app-scoped (all owners). A missing
   // log reads as an empty feed (best-effort — the app must degrade, never crash).
-  async listAppEvents(filter: { app_id: string; subject?: string; owner?: string; limit?: number }): Promise<AppEvent[]> {
+  async listAppEvents(filter: {
+    app_id: string;
+    subject?: string;
+    owner?: string;
+    limit?: number;
+  }): Promise<AppEvent[]> {
     const { events } = await getBackends();
     return events.list(filter.app_id, { subject: filter.subject, owner: filter.owner, limit: filter.limit });
   }
@@ -145,7 +159,14 @@ export class Store {
 
   async upsertNotification(
     app_id: string,
-    input: { key: string; title: string; body?: string; data?: Record<string, unknown>; subject?: string; owner?: string },
+    input: {
+      key: string;
+      title: string;
+      body?: string;
+      data?: Record<string, unknown>;
+      subject?: string;
+      owner?: string;
+    },
   ): Promise<Notification> {
     const { notifications } = await getBackends();
     return notifications.upsert(app_id, input);

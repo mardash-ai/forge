@@ -55,8 +55,14 @@ describe('bucket mapping + day classification', () => {
 describe('tallySnapshots', () => {
   it('groups samples by UTC day and counts per component + overall', () => {
     const days = tallySnapshots([
-      snap('2026-07-08T00:00:00Z', 'operational', [['web', 'operational'], ['db', 'operational']]),
-      snap('2026-07-08T06:00:00Z', 'partial_outage', [['web', 'operational'], ['db', 'down']]),
+      snap('2026-07-08T00:00:00Z', 'operational', [
+        ['web', 'operational'],
+        ['db', 'operational'],
+      ]),
+      snap('2026-07-08T06:00:00Z', 'partial_outage', [
+        ['web', 'operational'],
+        ['db', 'down'],
+      ]),
       snap('2026-07-07T06:00:00Z', 'operational', [['web', 'operational']]),
     ]);
     expect(days['2026-07-08']!.overall).toEqual({ up: 1, degraded: 0, down: 1 });
@@ -76,7 +82,12 @@ describe('pruneAndRoll — retention (raw window + daily rollup)', () => {
   ];
   // A rollup day well past the 90-day window that must be pruned.
   const rollup: UptimeRollup = {
-    days: { '2026-01-01': { components: { web: { up: 1, degraded: 0, down: 0 } }, overall: { up: 1, degraded: 0, down: 0 } } },
+    days: {
+      '2026-01-01': {
+        components: { web: { up: 1, degraded: 0, down: 0 } },
+        overall: { up: 1, degraded: 0, down: 0 },
+      },
+    },
   };
 
   it('folds samples older than the raw window into the rollup and keeps recent raw', () => {
@@ -118,14 +129,23 @@ describe('computeHistory — windowed per-component timeline', () => {
     ];
     const rollup: UptimeRollup = {
       days: {
-        '2026-07-05': { components: { web: { up: 1, degraded: 0, down: 1 } }, overall: { up: 1, degraded: 0, down: 1 } },
+        '2026-07-05': {
+          components: { web: { up: 1, degraded: 0, down: 1 } },
+          overall: { up: 1, degraded: 0, down: 1 },
+        },
       },
     };
     const h = computeHistory(raw, rollup, { now, windowDays: 5 });
     expect(h.window_days).toBe(5);
     const web = h.components.find((c) => c.name === 'web')!;
     // Oldest→newest: 07-04(nodata) 07-05(down) 07-06(nodata) 07-07(op) 07-08(op)
-    expect(web.days.map((d) => d.date)).toEqual(['2026-07-04', '2026-07-05', '2026-07-06', '2026-07-07', '2026-07-08']);
+    expect(web.days.map((d) => d.date)).toEqual([
+      '2026-07-04',
+      '2026-07-05',
+      '2026-07-06',
+      '2026-07-07',
+      '2026-07-08',
+    ]);
     expect(web.days.map((d) => d.state)).toEqual(['nodata', 'down', 'nodata', 'operational', 'operational']);
     // uptime over the window: up 3 / total 4 = 75%
     expect(web.uptime_pct).toBe(75);
@@ -136,7 +156,12 @@ describe('computeHistory — windowed per-component timeline', () => {
   it('raw wins over rollup for a day present in both (no double count)', () => {
     const raw = [snap('2026-07-07T00:00:00Z', 'operational', [['web', 'operational']])];
     const rollup: UptimeRollup = {
-      days: { '2026-07-07': { components: { web: { up: 0, degraded: 0, down: 5 } }, overall: { up: 0, degraded: 0, down: 5 } } },
+      days: {
+        '2026-07-07': {
+          components: { web: { up: 0, degraded: 0, down: 5 } },
+          overall: { up: 0, degraded: 0, down: 5 },
+        },
+      },
     };
     const h = computeHistory(raw, rollup, { now, windowDays: 3 });
     const day = h.components.find((c) => c.name === 'web')!.days.find((d) => d.date === '2026-07-07')!;

@@ -7,7 +7,13 @@
  * contain secrets).
  */
 import type { LogEntry, Severity } from '../../console/domain';
-import type { Feature, LogQuery, LogsProvider, ProviderContext, ProviderHealth } from '../../console/providers/types';
+import type {
+  Feature,
+  LogQuery,
+  LogsProvider,
+  ProviderContext,
+  ProviderHealth,
+} from '../../console/providers/types';
 import { gcpJson } from './http';
 
 const SEVERITY_ORDER: Severity[] = ['debug', 'info', 'warning', 'error', 'critical'];
@@ -129,14 +135,17 @@ export function createCloudLoggingProvider(opts: {
         });
         return { ok: true, detail: 'reachable', checked_at: new Date().toISOString() };
       } catch (e) {
-        return { ok: false, detail: (e as Error).message.slice(0, 200), checked_at: new Date().toISOString() };
+        return {
+          ok: false,
+          detail: (e as Error).message.slice(0, 200),
+          checked_at: new Date().toISOString(),
+        };
       }
     },
 
     async query(q, r, ctx): Promise<LogEntry[]> {
       const base = buildFilter(q);
-      const window =
-        `timestamp>="${r.start.toISOString()}" AND timestamp<="${r.end.toISOString()}"`;
+      const window = `timestamp>="${r.start.toISOString()}" AND timestamp<="${r.end.toISOString()}"`;
       const filter = base ? `${base} AND ${window}` : window;
 
       const body = await gcpJson<{ entries?: any[] }>({
@@ -156,7 +165,7 @@ export function createCloudLoggingProvider(opts: {
         const jp = e.jsonPayload as Record<string, unknown> | undefined;
         const message =
           (typeof e.textPayload === 'string' && e.textPayload) ||
-          (jp && (jp['message'] ?? jp['msg'] ?? jp['event']) as string) ||
+          (jp && ((jp['message'] ?? jp['msg'] ?? jp['event']) as string)) ||
           (jp ? JSON.stringify(jp) : '') ||
           describeHttpRequest(e.httpRequest) ||
           describeProtoPayload(e.protoPayload) ||

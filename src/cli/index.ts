@@ -30,7 +30,12 @@ function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
-async function api(method: string, path: string, body?: unknown, opts?: { longRunning?: boolean }): Promise<any> {
+async function api(
+  method: string,
+  path: string,
+  body?: unknown,
+  opts?: { longRunning?: boolean },
+): Promise<any> {
   let res: Response;
   try {
     const init: RequestInit = {
@@ -74,7 +79,9 @@ function output(result: { resource: any } | any): void {
     return;
   }
   const render = (r: any) => (globalOpts.summary ? summarize(r) : JSON.stringify(compact(r)));
-  const out = Array.isArray(resource) ? resource.map(render).join(globalOpts.summary ? '\n\n' : '\n') : render(resource);
+  const out = Array.isArray(resource)
+    ? resource.map(render).join(globalOpts.summary ? '\n\n' : '\n')
+    : render(resource);
   process.stdout.write(out + '\n');
 }
 
@@ -92,7 +99,9 @@ function renderVerify(v: any): void {
   }
   const mark = (s: string) => (s === 'pass' ? 'PASS' : s === 'fail' ? 'FAIL' : 'SKIP');
   const lines: string[] = [];
-  lines.push(`Verify ${v.host}  —  ${v.passed ? 'PASSED' : 'FAILED'} (${v.total - v.skipped - v.failed}/${v.total - v.skipped} passed${v.skipped ? `, ${v.skipped} skipped` : ''}${v.failed ? `, ${v.failed} failed` : ''})`);
+  lines.push(
+    `Verify ${v.host}  —  ${v.passed ? 'PASSED' : 'FAILED'} (${v.total - v.skipped - v.failed}/${v.total - v.skipped} passed${v.skipped ? `, ${v.skipped} skipped` : ''}${v.failed ? `, ${v.failed} failed` : ''})`,
+  );
   for (const a of v.assertions ?? []) {
     lines.push(`  ${mark(a.status)}  ${a.title} — ${a.target} — ${a.actual}`);
     if (a.detail) lines.push(`        ↳ ${a.detail}`);
@@ -111,7 +120,9 @@ function renderRelease(r: any): void {
   const mark = (s: string) => (s === 'ran' ? ' ok ' : s === 'skipped' ? 'skip' : 'FAIL');
   const lines: string[] = [];
   const head = r.dry_run ? 'Release (dry-run)' : 'Release';
-  lines.push(`${head} ${r.app}${r.commit ? ` @ ${String(r.commit).slice(0, 12)}` : ''} — ${r.status === 'succeeded' ? 'SUCCEEDED' : 'FAILED'}${r.failed_phase ? ` at ${r.failed_phase}` : ''}`);
+  lines.push(
+    `${head} ${r.app}${r.commit ? ` @ ${String(r.commit).slice(0, 12)}` : ''} — ${r.status === 'succeeded' ? 'SUCCEEDED' : 'FAILED'}${r.failed_phase ? ` at ${r.failed_phase}` : ''}`,
+  );
   for (const p of r.phases ?? []) {
     lines.push(`  [${mark(p.status)}] ${p.phase} — ${p.detail}`);
   }
@@ -183,7 +194,12 @@ program
   .option('--redis-port <hostPort>', 'host port to map to Redis 6379')
   .option('--web-port <hostPort>', 'host port to map to the web container')
   .option('--force', 'allow dropping a service that owns a data volume (e.g. Postgres)')
-  .option('--secret <name>', 'declare a secret the app needs, e.g. ANTHROPIC_API_KEY (repeatable)', collect, [])
+  .option(
+    '--secret <name>',
+    'declare a secret the app needs, e.g. ANTHROPIC_API_KEY (repeatable)',
+    collect,
+    [],
+  )
   .action(async (opts) => {
     await runCapability('provision-environment', {
       app: opts.app,
@@ -209,7 +225,11 @@ program
   .option('--platform <platform>', 'target platform', 'web')
   .option('--framework <framework>', 'target framework', 'nextjs')
   .action(async (opts) => {
-    await runCapability('install-dependencies', { app: opts.app, platform: opts.platform, framework: opts.framework });
+    await runCapability('install-dependencies', {
+      app: opts.app,
+      platform: opts.platform,
+      framework: opts.framework,
+    });
   });
 
 // --- dev -------------------------------------------------------------------
@@ -223,7 +243,12 @@ program
   .option('--status', 'report status only')
   .action(async (opts) => {
     const action = opts.stop ? 'stop' : opts.status ? 'status' : 'start';
-    await runCapability('run-dev-server', { app: opts.app, platform: opts.platform, framework: opts.framework, action });
+    await runCapability('run-dev-server', {
+      app: opts.app,
+      platform: opts.platform,
+      framework: opts.framework,
+      action,
+    });
   });
 
 // --- build / test / lint ---------------------------------------------------
@@ -250,8 +275,16 @@ program
   .requiredOption('--app <app>')
   .option('--service <service>', 'public service rolled start-first', 'web')
   .option('--context <context>', 'docker context for a remote target (default: local daemon)')
-  .option('--compose-file <file>', 'production compose manifest (default: what `forge productionize` writes, app/compose.prod.yaml)', 'app/compose.prod.yaml')
-  .option('--env-file <file>', 'env file Compose interpolates secrets from (default: what `forge productionize` documents, app/.env.prod)', 'app/.env.prod')
+  .option(
+    '--compose-file <file>',
+    'production compose manifest (default: what `forge productionize` writes, app/compose.prod.yaml)',
+    'app/compose.prod.yaml',
+  )
+  .option(
+    '--env-file <file>',
+    'env file Compose interpolates secrets from (default: what `forge productionize` documents, app/.env.prod)',
+    'app/.env.prod',
+  )
   .option('--proxy-net <name>', 'reverse-proxy network to drain the old replica from', 'proxy')
   .option('--no-pull', 'skip pulling images first')
   .option('--drain-seconds <n>', 'seconds to let in-flight requests settle before removing the old', '3')
@@ -280,11 +313,23 @@ program
   .option('--host <domain>', 'public host for the Traefik router (remembered after first run)')
   .option('--readiness-path <path>', 'readiness path Traefik + the healthcheck probe (default /api/health)')
   .option('--web-image <ref>', 'digest-pinned production web image, e.g. ghcr.io/owner/app@sha256:… (R1)')
-  .option('--data-plane-image <ref>', 'digest-pinned Forge data-plane image (default: FORGE_DATA_PLANE_IMAGE)')
+  .option(
+    '--data-plane-image <ref>',
+    'digest-pinned Forge data-plane image (default: FORGE_DATA_PLANE_IMAGE)',
+  )
   .option('--cert-resolver <name>', 'Traefik TLS cert resolver name (default letsencrypt)')
-  .option('--blobs-backend <kind>', 'C20 blob backend: filesystem (default, durable volume) or s3 (object store) — P33')
-  .option('--mcp-mtls-host <host>', 'dedicated mTLS MCP host: emits a second Traefik router terminating mutual TLS for /mcp + defaults FORGE_MCP_ALT_HOSTS to it (remembered; pass "" to clear)')
-  .option('--mcp-mtls-tls-options <ref>', 'Traefik file-provider tls.options ref for the mTLS router (default openai-mtls@file)')
+  .option(
+    '--blobs-backend <kind>',
+    'C20 blob backend: filesystem (default, durable volume) or s3 (object store) — P33',
+  )
+  .option(
+    '--mcp-mtls-host <host>',
+    'dedicated mTLS MCP host: emits a second Traefik router terminating mutual TLS for /mcp + defaults FORGE_MCP_ALT_HOSTS to it (remembered; pass "" to clear)',
+  )
+  .option(
+    '--mcp-mtls-tls-options <ref>',
+    'Traefik file-provider tls.options ref for the mTLS router (default openai-mtls@file)',
+  )
   .action(async (opts) => {
     await runCapability('productionize', {
       app: opts.app,
@@ -307,9 +352,16 @@ program
 program
   .command('inspect')
   .description('Compact structured inspection (Inspect)')
-  .argument('[type]', 'app | resources | events | app-events | notifications | routes | scripts | docker | secrets | jobs | agent-runs | email | auth | health', 'app')
+  .argument(
+    '[type]',
+    'app | resources | events | app-events | notifications | routes | scripts | docker | secrets | jobs | agent-runs | email | auth | health',
+    'app',
+  )
   .requiredOption('--app <app>')
-  .option('--owner <id>', 'scope owner-aware views (app-events | notifications | agent-runs) to one opaque user id (C11)')
+  .option(
+    '--owner <id>',
+    'scope owner-aware views (app-events | notifications | agent-runs) to one opaque user id (C11)',
+  )
   .action(async (type, opts) => {
     await runCapability('inspect', { app: opts.app, type, ...(opts.owner ? { owner: opts.owner } : {}) });
   });
@@ -317,20 +369,40 @@ program
 // --- verify (C14) ----------------------------------------------------------
 program
   .command('verify')
-  .description('Post-deploy contract smoke: check a deployed app honors the platform contracts it adopted — C6 health + C10 auth gates + /auth/config. Read-only; exits non-zero on any failed assertion (Verify).')
+  .description(
+    'Post-deploy contract smoke: check a deployed app honors the platform contracts it adopted — C6 health + C10 auth gates + /auth/config. Read-only; exits non-zero on any failed assertion (Verify).',
+  )
   .requiredOption('--app <app>')
-  .requiredOption('--host <host>', 'public host or base URL of the deployed app, e.g. app.example.com (https assumed)')
-  .option('--page-path <path>', 'unauthenticated page to probe for the C10 page gate (302 → /auth/login)', '/')
+  .requiredOption(
+    '--host <host>',
+    'public host or base URL of the deployed app, e.g. app.example.com (https assumed)',
+  )
+  .option(
+    '--page-path <path>',
+    'unauthenticated page to probe for the C10 page gate (302 → /auth/login)',
+    '/',
+  )
   .option('--health-path <path>', 'C6 health/readiness path', '/api/health')
-  .option('--api-path <path>', 'protected API path expected to 401 unauthenticated (C10 API gate); repeatable', collect, [])
+  .option(
+    '--api-path <path>',
+    'protected API path expected to 401 unauthenticated (C10 API gate); repeatable',
+    collect,
+    [],
+  )
   .option('--cron-path <path>', 'cron/service path expected to 403 with no service token (C10 service gate)')
-  .option('--expect <list>', 'comma list of auth methods expected enabled in /auth/config: google,email,password-signup')
+  .option(
+    '--expect <list>',
+    'comma list of auth methods expected enabled in /auth/config: google,email,password-signup',
+  )
   .option('--expect-google', 'assert Google sign-in is enabled in /auth/config')
   .option('--expect-email', 'assert email delivery is configured in /auth/config')
   .option('--expect-password-signup', 'assert email/password sign-up is enabled in /auth/config')
   .option('--check-refresh', 'also assert POST /auth/refresh with no cookies → 401')
   .option('--timeout-ms <n>', 'per-request timeout in milliseconds')
-  .option('--readiness-timeout-ms <n>', 'post-deploy warm-up wait: poll health until a clean C6 200 before asserting, up to n ms (0 = assert immediately)')
+  .option(
+    '--readiness-timeout-ms <n>',
+    'post-deploy warm-up wait: poll health until a clean C6 200 before asserting, up to n ms (0 = assert immediately)',
+  )
   .option('--readiness-interval-ms <n>', 'base interval between readiness polls (ms)')
   .action(async (opts) => {
     const expectList = String(opts.expect ?? '')
@@ -347,11 +419,17 @@ program
       expect_google: Boolean(opts.expectGoogle) || expectList.includes('google'),
       expect_email: Boolean(opts.expectEmail) || expectList.includes('email'),
       expect_password_signup:
-        Boolean(opts.expectPasswordSignup) || expectList.includes('password-signup') || expectList.includes('password_signup'),
+        Boolean(opts.expectPasswordSignup) ||
+        expectList.includes('password-signup') ||
+        expectList.includes('password_signup'),
       check_refresh: Boolean(opts.checkRefresh),
       ...(opts.timeoutMs ? { timeout_ms: Number.parseInt(opts.timeoutMs, 10) } : {}),
-      ...(opts.readinessTimeoutMs ? { readiness_timeout_ms: Number.parseInt(opts.readinessTimeoutMs, 10) } : {}),
-      ...(opts.readinessIntervalMs ? { readiness_interval_ms: Number.parseInt(opts.readinessIntervalMs, 10) } : {}),
+      ...(opts.readinessTimeoutMs
+        ? { readiness_timeout_ms: Number.parseInt(opts.readinessTimeoutMs, 10) }
+        : {}),
+      ...(opts.readinessIntervalMs
+        ? { readiness_interval_ms: Number.parseInt(opts.readinessIntervalMs, 10) }
+        : {}),
     };
     const result = await api('POST', '/capabilities/verify', body);
     const v = result.resource ?? result;
@@ -363,15 +441,27 @@ program
 // --- release (C18) ---------------------------------------------------------
 program
   .command('release')
-  .description('Run the full production deploy pipeline end-to-end, idempotently and fail-safe: publish/await the commit’s image → repin (C8) → deploy (C7 + P14 drift gate) → verify (C14). Resumable; leaves prod on the last-good version on any failure. Exits non-zero on failure (Release).')
+  .description(
+    'Run the full production deploy pipeline end-to-end, idempotently and fail-safe: publish/await the commit’s image → repin (C8) → deploy (C7 + P14 drift gate) → verify (C14). Resumable; leaves prod on the last-good version on any failure. Exits non-zero on failure (Release).',
+  )
   .requiredOption('--app <app>')
-  .option('--host <host>', 'public host for the post-deploy verify gate (recovered from productionize config if omitted)')
-  .option('--publish-mode <mode>', "how the commit's image reaches GHCR: ci (wait for the app's publish workflow) | build (build+push a multi-arch image here)", 'ci')
+  .option(
+    '--host <host>',
+    'public host for the post-deploy verify gate (recovered from productionize config if omitted)',
+  )
+  .option(
+    '--publish-mode <mode>',
+    "how the commit's image reaches GHCR: ci (wait for the app's publish workflow) | build (build+push a multi-arch image here)",
+    'ci',
+  )
   .option('--dry-run', 'assess + print the plan without publishing, repinning, deploying, or verifying')
   .option('--timeout <seconds>', 'GHCR poll budget in CI mode (seconds)', '600')
   .option('--poll-interval <seconds>', 'GHCR poll interval in CI mode (seconds)', '10')
   .option('--commit <sha>', 'commit to release (default: the app repo HEAD)')
-  .option('--image-ref <ref>', 'full tagged image ref to release (default: ghcr.io/<owner>/<app>-app:sha-<commit>)')
+  .option(
+    '--image-ref <ref>',
+    'full tagged image ref to release (default: ghcr.io/<owner>/<app>-app:sha-<commit>)',
+  )
   .option('--owner <org>', 'GHCR owner for the default image ref (default: the repo origin remote)')
   .option('--registry <host>', 'registry host for the default image ref (default: ghcr.io)')
   .option('--image-suffix <suffix>', 'repo suffix for the default image ref (default: -app)')
@@ -380,13 +470,24 @@ program
   .option('--compose-file <file>', 'production compose manifest (default: app/compose.prod.yaml)')
   .option('--env-file <file>', 'env file Compose interpolates secrets from (default: app/.env.prod)')
   .option('--allow-dirty', 'release even with an uncommitted working tree (normally refused)')
-  .option('--api-path <path>', 'verify: protected API path expected to 401 unauthenticated; repeatable', collect, [])
+  .option(
+    '--api-path <path>',
+    'verify: protected API path expected to 401 unauthenticated; repeatable',
+    collect,
+    [],
+  )
   .option('--cron-path <path>', 'verify: cron/service path expected to 403 with no service token')
   .option('--page-path <path>', 'verify: unauthenticated page expected to 302 → /auth/login')
   .option('--health-path <path>', 'verify: C6 health/readiness path')
-  .option('--expect <list>', 'verify: comma list of auth methods expected enabled: google,email,password-signup')
+  .option(
+    '--expect <list>',
+    'verify: comma list of auth methods expected enabled: google,email,password-signup',
+  )
   .option('--check-refresh', 'verify: also assert POST /auth/refresh with no cookies → 401')
-  .option('--verify-readiness-timeout-ms <n>', 'verify: deploy→verify warm-up wait — poll health for a clean C6 200 before asserting, up to n ms (default 30000; 0 = assert immediately)')
+  .option(
+    '--verify-readiness-timeout-ms <n>',
+    'verify: deploy→verify warm-up wait — poll health for a clean C6 200 before asserting, up to n ms (default 30000; 0 = assert immediately)',
+  )
   .action(async (opts) => {
     const expectList = String(opts.expect ?? '')
       .split(',')
@@ -415,9 +516,13 @@ program
       ...(opts.healthPath ? { health_path: opts.healthPath } : {}),
       ...(expectList.includes('google') ? { expect_google: true } : {}),
       ...(expectList.includes('email') ? { expect_email: true } : {}),
-      ...(expectList.includes('password-signup') || expectList.includes('password_signup') ? { expect_password_signup: true } : {}),
+      ...(expectList.includes('password-signup') || expectList.includes('password_signup')
+        ? { expect_password_signup: true }
+        : {}),
       ...(opts.checkRefresh ? { check_refresh: true } : {}),
-      ...(opts.verifyReadinessTimeoutMs !== undefined ? { verify_readiness_timeout_ms: Number.parseInt(opts.verifyReadinessTimeoutMs, 10) } : {}),
+      ...(opts.verifyReadinessTimeoutMs !== undefined
+        ? { verify_readiness_timeout_ms: Number.parseInt(opts.verifyReadinessTimeoutMs, 10) }
+        : {}),
     };
     // Release is long-running: the request blocks through publish→repin→deploy→verify. Use the
     // no-timeout dispatcher (P22) so a real run's server wait doesn't trip undici's 300s
@@ -451,7 +556,7 @@ program
   });
 
 // --- secrets ---------------------------------------------------------------
-const secrets = program.command('secrets').description('Manage an app\'s encrypted secrets (SetSecret)');
+const secrets = program.command('secrets').description("Manage an app's encrypted secrets (SetSecret)");
 secrets
   .command('set')
   .description('Store an encrypted secret for an app (SetSecret)')
@@ -560,7 +665,9 @@ email
   });
 
 // --- auth (C10) ------------------------------------------------------------
-const auth = program.command('auth').description('Inspect identity/auth + seed the owner user (Identity/Auth)');
+const auth = program
+  .command('auth')
+  .description('Inspect identity/auth + seed the owner user (Identity/Auth)');
 auth
   .command('users')
   .description('List users for an app (redacted email + verified + provider; never hashes)')
@@ -584,10 +691,14 @@ auth
   });
 
 // --- owner (C11) -----------------------------------------------------------
-const owner = program.command('owner').description('Per-user ownership of the shared stores (Permissions / access control)');
+const owner = program
+  .command('owner')
+  .description('Per-user ownership of the shared stores (Permissions / access control)');
 owner
   .command('claim-legacy')
-  .description('Assign every owner-less shared-store record (app-events + notifications + agent-runs) to an owner — the C11 cutover migration (pairs with `auth seed-owner`)')
+  .description(
+    'Assign every owner-less shared-store record (app-events + notifications + agent-runs) to an owner — the C11 cutover migration (pairs with `auth seed-owner`)',
+  )
   .requiredOption('--app <app>')
   .requiredOption('--owner <id>', 'opaque owner user id to claim legacy records for (e.g. the seeded owner)')
   .action(async (opts) => {
@@ -667,7 +778,15 @@ program
   .description('Discover available Capabilities')
   .action(async () => {
     const data = await api('GET', '/capabilities');
-    process.stdout.write(JSON.stringify(globalOpts.summary ? data.capabilities.map((c: any) => `${c.name} — ${c.description}`) : data.capabilities, null, globalOpts.summary ? 2 : 0) + '\n');
+    process.stdout.write(
+      JSON.stringify(
+        globalOpts.summary
+          ? data.capabilities.map((c: any) => `${c.name} — ${c.description}`)
+          : data.capabilities,
+        null,
+        globalOpts.summary ? 2 : 0,
+      ) + '\n',
+    );
   });
 
 program
@@ -682,7 +801,17 @@ program
     if (opts.type) params.set('type', opts.type);
     if (opts.owner) params.set('owner', opts.owner);
     const data = await api('GET', `/resources?${params.toString()}`);
-    process.stdout.write(JSON.stringify(data.resources.map((r: any) => ({ id: r.id, type: r.type, status: r.status, owner: r.owner, created_at: r.created_at }))) + '\n');
+    process.stdout.write(
+      JSON.stringify(
+        data.resources.map((r: any) => ({
+          id: r.id,
+          type: r.type,
+          status: r.status,
+          owner: r.owner,
+          created_at: r.created_at,
+        })),
+      ) + '\n',
+    );
   });
 
 program
@@ -697,7 +826,11 @@ program
     if (opts.resource) params.set('resource_id', opts.resource);
     params.set('limit', opts.limit);
     const data = await api('GET', `/events?${params.toString()}`);
-    process.stdout.write(JSON.stringify(data.events.map((e: any) => ({ type: e.type, resource_id: e.resource_id, at: e.timestamp }))) + '\n');
+    process.stdout.write(
+      JSON.stringify(
+        data.events.map((e: any) => ({ type: e.type, resource_id: e.resource_id, at: e.timestamp })),
+      ) + '\n',
+    );
   });
 
 program
@@ -727,15 +860,32 @@ const storage = program.command('storage').description('Platform storage operati
 storage
   .command('migrate')
   .description('Backfill a platform store from the filesystem into Postgres. Requires FORGE_DB_URL.')
-  .option('--store <name>', 'store to migrate: identity | search | events | notifications | secrets | resources | policy | mcp | blobs', 'identity')
+  .option(
+    '--store <name>',
+    'store to migrate: identity | search | events | notifications | secrets | resources | policy | mcp | blobs',
+    'identity',
+  )
   .option('--app <name>', 'migrate only this app (default: every app with filesystem state)')
   .action(async (opts) => {
-    const supported = ['identity', 'search', 'events', 'notifications', 'secrets', 'resources', 'policy', 'mcp', 'blobs'];
+    const supported = [
+      'identity',
+      'search',
+      'events',
+      'notifications',
+      'secrets',
+      'resources',
+      'policy',
+      'mcp',
+      'blobs',
+    ];
     if (!supported.includes(opts.store)) {
       fail(`unknown store "${opts.store}" (supported: ${supported.join(', ')})`);
     }
     const dbUrl = process.env.FORGE_DB_URL;
-    if (!dbUrl) fail('FORGE_DB_URL is required to migrate into Postgres (e.g. postgres://forge_platform:***@postgres:5432/forge_platform).');
+    if (!dbUrl)
+      fail(
+        'FORGE_DB_URL is required to migrate into Postgres (e.g. postgres://forge_platform:***@postgres:5432/forge_platform).',
+      );
     const { Pool } = await import('pg');
     const pool = new Pool({ connectionString: dbUrl });
     try {
@@ -746,7 +896,9 @@ storage
         await ensureIdentitySchema(pool);
         const apps = opts.app ? [opts.app] : await listFsIdentityApps();
         const migrated = await backfillIdentity(new FsIdentityBackend(), new PgIdentityBackend(pool), apps);
-        process.stdout.write(JSON.stringify({ store: 'identity', apps: apps.length, migrated }, null, 2) + '\n');
+        process.stdout.write(
+          JSON.stringify({ store: 'identity', apps: apps.length, migrated }, null, 2) + '\n',
+        );
       } else if (opts.store === 'search') {
         const { FsSearchBackend } = await import('../storage/backends/search/fs');
         const { PgSearchBackend, ensureSearchSchema } = await import('../storage/backends/search/pg');
@@ -754,7 +906,9 @@ storage
         await ensureSearchSchema(pool);
         const apps = opts.app ? [opts.app] : await listFsSearchApps();
         const migrated = await backfillSearch(new FsSearchBackend(), new PgSearchBackend(pool), apps);
-        process.stdout.write(JSON.stringify({ store: 'search', apps: apps.length, migrated }, null, 2) + '\n');
+        process.stdout.write(
+          JSON.stringify({ store: 'search', apps: apps.length, migrated }, null, 2) + '\n',
+        );
       } else if (opts.store === 'events') {
         const { FsEventBackend } = await import('../storage/backends/events/fs');
         const { PgEventBackend, ensureEventSchema } = await import('../storage/backends/events/pg');
@@ -762,15 +916,25 @@ storage
         await ensureEventSchema(pool);
         const apps = opts.app ? [opts.app] : await listFsEventApps();
         const migrated = await backfillEvents(new FsEventBackend(), new PgEventBackend(pool), apps);
-        process.stdout.write(JSON.stringify({ store: 'events', apps: apps.length, migrated }, null, 2) + '\n');
+        process.stdout.write(
+          JSON.stringify({ store: 'events', apps: apps.length, migrated }, null, 2) + '\n',
+        );
       } else if (opts.store === 'notifications') {
         const { FsNotificationBackend } = await import('../storage/backends/notifications/fs');
-        const { PgNotificationBackend, ensureNotificationSchema } = await import('../storage/backends/notifications/pg');
-        const { backfillNotifications, listFsNotificationApps } = await import('../storage/backends/notifications/migrate');
+        const { PgNotificationBackend, ensureNotificationSchema } =
+          await import('../storage/backends/notifications/pg');
+        const { backfillNotifications, listFsNotificationApps } =
+          await import('../storage/backends/notifications/migrate');
         await ensureNotificationSchema(pool);
         const apps = opts.app ? [opts.app] : await listFsNotificationApps();
-        const migrated = await backfillNotifications(new FsNotificationBackend(), new PgNotificationBackend(pool), apps);
-        process.stdout.write(JSON.stringify({ store: 'notifications', apps: apps.length, migrated }, null, 2) + '\n');
+        const migrated = await backfillNotifications(
+          new FsNotificationBackend(),
+          new PgNotificationBackend(pool),
+          apps,
+        );
+        process.stdout.write(
+          JSON.stringify({ store: 'notifications', apps: apps.length, migrated }, null, 2) + '\n',
+        );
       } else if (opts.store === 'secrets') {
         const { FsSecretsBackend } = await import('../storage/backends/secrets/fs');
         const { PgSecretsBackend, ensureSecretsSchema } = await import('../storage/backends/secrets/pg');
@@ -778,7 +942,9 @@ storage
         await ensureSecretsSchema(pool);
         const apps = opts.app ? [opts.app] : await listFsSecretApps();
         const migrated = await backfillSecrets(new FsSecretsBackend(), new PgSecretsBackend(pool), apps);
-        process.stdout.write(JSON.stringify({ store: 'secrets', apps: apps.length, migrated }, null, 2) + '\n');
+        process.stdout.write(
+          JSON.stringify({ store: 'secrets', apps: apps.length, migrated }, null, 2) + '\n',
+        );
       } else if (opts.store === 'resources') {
         const { FsResourceBackend } = await import('../storage/backends/resources/fs');
         const { PgResourceBackend, ensureResourceSchema } = await import('../storage/backends/resources/pg');
@@ -793,7 +959,9 @@ storage
         await ensurePolicySchema(pool);
         const apps = opts.app ? [opts.app] : await listFsPolicyApps();
         const migrated = await backfillPolicies(new FsPolicyBackend(), new PgPolicyBackend(pool), apps);
-        process.stdout.write(JSON.stringify({ store: 'policy', apps: apps.length, migrated }, null, 2) + '\n');
+        process.stdout.write(
+          JSON.stringify({ store: 'policy', apps: apps.length, migrated }, null, 2) + '\n',
+        );
       } else if (opts.store === 'mcp') {
         const { FsMcpBackend } = await import('../storage/backends/mcp/fs');
         const { PgMcpBackend, ensureMcpSchema } = await import('../storage/backends/mcp/pg');
@@ -806,7 +974,10 @@ storage
         // blobs: bytes filesystem → S3/MinIO, metadata → Postgres. Needs the S3 settings too.
         const { loadStoreConfig } = await import('../storage/backends/config');
         const s3cfg = loadStoreConfig().s3;
-        if (!s3cfg) fail('FORGE_S3_ENDPOINT + FORGE_S3_BUCKET (and creds) are required to migrate blobs into the object store.');
+        if (!s3cfg)
+          fail(
+            'FORGE_S3_ENDPOINT + FORGE_S3_BUCKET (and creds) are required to migrate blobs into the object store.',
+          );
         const { blobStore } = await import('../storage/blob-store');
         const { S3Client } = await import('../storage/backends/blobs/s3-client');
         const { S3BlobBackend, ensureBlobSchema } = await import('../storage/backends/blobs/s3');
@@ -851,7 +1022,11 @@ policy
   .action(async (opts) => {
     let match: unknown;
     if (opts.match) {
-      try { match = JSON.parse(opts.match); } catch { fail('--match must be valid JSON'); }
+      try {
+        match = JSON.parse(opts.match);
+      } catch {
+        fail('--match must be valid JSON');
+      }
     }
     const body: Record<string, unknown> = { effect: opts.effect };
     if (opts.app) body.app = opts.app;
@@ -868,7 +1043,10 @@ policy
   .description('Delete a policy by id (idempotent; --owner scopes the removal to that user’s own rules)')
   .argument('<id>')
   .option('--app <name>', 'app name')
-  .option('--owner <owner>', 'owner id — remove only if the rule belongs to this owner (omit for management scope)')
+  .option(
+    '--owner <owner>',
+    'owner id — remove only if the rule belongs to this owner (omit for management scope)',
+  )
   .action(async (id, opts) => {
     const qs = new URLSearchParams();
     if (opts.app) qs.set('app', opts.app);
@@ -904,13 +1082,29 @@ mcp
   .option('--input-schema <json>', 'input JSON Schema')
   .option('--output-schema <json>', 'output JSON Schema')
   .action(async (opts) => {
-    const body: Record<string, unknown> = { name: opts.name, handler_path: opts.handlerPath, family: opts.family };
+    const body: Record<string, unknown> = {
+      name: opts.name,
+      handler_path: opts.handlerPath,
+      family: opts.family,
+    };
     if (opts.app) body.app = opts.app;
     if (opts.description) body.description = opts.description;
     if (opts.scope) body.scope = opts.scope;
     if (opts.highRisk) body.high_risk = true;
-    if (opts.inputSchema) { try { body.input_schema = JSON.parse(opts.inputSchema); } catch { fail('--input-schema must be valid JSON'); } }
-    if (opts.outputSchema) { try { body.output_schema = JSON.parse(opts.outputSchema); } catch { fail('--output-schema must be valid JSON'); } }
+    if (opts.inputSchema) {
+      try {
+        body.input_schema = JSON.parse(opts.inputSchema);
+      } catch {
+        fail('--input-schema must be valid JSON');
+      }
+    }
+    if (opts.outputSchema) {
+      try {
+        body.output_schema = JSON.parse(opts.outputSchema);
+      } catch {
+        fail('--output-schema must be valid JSON');
+      }
+    }
     const r = await api('POST', '/mcp/tools', body);
     process.stdout.write(JSON.stringify(r.tool ?? r, null, 2) + '\n');
   });
@@ -952,7 +1146,9 @@ mcp
   });
 mcp
   .command('proactive')
-  .description('Schedule (or remove) a proactive prompt that periodically nudges the agent to use a tool (via C2)')
+  .description(
+    'Schedule (or remove) a proactive prompt that periodically nudges the agent to use a tool (via C2)',
+  )
   .requiredOption('--tool <name>', 'the tool to nudge toward')
   .option('--app <name>', 'app name')
   .option('--target-path <path>', 'app cron path the fire calls back, e.g. /api/cron/whats-next')
@@ -973,7 +1169,9 @@ mcp
 // --- eval (C30) --------------------------------------------------------------
 program
   .command('eval')
-  .description("Run an eval suite against an app's MCP surface: drive Claude/GPT as MCP clients, grade, report to Langfuse (Eval, C30)")
+  .description(
+    "Run an eval suite against an app's MCP surface: drive Claude/GPT as MCP clients, grade, report to Langfuse (Eval, C30)",
+  )
   .argument('<suite-file>', 'path to the suite JSON file the app authors')
   .requiredOption('--app <app>', 'the forge app whose MCP surface to drive')
   .requiredOption('--mcp-url <url>', 'the app MCP endpoint, e.g. https://api.dorinda.ai/mcp')
@@ -984,23 +1182,25 @@ program
     (val: string, prev: string[]) => [...prev, val],
     [] as string[],
   )
-  .action(async (suiteFile: string, opts: { app: string; mcpUrl: string; runName?: string; model: string[] }) => {
-    let suite: unknown;
-    try {
-      suite = JSON.parse(readFileSync(suiteFile, 'utf8'));
-    } catch (e) {
-      fail(`could not read/parse suite file "${suiteFile}": ${(e as Error)?.message ?? e}`);
-    }
-    const body: Record<string, unknown> = { app: opts.app, mcp_url: opts.mcpUrl, suite };
-    if (opts.runName) body.run_name = opts.runName;
-    if (opts.model.length) {
-      body.models = opts.model.map((s) => {
-        const i = s.indexOf(':');
-        return { provider: s.slice(0, i), model: s.slice(i + 1) };
-      });
-    }
-    await runCapability('eval', body);
-  });
+  .action(
+    async (suiteFile: string, opts: { app: string; mcpUrl: string; runName?: string; model: string[] }) => {
+      let suite: unknown;
+      try {
+        suite = JSON.parse(readFileSync(suiteFile, 'utf8'));
+      } catch (e) {
+        fail(`could not read/parse suite file "${suiteFile}": ${(e as Error)?.message ?? e}`);
+      }
+      const body: Record<string, unknown> = { app: opts.app, mcp_url: opts.mcpUrl, suite };
+      if (opts.runName) body.run_name = opts.runName;
+      if (opts.model.length) {
+        body.models = opts.model.map((s) => {
+          const i = s.indexOf(':');
+          return { provider: s.slice(0, i), model: s.slice(i + 1) };
+        });
+      }
+      await runCapability('eval', body);
+    },
+  );
 
 // --- provision-monitoring ----------------------------------------------------
 program
@@ -1023,7 +1223,10 @@ program
   .option('--smtp-from <addr>')
   .option('--langfuse-public-url <url>', 'PUBLIC Langfuse UI base for browser deep links')
   .option('--langfuse-project-id <id>', 'Langfuse project id for deep links')
-  .option('--app-db-network <name>', 'app stack network the postgres container lives on (enables the User Experience dashboard)')
+  .option(
+    '--app-db-network <name>',
+    'app stack network the postgres container lives on (enables the User Experience dashboard)',
+  )
   .option('--app-db-host <host>', 'postgres container name/host on that network')
   .option('--app-db-port <port>', 'postgres port (default 5432)')
   .option('--app-db-database <db>', 'database holding forge_identity_users (e.g. forge_platform)')
@@ -1033,7 +1236,11 @@ program
   .option('--env-file <name>', 'env filename inside the stack dir', '.env')
   .option('--context <ctx>', 'docker --context for a remote daemon')
   .option('--skip-deploy', 'generate files only; do not pull/up', false)
-  .option('--regenerate-secrets', 'force NEW secrets even if an env file exists (rotates Grafana admin)', false)
+  .option(
+    '--regenerate-secrets',
+    'force NEW secrets even if an env file exists (rotates Grafana admin)',
+    false,
+  )
   .action(
     async (opts: {
       dir?: string;

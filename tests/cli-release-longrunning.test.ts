@@ -53,8 +53,9 @@ describe('release long-running dispatcher (P22)', () => {
     const disp = makeLongRunningDispatcher() as unknown as { [k: symbol]: unknown };
     const opts = Object.getOwnPropertySymbols(disp)
       .map((s) => disp[s])
-      .find((v): v is { headersTimeout: number; bodyTimeout: number } =>
-        typeof v === 'object' && v !== null && 'headersTimeout' in v && 'bodyTimeout' in v,
+      .find(
+        (v): v is { headersTimeout: number; bodyTimeout: number } =>
+          typeof v === 'object' && v !== null && 'headersTimeout' in v && 'bodyTimeout' in v,
       );
     expect(opts?.headersTimeout).toBe(0);
     expect(opts?.bodyTimeout).toBe(0);
@@ -101,6 +102,8 @@ describe('release long-running dispatcher (P22)', () => {
       expect(res.status).toBe(200);
     }
     // The CLI composes this endpoint from resolveApiBaseUrl (the P20 IPv4 loopback default).
-    expect(`${resolveApiBaseUrl({})}/capabilities/release`).toBe('http://127.0.0.1:3717/capabilities/release');
+    expect(`${resolveApiBaseUrl({})}/capabilities/release`).toBe(
+      'http://127.0.0.1:3717/capabilities/release',
+    );
   });
 });

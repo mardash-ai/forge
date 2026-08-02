@@ -29,18 +29,20 @@ const inputSchema = z.object({
   // The app's MCP endpoint the eval client POSTs JSON-RPC to (e.g. https://api.dorinda.ai/mcp).
   mcp_url: z.string(),
   // Agents-under-test. Default: Claude + GPT (both from day one).
-  models: z
-    .array(modelSchema)
-    .default([
-      { provider: 'anthropic', model: 'claude-opus-4-8' },
-      { provider: 'openai', model: 'gpt-4o' },
-    ]),
+  models: z.array(modelSchema).default([
+    { provider: 'anthropic', model: 'claude-opus-4-8' },
+    { provider: 'openai', model: 'gpt-4o' },
+  ]),
   // The judge model (Claude, via forge's structured invoker).
   judge_model: z.string().default('claude-opus-4-8'),
   // Optional override of the run name (defaults to suite + timestamp) + Langfuse config.
   run_name: z.string().optional(),
   langfuse: z
-    .object({ baseUrl: z.string().optional(), publicKey: z.string().optional(), secretKey: z.string().optional() })
+    .object({
+      baseUrl: z.string().optional(),
+      publicKey: z.string().optional(),
+      secretKey: z.string().optional(),
+    })
     .partial()
     .optional(),
 });
@@ -86,7 +88,10 @@ export const evalCapability: Capability<Input, EvalRun> = {
     // Keys: Claude drives + judges (via forge's C1 resolver, vault→env); GPT via OPENAI_API_KEY.
     const anthropicKey = await resolveModelKey(appId);
     const openaiKey = await resolveOpenaiKey(appId);
-    if (!anthropicKey) throw new Error('eval needs ANTHROPIC_API_KEY (the LLM-judge runs on Claude) — set it in the vault or env.');
+    if (!anthropicKey)
+      throw new Error(
+        'eval needs ANTHROPIC_API_KEY (the LLM-judge runs on Claude) — set it in the vault or env.',
+      );
 
     // Best-effort Langfuse reporting (the eval still runs + returns results if Langfuse is absent).
     const lf = resolveLangfuse(input.langfuse);
@@ -104,7 +109,18 @@ export const evalCapability: Capability<Input, EvalRun> = {
       const key = m.provider === 'anthropic' ? anthropicKey : openaiKey;
       if (!key) {
         for (const c of suite.cases) {
-          results.push({ model: modelLabel, case_id: c.id, passed: false, deterministic_passed: false, dimension_avg: 0, trace_id: '', note: `skipped: no API key for ${m.provider}`, tokens_in: 0, tokens_out: 0, cost_usd: 0 });
+          results.push({
+            model: modelLabel,
+            case_id: c.id,
+            passed: false,
+            deterministic_passed: false,
+            dimension_avg: 0,
+            trace_id: '',
+            note: `skipped: no API key for ${m.provider}`,
+            tokens_in: 0,
+            tokens_out: 0,
+            cost_usd: 0,
+          });
         }
         continue;
       }
@@ -112,7 +128,8 @@ export const evalCapability: Capability<Input, EvalRun> = {
       for (const c of suite.cases) {
         const itemId = `${suite.name}:${c.id}`;
         const traceId = reporter?.newTraceId() ?? '';
-        if (reporter) await reporter.ensureItem(suite.name, itemId, { prompt: c.prompt }, { asserts: c.asserts });
+        if (reporter)
+          await reporter.ensureItem(suite.name, itemId, { prompt: c.prompt }, { asserts: c.asserts });
 
         // Isolated tenant → minted MCP token → drive the model through the real transport.
         const tenant = await seedEvalTenant(appId, { suite: suite.name, caseId: c.id, runId: runName });
@@ -126,16 +143,26 @@ export const evalCapability: Capability<Input, EvalRun> = {
         }
         const tools = await client.listTools();
         const trajectory = await runAgent({
-          provider: m.provider, apiKey: key, model: m.model, system: AGENT_SYSTEM, prompt: c.prompt,
-          tools, callTool: (name, args) => client.callTool(name, args),
+          provider: m.provider,
+          apiKey: key,
+          model: m.model,
+          system: AGENT_SYSTEM,
+          prompt: c.prompt,
+          tools,
+          callTool: (name, args) => client.callTool(name, args),
         });
 
         // Grade. Capture the judge call's token usage so the case cost includes it.
         const det = gradeDeterministic(trajectory, c);
         let judgeUsage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
         const dims = await gradeJudge({
-          apiKey: anthropicKey, model: input.judge_model, case: c, trajectory,
-          onUsage: (u) => { judgeUsage = addUsage(judgeUsage, u); },
+          apiKey: anthropicKey,
+          model: input.judge_model,
+          case: c,
+          trajectory,
+          onUsage: (u) => {
+            judgeUsage = addUsage(judgeUsage, u);
+          },
         });
         const avg = dimensionAverage(dims);
         const passed = det.passed && avg >= suite.threshold && !trajectory.error;
@@ -155,21 +182,44 @@ export const evalCapability: Capability<Input, EvalRun> = {
         runCost += caseCost;
 
         results.push({
-          model: modelLabel, case_id: c.id, passed, deterministic_passed: det.passed, dimension_avg: avg,
-          trace_id: traceId, note, tokens_in: caseUsage.inputTokens, tokens_out: caseUsage.outputTokens, cost_usd: caseCost,
+          model: modelLabel,
+          case_id: c.id,
+          passed,
+          deterministic_passed: det.passed,
+          dimension_avg: avg,
+          trace_id: traceId,
+          note,
+          tokens_in: caseUsage.inputTokens,
+          tokens_out: caseUsage.outputTokens,
+          cost_usd: caseCost,
         });
 
         // Report (best-effort).
         if (reporter && traceId) {
           await reporter.createTrace(
-            traceId, `eval:${suite.name}/${c.id}/${m.provider}`,
+            traceId,
+            `eval:${suite.name}/${c.id}/${m.provider}`,
             { prompt: c.prompt },
-            { final_reply: trajectory.finalText, tool_calls: trajectory.toolCalls.map((t) => ({ name: t.name, args: t.args, ok: t.ok, result: t.result })) },
+            {
+              final_reply: trajectory.finalText,
+              tool_calls: trajectory.toolCalls.map((t) => ({
+                name: t.name,
+                args: t.args,
+                ok: t.ok,
+                result: t.result,
+              })),
+            },
             { model: modelLabel, deterministic: det, loop_error: trajectory.error ?? null },
           );
           await reporter.score(traceId, 'passed', passed ? 1 : 0, 'BOOLEAN');
           await reporter.score(traceId, 'deterministic', det.passed ? 1 : 0, 'BOOLEAN');
-          await reporter.score(traceId, 'cost_usd', caseCost, 'NUMERIC', `in=${caseUsage.inputTokens} out=${caseUsage.outputTokens} tok`);
+          await reporter.score(
+            traceId,
+            'cost_usd',
+            caseCost,
+            'NUMERIC',
+            `in=${caseUsage.inputTokens} out=${caseUsage.outputTokens} tok`,
+          );
           for (const d of dims) await reporter.score(traceId, `dim.${d.name}`, d.score, 'NUMERIC', d.reason);
           await reporter.linkRun(runName, itemId, traceId, { model: modelLabel, passed, cost_usd: caseCost });
         }
@@ -197,10 +247,20 @@ export const evalCapability: Capability<Input, EvalRun> = {
     };
     await ctx.store.saveResource(resource);
     await ctx.emit({
-      type: 'EvalRunCompleted', resource_type: 'EvalRun', resource_id: resource.id, app_id: appId,
+      type: 'EvalRunCompleted',
+      resource_type: 'EvalRun',
+      resource_id: resource.id,
+      app_id: appId,
       data: {
-        suite: suite.name, run_name: runName, passed: resource.passed, passed_count: passedCount, total: results.length,
-        cost_usd: resource.cost_usd, tokens_in: resource.tokens_in, tokens_out: resource.tokens_out, cost_estimated: costEstimated,
+        suite: suite.name,
+        run_name: runName,
+        passed: resource.passed,
+        passed_count: passedCount,
+        total: results.length,
+        cost_usd: resource.cost_usd,
+        tokens_in: resource.tokens_in,
+        tokens_out: resource.tokens_out,
+        cost_estimated: costEstimated,
       },
     });
     return resource;

@@ -19,19 +19,24 @@ import { runContractChecks } from '../src/shared/contract-checks';
 // A configurable fake "deployed forge app". Each contract behaves compliantly unless a
 // flag flips it to a violation, so a single fixture proves both pass and fail paths.
 interface FakeAppConfig {
-  healthStatus?: number;              // default 200
-  healthBody?: unknown;               // default a valid C6 body
-  healthRedirect?: string;            // if set, /api/health 302s here (gated — a violation)
-  pageStatus?: number;                // default 302
-  pageLocation?: string;              // default /auth/login?next=/
-  apiStatus?: number;                 // default 401 for /api/protected
-  cronStatus?: number;                // default 403 for /api/cron/job
-  authConfig?: unknown;               // default a valid {methods,configured}
-  authConfigStatus?: number;          // default 200
-  refreshStatus?: number;             // default 401
+  healthStatus?: number; // default 200
+  healthBody?: unknown; // default a valid C6 body
+  healthRedirect?: string; // if set, /api/health 302s here (gated — a violation)
+  pageStatus?: number; // default 302
+  pageLocation?: string; // default /auth/login?next=/
+  apiStatus?: number; // default 401 for /api/protected
+  cronStatus?: number; // default 403 for /api/cron/job
+  authConfig?: unknown; // default a valid {methods,configured}
+  authConfigStatus?: number; // default 200
+  refreshStatus?: number; // default 401
 }
 
-const C6_OK = { status: 'ok', service: 'demo', time: '2026-01-01T00:00:00.000Z', checks: [{ name: 'db', status: 'ok' }] };
+const C6_OK = {
+  status: 'ok',
+  service: 'demo',
+  time: '2026-01-01T00:00:00.000Z',
+  checks: [{ name: 'db', status: 'ok' }],
+};
 const AUTH_CONFIG_OK = {
   methods: { password: true, password_signup: true, google: true },
   configured: { session_key: true, google: true, email: true, service_token: true },
@@ -61,7 +66,8 @@ async function startFakeApp(cfg: FakeAppConfig = {}): Promise<string> {
     if (url === '/api/protected') return json(cfg.apiStatus ?? 401, { error: { code: 'unauthenticated' } });
     if (url === '/api/cron/job') return json(cfg.cronStatus ?? 403, { error: { code: 'forbidden' } });
     if (url === '/auth/config') return json(cfg.authConfigStatus ?? 200, cfg.authConfig ?? AUTH_CONFIG_OK);
-    if (url === '/auth/refresh' && method === 'POST') return json(cfg.refreshStatus ?? 401, { error: { code: 'unauthenticated' } });
+    if (url === '/auth/refresh' && method === 'POST')
+      return json(cfg.refreshStatus ?? 401, { error: { code: 'unauthenticated' } });
     res.writeHead(404).end();
   });
   await new Promise<void>((r) => server!.listen(0, '127.0.0.1', r));
@@ -149,7 +155,10 @@ describe('C14 runContractChecks — contract assertions', () => {
 
   it('fails /auth/config when an expected method is not enabled', async () => {
     const base = await startFakeApp({
-      authConfig: { methods: { password: true, password_signup: false, google: false }, configured: { session_key: true, google: false, email: false, service_token: true } },
+      authConfig: {
+        methods: { password: true, password_signup: false, google: false },
+        configured: { session_key: true, google: false, email: false, service_token: true },
+      },
     });
     const report = await runContractChecks({ baseUrl: base, expect: { google: true } });
     const a = report.assertions.find((x) => x.name === 'auth-config')!;
@@ -159,7 +168,10 @@ describe('C14 runContractChecks — contract assertions', () => {
 
   it('passes /auth/config shape-only when no expectations are declared', async () => {
     const base = await startFakeApp({
-      authConfig: { methods: { password: true, password_signup: false, google: false }, configured: { session_key: true, google: false, email: false, service_token: false } },
+      authConfig: {
+        methods: { password: true, password_signup: false, google: false },
+        configured: { session_key: true, google: false, email: false, service_token: false },
+      },
     });
     const report = await runContractChecks({ baseUrl: base });
     expect(report.assertions.find((a) => a.name === 'auth-config')!.status).toBe('pass');
@@ -186,9 +198,18 @@ let prevState: string | undefined;
 async function seedApp(): Promise<Application> {
   const now = nowIso();
   const app: Application = {
-    id: 'app_demo', type: 'Application', app_id: 'app_demo', created_at: now, updated_at: now,
-    name: 'demo', repo_path: '/app', platform: 'web', framework: 'nextjs', template: 'nextjs-web',
-    language: 'typescript', package_manager: 'npm',
+    id: 'app_demo',
+    type: 'Application',
+    app_id: 'app_demo',
+    created_at: now,
+    updated_at: now,
+    name: 'demo',
+    repo_path: '/app',
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   };
   await store.saveResource(app);
   return app;
@@ -213,7 +234,14 @@ describe('C14 Verify Capability (through the runtime)', () => {
     const base = await startFakeApp();
     const { resource } = await executeCapability(
       'verify',
-      { app: 'demo', host: base, api_paths: ['/api/protected'], cron_path: '/api/cron/job', expect_google: true, check_refresh: true },
+      {
+        app: 'demo',
+        host: base,
+        api_paths: ['/api/protected'],
+        cron_path: '/api/cron/job',
+        expect_google: true,
+        check_refresh: true,
+      },
       SYSTEM_ACTOR,
     );
     const v = resource as Verification;

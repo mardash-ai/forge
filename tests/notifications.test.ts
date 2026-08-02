@@ -105,7 +105,7 @@ describe('Notification owner-scoping (C11)', () => {
     expect((await store.listNotifications('app', { owner: 'B', includeDismissed: true })).length).toBe(1); // still B's
   });
 
-  it("re-upsert preserves the per-owner dismissed flag independently", async () => {
+  it('re-upsert preserves the per-owner dismissed flag independently', async () => {
     await store.upsertNotification('app', { key: 'k', title: 't', owner: 'A' });
     await store.dismissNotification('app', 'k', 'A');
     await store.upsertNotification('app', { key: 'k', title: 't (re-derived)', owner: 'A' }); // still true for A

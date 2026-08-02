@@ -20,7 +20,7 @@ export async function build(appDir: string, logFile: string): Promise<BuildOutpu
   const top_errors = ok ? [] : extractErrors(r.combined);
   const error_summary = ok
     ? undefined
-    : top_errors[0]?.message ?? 'Build failed. Run: forge explain --resource <build-id>';
+    : (top_errors[0]?.message ?? 'Build failed. Run: forge explain --resource <build-id>');
 
   return { ok, run: r, artifact_refs, error_summary, top_errors };
 }

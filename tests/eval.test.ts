@@ -11,7 +11,7 @@ import type { EvalCase } from '../src/capabilities/eval/suite';
 // reporting all take an injected `fetch`, so the whole loop is exercised with zero network.
 
 const jsonRes = (body: unknown, ok = true, status = 200) =>
-  ({ ok, status, json: async () => body, text: async () => JSON.stringify(body) } as unknown as Response);
+  ({ ok, status, json: async () => body, text: async () => JSON.stringify(body) }) as unknown as Response;
 
 const trackResult = {
   content: [{ type: 'text', text: 'Created delegation d1' }],
@@ -26,14 +26,26 @@ describe('runAgent — Anthropic (Claude) tool-loop', () => {
     const fetchImpl = (async () => {
       call++;
       return call === 1
-        ? jsonRes({ content: [{ type: 'tool_use', id: 't1', name: 'track', input: { request: 'the Q3 budget from Dana' } }], stop_reason: 'tool_use' })
+        ? jsonRes({
+            content: [
+              { type: 'tool_use', id: 't1', name: 'track', input: { request: 'the Q3 budget from Dana' } },
+            ],
+            stop_reason: 'tool_use',
+          })
         : jsonRes({ content: [{ type: 'text', text: 'Done — I tracked it.' }], stop_reason: 'end_turn' });
     }) as unknown as typeof fetch;
     const seen: Array<{ name: string; args: unknown }> = [];
     const traj = await runAgent({
-      provider: 'anthropic', apiKey: 'k', model: 'claude-x', system: 's', prompt: 'track the Q3 budget',
+      provider: 'anthropic',
+      apiKey: 'k',
+      model: 'claude-x',
+      system: 's',
+      prompt: 'track the Q3 budget',
       tools: [{ name: 'track', description: 'track', inputSchema: { type: 'object' } }],
-      callTool: async (name, args) => { seen.push({ name, args }); return { ok: true, result: trackResult }; },
+      callTool: async (name, args) => {
+        seen.push({ name, args });
+        return { ok: true, result: trackResult };
+      },
       fetchImpl,
     });
     expect(traj.error).toBeUndefined();
@@ -45,10 +57,17 @@ describe('runAgent — Anthropic (Claude) tool-loop', () => {
   });
 
   it('captures a provider HTTP error in trajectory.error (never throws)', async () => {
-    const fetchImpl = (async () => jsonRes({ error: { message: 'overloaded' } }, false, 529)) as unknown as typeof fetch;
+    const fetchImpl = (async () =>
+      jsonRes({ error: { message: 'overloaded' } }, false, 529)) as unknown as typeof fetch;
     const traj = await runAgent({
-      provider: 'anthropic', apiKey: 'k', model: 'claude-x', system: 's', prompt: 'x', tools: [],
-      callTool: async () => ({ ok: true, result: {} }), fetchImpl,
+      provider: 'anthropic',
+      apiKey: 'k',
+      model: 'claude-x',
+      system: 's',
+      prompt: 'x',
+      tools: [],
+      callTool: async () => ({ ok: true, result: {} }),
+      fetchImpl,
     });
     expect(traj.error).toContain('anthropic HTTP 529');
     expect(traj.toolCalls).toHaveLength(0);
@@ -61,13 +80,38 @@ describe('runAgent — OpenAI (GPT) tool-loop', () => {
     const fetchImpl = (async () => {
       call++;
       return call === 1
-        ? jsonRes({ choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'track', arguments: '{"request":"the Q3 budget from Dana"}' } }] } }] })
-        : jsonRes({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Tracked it for you.' } }] });
+        ? jsonRes({
+            choices: [
+              {
+                finish_reason: 'tool_calls',
+                message: {
+                  role: 'assistant',
+                  tool_calls: [
+                    {
+                      id: 'c1',
+                      type: 'function',
+                      function: { name: 'track', arguments: '{"request":"the Q3 budget from Dana"}' },
+                    },
+                  ],
+                },
+              },
+            ],
+          })
+        : jsonRes({
+            choices: [
+              { finish_reason: 'stop', message: { role: 'assistant', content: 'Tracked it for you.' } },
+            ],
+          });
     }) as unknown as typeof fetch;
     const traj = await runAgent({
-      provider: 'openai', apiKey: 'k', model: 'gpt-x', system: 's', prompt: 'track the Q3 budget',
+      provider: 'openai',
+      apiKey: 'k',
+      model: 'gpt-x',
+      system: 's',
+      prompt: 'track the Q3 budget',
       tools: [{ name: 'track', description: 'track', inputSchema: { type: 'object' } }],
-      callTool: async () => ({ ok: true, result: trackResult }), fetchImpl,
+      callTool: async () => ({ ok: true, result: trackResult }),
+      fetchImpl,
     });
     expect(traj.error).toBeUndefined();
     expect(traj.toolCalls).toHaveLength(1);
@@ -79,29 +123,56 @@ describe('runAgent — OpenAI (GPT) tool-loop', () => {
 // ── deterministic grader ─────────────────────────────────────────────────────
 
 const caseOf = (asserts: EvalCase['asserts']): EvalCase => ({
-  id: 'c', prompt: 'p', asserts, dimensions: ['grounding'],
+  id: 'c',
+  prompt: 'p',
+  asserts,
+  dimensions: ['grounding'],
 });
 const trajOf = (toolCalls: Trajectory['toolCalls'], finalText = ''): Trajectory => ({
-  provider: 'anthropic', model: 'm', toolCalls, finalText, steps: 1, usage: { inputTokens: 0, outputTokens: 0 },
+  provider: 'anthropic',
+  model: 'm',
+  toolCalls,
+  finalText,
+  steps: 1,
+  usage: { inputTokens: 0, outputTokens: 0 },
 });
 
 describe('gradeDeterministic', () => {
   it('passes when the expected tool ran with the right structured status + arg substring', () => {
-    const traj = trajOf([{ name: 'track', args: { request: 'the Q3 budget from Dana' }, ok: true, result: trackResult }], 'Tracked it.');
-    const r = gradeDeterministic(traj, caseOf({ tool_called: 'track', structured_contains: { status: 'inbox' }, args_contains: { request: 'Q3 budget' }, final_text_contains: ['tracked'] }));
+    const traj = trajOf(
+      [{ name: 'track', args: { request: 'the Q3 budget from Dana' }, ok: true, result: trackResult }],
+      'Tracked it.',
+    );
+    const r = gradeDeterministic(
+      traj,
+      caseOf({
+        tool_called: 'track',
+        structured_contains: { status: 'inbox' },
+        args_contains: { request: 'Q3 budget' },
+        final_text_contains: ['tracked'],
+      }),
+    );
     expect(r.passed).toBe(true);
     expect(r.checks.every((c) => c.ok)).toBe(true);
   });
 
   it('fails when the expected tool was not called', () => {
-    const r = gradeDeterministic(trajOf([]), caseOf({ tool_called: 'track', structured_contains: { status: 'inbox' } }));
+    const r = gradeDeterministic(
+      trajOf([]),
+      caseOf({ tool_called: 'track', structured_contains: { status: 'inbox' } }),
+    );
     expect(r.passed).toBe(false);
     expect(r.checks.find((c) => c.name.startsWith('tool_called'))?.ok).toBe(false);
   });
 
   it('fails when the structured status differs', () => {
-    const traj = trajOf([{ name: 'track', args: {}, ok: true, result: { structuredContent: { status: 'done' } } }]);
-    const r = gradeDeterministic(traj, caseOf({ tool_called: 'track', structured_contains: { status: 'inbox' } }));
+    const traj = trajOf([
+      { name: 'track', args: {}, ok: true, result: { structuredContent: { status: 'done' } } },
+    ]);
+    const r = gradeDeterministic(
+      traj,
+      caseOf({ tool_called: 'track', structured_contains: { status: 'inbox' } }),
+    );
     expect(r.passed).toBe(false);
   });
 
@@ -112,7 +183,12 @@ describe('gradeDeterministic', () => {
 
 describe('dimensionAverage', () => {
   it('averages scores, empty ⇒ 0', () => {
-    expect(dimensionAverage([{ name: 'a', score: 1, reason: '' }, { name: 'b', score: 0.5, reason: '' }])).toBeCloseTo(0.75);
+    expect(
+      dimensionAverage([
+        { name: 'a', score: 1, reason: '' },
+        { name: 'b', score: 0.5, reason: '' },
+      ]),
+    ).toBeCloseTo(0.75);
     expect(dimensionAverage([])).toBe(0);
   });
 });
@@ -121,7 +197,10 @@ describe('dimensionAverage', () => {
 
 describe('suiteSchema', () => {
   it('parses a minimal suite + applies defaults', () => {
-    const s = suiteSchema.parse({ name: 'track_something_new', cases: [{ id: 'basic', prompt: 'Track the Q3 budget from Dana.' }] });
+    const s = suiteSchema.parse({
+      name: 'track_something_new',
+      cases: [{ id: 'basic', prompt: 'Track the Q3 budget from Dana.' }],
+    });
     expect(s.threshold).toBe(0.7);
     expect(s.cases[0]!.dimensions).toContain('tool_selection');
     expect(s.cases[0]!.asserts).toEqual({});
@@ -138,7 +217,11 @@ describe('resolveLangfuse', () => {
     expect(resolveLangfuse({ baseUrl: 'https://x', publicKey: '', secretKey: '' })).toBeNull();
   });
   it('strips the OTLP suffix to derive the host base', () => {
-    const cfg = resolveLangfuse({ baseUrl: 'https://monitor.dorinda.ai/api/public/otel', publicKey: 'pk', secretKey: 'sk' });
+    const cfg = resolveLangfuse({
+      baseUrl: 'https://monitor.dorinda.ai/api/public/otel',
+      publicKey: 'pk',
+      secretKey: 'sk',
+    });
     expect(cfg?.baseUrl).toBe('https://monitor.dorinda.ai');
   });
 });
@@ -151,11 +234,21 @@ describe('mcpClient', () => {
     const fetchImpl = (async (url: string, init: { headers: Record<string, string>; body: string }) => {
       seen.push({ url, headers: init.headers, body: JSON.parse(init.body) });
       const method = (JSON.parse(init.body) as { method: string }).method;
-      if (method === 'tools/list') return jsonRes({ result: { tools: [{ name: 'track', description: 'd', inputSchema: { type: 'object' } }] } });
-      return jsonRes({ result: { content: [{ type: 'text', text: 'ok' }], structuredContent: { id: 'd1', status: 'inbox' } } });
+      if (method === 'tools/list')
+        return jsonRes({
+          result: { tools: [{ name: 'track', description: 'd', inputSchema: { type: 'object' } }] },
+        });
+      return jsonRes({
+        result: { content: [{ type: 'text', text: 'ok' }], structuredContent: { id: 'd1', status: 'inbox' } },
+      });
     }) as unknown as typeof fetch;
 
-    const client = mcpClient({ mcpUrl: 'https://api.dorinda.ai/mcp', appName: 'dorinda-api', token: 'tok', fetchImpl });
+    const client = mcpClient({
+      mcpUrl: 'https://api.dorinda.ai/mcp',
+      appName: 'dorinda-api',
+      token: 'tok',
+      fetchImpl,
+    });
     const tools = await client.listTools();
     expect(tools).toEqual([{ name: 'track', description: 'd', inputSchema: { type: 'object' } }]);
     const r = await client.callTool('track', { request: 'x' });
@@ -165,7 +258,10 @@ describe('mcpClient', () => {
   });
 
   it('marks a tool result with isError as not-ok', async () => {
-    const fetchImpl = (async () => jsonRes({ result: { isError: true, content: [{ type: 'text', text: 'subscription_required' }] } })) as unknown as typeof fetch;
+    const fetchImpl = (async () =>
+      jsonRes({
+        result: { isError: true, content: [{ type: 'text', text: 'subscription_required' }] },
+      })) as unknown as typeof fetch;
     const client = mcpClient({ mcpUrl: 'u', appName: 'a', token: 't', fetchImpl });
     const r = await client.callTool('track', {});
     expect(r.ok).toBe(false);

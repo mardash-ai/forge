@@ -11,7 +11,9 @@ import type { MigratableBlobBackend } from './types';
 export async function listFsBlobApps(): Promise<string[]> {
   try {
     const entries = await readdir(blobsDir(), { withFileTypes: true });
-    return entries.filter((e) => e.isFile() && e.name.endsWith('.json')).map((e) => e.name.slice(0, -'.json'.length));
+    return entries
+      .filter((e) => e.isFile() && e.name.endsWith('.json'))
+      .map((e) => e.name.slice(0, -'.json'.length));
   } catch {
     return [];
   }

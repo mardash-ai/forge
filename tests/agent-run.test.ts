@@ -98,7 +98,13 @@ describe('AgentRun capability (C1)', () => {
 
     const { capability, resource } = await executeCapability(
       'agent-run',
-      { app: 'demo', capability: 'planner', system: 'You are a planner.', input: 'Plan a feature', schema: SCHEMA },
+      {
+        app: 'demo',
+        capability: 'planner',
+        system: 'You are a planner.',
+        input: 'Plan a feature',
+        schema: SCHEMA,
+      },
       SYSTEM_ACTOR,
     );
     const task = resource as AgentTask;
@@ -179,19 +185,27 @@ describe('AgentRun capability (C1)', () => {
     });
 
     await expect(
-      executeCapability('agent-run', { app: 'demo', capability: 'planner', system: 's', input: 'i', schema: SCHEMA }, SYSTEM_ACTOR),
+      executeCapability(
+        'agent-run',
+        { app: 'demo', capability: 'planner', system: 's', input: 'i', schema: SCHEMA },
+        SYSTEM_ACTOR,
+      ),
     ).rejects.toMatchObject({ code: 'dependency_unavailable', status: 503 });
 
     // Degradation, not a crash: it threw a typed ForgeError, never invoked the model, and
     // recorded no run (there was no invocation).
     await expect(
-      executeCapability('agent-run', { app: 'demo', capability: 'planner', system: 's', input: 'i', schema: SCHEMA }, SYSTEM_ACTOR),
+      executeCapability(
+        'agent-run',
+        { app: 'demo', capability: 'planner', system: 's', input: 'i', schema: SCHEMA },
+        SYSTEM_ACTOR,
+      ),
     ).rejects.toBeInstanceOf(ForgeError);
     expect(invoked).toBe(false);
     expect((await store.listResources({ type: 'AgentTask', app_id: app.id })).length).toBe(0);
   });
 
-  it('defaults the app to FORGE_APP_NAME so the running app needn\'t pass it', async () => {
+  it("defaults the app to FORGE_APP_NAME so the running app needn't pass it", async () => {
     const app = await seedApp('sidecar-app');
     await setSecret(app.id, 'ANTHROPIC_API_KEY', 'sk-ant-test');
     process.env.FORGE_APP_NAME = 'sidecar-app';
@@ -215,8 +229,20 @@ describe('AgentRun owner-scoping (C11)', () => {
     await setSecret(app.id, 'ANTHROPIC_API_KEY', 'sk-ant-test');
     setModelInvoker(async () => ({ steps: ['x'] }));
 
-    const a = (await executeCapability('agent-run', { app: 'demo', owner: 'A', capability: 'planner', system: 's', input: 'i', schema: SCHEMA }, SYSTEM_ACTOR)).resource as AgentTask;
-    const b = (await executeCapability('agent-run', { app: 'demo', owner: 'B', capability: 'planner', system: 's', input: 'i', schema: SCHEMA }, SYSTEM_ACTOR)).resource as AgentTask;
+    const a = (
+      await executeCapability(
+        'agent-run',
+        { app: 'demo', owner: 'A', capability: 'planner', system: 's', input: 'i', schema: SCHEMA },
+        SYSTEM_ACTOR,
+      )
+    ).resource as AgentTask;
+    const b = (
+      await executeCapability(
+        'agent-run',
+        { app: 'demo', owner: 'B', capability: 'planner', system: 's', input: 'i', schema: SCHEMA },
+        SYSTEM_ACTOR,
+      )
+    ).resource as AgentTask;
 
     expect(a.owner).toBe('A');
     expect(b.owner).toBe('B');
@@ -224,13 +250,25 @@ describe('AgentRun owner-scoping (C11)', () => {
     expect(((await store.getResource('Artifact', a.artifact_id!)) as Artifact).owner).toBe('A');
 
     // Owner-scoped queries return ONLY that owner's runs; the cross-owner read is empty.
-    const aRuns = (await store.listResources({ type: 'AgentTask', app_id: app.id, owner: 'A' })) as AgentTask[];
-    const bRuns = (await store.listResources({ type: 'AgentTask', app_id: app.id, owner: 'B' })) as AgentTask[];
+    const aRuns = (await store.listResources({
+      type: 'AgentTask',
+      app_id: app.id,
+      owner: 'A',
+    })) as AgentTask[];
+    const bRuns = (await store.listResources({
+      type: 'AgentTask',
+      app_id: app.id,
+      owner: 'B',
+    })) as AgentTask[];
     expect(aRuns.map((r) => r.id)).toEqual([a.id]);
     expect(bRuns.map((r) => r.id)).toEqual([b.id]);
     expect(aRuns.some((r) => r.owner === 'B')).toBe(false);
     // Owner-scoped Artifact isolation too.
-    expect(((await store.listResources({ type: 'Artifact', app_id: app.id, owner: 'B' })) as Artifact[]).every((r) => r.owner === 'B')).toBe(true);
+    expect(
+      ((await store.listResources({ type: 'Artifact', app_id: app.id, owner: 'B' })) as Artifact[]).every(
+        (r) => r.owner === 'B',
+      ),
+    ).toBe(true);
   });
 
   it('a FAILED run is also owner-stamped (persisted failures stay owner-scoped)', async () => {
@@ -239,7 +277,13 @@ describe('AgentRun owner-scoping (C11)', () => {
     setModelInvoker(async () => {
       throw new Error('nonconforming');
     });
-    const failed = (await executeCapability('agent-run', { app: 'demo', owner: 'A', capability: 'planner', system: 's', input: 'i', schema: SCHEMA }, SYSTEM_ACTOR)).resource as AgentTask;
+    const failed = (
+      await executeCapability(
+        'agent-run',
+        { app: 'demo', owner: 'A', capability: 'planner', system: 's', input: 'i', schema: SCHEMA },
+        SYSTEM_ACTOR,
+      )
+    ).resource as AgentTask;
     expect(failed.status).toBe('failed');
     expect(failed.owner).toBe('A');
     expect((await store.listResources({ type: 'AgentTask', app_id: app.id, owner: 'B' })).length).toBe(0);
@@ -249,14 +293,25 @@ describe('AgentRun owner-scoping (C11)', () => {
     const app = await seedApp('demo');
     await setSecret(app.id, 'ANTHROPIC_API_KEY', 'sk-ant-test');
     setModelInvoker(async () => ({ steps: [] }));
-    await executeCapability('agent-run', { app: 'demo', owner: 'A', capability: 'p', system: 's', input: 'i', schema: SCHEMA }, SYSTEM_ACTOR);
-    await executeCapability('agent-run', { app: 'demo', owner: 'B', capability: 'p', system: 's', input: 'i', schema: SCHEMA }, SYSTEM_ACTOR);
+    await executeCapability(
+      'agent-run',
+      { app: 'demo', owner: 'A', capability: 'p', system: 's', input: 'i', schema: SCHEMA },
+      SYSTEM_ACTOR,
+    );
+    await executeCapability(
+      'agent-run',
+      { app: 'demo', owner: 'B', capability: 'p', system: 's', input: 'i', schema: SCHEMA },
+      SYSTEM_ACTOR,
+    );
 
-    const aInspect = (await executeCapability('inspect', { app: 'demo', type: 'agent-runs', owner: 'A' }, SYSTEM_ACTOR)).resource as { data: unknown[] };
+    const aInspect = (
+      await executeCapability('inspect', { app: 'demo', type: 'agent-runs', owner: 'A' }, SYSTEM_ACTOR)
+    ).resource as { data: unknown[] };
     expect(aInspect.data.length).toBe(1);
     expect((aInspect.data[0] as { owner: string }).owner).toBe('A');
     // No owner → app-scope: both runs.
-    const allInspect = (await executeCapability('inspect', { app: 'demo', type: 'agent-runs' }, SYSTEM_ACTOR)).resource as { data: unknown[] };
+    const allInspect = (await executeCapability('inspect', { app: 'demo', type: 'agent-runs' }, SYSTEM_ACTOR))
+      .resource as { data: unknown[] };
     expect(allInspect.data.length).toBe(2);
   });
 
@@ -264,7 +319,13 @@ describe('AgentRun owner-scoping (C11)', () => {
     const app = await seedApp('demo');
     await setSecret(app.id, 'ANTHROPIC_API_KEY', 'sk-ant-test');
     setModelInvoker(async () => ({ steps: [] }));
-    const run = (await executeCapability('agent-run', { app: 'demo', capability: 'p', system: 's', input: 'i', schema: SCHEMA }, SYSTEM_ACTOR)).resource as AgentTask;
+    const run = (
+      await executeCapability(
+        'agent-run',
+        { app: 'demo', capability: 'p', system: 's', input: 'i', schema: SCHEMA },
+        SYSTEM_ACTOR,
+      )
+    ).resource as AgentTask;
     expect(run.owner).toBeUndefined();
     // App-scope query (no owner) sees it; an owner-scoped query does not (until migrated).
     expect((await store.listResources({ type: 'AgentTask', app_id: app.id })).length).toBe(1);
@@ -285,7 +346,13 @@ describe('model-anthropic plugin', () => {
   });
 
   it('buildRequest enforces the schema via a forced tool call (structured output)', () => {
-    const req = buildRequest({ model: 'm', system: 'sys', input: 'hi', schema: SCHEMA, maxTokens: 1024 }) as any;
+    const req = buildRequest({
+      model: 'm',
+      system: 'sys',
+      input: 'hi',
+      schema: SCHEMA,
+      maxTokens: 1024,
+    }) as any;
     expect(req.model).toBe('m');
     expect(req.system).toBe('sys');
     expect(req.tool_choice).toEqual({ type: 'tool', name: 'emit_result' });
@@ -295,12 +362,21 @@ describe('model-anthropic plugin', () => {
   });
 
   it('buildRequest serializes non-string input as JSON', () => {
-    const req = buildRequest({ model: 'm', system: 's', input: { a: 1 }, schema: SCHEMA, maxTokens: 10 }) as any;
+    const req = buildRequest({
+      model: 'm',
+      system: 's',
+      input: { a: 1 },
+      schema: SCHEMA,
+      maxTokens: 10,
+    }) as any;
     expect(req.messages[0].content).toBe('{"a":1}');
   });
 
   it('parseResult extracts the forced tool_use input, and throws on non-conforming output', () => {
-    const ok = { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'emit_result', input: { steps: ['a'] } }] };
+    const ok = {
+      stop_reason: 'tool_use',
+      content: [{ type: 'tool_use', name: 'emit_result', input: { steps: ['a'] } }],
+    };
     expect(parseResult(ok)).toEqual({ steps: ['a'] });
 
     const noTool = { stop_reason: 'end_turn', content: [{ type: 'text', text: 'sorry' }] };

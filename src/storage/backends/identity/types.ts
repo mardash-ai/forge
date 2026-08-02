@@ -105,7 +105,16 @@ export interface NewUser {
 }
 
 export type UpdateUserPatch = Partial<
-  Pick<StoredUser, 'email_verified' | 'password_hash' | 'provider' | 'provider_user_id' | 'name' | 'is_owner' | 'twofa_enabled'>
+  Pick<
+    StoredUser,
+    | 'email_verified'
+    | 'password_hash'
+    | 'provider'
+    | 'provider_user_id'
+    | 'name'
+    | 'is_owner'
+    | 'twofa_enabled'
+  >
 >;
 
 // An email-based two-factor one-time code, at rest (C10). Like verify/reset tokens the RAW 6-digit code
@@ -249,7 +258,12 @@ export interface IdentityBackend {
   revokeSessionRefreshTokens(appId: string, sessionId: string): Promise<number>;
   revokeAllUserRefreshTokens(appId: string, userId: string): Promise<number>;
   activeRefreshTokenCount(appId: string): Promise<number>;
-  redeemRefreshToken(appId: string, presentedHash: string, successorHash: string, opts: RedeemOpts): Promise<RefreshRedeem>;
+  redeemRefreshToken(
+    appId: string,
+    presentedHash: string,
+    successorHash: string,
+    opts: RedeemOpts,
+  ): Promise<RefreshRedeem>;
   // verify / reset tokens
   putVerifyToken(appId: string, tokenHash: string, userId: string, ttlSeconds: number): Promise<void>;
   putResetToken(appId: string, tokenHash: string, userId: string, ttlSeconds: number): Promise<void>;
@@ -259,7 +273,12 @@ export interface IdentityBackend {
   // same id replaces any prior one and RESETS attempts). `redeem` is the atomic check-and-consume above.
   putTwofaCode(appId: string, input: PutTwofaCodeInput): Promise<void>;
   getTwofaCode(appId: string, id: string): Promise<StoredTwofaCode | null>;
-  redeemTwofaCode(appId: string, id: string, presentedCodeHash: string, opts: RedeemTwofaOpts): Promise<TwofaRedeem>;
+  redeemTwofaCode(
+    appId: string,
+    id: string,
+    presentedCodeHash: string,
+    opts: RedeemTwofaOpts,
+  ): Promise<TwofaRedeem>;
   deleteTwofaCode(appId: string, id: string): Promise<void>;
   // lifecycle (test isolation + shutdown). Optional: only backends with external resources implement.
   close?(): Promise<void>;

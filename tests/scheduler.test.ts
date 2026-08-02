@@ -48,7 +48,9 @@ describe('nextRun', () => {
   });
 
   it('one-shot fires at its instant, or never once past', () => {
-    expect(nextRun(parseSchedule('once:2026-07-06T18:00:00.000Z'), NOW)?.toISOString()).toBe('2026-07-06T18:00:00.000Z');
+    expect(nextRun(parseSchedule('once:2026-07-06T18:00:00.000Z'), NOW)?.toISOString()).toBe(
+      '2026-07-06T18:00:00.000Z',
+    );
     expect(nextRun(parseSchedule('once:2026-07-06T06:00:00.000Z'), NOW)).toBeNull();
   });
 

@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { buildServiceGraph } from '../src/console/correlate/graph';
 import { runFindings } from '../src/console/findings';
-import { aggregate, createRegistry, type InventoryProvider, type Provider } from '../src/console/providers/types';
+import {
+  aggregate,
+  createRegistry,
+  type InventoryProvider,
+  type Provider,
+} from '../src/console/providers/types';
 import { buildServer, WRITE_ROUTES, createAuth } from '../src/console/server';
 import type { InfraResource } from '../src/console/domain';
 
@@ -88,7 +93,9 @@ describe('correlation — discovery-first, never a declared catalogue', () => {
     });
     const api = g.services.find((s) => s.key === 'dorinda-api')!;
     expect(api.bindings.some((b) => b.kind === 'secret')).toBe(true);
-    expect(g.services.find((s) => s.key === 'dorinda')!.bindings.some((b) => b.kind === 'secret')).toBe(false);
+    expect(g.services.find((s) => s.key === 'dorinda')!.bindings.some((b) => b.kind === 'secret')).toBe(
+      false,
+    );
   });
 
   it('a peripheral secret guess does not drag the service confidence down', () => {
@@ -174,7 +181,13 @@ describe('findings — report-only, and driven by things that actually happened'
     const f = runFindings({
       ...base,
       resources: [
-        r({ name: 'pg', kind: 'db.instance', scope: 'zonal', location: 'us-east1-d', attributes: { backups: false } }),
+        r({
+          name: 'pg',
+          kind: 'db.instance',
+          scope: 'zonal',
+          location: 'us-east1-d',
+          attributes: { backups: false },
+        }),
       ],
     });
     expect(f.find((x) => x.rule === 'db-no-backups')?.severity).toBe('critical');
@@ -185,17 +198,38 @@ describe('findings — report-only, and driven by things that actually happened'
     const soon = new Date('2026-08-04T00:00:00Z').toISOString(); // 3 days out
     const later = new Date('2026-08-20T00:00:00Z').toISOString(); // 19 days out
     const mk = (expires_at: string) => [
-      { id: 'c', env: 'prod-a', kind: 'api_token' as const, name: 'runner-pat', expires_at, auto_renews: false, source: 'declared' as const },
+      {
+        id: 'c',
+        env: 'prod-a',
+        kind: 'api_token' as const,
+        name: 'runner-pat',
+        expires_at,
+        auto_renews: false,
+        source: 'declared' as const,
+      },
     ];
-    expect(runFindings({ ...base, credentials: mk(soon) }).find((x) => x.rule === 'credential-expiring')?.severity).toBe('critical');
-    expect(runFindings({ ...base, credentials: mk(later) }).find((x) => x.rule === 'credential-expiring')?.severity).toBe('warn');
+    expect(
+      runFindings({ ...base, credentials: mk(soon) }).find((x) => x.rule === 'credential-expiring')?.severity,
+    ).toBe('critical');
+    expect(
+      runFindings({ ...base, credentials: mk(later) }).find((x) => x.rule === 'credential-expiring')
+        ?.severity,
+    ).toBe('warn');
   });
 
   it('ignores an auto-renewing credential', () => {
     const f = runFindings({
       ...base,
       credentials: [
-        { id: 'c', env: 'prod-a', kind: 'tls_certificate', name: 'cert', expires_at: new Date('2026-08-02').toISOString(), auto_renews: true, source: 'discovered' },
+        {
+          id: 'c',
+          env: 'prod-a',
+          kind: 'tls_certificate',
+          name: 'cert',
+          expires_at: new Date('2026-08-02').toISOString(),
+          auto_renews: true,
+          source: 'discovered',
+        },
       ],
     });
     expect(f.some((x) => x.rule === 'credential-expiring')).toBe(false);
@@ -205,7 +239,14 @@ describe('findings — report-only, and driven by things that actually happened'
     const fnd = runFindings({
       ...base,
       credentials: [
-        { id: 'k1', env: 'prod-a', kind: 'service_account_key', name: 'deployer key', auto_renews: false, source: 'discovered' },
+        {
+          id: 'k1',
+          env: 'prod-a',
+          kind: 'service_account_key',
+          name: 'deployer key',
+          auto_renews: false,
+          source: 'discovered',
+        },
       ],
     });
     expect(fnd.find((x) => x.rule === 'service-account-key-exists')?.severity).toBe('critical');
@@ -234,7 +275,9 @@ describe('provider aggregation — one dead source must not blank the page', () 
   });
 
   it('keeps the healthy provider’s rows and reports the failed one', async () => {
-    const { items, sources } = await aggregate([fake('good', false), fake('bad', true)], (p) => p.list({} as never));
+    const { items, sources } = await aggregate([fake('good', false), fake('bad', true)], (p) =>
+      p.list({} as never),
+    );
     expect(items).toHaveLength(1);
     expect(sources.find((s) => s.provider_id === 'bad')!.ok).toBe(false);
     expect(sources.find((s) => s.provider_id === 'bad')!.error).toContain('boom');
@@ -361,9 +404,19 @@ describe('timeline — the "what changed" axis', () => {
   it('interleaves deploys and CI runs on one axis, newest first', () => {
     const events = buildTimeline({
       runs: [run({ id: 'r1', started_at: '2026-07-31T09:00:00Z' })],
-      revisions: [{ service: 'dorinda-api', revisions: [rev({ id: 'rev-2', created_at: '2026-07-31T11:00:00Z' })] }],
+      revisions: [
+        { service: 'dorinda-api', revisions: [rev({ id: 'rev-2', created_at: '2026-07-31T11:00:00Z' })] },
+      ],
       findings: [],
-      audit: [{ at: '2026-07-31T10:00:00Z', actor: 'mark', action: 'pipeline.dispatch', target: 'wf1', outcome: 'succeeded' }],
+      audit: [
+        {
+          at: '2026-07-31T10:00:00Z',
+          actor: 'mark',
+          action: 'pipeline.dispatch',
+          target: 'wf1',
+          outcome: 'succeeded',
+        },
+      ],
       since,
     });
     expect(events.map((e) => e.kind)).toEqual(['deploy', 'action', 'pipeline']);
@@ -372,7 +425,9 @@ describe('timeline — the "what changed" axis', () => {
   it('drops everything older than the window, so a backlog cannot bury today', () => {
     const events = buildTimeline({
       runs: [run({ id: 'old', started_at: '2026-07-01T09:00:00Z' })],
-      revisions: [{ service: 'api', revisions: [rev({ id: 'old-rev', created_at: '2026-06-01T09:00:00Z' })] }],
+      revisions: [
+        { service: 'api', revisions: [rev({ id: 'old-rev', created_at: '2026-06-01T09:00:00Z' })] },
+      ],
       findings: [],
       audit: [],
       since,
@@ -385,7 +440,14 @@ describe('timeline — the "what changed" axis', () => {
     // deploy "happened", and traffic is still on the old one.
     const [e] = buildTimeline({
       runs: [],
-      revisions: [{ service: 'api', revisions: [rev({ id: 'bad', ready: false, traffic_percent: 0, created_at: '2026-07-31T12:00:00Z' })] }],
+      revisions: [
+        {
+          service: 'api',
+          revisions: [
+            rev({ id: 'bad', ready: false, traffic_percent: 0, created_at: '2026-07-31T12:00:00Z' }),
+          ],
+        },
+      ],
       findings: [],
       audit: [],
       since,
@@ -585,9 +647,12 @@ describe('cloud logging — a request log must not render as a blank row', () =>
 
   it('renders an audit log from protoPayload rather than blank', async () => {
     const { describeProtoPayload } = await import('../src/plugins/console-gcp/logs');
-    expect(describeProtoPayload({ methodName: 'google.cloud.run.v2.Services.UpdateService',
-                                  resourceName: 'projects/p/services/dorinda-api' }))
-      .toBe('google.cloud.run.v2.Services.UpdateService projects/p/services/dorinda-api');
+    expect(
+      describeProtoPayload({
+        methodName: 'google.cloud.run.v2.Services.UpdateService',
+        resourceName: 'projects/p/services/dorinda-api',
+      }),
+    ).toBe('google.cloud.run.v2.Services.UpdateService projects/p/services/dorinda-api');
   });
 });
 
@@ -597,7 +662,9 @@ describe('log truncation — a narrower answer than the question must say so', (
     // "no 5xx in the last 190 minutes" was about to be recorded as a pass from data that never
     // reached back that far. Silence here manufactures confident all-clears.
     const { envelope } = await import('../src/console/domain');
-    const env = envelope([1, 2, 3], [], { note: 'showing the newest 3 lines — they cover back to X, NOT the full 190m requested.' });
+    const env = envelope([1, 2, 3], [], {
+      note: 'showing the newest 3 lines — they cover back to X, NOT the full 190m requested.',
+    });
     expect(env.note).toContain('NOT the full');
   });
 
@@ -707,12 +774,22 @@ describe('docs — many sources, one pane', () => {
   it('one unreachable source reports itself and does NOT blank the others', async () => {
     const { indexAll } = await import('../src/console/docs');
     const ok = {
-      id: 'ok', label: 'Fine', origin: 'x', configured: () => true,
+      id: 'ok',
+      label: 'Fine',
+      origin: 'x',
+      configured: () => true,
       listPages: async () => [{ id: 'a', title: 'A' }],
       getPage: async () => ({ id: 'ok:a', title: 'A', html: '', styled: false }),
       getAsset: async () => ({ body: Buffer.from(''), contentType: 'x' }),
     };
-    const down = { ...ok, id: 'down', label: 'Down', listPages: async () => { throw new Error('502'); } };
+    const down = {
+      ...ok,
+      id: 'down',
+      label: 'Down',
+      listPages: async () => {
+        throw new Error('502');
+      },
+    };
     const unset = { ...ok, id: 'unset', label: 'Unset', configured: () => false };
 
     const out = await indexAll([ok, down, unset], AbortSignal.timeout(5_000));
@@ -769,7 +846,9 @@ describe('docs — a page keeps its own CSS but cannot restyle the console', () 
 
   it('recurses into @media and passes @keyframes / @font-face through untouched', async () => {
     const { scopeCss } = await import('../src/console/docs');
-    const out = scopeCss('@media (max-width:600px){.card{padding:4px}} @keyframes spin{from{opacity:0}to{opacity:1}}');
+    const out = scopeCss(
+      '@media (max-width:600px){.card{padding:4px}} @keyframes spin{from{opacity:0}to{opacity:1}}',
+    );
     expect(out).toContain('@media (max-width:600px){.doc-embed .card{padding:4px}}');
     // Prefixing `from`/`to` would not scope the animation — it would break it, silently.
     expect(out).toContain('@keyframes spin{from{opacity:0}to{opacity:1}}');
@@ -790,7 +869,9 @@ describe('docs — a page keeps its own CSS but cannot restyle the console', () 
     const { extractDoc } = await import('../src/console/docs');
     const doc = extractDoc(
       `<style>.a{color:red}</style><body><p onclick="steal()">x</p><script>alert(1)</script></body>`,
-      'app', 'x', 'x',
+      'app',
+      'x',
+      'x',
     );
     expect(doc.html).toContain('.doc-embed .a{color:red}');
     expect(doc.html).not.toContain('alert(1)');
@@ -814,20 +895,22 @@ describe('docs — a page keeps its own CSS but cannot restyle the console', () 
   });
 });
 
-describe('docs — a document\'s own chrome must not become the embed\'s layout', () => {
+describe("docs — a document's own chrome must not become the embed's layout", () => {
   it('drops box layout from html/body/:root rules but keeps their look', async () => {
     const { scopeCss } = await import('../src/console/docs');
     // The devs portal sets `body{display:flex}` so a fixed sidebar sits beside its content. Mapped
     // onto the embed that made the container a flex ROW, and every heading, paragraph and table
     // laid out as a narrow vertical strip — unreadable, and it looked like a content bug.
-    const out = scopeCss('body{display:flex;min-height:100vh;background:#0b1220;color:#e6edf7;font:15px sans-serif}');
+    const out = scopeCss(
+      'body{display:flex;min-height:100vh;background:#0b1220;color:#e6edf7;font:15px sans-serif}',
+    );
     expect(out).toContain('background:#0b1220');
     expect(out).toContain('color:#e6edf7');
     expect(out).not.toContain('display:flex');
     expect(out).not.toContain('min-height');
   });
 
-  it('keeps custom properties declared on :root — they are the page\'s design tokens', async () => {
+  it("keeps custom properties declared on :root — they are the page's design tokens", async () => {
     const { scopeCss } = await import('../src/console/docs');
     const out = scopeCss(':root{--ink:#e6edf7;--bg:#0b1220;padding:40px}');
     expect(out).toContain('--ink:#e6edf7');
@@ -879,14 +962,23 @@ describe('tenant provider — two credentials, two surfaces', () => {
       if (out instanceof Response) return out;
       return new Response(JSON.stringify(out ?? {}), { headers: { 'content-type': 'application/json' } });
     }) as never;
-    return { calls, restore: () => { globalThis.fetch = real; } };
+    return {
+      calls,
+      restore: () => {
+        globalThis.fetch = real;
+      },
+    };
   }
 
   it('sends the ADMIN token to /api/admin and the TEST token to /api/test — never the reverse', async () => {
     // The separation that bounds the blast radius: AUTH-style tokens leak, and the admin token can
     // erase a real account while the test token structurally cannot touch one.
     const { createDorindaTenantProvider } = await import('../src/plugins/console-dorinda/tenants');
-    const p = createDorindaTenantProvider({ origin: 'https://api.test', adminToken: 'ADMIN', testToken: 'TEST' });
+    const p = createDorindaTenantProvider({
+      origin: 'https://api.test',
+      adminToken: 'ADMIN',
+      testToken: 'TEST',
+    });
     const f = stubFetch((url) => (url.includes('/api/admin/accounts') ? { accounts: [] } : {}));
     try {
       await p.listAccounts(ctx);
@@ -924,10 +1016,13 @@ describe('tenant provider — two credentials, two surfaces', () => {
     const p = createDorindaTenantProvider({ origin: 'https://api.test', testToken: 'TEST' });
     const f = stubFetch(
       () =>
-        new Response(JSON.stringify({ error: { code: 'not_a_test_tenant', message: 'owner x is NOT flagged' } }), {
-          status: 403,
-          headers: { 'content-type': 'application/json' },
-        }),
+        new Response(
+          JSON.stringify({ error: { code: 'not_a_test_tenant', message: 'owner x is NOT flagged' } }),
+          {
+            status: 403,
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
     );
     try {
       await expect(p.reset(ctx, 'x')).rejects.toMatchObject({ status: 403, code: 'not_a_test_tenant' });
@@ -948,7 +1043,9 @@ describe('tenant provider — two credentials, two surfaces', () => {
         : { accounts: [{ owner: 'owner_1', email: 'real@x.test' }] },
     );
     try {
-      await expect(p.purge(ctx, 'owner_1', 'typo@x.test')).rejects.toMatchObject({ code: 'confirmation_mismatch' });
+      await expect(p.purge(ctx, 'owner_1', 'typo@x.test')).rejects.toMatchObject({
+        code: 'confirmation_mismatch',
+      });
       // …and it never reached the purge endpoint.
       expect(f.calls.some((c) => c.url.includes('/purge'))).toBe(false);
     } finally {
@@ -956,7 +1053,7 @@ describe('tenant provider — two credentials, two surfaces', () => {
     }
   });
 
-  it('translates lock to the app\'s inverse `active` flag', async () => {
+  it("translates lock to the app's inverse `active` flag", async () => {
     // The app models this as active/inactive. Translating in the provider means no screen has to
     // remember which polarity a given app uses.
     const { createDorindaTenantProvider } = await import('../src/plugins/console-dorinda/tenants');
@@ -1000,7 +1097,13 @@ describe('metric catalog — one definition, read from the dashboard', () => {
         title: 'Product — top-line',
         panels: [
           { type: 'row', title: 'Group', panels: [{ title: 'Nested', targets: [{ expr: 'up' }] }] },
-          { title: 'Tool calls / min', type: 'timeseries', description: 'why it matters', fieldConfig: { defaults: { unit: 'cpm' } }, targets: [{ expr: 'sum(rate(x[5m]))' }] },
+          {
+            title: 'Tool calls / min',
+            type: 'timeseries',
+            description: 'why it matters',
+            fieldConfig: { defaults: { unit: 'cpm' } },
+            targets: [{ expr: 'sum(rate(x[5m]))' }],
+          },
           { title: 'Just prose', type: 'text' },
           { title: 'No expr', type: 'timeseries', targets: [{}] },
         ],
@@ -1067,12 +1170,18 @@ describe('metric catalog — one definition, read from the dashboard', () => {
     const real = globalThis.fetch;
     globalThis.fetch = (async () => {
       calls++;
-      return new Response(JSON.stringify({ dashboard: { title: 'T', panels: [{ title: 'A', targets: [{ expr: 'x' }] }] } }), {
-        headers: { 'content-type': 'application/json' },
-      });
+      return new Response(
+        JSON.stringify({ dashboard: { title: 'T', panels: [{ title: 'A', targets: [{ expr: 'x' }] }] } }),
+        {
+          headers: { 'content-type': 'application/json' },
+        },
+      );
     }) as never;
     try {
-      const c = createGrafanaCatalog({ origin: 'https://g.test', user: 'u', pass: 'p', dashboardUid: 'd' }, 60_000);
+      const c = createGrafanaCatalog(
+        { origin: 'https://g.test', user: 'u', pass: 'p', dashboardUid: 'd' },
+        60_000,
+      );
       let t = 1_000;
       await c.get(AbortSignal.timeout(5_000), () => t);
       await c.get(AbortSignal.timeout(5_000), () => t);
@@ -1104,7 +1213,8 @@ describe('the top-line dashboard is the definition, and it must stay honest', ()
      * so error rate read as zero on two surfaces at once, with nothing to compare against.
      */
     const { readFile } = await import('node:fs/promises');
-    const path = new URL('../../dorinda-metrics/dashboards/dorinda-product-topline.json', import.meta.url).pathname;
+    const path = new URL('../../dorinda-metrics/dashboards/dorinda-product-topline.json', import.meta.url)
+      .pathname;
     const raw = await readFile(path, 'utf8').catch(() => null);
     if (!raw) return; // dorinda-metrics not checked out beside forge — skip rather than fail.
     // Assert against the QUERIES, not the file. A panel description explains this very bug and names
@@ -1113,13 +1223,15 @@ describe('the top-line dashboard is the definition, and it must stay honest', ()
     const dash = JSON.parse(raw) as { panels: Array<{ title: string; targets: Array<{ expr: string }> }> };
     const exprs = dash.panels.flatMap((p) => p.targets.map((t) => t.expr));
     expect(exprs.length).toBeGreaterThan(4);
-    for (const e of exprs) expect(e, `panel query uses a metric that is never emitted: ${e}`).not.toContain('mcp_tool_errors');
+    for (const e of exprs)
+      expect(e, `panel query uses a metric that is never emitted: ${e}`).not.toContain('mcp_tool_errors');
     expect(exprs.some((e) => e.includes('outcome="error"'))).toBe(true);
   });
 
   it('carries a heartbeat panel — without it every other panel can lie', async () => {
     const { readFile } = await import('node:fs/promises');
-    const path = new URL('../../dorinda-metrics/dashboards/dorinda-product-topline.json', import.meta.url).pathname;
+    const path = new URL('../../dorinda-metrics/dashboards/dorinda-product-topline.json', import.meta.url)
+      .pathname;
     const raw = await readFile(path, 'utf8').catch(() => null);
     if (!raw) return;
     // A dead pipeline makes "no traffic" and "no telemetry" identical. Absence must mean BROKEN,
@@ -1147,7 +1259,16 @@ describe('connections — a false zero is worse than no answer', () => {
         JSON.stringify({
           observedAt: '2026-08-02T00:00:00Z',
           totals: { connections: 2, activeRecently: 1, revoked: 0, toolRefreshChannels: 0 },
-          byClient: [{ client: 'Claude', connections: 2, activeRecently: 1, revoked: 0, toolRefreshChannels: 0, lastSeenAt: null }],
+          byClient: [
+            {
+              client: 'Claude',
+              connections: 2,
+              activeRecently: 1,
+              revoked: 0,
+              toolRefreshChannels: 0,
+              lastSeenAt: null,
+            },
+          ],
           bySource: [],
           streamsError: 'data-plane unreachable',
           platformNote: 'hosted connectors are not device-observable',
@@ -1171,9 +1292,12 @@ describe('connections — a false zero is worse than no answer', () => {
     const real = globalThis.fetch;
     globalThis.fetch = (async (u: string) => {
       calls.push(String(u));
-      return new Response(JSON.stringify({ observedAt: 'x', totals: {}, byClient: [], bySource: [], recentWithinHours: 168 }), {
-        headers: { 'content-type': 'application/json' },
-      });
+      return new Response(
+        JSON.stringify({ observedAt: 'x', totals: {}, byClient: [], bySource: [], recentWithinHours: 168 }),
+        {
+          headers: { 'content-type': 'application/json' },
+        },
+      );
     }) as never;
     try {
       const p = createDorindaTenantProvider({ origin: 'https://api.test', adminToken: 'ADMIN' });
@@ -1212,7 +1336,9 @@ describe('every dashboard panel points at a datasource that EXISTS', () => {
     const { join } = await import('node:path');
     const base = new URL('../../dorinda-metrics', import.meta.url).pathname;
 
-    const dsRaw = await readFile(join(base, 'provisioning/datasources/datasources.yaml'), 'utf8').catch(() => null);
+    const dsRaw = await readFile(join(base, 'provisioning/datasources/datasources.yaml'), 'utf8').catch(
+      () => null,
+    );
     if (!dsRaw) return; // dorinda-metrics not checked out beside forge — skip rather than fail.
 
     // Cheap YAML read: every `uid:` in the datasource provisioning file.
@@ -1276,7 +1402,8 @@ describe('Grafana time macros resolve, rather than reaching Prometheus verbatim'
      * shape of lie as an empty store, from a query that is simply too narrow for the traffic.
      */
     const { readFile } = await import('node:fs/promises');
-    const path = new URL('../../dorinda-metrics/dashboards/dorinda-product-topline.json', import.meta.url).pathname;
+    const path = new URL('../../dorinda-metrics/dashboards/dorinda-product-topline.json', import.meta.url)
+      .pathname;
     const raw = await readFile(path, 'utf8').catch(() => null);
     if (!raw) return;
     const dash = JSON.parse(raw) as { panels: Array<{ title: string; targets: Array<{ expr: string }> }> };
@@ -1296,7 +1423,12 @@ describe('embedded Grafana boards — self-healing across a redeploy', () => {
       if (out instanceof Response) return out;
       return new Response(JSON.stringify(out ?? {}), { headers: { 'content-type': 'application/json' } });
     }) as never;
-    return { calls, restore: () => { globalThis.fetch = real; } };
+    return {
+      calls,
+      restore: () => {
+        globalThis.fetch = real;
+      },
+    };
   }
   const cfg = { origin: 'https://g.test', user: 'u', pass: 'p', folder: 'Dorinda' };
 
@@ -1392,7 +1524,9 @@ describe('embedded Grafana boards — self-healing across a redeploy', () => {
         });
       if ((init.method ?? 'GET') === 'GET') return new Response('x', { status: 404 });
       body = JSON.parse(String(init.body));
-      return new Response(JSON.stringify({ accessToken: 't' }), { headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify({ accessToken: 't' }), {
+        headers: { 'content-type': 'application/json' },
+      });
     }) as never;
     try {
       await createGrafanaBoards(cfg).list(AbortSignal.timeout(5_000));
@@ -1455,10 +1589,9 @@ describe('logs — trace correlation is the point of this screen', () => {
     // Logs come back newest-first, so hitting the row limit means the response covers a SMALLER
     // window than the one asked for. During the 2026-07-31 run a 190-minute query returned 400 rows
     // spanning 20 minutes, and "no 5xx in 190 minutes" was about to be recorded as a pass.
-    const src = await (await import('node:fs/promises')).readFile(
-      new URL('../src/console/server.ts', import.meta.url).pathname,
-      'utf8',
-    );
+    const src = await (
+      await import('node:fs/promises')
+    ).readFile(new URL('../src/console/server.ts', import.meta.url).pathname, 'utf8');
     expect(src).toMatch(/truncated/);
     expect(src).toMatch(/oldest/);
   });
@@ -1471,10 +1604,11 @@ describe('Explore renders logs only — metrics live on Dashboards now', () => {
      * answered no question anyone arrives with. They moved to Dashboards, which embeds the real
      * Grafana boards whole. Asserted structurally so the two cannot quietly merge back.
      */
-    const src = await (await import('node:fs/promises')).readFile(
-      new URL('../../forge/console/src/App.tsx', import.meta.url).pathname,
-      'utf8',
-    ).catch(() => null);
+    const src = await (
+      await import('node:fs/promises')
+    )
+      .readFile(new URL('../../forge/console/src/App.tsx', import.meta.url).pathname, 'utf8')
+      .catch(() => null);
     if (!src) return;
     const start = src.indexOf('// ── Explore — logs ──');
     const end = src.indexOf('// ── Credentials & expiry ──');
@@ -1498,7 +1632,11 @@ describe('log filters combine — owner is a clause, not an override', () => {
      * the one asked is worse than one that fails.
      */
     const { buildFilter } = await import('../src/plugins/console-gcp/logs');
-    const f = buildFilter({ owner: 'user_abc', runtime_id: 'dorinda-api', severity_at_least: 'error' as never });
+    const f = buildFilter({
+      owner: 'user_abc',
+      runtime_id: 'dorinda-api',
+      severity_at_least: 'error' as never,
+    });
     expect(f).toContain('jsonPayload.owner="user_abc"');
     expect(f).toContain('resource.labels.service_name="dorinda-api"');
     expect(f).toContain('severity>=ERROR');

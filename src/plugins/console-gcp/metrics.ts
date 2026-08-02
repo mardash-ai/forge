@@ -37,9 +37,18 @@ const CM_INTENTS: Partial<Record<MetricIntent, { metric: string; aligner: string
   error_rate: { metric: 'run.googleapis.com/request_count', aligner: 'ALIGN_RATE' },
   latency_p95: { metric: 'run.googleapis.com/request_latencies', aligner: 'ALIGN_PERCENTILE_95' },
   instance_count: { metric: 'run.googleapis.com/container/instance_count', aligner: 'ALIGN_MEAN' },
-  cpu_utilization: { metric: 'run.googleapis.com/container/cpu/utilizations', aligner: 'ALIGN_PERCENTILE_95' },
-  memory_utilization: { metric: 'run.googleapis.com/container/memory/utilizations', aligner: 'ALIGN_PERCENTILE_95' },
-  db_connections: { metric: 'cloudsql.googleapis.com/database/postgresql/num_backends', aligner: 'ALIGN_MEAN' },
+  cpu_utilization: {
+    metric: 'run.googleapis.com/container/cpu/utilizations',
+    aligner: 'ALIGN_PERCENTILE_95',
+  },
+  memory_utilization: {
+    metric: 'run.googleapis.com/container/memory/utilizations',
+    aligner: 'ALIGN_PERCENTILE_95',
+  },
+  db_connections: {
+    metric: 'cloudsql.googleapis.com/database/postgresql/num_backends',
+    aligner: 'ALIGN_MEAN',
+  },
   db_disk_used: { metric: 'cloudsql.googleapis.com/database/disk/bytes_used', aligner: 'ALIGN_MEAN' },
 };
 
@@ -77,10 +86,20 @@ export function createCloudMonitoringProvider(opts: {
       }
     },
 
-    async query(i: MetricIntent, t: MetricTarget, r: MetricRange, ctx: ProviderContext): Promise<MetricResult> {
+    async query(
+      i: MetricIntent,
+      t: MetricTarget,
+      r: MetricRange,
+      ctx: ProviderContext,
+    ): Promise<MetricResult> {
       const spec = CM_INTENTS[i];
       if (!spec) {
-        return { series: [], provider_id: opts.id, empty_reason: 'not_supported', detail: `Cloud Monitoring cannot answer "${i}"` };
+        return {
+          series: [],
+          provider_id: opts.id,
+          empty_reason: 'not_supported',
+          detail: `Cloud Monitoring cannot answer "${i}"`,
+        };
       }
       const isDb = spec.metric.startsWith('cloudsql');
       const filter = isDb
@@ -117,7 +136,12 @@ export function createCloudMonitoringProvider(opts: {
         }
         return { series, provider_id: opts.id };
       } catch (e) {
-        return { series: [], provider_id: opts.id, empty_reason: 'query_failed', detail: (e as Error).message.slice(0, 200) };
+        return {
+          series: [],
+          provider_id: opts.id,
+          empty_reason: 'query_failed',
+          detail: (e as Error).message.slice(0, 200),
+        };
       }
     },
   };
@@ -157,7 +181,10 @@ export function createManagedPrometheusProvider(opts: {
    * This is the check that would have saved a week: an instant query against a sparse gauge looks
    * identical to an empty store, and I chased exactly that confusion for hours before range-querying.
    */
-  async function classifyEmpty(expr: string, signal: AbortSignal): Promise<{ reason: MetricResult['empty_reason']; detail: string }> {
+  async function classifyEmpty(
+    expr: string,
+    signal: AbortSignal,
+  ): Promise<{ reason: MetricResult['empty_reason']; detail: string }> {
     try {
       const end = Math.floor(Date.now() / 1000);
       const body = await gcpJson<{ data?: { result?: unknown[] } }>({
@@ -172,7 +199,10 @@ export function createManagedPrometheusProvider(opts: {
       // saying so would be the same over-claiming this console exists to stop. Pipeline health is
       // a separate question, answered by the metrics-pipeline-dead finding across ALL metrics.
       return any
-        ? { reason: 'no_data_in_window', detail: 'no samples in this window; this metric has data within the last 7 days' }
+        ? {
+            reason: 'no_data_in_window',
+            detail: 'no samples in this window; this metric has data within the last 7 days',
+          }
         : { reason: 'never_ingested', detail: 'this metric has no samples in the last 7 days' };
     } catch {
       return { reason: 'no_data_in_window', detail: 'no samples in this window' };
@@ -199,7 +229,12 @@ export function createManagedPrometheusProvider(opts: {
       }
       return { series, provider_id: opts.id };
     } catch (e) {
-      return { series: [], provider_id: opts.id, empty_reason: 'query_failed', detail: (e as Error).message.slice(0, 200) };
+      return {
+        series: [],
+        provider_id: opts.id,
+        empty_reason: 'query_failed',
+        detail: (e as Error).message.slice(0, 200),
+      };
     }
   }
 
@@ -223,10 +258,20 @@ export function createManagedPrometheusProvider(opts: {
       }
     },
 
-    async query(i: MetricIntent, _t: MetricTarget, r: MetricRange, ctx: ProviderContext): Promise<MetricResult> {
+    async query(
+      i: MetricIntent,
+      _t: MetricTarget,
+      r: MetricRange,
+      ctx: ProviderContext,
+    ): Promise<MetricResult> {
       const build = GMP_INTENTS[i];
       if (!build) {
-        return { series: [], provider_id: opts.id, empty_reason: 'not_supported', detail: `Managed Prometheus cannot answer "${i}"` };
+        return {
+          series: [],
+          provider_id: opts.id,
+          empty_reason: 'not_supported',
+          detail: `Managed Prometheus cannot answer "${i}"`,
+        };
       }
       return run(build(_t.runtime_id), r, ctx);
     },

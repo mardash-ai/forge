@@ -36,7 +36,8 @@ export function compact(resource: Any): Any {
         status: r.status,
         summary: r.summary,
         log_ref: logRef(r),
-        suggested_next: r.status === 'succeeded' ? 'forge build --app <app>' : `forge explain --resource ${r.id}`,
+        suggested_next:
+          r.status === 'succeeded' ? 'forge build --app <app>' : `forge explain --resource ${r.id}`,
       };
     case 'DevServer':
       return {
@@ -78,11 +79,10 @@ export function compact(resource: Any): Any {
         resource: r.id,
         status: r.status,
         duration_ms: r.duration_ms,
-        ...(r.status === 'succeeded'
-          ? { artifact_refs: r.artifact_refs }
-          : { summary: r.error_summary }),
+        ...(r.status === 'succeeded' ? { artifact_refs: r.artifact_refs } : { summary: r.error_summary }),
         log_ref: logRef(r),
-        suggested_next: r.status === 'succeeded' ? 'forge test --app <app>' : `forge explain --resource ${r.id}`,
+        suggested_next:
+          r.status === 'succeeded' ? 'forge test --app <app>' : `forge explain --resource ${r.id}`,
       };
     case 'TestRun':
       return {
@@ -93,7 +93,8 @@ export function compact(resource: Any): Any {
         skipped: r.skipped,
         ...(r.failure_summary ? { summary: r.failure_summary } : {}),
         log_ref: logRef(r),
-        suggested_next: r.status === 'succeeded' ? 'forge lint --app <app>' : `forge explain --resource ${r.id}`,
+        suggested_next:
+          r.status === 'succeeded' ? 'forge lint --app <app>' : `forge explain --resource ${r.id}`,
       };
     case 'CheckRun':
       return {
@@ -102,7 +103,8 @@ export function compact(resource: Any): Any {
         problems: r.problems,
         summary: r.summary,
         log_ref: logRef(r),
-        suggested_next: r.status === 'succeeded' ? 'forge build --app <app>' : `forge explain --resource ${r.id}`,
+        suggested_next:
+          r.status === 'succeeded' ? 'forge build --app <app>' : `forge explain --resource ${r.id}`,
       };
     case 'Secret':
       // Metadata only — a Secret Resource never carries the value.
@@ -129,7 +131,13 @@ export function compact(resource: Any): Any {
         failed: r.failed,
         skipped: r.skipped,
         summary: r.summary,
-        assertions: (r.assertions ?? []).map((a: Any) => ({ name: a.name, status: a.status, target: a.target, actual: a.actual, ...(a.detail ? { detail: a.detail } : {}) })),
+        assertions: (r.assertions ?? []).map((a: Any) => ({
+          name: a.name,
+          status: a.status,
+          target: a.target,
+          actual: a.actual,
+          ...(a.detail ? { detail: a.detail } : {}),
+        })),
       };
     case 'Analysis':
       return {

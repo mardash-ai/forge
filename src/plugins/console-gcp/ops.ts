@@ -58,7 +58,11 @@ export function createGcpAlertsProvider(opts: {
         });
         return { ok: true, detail: 'reachable', checked_at: new Date().toISOString() };
       } catch (e) {
-        return { ok: false, detail: (e as Error).message.slice(0, 200), checked_at: new Date().toISOString() };
+        return {
+          ok: false,
+          detail: (e as Error).message.slice(0, 200),
+          checked_at: new Date().toISOString(),
+        };
       }
     },
 
@@ -160,7 +164,11 @@ export function createGcsDriftProvider(opts: {
         });
         return { ok: true, detail: `reachable (gs://${bucket})`, checked_at: new Date().toISOString() };
       } catch (e) {
-        return { ok: false, detail: (e as Error).message.slice(0, 200), checked_at: new Date().toISOString() };
+        return {
+          ok: false,
+          detail: (e as Error).message.slice(0, 200),
+          checked_at: new Date().toISOString(),
+        };
       }
     },
 
@@ -337,7 +345,11 @@ export function createGcpCostProvider(opts: {
         });
         return { ok: true, detail: 'reachable', checked_at: new Date().toISOString() };
       } catch (e) {
-        return { ok: false, detail: (e as Error).message.slice(0, 200), checked_at: new Date().toISOString() };
+        return {
+          ok: false,
+          detail: (e as Error).message.slice(0, 200),
+          checked_at: new Date().toISOString(),
+        };
       }
     },
 

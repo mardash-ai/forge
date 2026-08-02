@@ -1,13 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { store } from '../storage/store';
-import {
-  DEFAULT_THEME,
-  normalizeTheme,
-  sanitizeCustomCss,
-  type RawTheme,
-  type Theme,
-} from '../shared/theme';
+import { DEFAULT_THEME, normalizeTheme, sanitizeCustomCss, type RawTheme, type Theme } from '../shared/theme';
 
 // The C16 theme file an app declares at its repo root. It is the SINGLE declaration
 // that brands every platform-served UI (auth + status + future UI). `forge

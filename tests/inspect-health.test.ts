@@ -76,7 +76,8 @@ beforeEach(async () => {
 afterEach(async () => {
   if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
   server = undefined;
-  const restore = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
+  const restore = (k: string, v: string | undefined) =>
+    v === undefined ? delete process.env[k] : (process.env[k] = v);
   restore('FORGE_STATE_DIR', prevState);
   restore('FORGE_APP_CALLBACK_HOST', prevHost);
   restore('FORGE_APP_CALLBACK_PORT', prevPort);

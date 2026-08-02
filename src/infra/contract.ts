@@ -84,7 +84,10 @@ export async function fetchContract(stack: RepoStack, env: string): Promise<Plat
  */
 export async function materializeContract(stack: RepoStack, env: string): Promise<PlatformContract> {
   const required = stack.config.required_platform_contract;
-  if (!required) throw new Error(`stack "${stack.config.stack}" has no required_platform_contract — nothing to materialize`);
+  if (!required)
+    throw new Error(
+      `stack "${stack.config.stack}" has no required_platform_contract — nothing to materialize`,
+    );
   const contract = await fetchContract(stack, env);
   if (!contract) {
     throw new Error(

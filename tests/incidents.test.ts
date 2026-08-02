@@ -44,8 +44,18 @@ describe('C15 Phase 3 — incident lifecycle (pure)', () => {
   const t2 = new Date('2026-03-01T02:00:00Z');
 
   it('create seeds the first timeline entry and stamps created_at', () => {
-    const inc = createIncident('inc_1', { title: 'DB slow', status: 'investigating', impact: 'major', body: 'looking' }, t0);
-    expect(inc).toMatchObject({ id: 'inc_1', title: 'DB slow', status: 'investigating', impact: 'major', created_at: t0.toISOString() });
+    const inc = createIncident(
+      'inc_1',
+      { title: 'DB slow', status: 'investigating', impact: 'major', body: 'looking' },
+      t0,
+    );
+    expect(inc).toMatchObject({
+      id: 'inc_1',
+      title: 'DB slow',
+      status: 'investigating',
+      impact: 'major',
+      created_at: t0.toISOString(),
+    });
     expect(inc.resolved_at).toBeUndefined();
     expect(inc.updates).toEqual([{ timestamp: t0.toISOString(), status: 'investigating', body: 'looking' }]);
     expect(inc.affected_components).toEqual([]);
@@ -63,7 +73,11 @@ describe('C15 Phase 3 — incident lifecycle (pure)', () => {
     expect(c.status).toBe('resolved');
     expect(c.resolved_at).toBe(t2.toISOString());
     expect(c.updates).toHaveLength(3);
-    expect(c.updates.at(-1)).toEqual({ timestamp: t2.toISOString(), status: 'resolved', body: 'fixed the query' });
+    expect(c.updates.at(-1)).toEqual({
+      timestamp: t2.toISOString(),
+      status: 'resolved',
+      body: 'fixed the query',
+    });
 
     // resolving again keeps the ORIGINAL resolved_at
     const d = resolveIncident(c, {}, new Date('2026-03-02T00:00:00Z'));
@@ -86,12 +100,27 @@ describe('C15 Phase 3 — incident lifecycle (pure)', () => {
 describe('C15 Phase 3 — retention (pure)', () => {
   const now = new Date('2026-06-01T00:00:00Z');
   const mk = (id: string, status: Incident['status'], resolvedDaysAgo?: number): Incident => {
-    const resolved_at = resolvedDaysAgo === undefined ? undefined : new Date(now.getTime() - resolvedDaysAgo * 86_400_000).toISOString();
-    return { id, title: id, status, impact: 'minor', affected_components: [], updates: [], created_at: '2026-01-01T00:00:00Z', ...(resolved_at ? { resolved_at } : {}) };
+    const resolved_at =
+      resolvedDaysAgo === undefined
+        ? undefined
+        : new Date(now.getTime() - resolvedDaysAgo * 86_400_000).toISOString();
+    return {
+      id,
+      title: id,
+      status,
+      impact: 'minor',
+      affected_components: [],
+      updates: [],
+      created_at: '2026-01-01T00:00:00Z',
+      ...(resolved_at ? { resolved_at } : {}),
+    };
   };
 
   it('keeps every active incident and drops resolved ones past the window', () => {
-    const kept = pruneIncidents([mk('a', 'investigating'), mk('r_recent', 'resolved', 10), mk('r_old', 'resolved', 200)], { now });
+    const kept = pruneIncidents(
+      [mk('a', 'investigating'), mk('r_recent', 'resolved', 10), mk('r_old', 'resolved', 200)],
+      { now },
+    );
     const ids = kept.map((i) => i.id).sort();
     expect(ids).toEqual(['a', 'r_recent']);
   });
@@ -110,7 +139,10 @@ describe('C15 Phase 3 — retention (pure)', () => {
 
 describe('C15 Phase 3 — banner precedence (pure)', () => {
   const okProbe: HealthProbeResult = {
-    url: 'x', reachable: true, httpStatus: 200, conforms: true,
+    url: 'x',
+    reachable: true,
+    httpStatus: 200,
+    conforms: true,
     health: { status: 'ok', service: APP, time: 'x', checks: [{ name: 'db', status: 'ok' }] },
   };
   const now = new Date('2026-03-01T00:00:00Z');
@@ -155,9 +187,21 @@ describe('C15 Phase 3 — banner precedence (pure)', () => {
 describe('C15 Phase 3 — /status.json incident shaping (pure)', () => {
   const now = new Date('2026-03-01T00:00:00Z');
   it('orders active (newest-first) then recent-resolved, and nulls resolved_at while active', () => {
-    const a1 = createIncident('a1', { title: 'a1', status: 'investigating', impact: 'major' }, new Date('2026-03-01T00:00:00Z'));
-    const a2 = createIncident('a2', { title: 'a2', status: 'identified', impact: 'minor' }, new Date('2026-03-01T05:00:00Z'));
-    const r1 = resolveIncident(createIncident('r1', { title: 'r1', status: 'investigating', impact: 'minor' }, now), {}, new Date('2026-03-02T00:00:00Z'));
+    const a1 = createIncident(
+      'a1',
+      { title: 'a1', status: 'investigating', impact: 'major' },
+      new Date('2026-03-01T00:00:00Z'),
+    );
+    const a2 = createIncident(
+      'a2',
+      { title: 'a2', status: 'identified', impact: 'minor' },
+      new Date('2026-03-01T05:00:00Z'),
+    );
+    const r1 = resolveIncident(
+      createIncident('r1', { title: 'r1', status: 'investigating', impact: 'minor' }, now),
+      {},
+      new Date('2026-03-02T00:00:00Z'),
+    );
     const json = incidentsJson([a1, r1, a2]);
     expect(json.map((i) => i.id)).toEqual(['a2', 'a1', 'r1']); // a2 newer active, then a1, then resolved
     expect(json[0]!.resolved_at).toBeNull();
@@ -181,15 +225,24 @@ describe('C15 Phase 3 — incident store (file-backed)', () => {
     await store.init();
   });
   afterEach(async () => {
-    if (prevState === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prevState;
+    if (prevState === undefined) delete process.env.FORGE_STATE_DIR;
+    else process.env.FORGE_STATE_DIR = prevState;
     await rm(dir, { recursive: true, force: true });
   });
 
   it('create → update → resolve roundtrips and list reflects it', async () => {
-    const created = await incidentStore.create(APP_ID, { title: 'DB slow', status: 'investigating', impact: 'major', affected_components: ['db'] });
+    const created = await incidentStore.create(APP_ID, {
+      title: 'DB slow',
+      status: 'investigating',
+      impact: 'major',
+      affected_components: ['db'],
+    });
     expect(created.id).toMatch(/^inc_/);
     expect(created.affected_components).toEqual(['db']);
-    const updated = await incidentStore.update(APP_ID, created.id, { status: 'identified', body: 'bad query' });
+    const updated = await incidentStore.update(APP_ID, created.id, {
+      status: 'identified',
+      body: 'bad query',
+    });
     expect(updated?.status).toBe('identified');
     const resolved = await incidentStore.resolve(APP_ID, created.id, { body: 'done' });
     expect(resolved?.status).toBe('resolved');
@@ -206,12 +259,20 @@ describe('C15 Phase 3 — incident store (file-backed)', () => {
 
   it('prunes an old resolved incident on the next write', async () => {
     const longAgo = new Date('2025-01-01T00:00:00Z'); // ~1.5 years before the fresh write
-    const old = await incidentStore.create(APP_ID, { title: 'old', status: 'investigating', impact: 'minor' }, longAgo);
+    const old = await incidentStore.create(
+      APP_ID,
+      { title: 'old', status: 'investigating', impact: 'minor' },
+      longAgo,
+    );
     await incidentStore.resolve(APP_ID, old.id, { body: 'done' }, longAgo);
     expect(await incidentStore.list(APP_ID)).toHaveLength(1); // still there (its own writes don't prune it — it was current then)
 
     // a fresh write with a much-later clock prunes the now-stale resolved incident
-    await incidentStore.create(APP_ID, { title: 'live', status: 'investigating', impact: 'none' }, new Date());
+    await incidentStore.create(
+      APP_ID,
+      { title: 'live', status: 'investigating', impact: 'none' },
+      new Date(),
+    );
     const list = await incidentStore.list(APP_ID);
     expect(list.map((i) => i.title).sort()).toEqual(['live']);
   });
@@ -243,16 +304,30 @@ async function startHealth(status: number, body: unknown): Promise<number> {
 async function seedApp(): Promise<void> {
   const now = nowIso();
   const app: Application = {
-    id: APP_ID, type: 'Application', app_id: APP_ID, created_at: now, updated_at: now,
-    name: APP, repo_path: repo, platform: 'web', framework: 'nextjs', template: 'nextjs-web',
-    language: 'typescript', package_manager: 'npm',
+    id: APP_ID,
+    type: 'Application',
+    app_id: APP_ID,
+    created_at: now,
+    updated_at: now,
+    name: APP,
+    repo_path: repo,
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   };
   await store.saveResource(app);
   await writeFile(path.join(repo, 'forge.app.json'), JSON.stringify({ port: 3000 }, null, 2));
 }
 
 async function healthyApp(): Promise<void> {
-  const port = await startHealth(200, { status: 'ok', service: APP, time: nowIso(), checks: [{ name: 'db', status: 'ok' }] });
+  const port = await startHealth(200, {
+    status: 'ok',
+    service: APP,
+    time: nowIso(),
+    checks: [{ name: 'db', status: 'ok' }],
+  });
   process.env.FORGE_APP_CALLBACK_PORT = String(port);
   await seedApp();
 }
@@ -276,7 +351,8 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
     await server.close();
     if (health) await new Promise<void>((r) => health!.close(() => r()));
     health = undefined;
-    const restore = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
+    const restore = (k: string, v: string | undefined) =>
+      v === undefined ? delete process.env[k] : (process.env[k] = v);
     restore('FORGE_STATE_DIR', prevState);
     restore('FORGE_APP_CALLBACK_HOST', prevHost);
     restore('FORGE_APP_CALLBACK_PORT', prevPort);
@@ -294,8 +370,15 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
 
     // declare a critical incident (public, no cookie needed)
     const created = await server.inject({
-      method: 'POST', url: '/status/incidents',
-      payload: { title: 'Checkout down', status: 'investigating', impact: 'critical', components: ['db'], body: 'Investigating elevated errors.' },
+      method: 'POST',
+      url: '/status/incidents',
+      payload: {
+        title: 'Checkout down',
+        status: 'investigating',
+        impact: 'critical',
+        components: ['db'],
+        body: 'Investigating elevated errors.',
+      },
     });
     expect(created.statusCode).toBe(200);
     const inc = created.json().incident;
@@ -312,7 +395,12 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
     expect(json.overall).toBe('major_outage');
     expect(json.banner).toBe('Major Outage');
     expect(json.incidents).toHaveLength(1);
-    expect(json.incidents[0]).toMatchObject({ title: 'Checkout down', status: 'investigating', impact: 'critical', affected_components: ['db'] });
+    expect(json.incidents[0]).toMatchObject({
+      title: 'Checkout down',
+      status: 'investigating',
+      impact: 'critical',
+      affected_components: ['db'],
+    });
     // Phase-1/2 fields still present
     expect(json.components.find((c: { name: string }) => c.name === 'db')).toBeTruthy();
     expect(json.uptime).toBeTruthy();
@@ -327,16 +415,27 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
 
   it('resolve moves the incident to history and the banner recovers', async () => {
     await healthyApp();
-    const created = (await server.inject({
-      method: 'POST', url: '/status/incidents',
-      payload: { title: 'API errors', status: 'investigating', impact: 'major' },
-    })).json().incident;
+    const created = (
+      await server.inject({
+        method: 'POST',
+        url: '/status/incidents',
+        payload: { title: 'API errors', status: 'investigating', impact: 'major' },
+      })
+    ).json().incident;
 
     // update then resolve
-    const upd = await server.inject({ method: 'POST', url: '/status/incidents/update', payload: { id: created.id, status: 'monitoring', body: 'mitigation in place' } });
+    const upd = await server.inject({
+      method: 'POST',
+      url: '/status/incidents/update',
+      payload: { id: created.id, status: 'monitoring', body: 'mitigation in place' },
+    });
     expect(upd.json().incident.status).toBe('monitoring');
 
-    const res = await server.inject({ method: 'POST', url: '/status/incidents/resolve', payload: { id: created.id, body: 'all clear' } });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/status/incidents/resolve',
+      payload: { id: created.id, body: 'all clear' },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json().incident.status).toBe('resolved');
     expect(res.json().incident.resolved_at).toBeTruthy();
@@ -365,27 +464,48 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
     // explicit empty incidents list (5 args) — so the incidents param, when empty, is a
     // no-op on the output.
     const probe: HealthProbeResult = {
-      url: 'x', reachable: true, httpStatus: 200, conforms: true,
+      url: 'x',
+      reachable: true,
+      httpStatus: 200,
+      conforms: true,
       health: { status: 'ok', service: APP, time: 'x', checks: [{ name: 'db', status: 'ok' }] },
     };
-    const report = computeStatus(probe, { appName: APP, planeLabel: 'Forge data plane', now: new Date('2026-01-01T00:00:00Z') });
-    const history: HistoryReport = { window_days: 90, overall_uptime_pct: null, sample_count: 0, components: [] };
+    const report = computeStatus(probe, {
+      appName: APP,
+      planeLabel: 'Forge data plane',
+      now: new Date('2026-01-01T00:00:00Z'),
+    });
+    const history: HistoryReport = {
+      window_days: 90,
+      overall_uptime_pct: null,
+      sample_count: 0,
+      components: [],
+    };
     const phase2 = statusPageHtml(DEFAULT_THEME, APP, report, history);
     const explicitEmpty = statusPageHtml(DEFAULT_THEME, APP, report, history, []);
     expect(explicitEmpty).toBe(phase2);
     // and adding an incident DOES change the output (guards against a dead code path)
-    const withInc = statusPageHtml(DEFAULT_THEME, APP, report, history, [createIncident('inc_x', { title: 'X', status: 'investigating', impact: 'major' }, new Date())]);
+    const withInc = statusPageHtml(DEFAULT_THEME, APP, report, history, [
+      createIncident('inc_x', { title: 'X', status: 'investigating', impact: 'major' }, new Date()),
+    ]);
     expect(withInc).not.toBe(phase2);
     expect(withInc).toContain('Active Incidents');
   });
 
   it('emits IncidentOpened / IncidentUpdated / IncidentResolved facts', async () => {
     await healthyApp();
-    const created = (await server.inject({
-      method: 'POST', url: '/status/incidents',
-      payload: { title: 'Cache cold', status: 'investigating', impact: 'minor' },
-    })).json().incident;
-    await server.inject({ method: 'POST', url: '/status/incidents/update', payload: { id: created.id, status: 'identified', body: 'x' } });
+    const created = (
+      await server.inject({
+        method: 'POST',
+        url: '/status/incidents',
+        payload: { title: 'Cache cold', status: 'investigating', impact: 'minor' },
+      })
+    ).json().incident;
+    await server.inject({
+      method: 'POST',
+      url: '/status/incidents/update',
+      payload: { id: created.id, status: 'identified', body: 'x' },
+    });
     await server.inject({ method: 'POST', url: '/status/incidents/resolve', payload: { id: created.id } });
 
     const events = await store.listEvents({ app_id: APP_ID, limit: 50 });
@@ -399,11 +519,18 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
 
   it('an update whose status is resolved emits IncidentResolved (not IncidentUpdated)', async () => {
     await healthyApp();
-    const created = (await server.inject({
-      method: 'POST', url: '/status/incidents',
-      payload: { title: 'quick blip', status: 'investigating', impact: 'minor' },
-    })).json().incident;
-    await server.inject({ method: 'POST', url: '/status/incidents/update', payload: { id: created.id, status: 'resolved', body: 'over' } });
+    const created = (
+      await server.inject({
+        method: 'POST',
+        url: '/status/incidents',
+        payload: { title: 'quick blip', status: 'investigating', impact: 'minor' },
+      })
+    ).json().incident;
+    await server.inject({
+      method: 'POST',
+      url: '/status/incidents/update',
+      payload: { id: created.id, status: 'resolved', body: 'over' },
+    });
     const json = (await server.inject({ method: 'GET', url: '/status.json' })).json();
     expect(json.incidents[0].status).toBe('resolved');
     const events = await store.listEvents({ app_id: APP_ID, limit: 50 });
@@ -413,14 +540,49 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
   it('validates input and unknown ids/apps', async () => {
     await healthyApp();
     // bad status
-    expect((await server.inject({ method: 'POST', url: '/status/incidents', payload: { title: 't', status: 'bogus', impact: 'minor' } })).statusCode).toBe(422);
+    expect(
+      (
+        await server.inject({
+          method: 'POST',
+          url: '/status/incidents',
+          payload: { title: 't', status: 'bogus', impact: 'minor' },
+        })
+      ).statusCode,
+    ).toBe(422);
     // bad impact
-    expect((await server.inject({ method: 'POST', url: '/status/incidents', payload: { title: 't', status: 'investigating', impact: 'nope' } })).statusCode).toBe(422);
+    expect(
+      (
+        await server.inject({
+          method: 'POST',
+          url: '/status/incidents',
+          payload: { title: 't', status: 'investigating', impact: 'nope' },
+        })
+      ).statusCode,
+    ).toBe(422);
     // missing title
-    expect((await server.inject({ method: 'POST', url: '/status/incidents', payload: { status: 'investigating', impact: 'minor' } })).statusCode).toBe(422);
+    expect(
+      (
+        await server.inject({
+          method: 'POST',
+          url: '/status/incidents',
+          payload: { status: 'investigating', impact: 'minor' },
+        })
+      ).statusCode,
+    ).toBe(422);
     // unknown incident
-    expect((await server.inject({ method: 'POST', url: '/status/incidents/update', payload: { id: 'inc_nope', status: 'monitoring' } })).statusCode).toBe(404);
-    expect((await server.inject({ method: 'POST', url: '/status/incidents/resolve', payload: { id: 'inc_nope' } })).statusCode).toBe(404);
+    expect(
+      (
+        await server.inject({
+          method: 'POST',
+          url: '/status/incidents/update',
+          payload: { id: 'inc_nope', status: 'monitoring' },
+        })
+      ).statusCode,
+    ).toBe(404);
+    expect(
+      (await server.inject({ method: 'POST', url: '/status/incidents/resolve', payload: { id: 'inc_nope' } }))
+        .statusCode,
+    ).toBe(404);
   });
 
   it('unknown app → 404 on create and list', async () => {
@@ -428,7 +590,15 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
     const s2 = Fastify({ logger: false });
     registerIncidentRoutes(s2); // no defaultApp
     await s2.ready();
-    expect((await s2.inject({ method: 'POST', url: '/status/incidents', payload: { title: 't', status: 'investigating', impact: 'minor' } })).statusCode).toBe(404);
+    expect(
+      (
+        await s2.inject({
+          method: 'POST',
+          url: '/status/incidents',
+          payload: { title: 't', status: 'investigating', impact: 'minor' },
+        })
+      ).statusCode,
+    ).toBe(404);
     expect((await s2.inject({ method: 'GET', url: '/status/incidents' })).statusCode).toBe(404);
     await s2.close();
   });
@@ -474,7 +644,8 @@ describe('C15 Phase 3 — P25 store-less box (empty Application store → app/fo
   });
   afterEach(async () => {
     await server2.close();
-    const restore = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
+    const restore = (k: string, v: string | undefined) =>
+      v === undefined ? delete process.env[k] : (process.env[k] = v);
     restore('FORGE_STATE_DIR', prevState2);
     restore('FORGE_WORKSPACE', prevWs);
     restore('FORGE_APP_LAYOUT', prevLayout);
@@ -490,7 +661,13 @@ describe('C15 Phase 3 — P25 store-less box (empty Application store → app/fo
     const created = await server2.inject({
       method: 'POST',
       url: '/status/incidents',
-      payload: { app: 'forge-os', title: 'Partner API down', status: 'investigating', impact: 'major', body: 'upstream 5xx' },
+      payload: {
+        app: 'forge-os',
+        title: 'Partner API down',
+        status: 'investigating',
+        impact: 'major',
+        body: 'upstream 5xx',
+      },
     });
     expect(created.statusCode).toBe(200);
     const inc = created.json().incident;
@@ -509,11 +686,13 @@ describe('C15 Phase 3 — P25 store-less box (empty Application store → app/fo
   });
 
   it('create → resolve moves the store-less incident to resolved history', async () => {
-    const inc = (await server2.inject({
-      method: 'POST',
-      url: '/status/incidents',
-      payload: { app: 'forge-os', title: 'Cache cold', status: 'investigating', impact: 'minor' },
-    })).json().incident;
+    const inc = (
+      await server2.inject({
+        method: 'POST',
+        url: '/status/incidents',
+        payload: { app: 'forge-os', title: 'Cache cold', status: 'investigating', impact: 'minor' },
+      })
+    ).json().incident;
 
     const res = await server2.inject({
       method: 'POST',

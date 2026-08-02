@@ -21,7 +21,8 @@ type Input = z.infer<typeof inputSchema>;
 export const unsetSecretCapability: Capability<Input, Secret> = {
   name: 'UnsetSecret',
   slug: 'unset-secret',
-  description: 'Remove/revoke an encrypted secret from an Application\'s vault (idempotent). Never returns the value.',
+  description:
+    "Remove/revoke an encrypted secret from an Application's vault (idempotent). Never returns the value.",
   inputSchema,
   resourceType: 'Secret',
   events: ['SecretUnset'],

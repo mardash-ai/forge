@@ -9,9 +9,7 @@ import type { ScheduledJob } from '../../resources/types';
 // All time math is UTC, matching how the rest of the platform treats dates.
 
 export type Schedule =
-  | { kind: 'interval'; ms: number }
-  | { kind: 'cron'; fields: CronFields }
-  | { kind: 'once'; at: string };
+  { kind: 'interval'; ms: number } | { kind: 'cron'; fields: CronFields } | { kind: 'once'; at: string };
 
 const UNIT_MS: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
 
@@ -53,8 +51,13 @@ function parseField(spec: string, min: number, max: number, label: string): Cron
       hi = rp[1] === undefined ? lo : Number(rp[1]);
     }
     if (
-      !Number.isInteger(lo) || !Number.isInteger(hi) || !Number.isInteger(step) ||
-      step < 1 || lo < min || hi > max || lo > hi
+      !Number.isInteger(lo) ||
+      !Number.isInteger(hi) ||
+      !Number.isInteger(step) ||
+      step < 1 ||
+      lo < min ||
+      hi > max ||
+      lo > hi
     ) {
       throw invalidInput(`Invalid cron ${label} field "${spec}".`, { field: label, value: spec });
     }
@@ -108,11 +111,9 @@ function nextCron(fields: CronFields, after: Date): Date | null {
 // Validate the flags and return the canonical string to persist. Exactly one of
 // every / cron / at must be given.
 export function toCanonical(input: { every?: string; cron?: string; at?: string }): string {
-  const provided = [
-    input.every ? 'every' : null,
-    input.cron ? 'cron' : null,
-    input.at ? 'at' : null,
-  ].filter(Boolean);
+  const provided = [input.every ? 'every' : null, input.cron ? 'cron' : null, input.at ? 'at' : null].filter(
+    Boolean,
+  );
   if (provided.length !== 1) {
     throw invalidInput('Provide exactly one of --every, --cron, or --at.', { provided });
   }

@@ -19,7 +19,12 @@ describe('deploy-compose-rollout — pure helpers', () => {
   describe('dockerArgs — remote-context passthrough', () => {
     it('prepends --context <ctx> to target a remote daemon', () => {
       expect(dockerArgs('box', ['compose', '-f', 'compose.prod.yaml', 'ps'])).toEqual([
-        '--context', 'box', 'compose', '-f', 'compose.prod.yaml', 'ps',
+        '--context',
+        'box',
+        'compose',
+        '-f',
+        'compose.prod.yaml',
+        'ps',
       ]);
     });
     it('targets the local daemon (no prefix) when no context is given', () => {
@@ -98,7 +103,11 @@ describe('deploy-compose-rollout — P14 drift detection', () => {
           postgres: { image: 'postgres:16-alpine' },
         },
       });
-      expect(parseComposeImages(json)).toEqual({ web: WEB, 'data-plane': DP, postgres: 'postgres:16-alpine' });
+      expect(parseComposeImages(json)).toEqual({
+        web: WEB,
+        'data-plane': DP,
+        postgres: 'postgres:16-alpine',
+      });
     });
     it('is tolerant of non-JSON (older compose / a config error) → {}', () => {
       expect(parseComposeImages('name: forge-demo-prod\nservices:\n  web:\n')).toEqual({});
@@ -111,7 +120,11 @@ describe('deploy-compose-rollout — P14 drift detection', () => {
 
   describe('detectDrift — running image must match the pin, or it is drift', () => {
     const state = (over: Partial<ServiceImageState>): ServiceImageState => ({
-      service: 'web', pinnedRef: WEB, pinnedImageId: 'sha256:pin', runningImageId: 'sha256:pin', ...over,
+      service: 'web',
+      pinnedRef: WEB,
+      pinnedImageId: 'sha256:pin',
+      runningImageId: 'sha256:pin',
+      ...over,
     });
 
     it('no drift when every running image matches its pin', () => {
@@ -142,7 +155,13 @@ describe('deploy-compose-rollout — P14 drift detection', () => {
   describe('driftReport — a prominent line per drifted service', () => {
     it('names the service, running-vs-pinned, and why', () => {
       const report = driftReport([
-        { service: 'data-plane', pinnedRef: DP, running: 'absent', reason: 'pinned image not present on the target (a required pull failed — is the registry authenticated?)' },
+        {
+          service: 'data-plane',
+          pinnedRef: DP,
+          running: 'absent',
+          reason:
+            'pinned image not present on the target (a required pull failed — is the registry authenticated?)',
+        },
       ]);
       expect(report).toContain('data-plane');
       expect(report).toContain(DP);

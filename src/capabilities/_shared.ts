@@ -58,8 +58,11 @@ export async function resolveAppLenient(store: Store, name: string): Promise<App
   // SAME repo `forge deploy` operates on; the manifest is the source of truth for the app name.
   const repo = appDir(name);
   try {
-    const manifest = JSON.parse(await readFile(path.join(repo, 'forge.app.json'), 'utf8')) as { name?: string };
-    const resolvedName = typeof manifest.name === 'string' && manifest.name.trim() ? manifest.name.trim() : name;
+    const manifest = JSON.parse(await readFile(path.join(repo, 'forge.app.json'), 'utf8')) as {
+      name?: string;
+    };
+    const resolvedName =
+      typeof manifest.name === 'string' && manifest.name.trim() ? manifest.name.trim() : name;
     return { id: undefined, name: resolvedName, repo_path: repo };
   } catch {
     throw notFound(

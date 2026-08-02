@@ -78,7 +78,11 @@ export function createCloudRunRuntimeProvider(opts: {
         });
         return { ok: true, detail: 'reachable', checked_at: new Date().toISOString() };
       } catch (e) {
-        return { ok: false, detail: (e as Error).message.slice(0, 200), checked_at: new Date().toISOString() };
+        return {
+          ok: false,
+          detail: (e as Error).message.slice(0, 200),
+          checked_at: new Date().toISOString(),
+        };
       }
     },
 
@@ -110,8 +114,12 @@ export function createCloudRunRuntimeProvider(opts: {
             traffic_percent: traffic.get(short) ?? 0,
             ready: ready?.state === 'CONDITION_SUCCEEDED',
             ...(ready?.message ? { ready_detail: ready.message } : {}),
-            ...(r.scaling?.minInstanceCount !== undefined ? { min_instances: r.scaling.minInstanceCount } : {}),
-            ...(r.scaling?.maxInstanceCount !== undefined ? { max_instances: r.scaling.maxInstanceCount } : {}),
+            ...(r.scaling?.minInstanceCount !== undefined
+              ? { min_instances: r.scaling.minInstanceCount }
+              : {}),
+            ...(r.scaling?.maxInstanceCount !== undefined
+              ? { max_instances: r.scaling.maxInstanceCount }
+              : {}),
           } satisfies Revision;
         })
         .sort((a, b) => b.created_at.localeCompare(a.created_at));

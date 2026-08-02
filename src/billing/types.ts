@@ -17,13 +17,7 @@ export type BillingSource = 'stripe' | 'apple' | 'google';
 // `missing_payment_method: pause` behavior). Data retained; no charge; adding a card RESUMES the SAME
 // subscription. Consumers map paused → read-only "grace" state. Use `canceled` for true termination only.
 export type SubscriptionStatus =
-  | 'active'
-  | 'trialing'
-  | 'past_due'
-  | 'paused'
-  | 'canceled'
-  | 'incomplete'
-  | 'none';
+  'active' | 'trialing' | 'past_due' | 'paused' | 'canceled' | 'incomplete' | 'none';
 
 export const SUBSCRIPTION_STATUSES: readonly SubscriptionStatus[] = [
   'active',

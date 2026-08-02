@@ -40,7 +40,13 @@ export async function ensureEventSchema(pool: Pool): Promise<void> {
 }
 
 interface EventRow {
-  id: string; app_id: string; type: string; subject: string | null; owner: string | null; data: unknown; at: string;
+  id: string;
+  app_id: string;
+  type: string;
+  subject: string | null;
+  owner: string | null;
+  data: unknown;
+  at: string;
 }
 function rowToEvent(r: EventRow): AppEvent {
   return {
@@ -69,7 +75,11 @@ export class PgEventBackend implements EventBackend, MigratableEventBackend {
       await client.query('COMMIT');
       return out;
     } catch (e) {
-      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
       throw e;
     } finally {
       client.release();
@@ -86,7 +96,15 @@ export class PgEventBackend implements EventBackend, MigratableEventBackend {
       data: input.data ?? {},
       at: nowIso(),
     };
-    await this.pool.query(INSERT_SQL, [appId, event.id, event.type, input.subject ?? null, input.owner ?? null, JSON.stringify(event.data), event.at]);
+    await this.pool.query(INSERT_SQL, [
+      appId,
+      event.id,
+      event.type,
+      input.subject ?? null,
+      input.owner ?? null,
+      JSON.stringify(event.data),
+      event.at,
+    ]);
     return event;
   }
 
@@ -146,7 +164,15 @@ export class PgEventBackend implements EventBackend, MigratableEventBackend {
       await c.query('DELETE FROM forge_app_events WHERE app_id=$1', [appId]);
       // Insert in array order (oldest-first) so `seq` reflects the original append order.
       for (const e of events) {
-        await c.query(INSERT_SQL, [appId, e.id, e.type, e.subject ?? null, e.owner ?? null, JSON.stringify(e.data ?? {}), e.at]);
+        await c.query(INSERT_SQL, [
+          appId,
+          e.id,
+          e.type,
+          e.subject ?? null,
+          e.owner ?? null,
+          JSON.stringify(e.data ?? {}),
+          e.at,
+        ]);
       }
     });
   }
@@ -155,8 +181,10 @@ export class PgEventBackend implements EventBackend, MigratableEventBackend {
     await this.pool.query('TRUNCATE forge_app_events');
   }
   async deleteByOwner(appId: string, owner: string): Promise<number> {
-    const r = await this.pool.query('DELETE FROM forge_app_events WHERE app_id=$1 AND owner=$2', [appId, owner]);
+    const r = await this.pool.query('DELETE FROM forge_app_events WHERE app_id=$1 AND owner=$2', [
+      appId,
+      owner,
+    ]);
     return r.rowCount ?? 0;
   }
-
 }

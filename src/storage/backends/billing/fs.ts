@@ -29,8 +29,10 @@ export class FsBillingBackend implements BillingBackend, MigratableBillingBacken
       const parsed = JSON.parse(await readFile(billingFile(appId), 'utf8')) as Partial<BillingState>;
       return {
         catalog: parsed.catalog ?? null,
-        subscriptions: parsed.subscriptions && typeof parsed.subscriptions === 'object' ? parsed.subscriptions : {},
-        webhook_events: parsed.webhook_events && typeof parsed.webhook_events === 'object' ? parsed.webhook_events : {},
+        subscriptions:
+          parsed.subscriptions && typeof parsed.subscriptions === 'object' ? parsed.subscriptions : {},
+        webhook_events:
+          parsed.webhook_events && typeof parsed.webhook_events === 'object' ? parsed.webhook_events : {},
       };
     } catch {
       return emptyBillingState();
@@ -49,7 +51,10 @@ export class FsBillingBackend implements BillingBackend, MigratableBillingBacken
     return this.readState(appId);
   }
 
-  async mutate<T>(appId: string, fn: (state: BillingState) => { state: BillingState; result: T }): Promise<T> {
+  async mutate<T>(
+    appId: string,
+    fn: (state: BillingState) => { state: BillingState; result: T },
+  ): Promise<T> {
     return this.withLock(appId, async () => {
       const state = await this.readState(appId);
       const { state: next, result } = fn(state);

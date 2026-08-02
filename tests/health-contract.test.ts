@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  aggregateHealth,
-  httpStatusFor,
-  parseHealthResponse,
-} from '../src/shared/health';
+import { aggregateHealth, httpStatusFor, parseHealthResponse } from '../src/shared/health';
 import { scaffold } from '../src/plugins/scaffold-nextjs-npm/index';
 
 // C6 — the standard health / telemetry contract. The platform owns the schema, the
@@ -45,7 +41,10 @@ describe('aggregateHealth (the platform-owned rollup)', () => {
     );
     expect(body.status).toBe('unavailable');
     expect(httpStatus).toBe(503);
-    expect(body.checks.find((c) => c.name === 'db')).toMatchObject({ status: 'unavailable', detail: 'ECONNREFUSED' });
+    expect(body.checks.find((c) => c.name === 'db')).toMatchObject({
+      status: 'unavailable',
+      detail: 'ECONNREFUSED',
+    });
   });
 
   it('only a NON-required check fails -> degraded / still HTTP 200', () => {
@@ -85,7 +84,12 @@ describe('httpStatusFor (the 200/503 convention)', () => {
 
 describe('parseHealthResponse (schema recognition)', () => {
   it('accepts a well-formed standard response', () => {
-    const r = parseHealthResponse({ status: 'ok', service: 'svc', time: '2026-01-01T00:00:00.000Z', checks: [] });
+    const r = parseHealthResponse({
+      status: 'ok',
+      service: 'svc',
+      time: '2026-01-01T00:00:00.000Z',
+      checks: [],
+    });
     expect(r.ok).toBe(true);
   });
 

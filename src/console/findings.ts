@@ -23,10 +23,7 @@ export interface FindingsSnapshot {
 
 type Rule = (s: FindingsSnapshot) => Finding[];
 
-const f = (
-  p: Omit<Finding, 'id' | 'first_seen_at'> & { id?: string },
-  now: Date,
-): Finding => ({
+const f = (p: Omit<Finding, 'id' | 'first_seen_at'> & { id?: string }, now: Date): Finding => ({
   id: p.id ?? `${p.rule}:${p.subject}`,
   first_seen_at: now.toISOString(),
   ...p,
@@ -72,9 +69,7 @@ const expiringCredentials: Rule = (s) =>
           rule: 'credential-expiring',
           severity,
           title:
-            left <= 0
-              ? `${c.name} has EXPIRED`
-              : `${c.name} expires in ${left} day${left === 1 ? '' : 's'}`,
+            left <= 0 ? `${c.name} has EXPIRED` : `${c.name} expires in ${left} day${left === 1 ? '' : 's'}`,
           detail:
             c.kind === 'tls_certificate'
               ? 'A managed certificate renews automatically only while its DNS authorization resolves.'
@@ -199,7 +194,7 @@ const databaseProtection: Rule = (s) =>
               severity: 'info',
               title: `${r.name} is pinned to a single zone (${r.location})`,
               detail:
-                'This is the estate\'s only zone-pinned resource, so it is the entire single-zone ' +
+                "This is the estate's only zone-pinned resource, so it is the entire single-zone " +
                 'availability story: if that zone goes, everything else stays up with nothing to talk to.',
               subject: r.external_id,
               env: r.env,

@@ -7,7 +7,15 @@ import { newToken, hashToken, resolveAuthConfig } from '../plugins/auth-identity
 import * as authStore from '../plugins/auth-identity/store';
 import { SESSION_COOKIE, APP_HEADER, verifySessionToken, parseCookies } from '../shared/session';
 import { resolveThemeForApp } from './theme-context';
-import { DEFAULT_THEME, themeMetaHead, themeCustomStyleTag, themeTitle, themeLogoImg, escapeHtml, type Theme } from '../shared/theme';
+import {
+  DEFAULT_THEME,
+  themeMetaHead,
+  themeCustomStyleTag,
+  themeTitle,
+  themeLogoImg,
+  escapeHtml,
+  type Theme,
+} from '../shared/theme';
 import {
   parseScopes,
   scopeString,
@@ -40,17 +48,27 @@ import { startSpan } from '../plugins/otel/index';
 //   POST /oauth/token          authorization_code | refresh_token -> { access_token, refresh_token, … }
 //   POST /oauth/revoke         { token, token_type_hint? } -> {}
 
-const unknownApp = { error: 'invalid_request', error_description: 'unknown app (pass `app` or set FORGE_APP_NAME).' };
+const unknownApp = {
+  error: 'invalid_request',
+  error_description: 'unknown app (pass `app` or set FORGE_APP_NAME).',
+};
 
-export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: () => string | undefined } = {}): void {
+export function registerOAuthRoutes(
+  app: FastifyInstance,
+  opts: { defaultApp?: () => string | undefined } = {},
+): void {
   if (!app.hasContentTypeParser('application/x-www-form-urlencoded')) {
-    app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_req, body, done) => {
-      try {
-        done(null, Object.fromEntries(new URLSearchParams(body as string)));
-      } catch (e) {
-        done(e as Error, undefined);
-      }
-    });
+    app.addContentTypeParser(
+      'application/x-www-form-urlencoded',
+      { parseAs: 'string' },
+      (_req, body, done) => {
+        try {
+          done(null, Object.fromEntries(new URLSearchParams(body as string)));
+        } catch (e) {
+          done(e as Error, undefined);
+        }
+      },
+    );
   }
 
   const trimmed = (v: unknown): string | undefined => {
@@ -69,7 +87,10 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
     if (fromHeader) return fromHeader;
     return opts.defaultApp?.();
   };
-  const resolveAppId = async (req: FastifyRequest, explicit?: string): Promise<{ id: string; name: string } | null> => {
+  const resolveAppId = async (
+    req: FastifyRequest,
+    explicit?: string,
+  ): Promise<{ id: string; name: string } | null> => {
     const n = resolveAppName(req, explicit);
     if (!n) return null;
     const a = await store.findAppByName(n);
@@ -86,14 +107,20 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
     // prod set that before the split); then the forwarded-host header.
     const explicit = process.env.FORGE_MCP_PUBLIC_URL || process.env.FORGE_OAUTH_PUBLIC_URL;
     if (explicit) return explicit.replace(/\/+$/, '');
-    const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]!.trim() || 'https';
+    const proto =
+      String(req.headers['x-forwarded-proto'] ?? '')
+        .split(',')[0]!
+        .trim() || 'https';
     const host = String(req.headers['x-forwarded-host'] ?? req.headers['host'] ?? 'localhost');
     return `${proto}://${host}`;
   }
 
   // The logged-in C10 user for this app, or null. Reuses the C10 session contract (signed access cookie +
   // a live, non-revoked server-side session record) — the OAuth AS never re-implements sign-in.
-  async function currentUser(req: FastifyRequest, appId: string): Promise<{ userId: string; email: string } | null> {
+  async function currentUser(
+    req: FastifyRequest,
+    appId: string,
+  ): Promise<{ userId: string; email: string } | null> {
     const cfg = await resolveAuthConfig(appId);
     if (!cfg.sessionSecret) return null;
     const claims = verifySessionToken(parseCookies(req.headers.cookie)[SESSION_COOKIE], cfg.sessionSecret);
@@ -103,7 +130,8 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
     return { userId: claims.userId, email: claims.email };
   }
 
-  const themeFor = async (appId?: string): Promise<Theme> => (appId ? resolveThemeForApp(appId) : DEFAULT_THEME);
+  const themeFor = async (appId?: string): Promise<Theme> =>
+    appId ? resolveThemeForApp(appId) : DEFAULT_THEME;
   const oauthError = (reply: FastifyReply, status: number, error: string, description?: string) =>
     reply.status(status).send({ error, ...(description ? { error_description: description } : {}) });
 
@@ -125,7 +153,11 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
   // === dynamic client registration (RFC 7591) ====================================================
   app.post('/oauth/register', async (req, reply) => {
     const b = (req.body ?? {}) as {
-      app?: string; client_name?: string; redirect_uris?: unknown; token_endpoint_auth_method?: string; scope?: string;
+      app?: string;
+      client_name?: string;
+      redirect_uris?: unknown;
+      token_endpoint_auth_method?: string;
+      scope?: string;
     };
     // C36 — every registration outcome gets a span (`oauth.register`): outcome + the PUBLIC client_name.
     // Never any secret (the minted client_secret is NOT recorded). Fire-and-forget, never blocks the flow.
@@ -137,12 +169,26 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
       span.end(ok ? 'ok' : 'error', ok ? undefined : o);
     };
     const app_ = await resolveAppId(req, b.app);
-    if (!app_) { outcome('invalid_request'); return reply.status(404).send(unknownApp); }
+    if (!app_) {
+      outcome('invalid_request');
+      return reply.status(404).send(unknownApp);
+    }
     span.setAttribute('mcp.app', app_.name);
-    const redirectUris = Array.isArray(b.redirect_uris) ? b.redirect_uris.filter((u): u is string => typeof u === 'string' && /^https?:\/\//.test(u)) : [];
-    if (redirectUris.length === 0) { outcome('invalid_redirect_uri'); return oauthError(reply, 400, 'invalid_redirect_uri', 'at least one absolute http(s) `redirect_uris` entry is required.'); }
+    const redirectUris = Array.isArray(b.redirect_uris)
+      ? b.redirect_uris.filter((u): u is string => typeof u === 'string' && /^https?:\/\//.test(u))
+      : [];
+    if (redirectUris.length === 0) {
+      outcome('invalid_redirect_uri');
+      return oauthError(
+        reply,
+        400,
+        'invalid_redirect_uri',
+        'at least one absolute http(s) `redirect_uris` entry is required.',
+      );
+    }
     const method: TokenEndpointAuthMethod =
-      b.token_endpoint_auth_method === 'client_secret_basic' || b.token_endpoint_auth_method === 'client_secret_post'
+      b.token_endpoint_auth_method === 'client_secret_basic' ||
+      b.token_endpoint_auth_method === 'client_secret_post'
         ? b.token_endpoint_auth_method
         : 'none';
 
@@ -184,48 +230,80 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
     const q = req.query as Record<string, string>;
     const app_ = await resolveAppId(req);
     const theme = await themeFor(app_?.id);
-    if (!app_) return htmlReply(reply, 404, errorPage(theme, 'Unknown app', 'This authorization request targets an unknown app.'));
+    if (!app_)
+      return htmlReply(
+        reply,
+        404,
+        errorPage(theme, 'Unknown app', 'This authorization request targets an unknown app.'),
+      );
 
     const client = q.client_id ? await (await mcp()).getClient(app_.id, q.client_id) : null;
-    if (!client) return htmlReply(reply, 400, errorPage(theme, 'Unknown client', 'The client_id is not registered.'));
+    if (!client)
+      return htmlReply(reply, 400, errorPage(theme, 'Unknown client', 'The client_id is not registered.'));
     // redirect_uri MUST match a registered one — never redirect to an unregistered URI (open-redirect guard).
     const redirectUri = q.redirect_uri ?? client.redirect_uris[0];
     if (!redirectUri || !client.redirect_uris.includes(redirectUri)) {
-      return htmlReply(reply, 400, errorPage(theme, 'Invalid redirect_uri', 'The redirect_uri does not match a registered value.'));
+      return htmlReply(
+        reply,
+        400,
+        errorPage(theme, 'Invalid redirect_uri', 'The redirect_uri does not match a registered value.'),
+      );
     }
-    if ((q.response_type ?? 'code') !== 'code') return redirectError(reply, redirectUri, 'unsupported_response_type', q.state);
+    if ((q.response_type ?? 'code') !== 'code')
+      return redirectError(reply, redirectUri, 'unsupported_response_type', q.state);
     // PKCE is MANDATORY (OAuth 2.1). Only S256 is offered.
-    if (!q.code_challenge) return redirectError(reply, redirectUri, 'invalid_request', q.state, 'code_challenge (PKCE) is required');
-    if (q.code_challenge_method && q.code_challenge_method !== 'S256') return redirectError(reply, redirectUri, 'invalid_request', q.state, 'only S256 code_challenge_method is supported');
+    if (!q.code_challenge)
+      return redirectError(
+        reply,
+        redirectUri,
+        'invalid_request',
+        q.state,
+        'code_challenge (PKCE) is required',
+      );
+    if (q.code_challenge_method && q.code_challenge_method !== 'S256')
+      return redirectError(
+        reply,
+        redirectUri,
+        'invalid_request',
+        q.state,
+        'only S256 code_challenge_method is supported',
+      );
 
     // Require a logged-in C10 user; if absent, bounce through the hosted login and come back here.
     const user = await currentUser(req, app_.id);
     if (!user) {
       const back = req.url; // same-origin /oauth/authorize?… — C10 safeNext accepts a single-slash path
-      return reply.code(302).header('location', `/auth/login?next=${encodeURIComponent(back)}`).send();
+      return reply
+        .code(302)
+        .header('location', `/auth/login?next=${encodeURIComponent(back)}`)
+        .send();
     }
 
     const requested = parseScopes(q.scope ?? client.scope);
-    return htmlReply(reply, 200, consentPage(theme, {
-      // The USER-FACING brand on the consent screen ("<client> wants to connect to <appName>"). Prefer
-      // FORGE_OAUTH_DISPLAY_NAME (e.g. "Dorinda") over the internal app slug ("dorinda-api") so the
-      // interstitial a connecting user (incl. a directory reviewer) sees is the product name, not the
-      // deploy name. Falls back to app_.name when the env is unset (back-compat).
-      appName: process.env.FORGE_OAUTH_DISPLAY_NAME?.trim() || app_.name,
-      clientName: client.client_name ?? client.client_id,
-      email: user.email,
-      scopes: requested,
-      fields: {
-        client_id: client.client_id,
-        redirect_uri: redirectUri,
-        scope: scopeString(requested),
-        state: q.state ?? '',
-        code_challenge: q.code_challenge,
-        code_challenge_method: q.code_challenge_method ?? 'S256',
-        // RFC 8707 resource indicator — carried through consent so it binds onto the minted code grant.
-        ...(trimmed(q.resource) ? { resource: trimmed(q.resource)! } : {}),
-      },
-    }));
+    return htmlReply(
+      reply,
+      200,
+      consentPage(theme, {
+        // The USER-FACING brand on the consent screen ("<client> wants to connect to <appName>"). Prefer
+        // FORGE_OAUTH_DISPLAY_NAME (e.g. "Dorinda") over the internal app slug ("dorinda-api") so the
+        // interstitial a connecting user (incl. a directory reviewer) sees is the product name, not the
+        // deploy name. Falls back to app_.name when the env is unset (back-compat).
+        appName: process.env.FORGE_OAUTH_DISPLAY_NAME?.trim() || app_.name,
+        clientName: client.client_name ?? client.client_id,
+        email: user.email,
+        scopes: requested,
+        fields: {
+          client_id: client.client_id,
+          redirect_uri: redirectUri,
+          scope: scopeString(requested),
+          state: q.state ?? '',
+          code_challenge: q.code_challenge,
+          code_challenge_method: q.code_challenge_method ?? 'S256',
+          // RFC 8707 resource indicator — carried through consent so it binds onto the minted code grant.
+          ...(trimmed(q.resource) ? { resource: trimmed(q.resource)! } : {}),
+        },
+      }),
+    );
   });
 
   // === consent decision → mint an authorization code =============================================
@@ -242,20 +320,45 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
     };
     const app_ = await resolveAppId(req);
     const theme = await themeFor(app_?.id);
-    if (!app_) { outcome('invalid_request'); return htmlReply(reply, 404, errorPage(theme, 'Unknown app', 'This request targets an unknown app.')); }
+    if (!app_) {
+      outcome('invalid_request');
+      return htmlReply(reply, 404, errorPage(theme, 'Unknown app', 'This request targets an unknown app.'));
+    }
     span.setAttribute('mcp.app', app_.name);
     const user = await currentUser(req, app_.id);
-    if (!user) { outcome('login_required'); return reply.code(302).header('location', '/auth/login').send(); }
+    if (!user) {
+      outcome('login_required');
+      return reply.code(302).header('location', '/auth/login').send();
+    }
 
     const client = b.client_id ? await (await mcp()).getClient(app_.id, b.client_id) : null;
-    if (!client) { outcome('invalid_client'); return htmlReply(reply, 400, errorPage(theme, 'Unknown client', 'The client_id is not registered.')); }
+    if (!client) {
+      outcome('invalid_client');
+      return htmlReply(reply, 400, errorPage(theme, 'Unknown client', 'The client_id is not registered.'));
+    }
     const redirectUri = b.redirect_uri;
     if (!redirectUri || !client.redirect_uris.includes(redirectUri)) {
       outcome('invalid_redirect_uri');
-      return htmlReply(reply, 400, errorPage(theme, 'Invalid redirect_uri', 'The redirect_uri does not match a registered value.'));
+      return htmlReply(
+        reply,
+        400,
+        errorPage(theme, 'Invalid redirect_uri', 'The redirect_uri does not match a registered value.'),
+      );
     }
-    if (b.decision !== 'approve') { outcome('deny', true); return redirectError(reply, redirectUri, 'access_denied', b.state); }
-    if (!b.code_challenge) { outcome('invalid_request'); return redirectError(reply, redirectUri, 'invalid_request', b.state, 'code_challenge (PKCE) is required'); }
+    if (b.decision !== 'approve') {
+      outcome('deny', true);
+      return redirectError(reply, redirectUri, 'access_denied', b.state);
+    }
+    if (!b.code_challenge) {
+      outcome('invalid_request');
+      return redirectError(
+        reply,
+        redirectUri,
+        'invalid_request',
+        b.state,
+        'code_challenge (PKCE) is required',
+      );
+    }
 
     const scopes = parseScopes(b.scope);
     // Record consent (revocable; lets a repeat authorize / refresh proceed without re-prompting).
@@ -331,13 +434,16 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
     const store_ = await mcp();
 
     // Client authentication (confidential clients present a secret; public clients are PKCE-only).
-    const authClient = async (clientId: string | undefined): Promise<OAuthClient | 'invalid_client' | null> => {
+    const authClient = async (
+      clientId: string | undefined,
+    ): Promise<OAuthClient | 'invalid_client' | null> => {
       if (!clientId) return null;
       const client = await store_.getClient(app_.id, clientId);
       if (!client) return null;
       if (client.token_endpoint_auth_method !== 'none') {
         const presented = extractClientSecret(req, b);
-        if (!presented || !client.client_secret_hash || hashToken(presented) !== client.client_secret_hash) return 'invalid_client';
+        if (!presented || !client.client_secret_hash || hashToken(presented) !== client.client_secret_hash)
+          return 'invalid_client';
       }
       return client;
     };
@@ -349,14 +455,26 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
       if (!b.code) return fail(400, 'invalid_request', 'code is required.');
       // Consume the code (one-shot — a replay finds nothing).
       const codeGrant = await store_.consumeGrant(app_.id, 'code', hashToken(b.code));
-      if (!codeGrant || isExpired(codeGrant.expires_at)) return fail(400, 'invalid_grant', 'authorization code is invalid or expired.');
-      if (codeGrant.client_id !== client.client_id) return fail(400, 'invalid_grant', 'code was issued to a different client.');
-      if (codeGrant.redirect_uri && b.redirect_uri && codeGrant.redirect_uri !== b.redirect_uri) return fail(400, 'invalid_grant', 'redirect_uri mismatch.');
-      if (!verifyPkce(b.code_verifier, codeGrant.code_challenge, codeGrant.code_challenge_method)) return fail(400, 'invalid_grant', 'PKCE verification failed.');
+      if (!codeGrant || isExpired(codeGrant.expires_at))
+        return fail(400, 'invalid_grant', 'authorization code is invalid or expired.');
+      if (codeGrant.client_id !== client.client_id)
+        return fail(400, 'invalid_grant', 'code was issued to a different client.');
+      if (codeGrant.redirect_uri && b.redirect_uri && codeGrant.redirect_uri !== b.redirect_uri)
+        return fail(400, 'invalid_grant', 'redirect_uri mismatch.');
+      if (!verifyPkce(b.code_verifier, codeGrant.code_challenge, codeGrant.code_challenge_method))
+        return fail(400, 'invalid_grant', 'PKCE verification failed.');
       // RFC 8707 — the issued tokens inherit the CODE's bound resource. A `resource` presented at exchange
       // must match what was requested at authorize (else invalid_target); omitting it inherits the code's.
-      if (trimmed(b.resource) && trimmed(b.resource) !== codeGrant.resource) return fail(400, 'invalid_target', 'resource does not match the authorization request.');
-      const tokens = await issueTokens(app_.id, client.client_id, codeGrant.owner, codeGrant.scopes, undefined, codeGrant.resource);
+      if (trimmed(b.resource) && trimmed(b.resource) !== codeGrant.resource)
+        return fail(400, 'invalid_target', 'resource does not match the authorization request.');
+      const tokens = await issueTokens(
+        app_.id,
+        client.client_id,
+        codeGrant.owner,
+        codeGrant.scopes,
+        undefined,
+        codeGrant.resource,
+      );
       return issued(tokens);
     }
 
@@ -367,16 +485,26 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
       if (!b.refresh_token) return fail(400, 'invalid_request', 'refresh_token is required.');
       // Rotate: consume the presented refresh (one-shot), issue a fresh access + refresh pair.
       const refreshGrant = await store_.consumeGrant(app_.id, 'refresh', hashToken(b.refresh_token));
-      if (!refreshGrant || isExpired(refreshGrant.expires_at)) return fail(400, 'invalid_grant', 'refresh token is invalid or expired.');
-      if (refreshGrant.client_id !== client.client_id) return fail(400, 'invalid_grant', 'refresh token was issued to a different client.');
+      if (!refreshGrant || isExpired(refreshGrant.expires_at))
+        return fail(400, 'invalid_grant', 'refresh token is invalid or expired.');
+      if (refreshGrant.client_id !== client.client_id)
+        return fail(400, 'invalid_grant', 'refresh token was issued to a different client.');
       let scopes = refreshGrant.scopes;
       if (b.scope) {
         const requested = parseScopes(b.scope);
-        if (!scopesSubset(requested, refreshGrant.scopes)) return fail(400, 'invalid_scope', 'requested scope exceeds the original grant.');
+        if (!scopesSubset(requested, refreshGrant.scopes))
+          return fail(400, 'invalid_scope', 'requested scope exceeds the original grant.');
         scopes = requested;
       }
       // RFC 8707 — carry the audience binding across the rotation so the rotated access token stays bound.
-      const tokens = await issueTokens(app_.id, client.client_id, refreshGrant.owner, scopes, refreshGrant.token_hash, refreshGrant.resource);
+      const tokens = await issueTokens(
+        app_.id,
+        client.client_id,
+        refreshGrant.owner,
+        scopes,
+        refreshGrant.token_hash,
+        refreshGrant.resource,
+      );
       return issued(tokens);
     }
 
@@ -401,18 +529,49 @@ export function registerOAuthRoutes(app: FastifyInstance, opts: { defaultApp?: (
   // Issue a scoped access + rotating refresh token pair, persisting only their HASHES. `resource` (RFC 8707)
   // is the audience the pair is bound to — threaded from the authorization code (or carried across a refresh
   // rotation) so the resource server can reject a token presented to a different resource.
-  async function issueTokens(appId: string, clientId: string, owner: string, scopes: string[], parentHash?: string, resource?: string) {
+  async function issueTokens(
+    appId: string,
+    clientId: string,
+    owner: string,
+    scopes: string[],
+    parentHash?: string,
+    resource?: string,
+  ) {
     const store_ = await mcp();
     const now = nowIso();
     const access = newToken();
     const refresh = newToken();
     const accessTtl = accessTtlSeconds();
-    await store_.putGrant(appId, { kind: 'access', token_hash: access.hash, client_id: clientId, owner, scopes, expires_at: expiresAtIso(accessTtl), ...(resource ? { resource } : {}), visibility: 'private', created_at: now });
     await store_.putGrant(appId, {
-      kind: 'refresh', token_hash: refresh.hash, client_id: clientId, owner, scopes, expires_at: expiresAtIso(refreshTtlSeconds()),
-      ...(resource ? { resource } : {}), ...(parentHash ? { parent_hash: parentHash } : {}), visibility: 'private', created_at: now,
+      kind: 'access',
+      token_hash: access.hash,
+      client_id: clientId,
+      owner,
+      scopes,
+      expires_at: expiresAtIso(accessTtl),
+      ...(resource ? { resource } : {}),
+      visibility: 'private',
+      created_at: now,
     });
-    return { access_token: access.token, token_type: 'Bearer', expires_in: accessTtl, refresh_token: refresh.token, scope: scopeString(scopes) };
+    await store_.putGrant(appId, {
+      kind: 'refresh',
+      token_hash: refresh.hash,
+      client_id: clientId,
+      owner,
+      scopes,
+      expires_at: expiresAtIso(refreshTtlSeconds()),
+      ...(resource ? { resource } : {}),
+      ...(parentHash ? { parent_hash: parentHash } : {}),
+      visibility: 'private',
+      created_at: now,
+    });
+    return {
+      access_token: access.token,
+      token_type: 'Bearer',
+      expires_in: accessTtl,
+      refresh_token: refresh.token,
+      scope: scopeString(scopes),
+    };
   }
 }
 
@@ -433,7 +592,10 @@ function basicAuthPair(req: FastifyRequest): { id?: string; secret?: string } {
         return s;
       }
     };
-    return { id: dec(decoded.slice(0, idx)) || undefined, secret: decoded.slice(idx + 1) ? dec(decoded.slice(idx + 1)) : undefined };
+    return {
+      id: dec(decoded.slice(0, idx)) || undefined,
+      secret: decoded.slice(idx + 1) ? dec(decoded.slice(idx + 1)) : undefined,
+    };
   } catch {
     return {};
   }
@@ -459,7 +621,13 @@ function extractClientSecret(req: FastifyRequest, body: Record<string, string>):
 
 // --- redirect / html helpers ----------------------------------------------------
 
-function redirectError(reply: FastifyReply, redirectUri: string, error: string, state?: string, description?: string) {
+function redirectError(
+  reply: FastifyReply,
+  redirectUri: string,
+  error: string,
+  state?: string,
+  description?: string,
+) {
   const url = new URL(redirectUri);
   url.searchParams.set('error', error);
   if (description) url.searchParams.set('error_description', description);
@@ -497,11 +665,16 @@ function pageShell(theme: Theme, title: string, bodyHtml: string): string {
   );
 }
 
-function consentPage(theme: Theme, o: { appName: string; clientName: string; email: string; scopes: string[]; fields: Record<string, string> }): string {
+function consentPage(
+  theme: Theme,
+  o: { appName: string; clientName: string; email: string; scopes: string[]; fields: Record<string, string> },
+): string {
   const scopeList = o.scopes.length
     ? `<ul class="scopes">${o.scopes.map((s) => `<li><code>${escapeHtml(s)}</code></li>`).join('')}</ul>`
     : `<p class="muted">No specific scopes requested.</p>`;
-  const hidden = Object.entries(o.fields).map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`).join('');
+  const hidden = Object.entries(o.fields)
+    .map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`)
+    .join('');
   // SWITCH-ACCOUNT affordance. This screen binds the grant to whichever identity the browser's
   // session cookie happens to hold, and the ONLY signal of which account that is, is the email in
   // the sentence above. So a returning user reconnecting a connector silently rebinds their AI to
@@ -514,17 +687,19 @@ function consentPage(theme: Theme, o: { appName: string; clientName: string; ema
   const switchAccount =
     `<p class="muted">Not ${escapeHtml(o.email)}? ` +
     `<a href="/auth/logout?next=${encodeURIComponent(authorizeUrl)}">Use a different account</a>.</p>`;
-  return pageShell(theme, 'Authorize', (
+  return pageShell(
+    theme,
+    'Authorize',
     `<h1>Authorize ${escapeHtml(o.clientName)}</h1>` +
-    `<p class="muted"><b>${escapeHtml(o.clientName)}</b> wants to connect to <b>${escapeHtml(o.appName)}</b> as <b>${escapeHtml(o.email)}</b> and use:</p>` +
-    scopeList +
-    `<form method="post" action="/oauth/authorize/decision">${hidden}` +
-    `<div class="row">` +
-    `<button class="deny" type="submit" name="decision" value="deny">Deny</button>` +
-    `<button class="approve" type="submit" name="decision" value="approve">Allow</button>` +
-    `</div></form>` +
-    switchAccount
-  ));
+      `<p class="muted"><b>${escapeHtml(o.clientName)}</b> wants to connect to <b>${escapeHtml(o.appName)}</b> as <b>${escapeHtml(o.email)}</b> and use:</p>` +
+      scopeList +
+      `<form method="post" action="/oauth/authorize/decision">${hidden}` +
+      `<div class="row">` +
+      `<button class="deny" type="submit" name="decision" value="deny">Deny</button>` +
+      `<button class="approve" type="submit" name="decision" value="approve">Allow</button>` +
+      `</div></form>` +
+      switchAccount,
+  );
 }
 
 function errorPage(theme: Theme, title: string, detail: string): string {

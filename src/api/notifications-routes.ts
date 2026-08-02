@@ -37,24 +37,56 @@ export function registerNotificationRoutes(
     return a && a.type === 'Application' ? { id: a.id, name: n } : null;
   };
   const resolveAppId = async (name?: string): Promise<string | null> => (await resolveApp(name))?.id ?? null;
-  const unknownApp = { error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } };
-  const badKey = { error: { code: 'invalid_input', message: 'a notification requires a string `key`.', retry: 'change-input' } };
+  const unknownApp = {
+    error: {
+      code: 'not_found',
+      message: 'unknown app (pass `app` or set FORGE_APP_NAME).',
+      retry: 'change-input',
+    },
+  };
+  const badKey = {
+    error: {
+      code: 'invalid_input',
+      message: 'a notification requires a string `key`.',
+      retry: 'change-input',
+    },
+  };
 
   app.post('/notifications', async (req, reply) => {
     const b = (req.body ?? {}) as {
-      app?: string; key?: string; title?: string; body?: string; data?: Record<string, unknown>;
-      subject?: string; owner?: string; channels?: unknown; idempotency_key?: string;
+      app?: string;
+      key?: string;
+      title?: string;
+      body?: string;
+      data?: Record<string, unknown>;
+      subject?: string;
+      owner?: string;
+      channels?: unknown;
+      idempotency_key?: string;
     };
     if (!b.key || typeof b.key !== 'string') return reply.status(422).send(badKey);
     if (!b.title || typeof b.title !== 'string') {
-      return reply.status(422).send({ error: { code: 'invalid_input', message: 'a notification requires a string `title`.', retry: 'change-input' } });
+      return reply.status(422).send({
+        error: {
+          code: 'invalid_input',
+          message: 'a notification requires a string `title`.',
+          retry: 'change-input',
+        },
+      });
     }
     // Validate `channels` (a subset of in_app|push|email) BEFORE resolving the app, so a bad request is a
     // clean 422. Absent/empty → default ['in_app'] (backward compatible).
     if (b.channels !== undefined) {
-      if (!Array.isArray(b.channels) || b.channels.some((c) => typeof c !== 'string' || !(CHANNELS as readonly string[]).includes(c))) {
+      if (
+        !Array.isArray(b.channels) ||
+        b.channels.some((c) => typeof c !== 'string' || !(CHANNELS as readonly string[]).includes(c))
+      ) {
         return reply.status(422).send({
-          error: { code: 'invalid_input', message: `channels must be a subset of ${CHANNELS.join('|')}.`, retry: 'change-input' },
+          error: {
+            code: 'invalid_input',
+            message: `channels must be a subset of ${CHANNELS.join('|')}.`,
+            retry: 'change-input',
+          },
         });
       }
     }
@@ -62,8 +94,14 @@ export function registerNotificationRoutes(
     if (!resolved) return reply.status(404).send(unknownApp);
     const channels = normalizeChannels(b.channels as string[] | undefined) as Channel[];
     const result = await notify(resolved.id, resolved.name, {
-      key: b.key, title: b.title, body: b.body, data: b.data, subject: b.subject, owner: b.owner,
-      channels, ...(b.idempotency_key ? { idempotencyKey: b.idempotency_key } : {}),
+      key: b.key,
+      title: b.title,
+      body: b.body,
+      data: b.data,
+      subject: b.subject,
+      owner: b.owner,
+      channels,
+      ...(b.idempotency_key ? { idempotencyKey: b.idempotency_key } : {}),
     });
     // Backward compatible: a pure-in_app notify() returns exactly `{ notification }`; delivery is added
     // only when an external channel was requested.
@@ -115,22 +153,41 @@ export function registerNotificationRoutes(
   // many devices.
   app.post('/notifications/push/subscribe', async (req, reply) => {
     const b = (req.body ?? {}) as {
-      app?: string; owner?: string;
+      app?: string;
+      owner?: string;
       subscription?: { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
     };
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
     if (!b.owner || typeof b.owner !== 'string') {
-      return reply.status(422).send({ error: { code: 'invalid_input', message: 'push subscribe requires an `owner` (the session userId).', retry: 'change-input' } });
+      return reply.status(422).send({
+        error: {
+          code: 'invalid_input',
+          message: 'push subscribe requires an `owner` (the session userId).',
+          retry: 'change-input',
+        },
+      });
     }
     const sub = b.subscription;
-    if (!sub || typeof sub.endpoint !== 'string' || !sub.keys || typeof sub.keys.p256dh !== 'string' || typeof sub.keys.auth !== 'string') {
+    if (
+      !sub ||
+      typeof sub.endpoint !== 'string' ||
+      !sub.keys ||
+      typeof sub.keys.p256dh !== 'string' ||
+      typeof sub.keys.auth !== 'string'
+    ) {
       return reply.status(422).send({
-        error: { code: 'invalid_input', message: 'push subscribe requires `subscription` = { endpoint, keys: { p256dh, auth } }.', retry: 'change-input' },
+        error: {
+          code: 'invalid_input',
+          message: 'push subscribe requires `subscription` = { endpoint, keys: { p256dh, auth } }.',
+          retry: 'change-input',
+        },
       });
     }
     const rec = await store.registerPushSubscription(app_id, {
-      owner: b.owner, endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth },
+      owner: b.owner,
+      endpoint: sub.endpoint,
+      keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth },
     });
     return reply.status(200).send({ subscribed: true, endpoint: rec.endpoint });
   });
@@ -142,7 +199,13 @@ export function registerNotificationRoutes(
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
     if (!b.endpoint || typeof b.endpoint !== 'string') {
-      return reply.status(422).send({ error: { code: 'invalid_input', message: 'push unsubscribe requires an `endpoint`.', retry: 'change-input' } });
+      return reply.status(422).send({
+        error: {
+          code: 'invalid_input',
+          message: 'push unsubscribe requires an `endpoint`.',
+          retry: 'change-input',
+        },
+      });
     }
     return { unsubscribed: await store.unregisterPushSubscription(app_id, b.endpoint, b.owner) };
   });

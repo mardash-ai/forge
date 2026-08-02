@@ -16,7 +16,9 @@ import type { Application } from '../src/resources/types';
 // (rank.ts) is unit-tested directly; the file-backed store + the four data-plane routes are driven
 // against a throwaway FORGE_STATE_DIR / Fastify instance.
 
-const doc = (over: Partial<SearchDocument> & Pick<SearchDocument, 'owner' | 'type' | 'id' | 'title'>): SearchDocument => over;
+const doc = (
+  over: Partial<SearchDocument> & Pick<SearchDocument, 'owner' | 'type' | 'id' | 'title'>,
+): SearchDocument => over;
 
 // ============================================================================
 // PURE — tokenize / stem / BM25 ranking / snippet
@@ -41,7 +43,13 @@ describe('C19 — tokenize + stem (pure)', () => {
 describe('C19 — BM25 ranking (pure)', () => {
   it('a TITLE match outranks a BODY-only match (title is weighted above body)', () => {
     const docs = [
-      doc({ owner: 'u', type: 'goal', id: 'body', title: 'Something else entirely', body: 'the alpha appears only in the body here' }),
+      doc({
+        owner: 'u',
+        type: 'goal',
+        id: 'body',
+        title: 'Something else entirely',
+        body: 'the alpha appears only in the body here',
+      }),
       doc({ owner: 'u', type: 'goal', id: 'title', title: 'Alpha initiative', body: 'unrelated content' }),
     ];
     const { hits, total } = rankDocuments(docs, { q: 'alpha', limit: 20, offset: 0 });
@@ -74,7 +82,13 @@ describe('C19 — BM25 ranking (pure)', () => {
 
   it('builds an HTML <mark> snippet and ESCAPES the surrounding text', () => {
     const docs = [
-      doc({ owner: 'u', type: 'note', id: 'n', title: 'Report', body: 'Revenue & <growth> for the alpha quarter looked great' }),
+      doc({
+        owner: 'u',
+        type: 'note',
+        id: 'n',
+        title: 'Report',
+        body: 'Revenue & <growth> for the alpha quarter looked great',
+      }),
     ];
     const { hits } = rankDocuments(docs, { q: 'alpha', limit: 20, offset: 0 });
     const snip = hits[0]!.snippet;
@@ -88,17 +102,35 @@ describe('C19 — BM25 ranking (pure)', () => {
     const docs = [
       doc({ owner: 'u', type: 'goal', id: 'g', title: 'alpha goal', created_at: '2026-03-01T00:00:00Z' }),
       doc({ owner: 'u', type: 'task', id: 't', title: 'alpha task', created_at: '2026-03-10T00:00:00Z' }),
-      doc({ owner: 'u', type: 'task', id: 'old', title: 'alpha task old', created_at: '2026-01-01T00:00:00Z' }),
+      doc({
+        owner: 'u',
+        type: 'task',
+        id: 'old',
+        title: 'alpha task old',
+        created_at: '2026-01-01T00:00:00Z',
+      }),
     ];
     // type filter
-    expect(rankDocuments(docs, { q: 'alpha', types: ['task'], limit: 20, offset: 0 }).hits.map((h) => h.id).sort()).toEqual(['old', 't']);
+    expect(
+      rankDocuments(docs, { q: 'alpha', types: ['task'], limit: 20, offset: 0 })
+        .hits.map((h) => h.id)
+        .sort(),
+    ).toEqual(['old', 't']);
     // date range (inclusive) — only March window
-    const inMarch = rankDocuments(docs, { q: 'alpha', date_from: '2026-02-01T00:00:00Z', date_to: '2026-03-31T00:00:00Z', limit: 20, offset: 0 });
+    const inMarch = rankDocuments(docs, {
+      q: 'alpha',
+      date_from: '2026-02-01T00:00:00Z',
+      date_to: '2026-03-31T00:00:00Z',
+      limit: 20,
+      offset: 0,
+    });
     expect(inMarch.hits.map((h) => h.id).sort()).toEqual(['g', 't']);
   });
 
   it('paginates: total is the pre-paging match count; offset past the end yields empty hits', () => {
-    const docs = Array.from({ length: 5 }, (_, i) => doc({ owner: 'u', type: 't', id: `d${i}`, title: `alpha ${i}` }));
+    const docs = Array.from({ length: 5 }, (_, i) =>
+      doc({ owner: 'u', type: 't', id: `d${i}`, title: `alpha ${i}` }),
+    );
     const page = rankDocuments(docs, { q: 'alpha', limit: 2, offset: 0 });
     expect(page.total).toBe(5);
     expect(page.hits).toHaveLength(2);
@@ -106,11 +138,26 @@ describe('C19 — BM25 ranking (pure)', () => {
   });
 
   it('an empty query returns no hits (the route rejects empty q with 400 before this)', () => {
-    expect(rankDocuments([doc({ owner: 'u', type: 't', id: '1', title: 'x' })], { q: '   ', limit: 20, offset: 0 })).toEqual({ hits: [], total: 0 });
+    expect(
+      rankDocuments([doc({ owner: 'u', type: 't', id: '1', title: 'x' })], {
+        q: '   ',
+        limit: 20,
+        offset: 0,
+      }),
+    ).toEqual({ hits: [], total: 0 });
   });
 
   it('round-trips attrs + created_at on a hit', () => {
-    const docs = [doc({ owner: 'u', type: 'goal', id: 'g', title: 'alpha', attrs: { url: '/g/1', done: false }, created_at: '2026-05-05T00:00:00Z' })];
+    const docs = [
+      doc({
+        owner: 'u',
+        type: 'goal',
+        id: 'g',
+        title: 'alpha',
+        attrs: { url: '/g/1', done: false },
+        created_at: '2026-05-05T00:00:00Z',
+      }),
+    ];
     const { hits } = rankDocuments(docs, { q: 'alpha', limit: 20, offset: 0 });
     expect(hits[0]!.attrs).toEqual({ url: '/g/1', done: false });
     expect(hits[0]!.created_at).toBe('2026-05-05T00:00:00Z');
@@ -133,17 +180,27 @@ describe('C19 — search store (file-backed)', () => {
     await store.init();
   });
   afterEach(async () => {
-    if (prev === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prev;
+    if (prev === undefined) delete process.env.FORGE_STATE_DIR;
+    else process.env.FORGE_STATE_DIR = prev;
     await rm(dir, { recursive: true, force: true });
   });
 
   it('searches empty before anything is indexed (degrades, never throws)', async () => {
-    expect(await searchStore.search(APP, { owner: 'A', q: 'anything' })).toMatchObject({ hits: [], total: 0 });
+    expect(await searchStore.search(APP, { owner: 'A', q: 'anything' })).toMatchObject({
+      hits: [],
+      total: 0,
+    });
   });
 
   it('upsert is idempotent by (owner, type, id) — re-index updates in place, preserves created_at', async () => {
-    const first = await searchStore.index(APP, doc({ owner: 'A', type: 'goal', id: 'g1', title: 'Learn piano' }));
-    await searchStore.index(APP, doc({ owner: 'A', type: 'goal', id: 'g1', title: 'Learn the piano properly' }));
+    const first = await searchStore.index(
+      APP,
+      doc({ owner: 'A', type: 'goal', id: 'g1', title: 'Learn piano' }),
+    );
+    await searchStore.index(
+      APP,
+      doc({ owner: 'A', type: 'goal', id: 'g1', title: 'Learn the piano properly' }),
+    );
     const res = await searchStore.search(APP, { owner: 'A', q: 'piano' });
     expect(res.total).toBe(1); // no duplicate despite two indexes of the same (owner,type,id)
     expect(res.hits[0]!.title).toBe('Learn the piano properly'); // updated in place
@@ -151,14 +208,35 @@ describe('C19 — search store (file-backed)', () => {
     await searchStore.index(APP, doc({ owner: 'A', type: 'goal', id: 'g2', title: 'Learn piano scales' }));
     expect((await searchStore.search(APP, { owner: 'A', q: 'piano' })).total).toBe(2);
     // created_at is stable across re-index
-    const reindexed = await searchStore.index(APP, doc({ owner: 'A', type: 'goal', id: 'g1', title: 'Learn piano again' }));
+    const reindexed = await searchStore.index(
+      APP,
+      doc({ owner: 'A', type: 'goal', id: 'g1', title: 'Learn piano again' }),
+    );
     expect(reindexed.created_at).toBe(first.created_at);
   });
 
   it('OWNER-SCOPING CRUX: A’s search never returns B’s document, even on the same terms/type/id', async () => {
     // Same (type,id) for two owners, query term in the body so the snippet is drawn from it.
-    await searchStore.index(APP, doc({ owner: 'A', type: 'note', id: 'shared-id', title: 'plan', body: 'alpha is the A-only-marker note' }));
-    await searchStore.index(APP, doc({ owner: 'B', type: 'note', id: 'shared-id', title: 'plan', body: 'alpha is the B-only-marker note' }));
+    await searchStore.index(
+      APP,
+      doc({
+        owner: 'A',
+        type: 'note',
+        id: 'shared-id',
+        title: 'plan',
+        body: 'alpha is the A-only-marker note',
+      }),
+    );
+    await searchStore.index(
+      APP,
+      doc({
+        owner: 'B',
+        type: 'note',
+        id: 'shared-id',
+        title: 'plan',
+        body: 'alpha is the B-only-marker note',
+      }),
+    );
 
     const aRes = await searchStore.search(APP, { owner: 'A', q: 'alpha' });
     const bRes = await searchStore.search(APP, { owner: 'B', q: 'alpha' });
@@ -186,7 +264,9 @@ describe('C19 — search store (file-backed)', () => {
   });
 
   it('reindex bulk-loads many documents in one shot', async () => {
-    const docs = Array.from({ length: 4 }, (_, i) => doc({ owner: 'A', type: 'goal', id: `g${i}`, title: `alpha goal ${i}` }));
+    const docs = Array.from({ length: 4 }, (_, i) =>
+      doc({ owner: 'A', type: 'goal', id: `g${i}`, title: `alpha goal ${i}` }),
+    );
     expect(await searchStore.reindex(APP, docs)).toBe(4);
     expect((await searchStore.search(APP, { owner: 'A', q: 'alpha' })).total).toBe(4);
     // re-running reindex is idempotent by key (still 4, not 8)
@@ -197,8 +277,12 @@ describe('C19 — search store (file-backed)', () => {
   it('isolates the index per app', async () => {
     await searchStore.index('app_a', doc({ owner: 'A', type: 'note', id: 'n', title: 'alpha in app a' }));
     await searchStore.index('app_b', doc({ owner: 'A', type: 'note', id: 'n', title: 'alpha in app b' }));
-    expect((await searchStore.search('app_a', { owner: 'A', q: 'alpha' })).hits[0]!.title).toBe('alpha in app a');
-    expect((await searchStore.search('app_b', { owner: 'A', q: 'alpha' })).hits[0]!.title).toBe('alpha in app b');
+    expect((await searchStore.search('app_a', { owner: 'A', q: 'alpha' })).hits[0]!.title).toBe(
+      'alpha in app a',
+    );
+    expect((await searchStore.search('app_b', { owner: 'A', q: 'alpha' })).hits[0]!.title).toBe(
+      'alpha in app b',
+    );
   });
 });
 
@@ -216,9 +300,18 @@ describe('C19 — search routes', () => {
   const seedApp = async (): Promise<void> => {
     const now = nowIso();
     const application: Application = {
-      id: APP_ID, type: 'Application', app_id: APP_ID, created_at: now, updated_at: now,
-      name: APP, repo_path: '/app', platform: 'web', framework: 'nextjs', template: 'nextjs-web',
-      language: 'typescript', package_manager: 'npm',
+      id: APP_ID,
+      type: 'Application',
+      app_id: APP_ID,
+      created_at: now,
+      updated_at: now,
+      name: APP,
+      repo_path: '/app',
+      platform: 'web',
+      framework: 'nextjs',
+      template: 'nextjs-web',
+      language: 'typescript',
+      package_manager: 'npm',
     };
     await store.saveResource(application);
   };
@@ -236,16 +329,29 @@ describe('C19 — search routes', () => {
   afterEach(async () => {
     await server.close();
     vi.restoreAllMocks();
-    if (prev === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prev;
+    if (prev === undefined) delete process.env.FORGE_STATE_DIR;
+    else process.env.FORGE_STATE_DIR = prev;
     await rm(dir, { recursive: true, force: true });
   });
 
-  const post = (url: string, payload: unknown) => server.inject({ method: 'POST', url, payload: payload as object });
+  const post = (url: string, payload: unknown) =>
+    server.inject({ method: 'POST', url, payload: payload as object });
 
   it('index → search returns the caller’s ranked hits with <mark> snippets', async () => {
-    const r = await post('/index', { owner: 'A', type: 'goal', id: 'g1', title: 'Alpha launch plan', body: 'ship the alpha to users' });
+    const r = await post('/index', {
+      owner: 'A',
+      type: 'goal',
+      id: 'g1',
+      title: 'Alpha launch plan',
+      body: 'ship the alpha to users',
+    });
     expect(r.statusCode).toBe(200);
-    expect(r.json().document).toMatchObject({ owner: 'A', type: 'goal', id: 'g1', title: 'Alpha launch plan' });
+    expect(r.json().document).toMatchObject({
+      owner: 'A',
+      type: 'goal',
+      id: 'g1',
+      title: 'Alpha launch plan',
+    });
 
     const s = await post('/search', { owner: 'A', q: 'alpha' });
     expect(s.statusCode).toBe(200);
@@ -257,8 +363,20 @@ describe('C19 — search routes', () => {
   });
 
   it('OWNER-SCOPING via the route: A’s /search never returns B’s document', async () => {
-    await post('/index', { owner: 'A', type: 'note', id: 'shared', title: 'secret', body: 'alpha for A-marker' });
-    await post('/index', { owner: 'B', type: 'note', id: 'shared', title: 'secret', body: 'alpha for B-marker' });
+    await post('/index', {
+      owner: 'A',
+      type: 'note',
+      id: 'shared',
+      title: 'secret',
+      body: 'alpha for A-marker',
+    });
+    await post('/index', {
+      owner: 'B',
+      type: 'note',
+      id: 'shared',
+      title: 'secret',
+      body: 'alpha for B-marker',
+    });
     const a = (await post('/search', { owner: 'A', q: 'alpha' })).json();
     expect(a.total).toBe(1);
     expect(a.hits[0].snippet).toContain('A-marker');
@@ -280,7 +398,8 @@ describe('C19 — search routes', () => {
 
   it('clamps limit server-side to [1, 100]', async () => {
     // index 3 docs; a huge limit still succeeds (clamped) and returns all 3
-    for (let i = 0; i < 3; i++) await post('/index', { owner: 'A', type: 'goal', id: `g${i}`, title: `alpha ${i}` });
+    for (let i = 0; i < 3; i++)
+      await post('/index', { owner: 'A', type: 'goal', id: `g${i}`, title: `alpha ${i}` });
     const r = await post('/search', { owner: 'A', q: 'alpha', limit: 9999 });
     expect(r.statusCode).toBe(200);
     expect(r.json().hits.length).toBe(3);
@@ -290,8 +409,20 @@ describe('C19 — search routes', () => {
   });
 
   it('date_from/date_to filter the results', async () => {
-    await post('/index', { owner: 'A', type: 'note', id: 'jan', title: 'alpha jan', created_at: '2026-01-15T00:00:00Z' });
-    await post('/index', { owner: 'A', type: 'note', id: 'jun', title: 'alpha jun', created_at: '2026-06-15T00:00:00Z' });
+    await post('/index', {
+      owner: 'A',
+      type: 'note',
+      id: 'jan',
+      title: 'alpha jan',
+      created_at: '2026-01-15T00:00:00Z',
+    });
+    await post('/index', {
+      owner: 'A',
+      type: 'note',
+      id: 'jun',
+      title: 'alpha jun',
+      created_at: '2026-06-15T00:00:00Z',
+    });
     const r = await post('/search', { owner: 'A', q: 'alpha', date_from: '2026-05-01T00:00:00Z' });
     expect(r.json().hits.map((h: { id: string }) => h.id)).toEqual(['jun']);
   });
@@ -307,10 +438,12 @@ describe('C19 — search routes', () => {
   });
 
   it('reindex route bulk-upserts an array', async () => {
-    const r = await post('/reindex', { documents: [
-      { owner: 'A', type: 'goal', id: 'g1', title: 'alpha one' },
-      { owner: 'A', type: 'goal', id: 'g2', title: 'alpha two' },
-    ] });
+    const r = await post('/reindex', {
+      documents: [
+        { owner: 'A', type: 'goal', id: 'g1', title: 'alpha one' },
+        { owner: 'A', type: 'goal', id: 'g2', title: 'alpha two' },
+      ],
+    });
     expect(r.statusCode).toBe(200);
     expect(r.json().indexed).toBe(2);
     expect((await post('/search', { owner: 'A', q: 'alpha' })).json().total).toBe(2);
@@ -327,8 +460,18 @@ describe('C19 — search routes', () => {
     const s2 = Fastify({ logger: false });
     registerSearchRoutes(s2); // no defaultApp
     await s2.ready();
-    expect((await s2.inject({ method: 'POST', url: '/index', payload: { owner: 'A', type: 'goal', id: 'g', title: 't' } })).statusCode).toBe(404);
-    expect((await s2.inject({ method: 'POST', url: '/search', payload: { owner: 'A', q: 'alpha' } })).statusCode).toBe(404);
+    expect(
+      (
+        await s2.inject({
+          method: 'POST',
+          url: '/index',
+          payload: { owner: 'A', type: 'goal', id: 'g', title: 't' },
+        })
+      ).statusCode,
+    ).toBe(404);
+    expect(
+      (await s2.inject({ method: 'POST', url: '/search', payload: { owner: 'A', q: 'alpha' } })).statusCode,
+    ).toBe(404);
     await s2.close();
   });
 });
@@ -340,7 +483,10 @@ describe('C19 — search routes', () => {
 describe('C19 access-aware — docVisibleTo (pure predicate)', () => {
   const base = { type: 'note', id: 'n', title: 't' };
   const HOUSE = { groupId: 'house' };
-  const SCOPE = (over: Partial<{ groupId: string; canReadAll: boolean }> = {}) => ({ groupId: 'house', ...over });
+  const SCOPE = (over: Partial<{ groupId: string; canReadAll: boolean }> = {}) => ({
+    groupId: 'house',
+    ...over,
+  });
 
   it('you ALWAYS see your own doc — any visibility, with or without a scope', () => {
     for (const visibility of ['private', 'group', 'shared'] as const) {
@@ -371,7 +517,14 @@ describe('C19 access-aware — docVisibleTo (pure predicate)', () => {
   });
 
   it("visibility 'shared' matches ONLY the caller in sharedWith ∪ sharedWriters (read-all irrelevant), same group", () => {
-    const shared = { ...base, owner: 'A', visibility: 'shared' as const, ...HOUSE, sharedWith: ['B'], sharedWriters: ['C'] };
+    const shared = {
+      ...base,
+      owner: 'A',
+      visibility: 'shared' as const,
+      ...HOUSE,
+      sharedWith: ['B'],
+      sharedWriters: ['C'],
+    };
     expect(docVisibleTo(shared, 'B', SCOPE())).toBe(true); // in sharedWith
     expect(docVisibleTo(shared, 'C', SCOPE())).toBe(true); // in sharedWriters
     expect(docVisibleTo(shared, 'D', SCOPE({ canReadAll: true }))).toBe(false); // not granted — read-all doesn't help
@@ -391,15 +544,47 @@ describe('C19 access-aware — search store (file-backed ACL)', () => {
     await store.init();
   });
   afterEach(async () => {
-    if (prev === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prev;
+    if (prev === undefined) delete process.env.FORGE_STATE_DIR;
+    else process.env.FORGE_STATE_DIR = prev;
     await rm(dir, { recursive: true, force: true });
   });
 
   // A owns a private doc, a group doc, and a doc shared to B — all in group 'house'. C is in another group.
   const seedHousehold = async (): Promise<void> => {
-    await searchStore.index(APP, doc({ owner: 'A', type: 'note', id: 'priv', title: 'alpha private plan', visibility: 'private', groupId: 'house' }));
-    await searchStore.index(APP, doc({ owner: 'A', type: 'note', id: 'grp', title: 'alpha group roster', visibility: 'group', groupId: 'house' }));
-    await searchStore.index(APP, doc({ owner: 'A', type: 'note', id: 'shr', title: 'alpha shared list', visibility: 'shared', groupId: 'house', sharedWith: ['B'] }));
+    await searchStore.index(
+      APP,
+      doc({
+        owner: 'A',
+        type: 'note',
+        id: 'priv',
+        title: 'alpha private plan',
+        visibility: 'private',
+        groupId: 'house',
+      }),
+    );
+    await searchStore.index(
+      APP,
+      doc({
+        owner: 'A',
+        type: 'note',
+        id: 'grp',
+        title: 'alpha group roster',
+        visibility: 'group',
+        groupId: 'house',
+      }),
+    );
+    await searchStore.index(
+      APP,
+      doc({
+        owner: 'A',
+        type: 'note',
+        id: 'shr',
+        title: 'alpha shared list',
+        visibility: 'shared',
+        groupId: 'house',
+        sharedWith: ['B'],
+      }),
+    );
   };
 
   it('no scope ⇒ owner-only (unchanged): A sees all 3 of A’s docs; B sees none of them', async () => {
@@ -410,46 +595,116 @@ describe('C19 access-aware — search store (file-backed ACL)', () => {
 
   it('a read-all member of the same group sees the GROUP doc (not private, not the shared-to-someone-else doc)', async () => {
     await seedHousehold();
-    const res = await searchStore.search(APP, { owner: 'M', q: 'alpha', scope: { groupId: 'house', canReadAll: true } });
+    const res = await searchStore.search(APP, {
+      owner: 'M',
+      q: 'alpha',
+      scope: { groupId: 'house', canReadAll: true },
+    });
     expect(res.hits.map((h) => h.id).sort()).toEqual(['grp']); // only the group-visible doc; private stays private, shared needs a grant
   });
 
   it('a NON-read-all same-group member sees only what is explicitly shared TO them', async () => {
     await seedHousehold();
     // B is granted the shared doc (sharedWith:['B']) but has no read-all ⇒ no group doc, no private doc.
-    const bRes = await searchStore.search(APP, { owner: 'B', q: 'alpha', scope: { groupId: 'house', canReadAll: false } });
+    const bRes = await searchStore.search(APP, {
+      owner: 'B',
+      q: 'alpha',
+      scope: { groupId: 'house', canReadAll: false },
+    });
     expect(bRes.hits.map((h) => h.id)).toEqual(['shr']);
     // A different member with no grant + no read-all sees nothing of A's.
-    const zRes = await searchStore.search(APP, { owner: 'Z', q: 'alpha', scope: { groupId: 'house', canReadAll: false } });
+    const zRes = await searchStore.search(APP, {
+      owner: 'Z',
+      q: 'alpha',
+      scope: { groupId: 'house', canReadAll: false },
+    });
     expect(zRes.total).toBe(0);
   });
 
   it('CROSS-GROUP never leaks: a read-all member of ANOTHER group sees nothing', async () => {
     await seedHousehold();
-    const res = await searchStore.search(APP, { owner: 'C', q: 'alpha', scope: { groupId: 'other-house', canReadAll: true } });
+    const res = await searchStore.search(APP, {
+      owner: 'C',
+      q: 'alpha',
+      scope: { groupId: 'other-house', canReadAll: true },
+    });
     expect(res.total).toBe(0);
   });
 
   it('the OWNER always sees own docs even while scoped as another group', async () => {
     await seedHousehold();
-    const res = await searchStore.search(APP, { owner: 'A', q: 'alpha', scope: { groupId: 'other', canReadAll: false } });
+    const res = await searchStore.search(APP, {
+      owner: 'A',
+      q: 'alpha',
+      scope: { groupId: 'other', canReadAll: false },
+    });
     expect(res.total).toBe(3); // you always see what you own
   });
 
   it('shared docs are matched by sharedWriters too (union), and re-index can REVOKE a grant', async () => {
-    await searchStore.index(APP, doc({ owner: 'A', type: 'note', id: 's', title: 'alpha shared', visibility: 'shared', groupId: 'house', sharedWriters: ['W'] }));
-    expect((await searchStore.search(APP, { owner: 'W', q: 'alpha', scope: { groupId: 'house' } })).total).toBe(1);
+    await searchStore.index(
+      APP,
+      doc({
+        owner: 'A',
+        type: 'note',
+        id: 's',
+        title: 'alpha shared',
+        visibility: 'shared',
+        groupId: 'house',
+        sharedWriters: ['W'],
+      }),
+    );
+    expect(
+      (await searchStore.search(APP, { owner: 'W', q: 'alpha', scope: { groupId: 'house' } })).total,
+    ).toBe(1);
     // re-index without W in the grant lists ⇒ W no longer sees it (ACL updated in place).
-    await searchStore.index(APP, doc({ owner: 'A', type: 'note', id: 's', title: 'alpha shared', visibility: 'shared', groupId: 'house', sharedWith: ['X'] }));
-    expect((await searchStore.search(APP, { owner: 'W', q: 'alpha', scope: { groupId: 'house' } })).total).toBe(0);
-    expect((await searchStore.search(APP, { owner: 'X', q: 'alpha', scope: { groupId: 'house' } })).total).toBe(1);
+    await searchStore.index(
+      APP,
+      doc({
+        owner: 'A',
+        type: 'note',
+        id: 's',
+        title: 'alpha shared',
+        visibility: 'shared',
+        groupId: 'house',
+        sharedWith: ['X'],
+      }),
+    );
+    expect(
+      (await searchStore.search(APP, { owner: 'W', q: 'alpha', scope: { groupId: 'house' } })).total,
+    ).toBe(0);
+    expect(
+      (await searchStore.search(APP, { owner: 'X', q: 'alpha', scope: { groupId: 'house' } })).total,
+    ).toBe(1);
   });
 
   it('ACL narrows the candidate set BEFORE limit/paging — total + pagination stay correct', async () => {
     // A owns 5 group-visible docs + 3 private docs, all matching 'alpha'. A read-all group member should
     // see exactly the 5 group docs, paginated correctly (total=5, not 8, and never a private doc).
-    for (let i = 0; i < 5; i++) await searchStore.index(APP, doc({ owner: 'A', type: 'note', id: `g${i}`, title: `alpha group ${i}`, visibility: 'group', groupId: 'house' }));
-    for (let i = 0; i < 3; i++) await searchStore.index(APP, doc({ owner: 'A', type: 'note', id: `p${i}`, title: `alpha private ${i}`, visibility: 'private', groupId: 'house' }));
+    for (let i = 0; i < 5; i++)
+      await searchStore.index(
+        APP,
+        doc({
+          owner: 'A',
+          type: 'note',
+          id: `g${i}`,
+          title: `alpha group ${i}`,
+          visibility: 'group',
+          groupId: 'house',
+        }),
+      );
+    for (let i = 0; i < 3; i++)
+      await searchStore.index(
+        APP,
+        doc({
+          owner: 'A',
+          type: 'note',
+          id: `p${i}`,
+          title: `alpha private ${i}`,
+          visibility: 'private',
+          groupId: 'house',
+        }),
+      );
     const scope = { groupId: 'house', canReadAll: true };
     const page1 = await searchStore.search(APP, { owner: 'M', q: 'alpha', limit: 2, offset: 0, scope });
     expect(page1.total).toBe(5); // pre-paging count is the ACL-narrowed set, NOT all 8
@@ -459,7 +714,11 @@ describe('C19 access-aware — search store (file-backed ACL)', () => {
     expect(page3.hits.every((h) => h.id.startsWith('g'))).toBe(true); // never a private doc
     // Walk every page: exactly the 5 group ids, no private id ever appears.
     const seen = new Set<string>();
-    for (let off = 0; off < 5; off += 2) for (const h of (await searchStore.search(APP, { owner: 'M', q: 'alpha', limit: 2, offset: off, scope })).hits) seen.add(h.id);
+    for (let off = 0; off < 5; off += 2)
+      for (const h of (
+        await searchStore.search(APP, { owner: 'M', q: 'alpha', limit: 2, offset: off, scope })
+      ).hits)
+        seen.add(h.id);
     expect([...seen].sort()).toEqual(['g0', 'g1', 'g2', 'g3', 'g4']);
   });
 });
@@ -474,9 +733,18 @@ describe('C19 access-aware — routes (scope + ACL fields)', () => {
   const seedApp = async (): Promise<void> => {
     const now = nowIso();
     const application: Application = {
-      id: APP_ID, type: 'Application', app_id: APP_ID, created_at: now, updated_at: now,
-      name: APP, repo_path: '/app', platform: 'web', framework: 'nextjs', template: 'nextjs-web',
-      language: 'typescript', package_manager: 'npm',
+      id: APP_ID,
+      type: 'Application',
+      app_id: APP_ID,
+      created_at: now,
+      updated_at: now,
+      name: APP,
+      repo_path: '/app',
+      platform: 'web',
+      framework: 'nextjs',
+      template: 'nextjs-web',
+      language: 'typescript',
+      package_manager: 'npm',
     };
     await store.saveResource(application);
   };
@@ -494,19 +762,45 @@ describe('C19 access-aware — routes (scope + ACL fields)', () => {
   afterEach(async () => {
     await server.close();
     vi.restoreAllMocks();
-    if (prev === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prev;
+    if (prev === undefined) delete process.env.FORGE_STATE_DIR;
+    else process.env.FORGE_STATE_DIR = prev;
     await rm(dir, { recursive: true, force: true });
   });
 
-  const post = (url: string, payload: unknown) => server.inject({ method: 'POST', url, payload: payload as object });
+  const post = (url: string, payload: unknown) =>
+    server.inject({ method: 'POST', url, payload: payload as object });
 
   it('a scoped /search returns the caller’s own docs PLUS group/shared docs the scope authorizes', async () => {
-    await post('/index', { owner: 'A', type: 'note', id: 'grp', title: 'alpha roster', visibility: 'group', groupId: 'house' });
-    await post('/index', { owner: 'A', type: 'note', id: 'shr', title: 'alpha list', visibility: 'shared', groupId: 'house', sharedWith: ['B'] });
-    await post('/index', { owner: 'B', type: 'note', id: 'own', title: 'alpha of B', visibility: 'private', groupId: 'house' });
+    await post('/index', {
+      owner: 'A',
+      type: 'note',
+      id: 'grp',
+      title: 'alpha roster',
+      visibility: 'group',
+      groupId: 'house',
+    });
+    await post('/index', {
+      owner: 'A',
+      type: 'note',
+      id: 'shr',
+      title: 'alpha list',
+      visibility: 'shared',
+      groupId: 'house',
+      sharedWith: ['B'],
+    });
+    await post('/index', {
+      owner: 'B',
+      type: 'note',
+      id: 'own',
+      title: 'alpha of B',
+      visibility: 'private',
+      groupId: 'house',
+    });
 
     // B: read-all member ⇒ own private doc + A's group doc + A's shared-to-B doc.
-    const b = (await post('/search', { owner: 'B', q: 'alpha', scope: { groupId: 'house', canReadAll: true } })).json();
+    const b = (
+      await post('/search', { owner: 'B', q: 'alpha', scope: { groupId: 'house', canReadAll: true } })
+    ).json();
     expect(b.hits.map((h: { id: string }) => h.id).sort()).toEqual(['grp', 'own', 'shr']);
 
     // Same request WITHOUT scope ⇒ owner-only (just B's own doc) — backward compatible.
@@ -515,8 +809,17 @@ describe('C19 access-aware — routes (scope + ACL fields)', () => {
   });
 
   it('reads groupId from attrs when no dedicated field is sent (consumer continuity)', async () => {
-    await post('/index', { owner: 'A', type: 'note', id: 'g', title: 'alpha in attrs group', visibility: 'group', attrs: { groupId: 'house' } });
-    const res = (await post('/search', { owner: 'M', q: 'alpha', scope: { groupId: 'house', canReadAll: true } })).json();
+    await post('/index', {
+      owner: 'A',
+      type: 'note',
+      id: 'g',
+      title: 'alpha in attrs group',
+      visibility: 'group',
+      attrs: { groupId: 'house' },
+    });
+    const res = (
+      await post('/search', { owner: 'M', q: 'alpha', scope: { groupId: 'house', canReadAll: true } })
+    ).json();
     expect(res.hits.map((h: { id: string }) => h.id)).toEqual(['g']); // groupId taken from attrs.groupId
   });
 
@@ -526,7 +829,14 @@ describe('C19 access-aware — routes (scope + ACL fields)', () => {
   });
 
   it('a malformed scope falls back to owner-only (never a 500)', async () => {
-    await post('/index', { owner: 'A', type: 'note', id: 'grp', title: 'alpha', visibility: 'group', groupId: 'house' });
+    await post('/index', {
+      owner: 'A',
+      type: 'note',
+      id: 'grp',
+      title: 'alpha',
+      visibility: 'group',
+      groupId: 'house',
+    });
     const r = await post('/search', { owner: 'B', q: 'alpha', scope: 'not-an-object' });
     expect(r.statusCode).toBe(200);
     expect(r.json().total).toBe(0); // owner-only fallback: B sees nothing

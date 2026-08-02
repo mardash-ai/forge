@@ -114,10 +114,18 @@ describe('generateMonitoringCompose — defaults', () => {
 
   it('promtail is SCOPED to the forge stacks + edge and strips the docker name slash', () => {
     const cfg = renderPromtailConfig({
-      projectName: 'dorinda-monitoring', publicHost: undefined, uiPort: 3200,
-      network: 'observability', proxyNetwork: 'proxy', certResolver: 'letsencrypt',
-      alertEmail: 'ops@forge.local', logScopeRegex: DEFAULT_LOG_SCOPE_REGEX,
-      memLimit: '512m', lokiRetention: '720h', promRetentionTime: '365d', promRetentionSize: '20GB',
+      projectName: 'dorinda-monitoring',
+      publicHost: undefined,
+      uiPort: 3200,
+      network: 'observability',
+      proxyNetwork: 'proxy',
+      certResolver: 'letsencrypt',
+      alertEmail: 'ops@forge.local',
+      logScopeRegex: DEFAULT_LOG_SCOPE_REGEX,
+      memLimit: '512m',
+      lokiRetention: '720h',
+      promRetentionTime: '365d',
+      promRetentionSize: '20GB',
     } as never);
     expect(cfg).toContain('regex: "/(.*)"');
     expect(cfg).toContain(`regex: "${DEFAULT_LOG_SCOPE_REGEX}"`);
@@ -142,7 +150,10 @@ describe('generateMonitoringCompose — defaults', () => {
   });
 
   it('datasource uids are forge-neutral and consistent between datasources and alert rules', () => {
-    const GRAFANA_DATASOURCES = renderGrafanaDatasources({ langfusePublicUrl: 'https://monitor.dorinda.ai', langfuseProjectId: 'forge-default' });
+    const GRAFANA_DATASOURCES = renderGrafanaDatasources({
+      langfusePublicUrl: 'https://monitor.dorinda.ai',
+      langfuseProjectId: 'forge-default',
+    });
     expect(GRAFANA_DATASOURCES).toContain('uid: forge-loki');
     expect(GRAFANA_DATASOURCES).toContain('uid: forge-prometheus');
     expect(GRAFANA_ALERT_RULES).not.toContain('proxygen');
@@ -189,7 +200,13 @@ describe('generateMonitoringCompose — defaults', () => {
     const tool = JSON.parse(DASHBOARD_TOOL_DRILLDOWN);
     expect(tool.uid).toBe('forge-tool-drilldown');
     expect(JSON.stringify(tool)).toContain('label_values');
-    const user = JSON.parse(renderUserExperienceDashboard({ appId: 'dorinda-api', langfusePublicUrl: 'https://monitor.dorinda.ai', langfuseProjectId: 'forge-default' }));
+    const user = JSON.parse(
+      renderUserExperienceDashboard({
+        appId: 'dorinda-api',
+        langfusePublicUrl: 'https://monitor.dorinda.ai',
+        langfuseProjectId: 'forge-default',
+      }),
+    );
     expect(user.uid).toBe('forge-user-experience');
     // the email picker queries the identity table scoped to the app, via the RO datasource
     const pickerQ = JSON.stringify(user.templating);
@@ -199,7 +216,10 @@ describe('generateMonitoringCompose — defaults', () => {
   });
 
   it('derived fields deep-link to the PUBLIC Langfuse (never an internal hostname) incl. correlation_id (0.77.0)', () => {
-    const ds = renderGrafanaDatasources({ langfusePublicUrl: 'https://monitor.dorinda.ai', langfuseProjectId: 'forge-default' });
+    const ds = renderGrafanaDatasources({
+      langfusePublicUrl: 'https://monitor.dorinda.ai',
+      langfuseProjectId: 'forge-default',
+    });
     expect(ds).toContain('https://monitor.dorinda.ai/project/forge-default/traces/');
     expect(ds).not.toContain('langfuse-web:3000');
     expect(ds).toContain('"correlation_id":"00-');
@@ -213,7 +233,11 @@ describe('generateMonitoringCompose — defaults', () => {
     // the `app=~".+"` matcher pins the panels to the transport family, which sees each logical
     // call exactly once — including failures (unknown_tool, app_unreachable) that never reach
     // the app tier.
-    for (const family of ['mcp_tool_calls(_total)?', 'mcp_tool_errors(_total)?', 'mcp_tool_duration_ms(_milliseconds)?_bucket']) {
+    for (const family of [
+      'mcp_tool_calls(_total)?',
+      'mcp_tool_errors(_total)?',
+      'mcp_tool_duration_ms(_milliseconds)?_bucket',
+    ]) {
       const q = compose.split('\n').filter((l) => l.includes(family));
       expect(q.length).toBeGreaterThanOrEqual(1);
       for (const line of q) expect(line).toContain('app=~');
@@ -237,7 +261,10 @@ describe('secrets + env rendering', () => {
   it('generates a strong admin password and renders it into the env (0600 written by the capability)', () => {
     const s = generateMonitoringSecrets();
     expect(s.GRAFANA_ADMIN_PASSWORD.length).toBeGreaterThanOrEqual(24);
-    const env = renderMonitoringEnv(s, { langfuseOtlpB64: 'AbCd', smtp: { host: 'smtp.x:587', user: 'u', password: 'p', from: 'f@x' } });
+    const env = renderMonitoringEnv(s, {
+      langfuseOtlpB64: 'AbCd',
+      smtp: { host: 'smtp.x:587', user: 'u', password: 'p', from: 'f@x' },
+    });
     expect(env).toContain(`GRAFANA_ADMIN_PASSWORD=${s.GRAFANA_ADMIN_PASSWORD}`);
     expect(env).toContain('LANGFUSE_OTLP_B64=AbCd');
     expect(env).toContain('GRAFANA_SMTP_ENABLED=true');
@@ -245,12 +272,23 @@ describe('secrets + env rendering', () => {
 
   it('percent-decodes an SMTP user copied out of an SMTP URL (%40 → @ — the 535 BadCredentials trap)', () => {
     const s = generateMonitoringSecrets();
-    const env = renderMonitoringEnv(s, { smtp: { host: 'smtp.gmail.com:587', user: 'no-reply%40dorinda.ai', password: 'p', from: 'no-reply@dorinda.ai' } });
+    const env = renderMonitoringEnv(s, {
+      smtp: {
+        host: 'smtp.gmail.com:587',
+        user: 'no-reply%40dorinda.ai',
+        password: 'p',
+        from: 'no-reply@dorinda.ai',
+      },
+    });
     expect(env).toContain('GRAFANA_SMTP_USER=no-reply@dorinda.ai');
     // A plain user (no valid percent-escape) passes through untouched — even with a literal %.
-    const plain = renderMonitoringEnv(s, { smtp: { host: 'h:587', user: 'user@x.com', password: 'p', from: 'f@x' } });
+    const plain = renderMonitoringEnv(s, {
+      smtp: { host: 'h:587', user: 'user@x.com', password: 'p', from: 'f@x' },
+    });
     expect(plain).toContain('GRAFANA_SMTP_USER=user@x.com');
-    const oddPct = renderMonitoringEnv(s, { smtp: { host: 'h:587', user: 'we%rd', password: 'p', from: 'f@x' } });
+    const oddPct = renderMonitoringEnv(s, {
+      smtp: { host: 'h:587', user: 'we%rd', password: 'p', from: 'f@x' },
+    });
     expect(oddPct).toContain('GRAFANA_SMTP_USER=we%rd');
   });
 
@@ -267,7 +305,11 @@ describe('secrets + env rendering', () => {
 });
 
 describe('generateMonitoringCompose — appDb (User Experience dashboard)', () => {
-  const appDb = { network: 'forge-dorinda-api-prod_internal', host: 'forge-dorinda-api-prod-postgres-1', database: 'forge_platform' };
+  const appDb = {
+    network: 'forge-dorinda-api-prod_internal',
+    host: 'forge-dorinda-api-prod-postgres-1',
+    database: 'forge_platform',
+  };
   const compose = generateMonitoringCompose({ appDb });
 
   it('adds the RO postgres datasource, joins the app network, and ships the user dashboard', () => {
@@ -304,7 +346,14 @@ describe('Background Plane — a metric nobody displays does not exist (acceptan
     expect(dash).toContain('account_purged');
     expect(dash).toContain('account_created');
     // and it must not have lost the counters it already covered
-    for (const m of ['gcal_sync', 'message_staged', 'message_sent', 'approval', 'reminders_fired', 'routines_ran']) {
+    for (const m of [
+      'gcal_sync',
+      'message_staged',
+      'message_sent',
+      'approval',
+      'reminders_fired',
+      'routines_ran',
+    ]) {
       expect(dash).toContain(m);
     }
   });

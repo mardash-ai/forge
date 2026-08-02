@@ -69,7 +69,11 @@ export class PgPushBackend implements PushBackend, MigratablePushBackend {
       await client.query('COMMIT');
       return out;
     } catch (e) {
-      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
       throw e;
     } finally {
       client.release();
@@ -92,8 +96,14 @@ export class PgPushBackend implements PushBackend, MigratablePushBackend {
   async unregisterSubscription(appId: string, endpoint: string, owner?: string): Promise<boolean> {
     const r =
       owner === undefined
-        ? await this.pool.query('DELETE FROM forge_push_subscriptions WHERE app_id=$1 AND endpoint=$2', [appId, endpoint])
-        : await this.pool.query('DELETE FROM forge_push_subscriptions WHERE app_id=$1 AND endpoint=$2 AND owner=$3', [appId, endpoint, owner]);
+        ? await this.pool.query('DELETE FROM forge_push_subscriptions WHERE app_id=$1 AND endpoint=$2', [
+            appId,
+            endpoint,
+          ])
+        : await this.pool.query(
+            'DELETE FROM forge_push_subscriptions WHERE app_id=$1 AND endpoint=$2 AND owner=$3',
+            [appId, endpoint, owner],
+          );
     return (r.rowCount ?? 0) > 0;
   }
 
@@ -107,7 +117,10 @@ export class PgPushBackend implements PushBackend, MigratablePushBackend {
   }
 
   async pruneSubscription(appId: string, endpoint: string): Promise<boolean> {
-    const r = await this.pool.query('DELETE FROM forge_push_subscriptions WHERE app_id=$1 AND endpoint=$2', [appId, endpoint]);
+    const r = await this.pool.query('DELETE FROM forge_push_subscriptions WHERE app_id=$1 AND endpoint=$2', [
+      appId,
+      endpoint,
+    ]);
     return (r.rowCount ?? 0) > 0;
   }
 
@@ -122,7 +135,10 @@ export class PgPushBackend implements PushBackend, MigratablePushBackend {
   }
 
   async pruneDeliveriesBefore(appId: string, cutoffIso: string): Promise<number> {
-    const r = await this.pool.query('DELETE FROM forge_push_deliveries WHERE app_id=$1 AND claimed_at < $2', [appId, cutoffIso]);
+    const r = await this.pool.query('DELETE FROM forge_push_deliveries WHERE app_id=$1 AND claimed_at < $2', [
+      appId,
+      cutoffIso,
+    ]);
     return r.rowCount ?? 0;
   }
 
@@ -165,9 +181,13 @@ export class PgPushBackend implements PushBackend, MigratablePushBackend {
   async deleteByOwner(appId: string, owner: string): Promise<number> {
     // BOTH tables. Deleting only the subscriptions would leave queued deliveries addressed to a
     // person who no longer exists — they would fail to send and log an error naming a deleted user.
-    const subs = await this.pool.query('DELETE FROM forge_push_subscriptions WHERE app_id=$1 AND owner=$2', [appId, owner]);
-    await this.pool.query('DELETE FROM forge_push_deliveries WHERE app_id=$1 AND owner=$2', [appId, owner]).catch(() => undefined);
+    const subs = await this.pool.query('DELETE FROM forge_push_subscriptions WHERE app_id=$1 AND owner=$2', [
+      appId,
+      owner,
+    ]);
+    await this.pool
+      .query('DELETE FROM forge_push_deliveries WHERE app_id=$1 AND owner=$2', [appId, owner])
+      .catch(() => undefined);
     return subs.rowCount ?? 0;
   }
-
 }

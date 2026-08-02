@@ -21,8 +21,16 @@ const DP = 'ghcr.io/mardash-ai/forge-data-plane:0.11.0@sha256:' + 'b'.repeat(64)
 
 function base(): ProdComposeOptions {
   return {
-    appName: 'demo', port: 3000, host: 'demo.example.com', readinessPath: '/api/health',
-    webImage: WEB, dataPlaneImage: DP, withPostgres: false, withRedis: false, secrets: [], certResolver: 'letsencrypt',
+    appName: 'demo',
+    port: 3000,
+    host: 'demo.example.com',
+    readinessPath: '/api/health',
+    webImage: WEB,
+    dataPlaneImage: DP,
+    withPostgres: false,
+    withRedis: false,
+    secrets: [],
+    certResolver: 'letsencrypt',
   };
 }
 
@@ -31,7 +39,10 @@ function dataPlaneBlock(yaml: string): string {
   const start = lines.findIndex((l) => l === '  data-plane:');
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
-    if (/^  \S/.test(lines[i] ?? '') || /^\S/.test(lines[i] ?? '')) { end = i; break; }
+    if (/^  \S/.test(lines[i] ?? '') || /^\S/.test(lines[i] ?? '')) {
+      end = i;
+      break;
+    }
   }
   return lines.slice(start, end).join('\n');
 }
@@ -76,14 +87,28 @@ let prevDp: string | undefined;
 async function seedApp(): Promise<void> {
   const now = nowIso();
   const app: Application = {
-    id: 'app_demo', type: 'Application', app_id: 'app_demo', created_at: now, updated_at: now,
-    name: 'demo', repo_path: repo, platform: 'web', framework: 'nextjs', template: 'nextjs-web',
-    language: 'typescript', package_manager: 'npm',
+    id: 'app_demo',
+    type: 'Application',
+    app_id: 'app_demo',
+    created_at: now,
+    updated_at: now,
+    name: 'demo',
+    repo_path: repo,
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   };
   await store.saveResource(app);
 }
 async function exists(p: string): Promise<boolean> {
-  try { await stat(p); return true; } catch { return false; }
+  try {
+    await stat(p);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 beforeEach(async () => {
@@ -97,7 +122,8 @@ beforeEach(async () => {
   await seedApp();
 });
 afterEach(async () => {
-  const restore = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
+  const restore = (k: string, v: string | undefined) =>
+    v === undefined ? delete process.env[k] : (process.env[k] = v);
   restore('FORGE_STATE_DIR', prevState);
   restore('FORGE_DATA_PLANE_IMAGE', prevDp);
   await rm(dir, { recursive: true, force: true });
@@ -107,7 +133,11 @@ afterEach(async () => {
 describe('C16 forge productionize scaffolds + carries the theme', () => {
   it('scaffolds forge.theme.json when absent and mounts it in the compose', async () => {
     expect(await exists(path.join(repo, 'forge.theme.json'))).toBe(false);
-    await executeCapability('productionize', { app: 'demo', host: 'demo.example.com', web_image: WEB }, SYSTEM_ACTOR);
+    await executeCapability(
+      'productionize',
+      { app: 'demo', host: 'demo.example.com', web_image: WEB },
+      SYSTEM_ACTOR,
+    );
     expect(await exists(path.join(repo, 'forge.theme.json'))).toBe(true);
     const starter = JSON.parse(await readFile(path.join(repo, 'forge.theme.json'), 'utf8'));
     expect(starter.name).toBe('demo');
@@ -119,7 +149,11 @@ describe('C16 forge productionize scaffolds + carries the theme', () => {
   it('never clobbers an app-edited theme', async () => {
     const edited = JSON.stringify({ name: 'Edited', colors: { primary: '#abcdef' } }, null, 2);
     await writeFile(path.join(repo, 'forge.theme.json'), edited);
-    await executeCapability('productionize', { app: 'demo', host: 'demo.example.com', web_image: WEB }, SYSTEM_ACTOR);
+    await executeCapability(
+      'productionize',
+      { app: 'demo', host: 'demo.example.com', web_image: WEB },
+      SYSTEM_ACTOR,
+    );
     expect(await readFile(path.join(repo, 'forge.theme.json'), 'utf8')).toBe(edited);
   });
 });

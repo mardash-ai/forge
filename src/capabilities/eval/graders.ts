@@ -42,23 +42,44 @@ export function gradeDeterministic(traj: Trajectory, c: EvalCase): Deterministic
   if (a.tool_called) {
     matched = traj.toolCalls.find((t) => t.name === a.tool_called);
     const called = traj.toolCalls.map((t) => t.name).join(', ') || 'none';
-    checks.push({ name: `tool_called:${a.tool_called}`, ok: Boolean(matched), detail: matched ? 'called' : `not called (called: ${called})` });
+    checks.push({
+      name: `tool_called:${a.tool_called}`,
+      ok: Boolean(matched),
+      detail: matched ? 'called' : `not called (called: ${called})`,
+    });
   }
   if (a.structured_contains) {
     const sc = structuredContent(matched);
     for (const [k, v] of Object.entries(a.structured_contains)) {
       const ok = eq(sc[k], v);
-      checks.push({ name: `structured.${k}`, ok, detail: ok ? 'match' : `got ${JSON.stringify(sc[k])}, want ${JSON.stringify(v)}` });
+      checks.push({
+        name: `structured.${k}`,
+        ok,
+        detail: ok ? 'match' : `got ${JSON.stringify(sc[k])}, want ${JSON.stringify(v)}`,
+      });
     }
   }
   if (a.args_contains && matched) {
     for (const [k, v] of Object.entries(a.args_contains)) {
       const got = matched.args[k];
-      const ok = typeof v === 'string' ? String(got ?? '').toLowerCase().includes(v.toLowerCase()) : eq(got, v);
-      checks.push({ name: `args.${k}`, ok, detail: ok ? 'match' : `got ${JSON.stringify(got)}, want ${JSON.stringify(v)}` });
+      const ok =
+        typeof v === 'string'
+          ? String(got ?? '')
+              .toLowerCase()
+              .includes(v.toLowerCase())
+          : eq(got, v);
+      checks.push({
+        name: `args.${k}`,
+        ok,
+        detail: ok ? 'match' : `got ${JSON.stringify(got)}, want ${JSON.stringify(v)}`,
+      });
     }
   } else if (a.args_contains && !matched) {
-    checks.push({ name: 'args_contains', ok: false, detail: 'expected tool was not called, so args cannot match' });
+    checks.push({
+      name: 'args_contains',
+      ok: false,
+      detail: 'expected tool was not called, so args cannot match',
+    });
   }
   if (a.final_text_contains) {
     const text = traj.finalText.toLowerCase();
@@ -120,22 +141,45 @@ export async function gradeJudge(opts: {
     user_request: opts.case.prompt,
     dimensions: opts.case.dimensions,
     trajectory: {
-      tool_calls: opts.trajectory.toolCalls.map((t) => ({ name: t.name, arguments: t.args, ok: t.ok, result: summarizeResult(t.result) })),
+      tool_calls: opts.trajectory.toolCalls.map((t) => ({
+        name: t.name,
+        arguments: t.args,
+        ok: t.ok,
+        result: summarizeResult(t.result),
+      })),
       final_reply: opts.trajectory.finalText,
       loop_error: opts.trajectory.error ?? null,
     },
   };
   try {
-    const out = await invoke({ apiKey: opts.apiKey, model: opts.model ?? 'claude-opus-4-8', system, input, schema: JUDGE_SCHEMA, maxTokens: 1024, onUsage: opts.onUsage });
-    const dims = (out as { dimensions?: Array<{ name?: unknown; score?: unknown; reason?: unknown }> })?.dimensions ?? [];
+    const out = await invoke({
+      apiKey: opts.apiKey,
+      model: opts.model ?? 'claude-opus-4-8',
+      system,
+      input,
+      schema: JUDGE_SCHEMA,
+      maxTokens: 1024,
+      onUsage: opts.onUsage,
+    });
+    const dims =
+      (out as { dimensions?: Array<{ name?: unknown; score?: unknown; reason?: unknown }> })?.dimensions ??
+      [];
     const byName = new Map(dims.map((d) => [String(d.name), d]));
     // Return exactly the requested dimensions, in order (defensive against a judge that drops/renames one).
     return opts.case.dimensions.map((name) => {
       const d = byName.get(name);
-      return { name, score: clamp01(Number(d?.score)), reason: d?.reason ? String(d.reason) : 'no score returned' };
+      return {
+        name,
+        score: clamp01(Number(d?.score)),
+        reason: d?.reason ? String(d.reason) : 'no score returned',
+      };
     });
   } catch (e) {
-    return opts.case.dimensions.map((name) => ({ name, score: 0, reason: `judge failed: ${(e as Error)?.message ?? String(e)}` }));
+    return opts.case.dimensions.map((name) => ({
+      name,
+      score: 0,
+      reason: `judge failed: ${(e as Error)?.message ?? String(e)}`,
+    }));
   }
 }
 

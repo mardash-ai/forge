@@ -16,7 +16,12 @@ import { releaseCapability } from '../src/capabilities/release/index';
 // scripted sequence of health responses (per health-path hit), and the wait's INJECTABLE clock/sleep
 // make timing exact with no real waiting — so budget/backoff/no-overrun are asserted precisely.
 
-const C6_OK = { status: 'ok', service: 'demo', time: '2026-01-01T00:00:00.000Z', checks: [{ name: 'db', status: 'ok' }] };
+const C6_OK = {
+  status: 'ok',
+  service: 'demo',
+  time: '2026-01-01T00:00:00.000Z',
+  checks: [{ name: 'db', status: 'ok' }],
+};
 
 let server: http.Server | undefined;
 
@@ -172,16 +177,20 @@ describe('P28 the gate is wired into runContractChecks (C14 verify path)', () =>
 
 describe('P28 the readiness inputs are threaded through the capabilities', () => {
   it('(e) verify defaults readiness_timeout_ms to 0 (off for a standalone verify)', () => {
-    const shape = (verify.inputSchema as unknown as {
-      shape: { readiness_timeout_ms: { parse: (v: unknown) => unknown } };
-    }).shape;
+    const shape = (
+      verify.inputSchema as unknown as {
+        shape: { readiness_timeout_ms: { parse: (v: unknown) => unknown } };
+      }
+    ).shape;
     expect(shape.readiness_timeout_ms.parse(undefined)).toBe(0);
   });
 
   it('(e) release defaults verify_readiness_timeout_ms to 30000 (on for the deploy→verify handoff)', () => {
-    const shape = (releaseCapability.inputSchema as unknown as {
-      shape: { verify_readiness_timeout_ms: { parse: (v: unknown) => unknown } };
-    }).shape;
+    const shape = (
+      releaseCapability.inputSchema as unknown as {
+        shape: { verify_readiness_timeout_ms: { parse: (v: unknown) => unknown } };
+      }
+    ).shape;
     expect(shape.verify_readiness_timeout_ms.parse(undefined)).toBe(30_000);
   });
 });

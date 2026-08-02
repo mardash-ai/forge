@@ -34,8 +34,10 @@ export function stem(raw: string): string {
   let t = raw.toLowerCase();
   if (t.length <= 2) return t;
   // 1) plural
-  if (t.endsWith('ies') && t.length > 4) t = t.slice(0, -3) + 'y'; // parties -> party
-  else if (/(?:s|x|z|ch|sh)es$/.test(t)) t = t.slice(0, -2); // boxes -> box, dishes -> dish
+  if (t.endsWith('ies') && t.length > 4)
+    t = t.slice(0, -3) + 'y'; // parties -> party
+  else if (/(?:s|x|z|ch|sh)es$/.test(t))
+    t = t.slice(0, -2); // boxes -> box, dishes -> dish
   else if (t.endsWith('s') && !t.endsWith('ss') && t.length > 3) t = t.slice(0, -1); // goals -> goal
   // 2) gerund / past tense (undoing a doubled final consonant: running -> runn -> run)
   if (t.endsWith('ing') && t.length > 5) {
@@ -61,7 +63,13 @@ export function tokenize(text: string | undefined | null): string[] {
 
 // --- HTML escaping + highlight ----------------------------------------------------------------------
 
-const ESCAPE: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const ESCAPE: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+};
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ESCAPE[c]!);
 }

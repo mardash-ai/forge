@@ -17,7 +17,9 @@ export async function ensureMembershipSchema(pool: Pool): Promise<void> {
   `);
 }
 
-interface Row { data: MembershipState }
+interface Row {
+  data: MembershipState;
+}
 
 function normalize(data: Partial<MembershipState> | undefined): MembershipState {
   return {
@@ -36,7 +38,10 @@ export class PgMembershipBackend implements MembershipBackend, MigratableMembers
     return r.rows[0] ? normalize(r.rows[0].data) : emptyMembershipState();
   }
 
-  async mutate<T>(appId: string, fn: (state: MembershipState) => { state: MembershipState; result: T }): Promise<T> {
+  async mutate<T>(
+    appId: string,
+    fn: (state: MembershipState) => { state: MembershipState; result: T },
+  ): Promise<T> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -45,14 +50,23 @@ export class PgMembershipBackend implements MembershipBackend, MigratableMembers
         `INSERT INTO forge_membership (app_id, data) VALUES ($1, $2::jsonb) ON CONFLICT (app_id) DO NOTHING`,
         [appId, JSON.stringify(emptyMembershipState())],
       );
-      const cur = await client.query<Row>('SELECT data FROM forge_membership WHERE app_id=$1 FOR UPDATE', [appId]);
+      const cur = await client.query<Row>('SELECT data FROM forge_membership WHERE app_id=$1 FOR UPDATE', [
+        appId,
+      ]);
       const state = normalize(cur.rows[0]?.data);
       const { state: next, result } = fn(state);
-      await client.query('UPDATE forge_membership SET data=$2::jsonb, updated_at=now() WHERE app_id=$1', [appId, JSON.stringify(next)]);
+      await client.query('UPDATE forge_membership SET data=$2::jsonb, updated_at=now() WHERE app_id=$1', [
+        appId,
+        JSON.stringify(next),
+      ]);
       await client.query('COMMIT');
       return result;
     } catch (e) {
-      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
       throw e;
     } finally {
       client.release();

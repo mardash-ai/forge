@@ -26,7 +26,10 @@ const inputSchema = z
     subject: z.string().min(1).optional().describe('Subject line (required for an inline body)'),
     html: z.string().min(1).optional().describe('HTML body'),
     text: z.string().min(1).optional().describe('Plain-text body'),
-    template: z.enum(TEMPLATES).optional().describe('Built-in template: verify-email | reset-password | twofa-code'),
+    template: z
+      .enum(TEMPLATES)
+      .optional()
+      .describe('Built-in template: verify-email | reset-password | twofa-code'),
     data: z.record(z.unknown()).optional().describe('Template data, e.g. { url, code?, product?, name? }'),
   })
   .superRefine((val, ctx) => {

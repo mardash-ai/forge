@@ -43,9 +43,15 @@ describe('release plan — image ref + digest pin helpers', () => {
   });
 
   it('targetImageRef honors registry + suffix overrides', () => {
-    expect(targetImageRef({ registry: 'reg.example.com', owner: 'acme', app: 'shop', commit: 'c0ffee', suffix: '-web' })).toBe(
-      'reg.example.com/acme/shop-web:sha-c0ffee',
-    );
+    expect(
+      targetImageRef({
+        registry: 'reg.example.com',
+        owner: 'acme',
+        app: 'shop',
+        commit: 'c0ffee',
+        suffix: '-web',
+      }),
+    ).toBe('reg.example.com/acme/shop-web:sha-c0ffee');
   });
 
   it('stripTag removes a :tag but not a registry :port', () => {
@@ -85,12 +91,19 @@ describe('release plan — short-SHA tag derivation (P23)', () => {
   });
 
   it('candidateImageRefs honors registry/owner/suffix overrides and dedups a ≤7-char commit', () => {
-    expect(candidateImageRefs({ registry: 'reg.example.com', owner: 'acme', app: 'shop', commit: FULL, suffix: '-web' })).toEqual([
-      `reg.example.com/acme/shop-web:sha-${SHORT}`,
-      `reg.example.com/acme/shop-web:sha-${FULL}`,
-    ]);
+    expect(
+      candidateImageRefs({
+        registry: 'reg.example.com',
+        owner: 'acme',
+        app: 'shop',
+        commit: FULL,
+        suffix: '-web',
+      }),
+    ).toEqual([`reg.example.com/acme/shop-web:sha-${SHORT}`, `reg.example.com/acme/shop-web:sha-${FULL}`]);
     // A commit already ≤ 7 chars → short === full → a single deduped candidate.
-    expect(candidateImageRefs({ owner: 'acme', app: 'shop', commit: 'abc1234' })).toEqual(['ghcr.io/acme/shop-app:sha-abc1234']);
+    expect(candidateImageRefs({ owner: 'acme', app: 'shop', commit: 'abc1234' })).toEqual([
+      'ghcr.io/acme/shop-app:sha-abc1234',
+    ]);
   });
 });
 
@@ -111,14 +124,24 @@ describe('release plan — idempotent-resume predicates', () => {
 
   it('needsDeploy skips only when pinned AND running the exact local image id', () => {
     // Already current → skip.
-    expect(needsDeploy({ pinMatches: true, runningWebImageId: 'sha256:img1', pinnedWebImageId: 'sha256:img1' })).toBe(false);
+    expect(
+      needsDeploy({ pinMatches: true, runningWebImageId: 'sha256:img1', pinnedWebImageId: 'sha256:img1' }),
+    ).toBe(false);
     // Pin matches but the running image differs (the P14 stale-image trap) → deploy.
-    expect(needsDeploy({ pinMatches: true, runningWebImageId: 'sha256:old', pinnedWebImageId: 'sha256:img1' })).toBe(true);
+    expect(
+      needsDeploy({ pinMatches: true, runningWebImageId: 'sha256:old', pinnedWebImageId: 'sha256:img1' }),
+    ).toBe(true);
     // Compose not yet pinned to the target → deploy.
-    expect(needsDeploy({ pinMatches: false, runningWebImageId: 'sha256:img1', pinnedWebImageId: 'sha256:img1' })).toBe(true);
+    expect(
+      needsDeploy({ pinMatches: false, runningWebImageId: 'sha256:img1', pinnedWebImageId: 'sha256:img1' }),
+    ).toBe(true);
     // Any unknown (image not pulled / container not found) → deploy (safe: it is idempotent).
-    expect(needsDeploy({ pinMatches: true, runningWebImageId: undefined, pinnedWebImageId: 'sha256:img1' })).toBe(true);
-    expect(needsDeploy({ pinMatches: true, runningWebImageId: 'sha256:img1', pinnedWebImageId: undefined })).toBe(true);
+    expect(
+      needsDeploy({ pinMatches: true, runningWebImageId: undefined, pinnedWebImageId: 'sha256:img1' }),
+    ).toBe(true);
+    expect(
+      needsDeploy({ pinMatches: true, runningWebImageId: 'sha256:img1', pinnedWebImageId: undefined }),
+    ).toBe(true);
   });
 });
 
@@ -210,7 +233,7 @@ function refAwareDocker(present: Record<string, string>): DockerRunner {
   };
 }
 
-describe('release ghcr — dual-tag resolution finds the workflow\'s short-SHA image (P23)', () => {
+describe("release ghcr — dual-tag resolution finds the workflow's short-SHA image (P23)", () => {
   const FULL = 'dae6c6a14afedc315f43823c6700e3b8f7e53ad8';
   const SHORT = 'dae6c6a';
   const REPO = 'ghcr.io/mardash-ai/forge-os-app';
@@ -252,7 +275,12 @@ describe('release ghcr — dual-tag resolution finds the workflow\'s short-SHA i
   it('waitForAnyDigest names every candidate in the timeout error when nothing lands', async () => {
     const clock = fakeClock();
     await expect(
-      waitForAnyDigest(refAwareDocker({}), refs, { timeoutMs: 100, intervalMs: 50, now: clock.now, sleep: clock.sleep }),
+      waitForAnyDigest(refAwareDocker({}), refs, {
+        timeoutMs: 100,
+        intervalMs: 50,
+        now: clock.now,
+        sleep: clock.sleep,
+      }),
     ).rejects.toThrow(new RegExp(`timed out.*${SHORT_REF}.*or.*${FULL_REF}.*not published yet`, 's'));
   });
 });

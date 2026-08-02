@@ -25,7 +25,10 @@ import type {
 // faithful copy until the FS write is retired. Selected with FORGE_IDENTITY_BACKEND=postgres +
 // FORGE_IDENTITY_DUAL_WRITE=1. (Steady state, post-cutover, is plain FORGE_IDENTITY_BACKEND=postgres.)
 export class DualWriteIdentityBackend implements IdentityBackend {
-  constructor(private readonly primary: PgIdentityBackend, private readonly secondary: FsIdentityBackend) {}
+  constructor(
+    private readonly primary: PgIdentityBackend,
+    private readonly secondary: FsIdentityBackend,
+  ) {}
 
   // Rebuild the FS doc for one app from the Postgres source of truth (faithful — exact ids preserved).
   private async mirror(appId: string): Promise<void> {
@@ -33,16 +36,36 @@ export class DualWriteIdentityBackend implements IdentityBackend {
   }
 
   // reads → primary (Postgres)
-  getUser(appId: string, userId: string): Promise<StoredUser | null> { return this.primary.getUser(appId, userId); }
-  findByEmail(appId: string, email: string): Promise<StoredUser | null> { return this.primary.findByEmail(appId, email); }
-  findByProvider(appId: string, p: Provider, id: string): Promise<StoredUser | null> { return this.primary.findByProvider(appId, p, id); }
-  countUsers(appId: string): Promise<number> { return this.primary.countUsers(appId); }
-  listUsers(appId: string): Promise<StoredUser[]> { return this.primary.listUsers(appId); }
-  getUserScope(appId: string, userId: string): Promise<UserScope | null> { return this.primary.getUserScope(appId, userId); }
-  getSession(appId: string, id: string): Promise<StoredSession | null> { return this.primary.getSession(appId, id); }
-  activeSessionCount(appId: string): Promise<number> { return this.primary.activeSessionCount(appId); }
-  getRefreshToken(appId: string, h: string): Promise<StoredRefreshToken | null> { return this.primary.getRefreshToken(appId, h); }
-  activeRefreshTokenCount(appId: string): Promise<number> { return this.primary.activeRefreshTokenCount(appId); }
+  getUser(appId: string, userId: string): Promise<StoredUser | null> {
+    return this.primary.getUser(appId, userId);
+  }
+  findByEmail(appId: string, email: string): Promise<StoredUser | null> {
+    return this.primary.findByEmail(appId, email);
+  }
+  findByProvider(appId: string, p: Provider, id: string): Promise<StoredUser | null> {
+    return this.primary.findByProvider(appId, p, id);
+  }
+  countUsers(appId: string): Promise<number> {
+    return this.primary.countUsers(appId);
+  }
+  listUsers(appId: string): Promise<StoredUser[]> {
+    return this.primary.listUsers(appId);
+  }
+  getUserScope(appId: string, userId: string): Promise<UserScope | null> {
+    return this.primary.getUserScope(appId, userId);
+  }
+  getSession(appId: string, id: string): Promise<StoredSession | null> {
+    return this.primary.getSession(appId, id);
+  }
+  activeSessionCount(appId: string): Promise<number> {
+    return this.primary.activeSessionCount(appId);
+  }
+  getRefreshToken(appId: string, h: string): Promise<StoredRefreshToken | null> {
+    return this.primary.getRefreshToken(appId, h);
+  }
+  activeRefreshTokenCount(appId: string): Promise<number> {
+    return this.primary.activeRefreshTokenCount(appId);
+  }
 
   // writes → primary, then mirror the app to the filesystem
   async createUser(appId: string, input: NewUser): Promise<StoredUser> {
@@ -95,7 +118,12 @@ export class DualWriteIdentityBackend implements IdentityBackend {
     await this.mirror(appId);
     return n;
   }
-  async redeemRefreshToken(appId: string, presented: string, successor: string, opts: RedeemOpts): Promise<RefreshRedeem> {
+  async redeemRefreshToken(
+    appId: string,
+    presented: string,
+    successor: string,
+    opts: RedeemOpts,
+  ): Promise<RefreshRedeem> {
     const out = await this.primary.redeemRefreshToken(appId, presented, successor, opts);
     await this.mirror(appId);
     return out;
@@ -121,10 +149,21 @@ export class DualWriteIdentityBackend implements IdentityBackend {
 
   // 2FA codes are transient + excluded from the mirror snapshot; in dual mode the read path is always
   // Postgres (the primary), so these delegate straight through with no filesystem mirror.
-  putTwofaCode(appId: string, input: PutTwofaCodeInput): Promise<void> { return this.primary.putTwofaCode(appId, input); }
-  getTwofaCode(appId: string, id: string): Promise<StoredTwofaCode | null> { return this.primary.getTwofaCode(appId, id); }
-  redeemTwofaCode(appId: string, id: string, presentedCodeHash: string, opts: RedeemTwofaOpts): Promise<TwofaRedeem> {
+  putTwofaCode(appId: string, input: PutTwofaCodeInput): Promise<void> {
+    return this.primary.putTwofaCode(appId, input);
+  }
+  getTwofaCode(appId: string, id: string): Promise<StoredTwofaCode | null> {
+    return this.primary.getTwofaCode(appId, id);
+  }
+  redeemTwofaCode(
+    appId: string,
+    id: string,
+    presentedCodeHash: string,
+    opts: RedeemTwofaOpts,
+  ): Promise<TwofaRedeem> {
     return this.primary.redeemTwofaCode(appId, id, presentedCodeHash, opts);
   }
-  deleteTwofaCode(appId: string, id: string): Promise<void> { return this.primary.deleteTwofaCode(appId, id); }
+  deleteTwofaCode(appId: string, id: string): Promise<void> {
+    return this.primary.deleteTwofaCode(appId, id);
+  }
 }

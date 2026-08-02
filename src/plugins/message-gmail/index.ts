@@ -141,7 +141,9 @@ export const httpGmailSender: GmailSender = {
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
       // Surface a compact, scrubbed provider error — the Capability persists it as status:'failed'.
-      throw new Error(`gmail send failed: ${res.status}${detail ? ` ${sanitizeError(detail.slice(0, 300))}` : ''}`);
+      throw new Error(
+        `gmail send failed: ${res.status}${detail ? ` ${sanitizeError(detail.slice(0, 300))}` : ''}`,
+      );
     }
     const json = (await res.json().catch(() => ({}))) as { id?: string; threadId?: string };
     if (!json.id) throw new Error('gmail send response missing message id');

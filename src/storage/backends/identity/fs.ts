@@ -56,7 +56,16 @@ interface AuthDoc {
 }
 
 function emptyDoc(): AuthDoc {
-  return { users: {}, email_index: {}, provider_index: {}, sessions: {}, verify_tokens: {}, reset_tokens: {}, refresh_tokens: {}, twofa_codes: {} };
+  return {
+    users: {},
+    email_index: {},
+    provider_index: {},
+    sessions: {},
+    verify_tokens: {},
+    reset_tokens: {},
+    refresh_tokens: {},
+    twofa_codes: {},
+  };
 }
 
 // A solo account is a GROUP-OF-ONE. The filesystem backend has no groups table, so it synthesizes a
@@ -151,13 +160,13 @@ export class FsIdentityBackend implements IdentityBackend, MigratableIdentityBac
   async findByEmail(appId: string, email: string): Promise<StoredUser | null> {
     const doc = await this.read(appId);
     const id = doc.email_index[canonicalEmail(email)];
-    return id ? doc.users[id] ?? null : null;
+    return id ? (doc.users[id] ?? null) : null;
   }
 
   async findByProvider(appId: string, provider: string, providerUserId: string): Promise<StoredUser | null> {
     const doc = await this.read(appId);
     const id = doc.provider_index[`${provider}:${providerUserId}`];
-    return id ? doc.users[id] ?? null : null;
+    return id ? (doc.users[id] ?? null) : null;
   }
 
   async updateUser(appId: string, userId: string, patch: UpdateUserPatch): Promise<StoredUser | null> {
@@ -186,10 +195,14 @@ export class FsIdentityBackend implements IdentityBackend, MigratableIdentityBac
       }
       // Remove every credential/session artifact so nothing can authenticate as this identity again.
       for (const [id, s] of Object.entries(doc.sessions)) if (s.user_id === userId) delete doc.sessions[id];
-      for (const [id, r] of Object.entries(doc.refresh_tokens)) if (r.user_id === userId) delete doc.refresh_tokens[id];
-      for (const [h, t] of Object.entries(doc.verify_tokens)) if (t.user_id === userId) delete doc.verify_tokens[h];
-      for (const [h, t] of Object.entries(doc.reset_tokens)) if (t.user_id === userId) delete doc.reset_tokens[h];
-      for (const [id, c] of Object.entries(doc.twofa_codes)) if (c.user_id === userId) delete doc.twofa_codes[id];
+      for (const [id, r] of Object.entries(doc.refresh_tokens))
+        if (r.user_id === userId) delete doc.refresh_tokens[id];
+      for (const [h, t] of Object.entries(doc.verify_tokens))
+        if (t.user_id === userId) delete doc.verify_tokens[h];
+      for (const [h, t] of Object.entries(doc.reset_tokens))
+        if (t.user_id === userId) delete doc.reset_tokens[h];
+      for (const [id, c] of Object.entries(doc.twofa_codes))
+        if (c.user_id === userId) delete doc.twofa_codes[id];
       return { deleted: true, email };
     });
   }
@@ -199,7 +212,9 @@ export class FsIdentityBackend implements IdentityBackend, MigratableIdentityBac
   }
 
   async listUsers(appId: string): Promise<StoredUser[]> {
-    return Object.values((await this.read(appId)).users).sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
+    return Object.values((await this.read(appId)).users).sort((a, b) =>
+      a.created_at < b.created_at ? -1 : 1,
+    );
   }
 
   async getUserScope(appId: string, userId: string): Promise<UserScope | null> {
@@ -265,7 +280,8 @@ export class FsIdentityBackend implements IdentityBackend, MigratableIdentityBac
   async activeSessionCount(appId: string): Promise<number> {
     const doc = await this.read(appId);
     const now = Date.now();
-    return Object.values(doc.sessions).filter((s) => !s.revoked && new Date(s.expires_at).getTime() > now).length;
+    return Object.values(doc.sessions).filter((s) => !s.revoked && new Date(s.expires_at).getTime() > now)
+      .length;
   }
 
   async putRefreshToken(appId: string, input: PutRefreshTokenInput): Promise<StoredRefreshToken> {
@@ -320,10 +336,17 @@ export class FsIdentityBackend implements IdentityBackend, MigratableIdentityBac
   async activeRefreshTokenCount(appId: string): Promise<number> {
     const doc = await this.read(appId);
     const now = Date.now();
-    return Object.values(doc.refresh_tokens).filter((r) => !r.revoked_at && new Date(r.expires_at).getTime() > now).length;
+    return Object.values(doc.refresh_tokens).filter(
+      (r) => !r.revoked_at && new Date(r.expires_at).getTime() > now,
+    ).length;
   }
 
-  async redeemRefreshToken(appId: string, presentedHash: string, successorHash: string, opts: RedeemOpts): Promise<RefreshRedeem> {
+  async redeemRefreshToken(
+    appId: string,
+    presentedHash: string,
+    successorHash: string,
+    opts: RedeemOpts,
+  ): Promise<RefreshRedeem> {
     const grace = opts.graceSeconds ?? 0;
     return this.mutate(appId, (doc) => {
       const nowMs = opts.now ?? Date.now();
@@ -380,13 +403,19 @@ export class FsIdentityBackend implements IdentityBackend, MigratableIdentityBac
 
   async putVerifyToken(appId: string, tokenHash: string, userId: string, ttlSeconds: number): Promise<void> {
     await this.mutate(appId, (doc) => {
-      doc.verify_tokens[tokenHash] = { user_id: userId, expires_at: new Date(Date.now() + ttlSeconds * 1000).toISOString() };
+      doc.verify_tokens[tokenHash] = {
+        user_id: userId,
+        expires_at: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
+      };
     });
   }
 
   async putResetToken(appId: string, tokenHash: string, userId: string, ttlSeconds: number): Promise<void> {
     await this.mutate(appId, (doc) => {
-      doc.reset_tokens[tokenHash] = { user_id: userId, expires_at: new Date(Date.now() + ttlSeconds * 1000).toISOString() };
+      doc.reset_tokens[tokenHash] = {
+        user_id: userId,
+        expires_at: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
+      };
     });
   }
 
@@ -432,7 +461,12 @@ export class FsIdentityBackend implements IdentityBackend, MigratableIdentityBac
   // increments the attempt counter; a correct code consumes the record; the attempt cap and expiry are
   // enforced in the same critical section so a concurrent double-submit can neither both win nor skip a
   // count.
-  async redeemTwofaCode(appId: string, id: string, presentedCodeHash: string, opts: RedeemTwofaOpts): Promise<TwofaRedeem> {
+  async redeemTwofaCode(
+    appId: string,
+    id: string,
+    presentedCodeHash: string,
+    opts: RedeemTwofaOpts,
+  ): Promise<TwofaRedeem> {
     return this.mutate(appId, (doc) => {
       const nowMs = opts.now ?? Date.now();
       const rec = doc.twofa_codes[id];
@@ -451,7 +485,12 @@ export class FsIdentityBackend implements IdentityBackend, MigratableIdentityBac
         return { outcome: 'mismatch', attemptsRemaining } as TwofaRedeem;
       }
       delete doc.twofa_codes[id];
-      return { outcome: 'ok', userId: rec.user_id, purpose: rec.purpose, ...(rec.next ? { next: rec.next } : {}) } as TwofaRedeem;
+      return {
+        outcome: 'ok',
+        userId: rec.user_id,
+        purpose: rec.purpose,
+        ...(rec.next ? { next: rec.next } : {}),
+      } as TwofaRedeem;
     });
   }
 
@@ -462,28 +501,65 @@ export class FsIdentityBackend implements IdentityBackend, MigratableIdentityBac
     return {
       users,
       // FS has no groups table — a solo account IS a group-of-one; synthesize the records.
-      groups: users.map((u) => ({ id: u.personal_group_id ?? personalGroupId(u.id), kind: 'personal' as const, name: u.email, created_at: u.created_at })),
-      memberships: users.map((u) => ({ group_id: u.personal_group_id ?? personalGroupId(u.id), user_id: u.id, role: 'owner' as const, created_at: u.created_at })),
+      groups: users.map((u) => ({
+        id: u.personal_group_id ?? personalGroupId(u.id),
+        kind: 'personal' as const,
+        name: u.email,
+        created_at: u.created_at,
+      })),
+      memberships: users.map((u) => ({
+        group_id: u.personal_group_id ?? personalGroupId(u.id),
+        user_id: u.id,
+        role: 'owner' as const,
+        created_at: u.created_at,
+      })),
       sessions: Object.values(doc.sessions),
       refresh_tokens: Object.values(doc.refresh_tokens),
-      verify_tokens: Object.entries(doc.verify_tokens).map(([hash, t]) => ({ hash, user_id: t.user_id, expires_at: t.expires_at, ...(t.used_at ? { used_at: t.used_at } : {}) })),
-      reset_tokens: Object.entries(doc.reset_tokens).map(([hash, t]) => ({ hash, user_id: t.user_id, expires_at: t.expires_at, ...(t.used_at ? { used_at: t.used_at } : {}) })),
+      verify_tokens: Object.entries(doc.verify_tokens).map(([hash, t]) => ({
+        hash,
+        user_id: t.user_id,
+        expires_at: t.expires_at,
+        ...(t.used_at ? { used_at: t.used_at } : {}),
+      })),
+      reset_tokens: Object.entries(doc.reset_tokens).map(([hash, t]) => ({
+        hash,
+        user_id: t.user_id,
+        expires_at: t.expires_at,
+        ...(t.used_at ? { used_at: t.used_at } : {}),
+      })),
     };
   }
 
   async importApp(appId: string, snap: IdentitySnapshot): Promise<void> {
     await this.mutate(appId, (doc) => {
-      doc.users = {}; doc.email_index = {}; doc.provider_index = {};
-      doc.sessions = {}; doc.verify_tokens = {}; doc.reset_tokens = {}; doc.refresh_tokens = {}; doc.twofa_codes = {};
+      doc.users = {};
+      doc.email_index = {};
+      doc.provider_index = {};
+      doc.sessions = {};
+      doc.verify_tokens = {};
+      doc.reset_tokens = {};
+      doc.refresh_tokens = {};
+      doc.twofa_codes = {};
       for (const u of snap.users) {
         doc.users[u.id] = u;
         doc.email_index[u.email] = u.id;
-        if (u.provider && u.provider_user_id) doc.provider_index[`${u.provider}:${u.provider_user_id}`] = u.id;
+        if (u.provider && u.provider_user_id)
+          doc.provider_index[`${u.provider}:${u.provider_user_id}`] = u.id;
       }
       for (const s of snap.sessions) doc.sessions[s.id] = s;
       for (const r of snap.refresh_tokens) doc.refresh_tokens[r.id] = r;
-      for (const t of snap.verify_tokens) doc.verify_tokens[t.hash] = { user_id: t.user_id, expires_at: t.expires_at, ...(t.used_at ? { used_at: t.used_at } : {}) };
-      for (const t of snap.reset_tokens) doc.reset_tokens[t.hash] = { user_id: t.user_id, expires_at: t.expires_at, ...(t.used_at ? { used_at: t.used_at } : {}) };
+      for (const t of snap.verify_tokens)
+        doc.verify_tokens[t.hash] = {
+          user_id: t.user_id,
+          expires_at: t.expires_at,
+          ...(t.used_at ? { used_at: t.used_at } : {}),
+        };
+      for (const t of snap.reset_tokens)
+        doc.reset_tokens[t.hash] = {
+          user_id: t.user_id,
+          expires_at: t.expires_at,
+          ...(t.used_at ? { used_at: t.used_at } : {}),
+        };
     });
   }
 }

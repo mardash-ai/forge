@@ -165,7 +165,11 @@ export function createGrafanaCatalog(cfg: GrafanaCatalogConfig, ttlMs = 60_000) 
   return {
     async get(signal: AbortSignal, now: () => number = Date.now): Promise<MetricCatalog> {
       const uid = cfg.dashboardUid ?? '';
-      const head = { dashboardUid: uid, title: 'Product — top-line', url: cfg.origin ? `${cfg.origin}/d/${uid}` : undefined };
+      const head = {
+        dashboardUid: uid,
+        title: 'Product — top-line',
+        url: cfg.origin ? `${cfg.origin}/d/${uid}` : undefined,
+      };
 
       if (!catalogConfigured(cfg)) {
         return { source: head, metrics: [], error: 'grafana catalog is not configured' };

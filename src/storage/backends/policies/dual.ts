@@ -6,7 +6,10 @@ import type { PolicyRule } from '../../../authz/types';
 // C29 / P26 — the DUAL-WRITE policy backend: Postgres is the source of truth (reads); every write also
 // mirrors to the filesystem, for a reversible cutover. FORGE_POLICY_BACKEND=postgres + FORGE_POLICY_DUAL_WRITE=1.
 export class DualWritePolicyBackend implements PolicyBackend {
-  constructor(private readonly primary: PgPolicyBackend, private readonly secondary: FsPolicyBackend) {}
+  constructor(
+    private readonly primary: PgPolicyBackend,
+    private readonly secondary: FsPolicyBackend,
+  ) {}
 
   get(appId: string, id: string): Promise<PolicyRule | null> {
     return this.primary.get(appId, id);

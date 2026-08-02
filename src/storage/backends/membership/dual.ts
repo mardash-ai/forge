@@ -7,13 +7,19 @@ import type { MembershipState } from '../../../membership/types';
 // mutate), and each committed state is mirrored to the filesystem, for a reversible cutover.
 // FORGE_MEMBERSHIP_BACKEND=postgres + FORGE_MEMBERSHIP_DUAL_WRITE=1.
 export class DualWriteMembershipBackend implements MembershipBackend {
-  constructor(private readonly primary: PgMembershipBackend, private readonly secondary: FsMembershipBackend) {}
+  constructor(
+    private readonly primary: PgMembershipBackend,
+    private readonly secondary: FsMembershipBackend,
+  ) {}
 
   read(appId: string): Promise<MembershipState> {
     return this.primary.read(appId);
   }
 
-  async mutate<T>(appId: string, fn: (state: MembershipState) => { state: MembershipState; result: T }): Promise<T> {
+  async mutate<T>(
+    appId: string,
+    fn: (state: MembershipState) => { state: MembershipState; result: T },
+  ): Promise<T> {
     let committed: MembershipState | undefined;
     const result = await this.primary.mutate(appId, (state) => {
       const out = fn(state);

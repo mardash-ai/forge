@@ -107,7 +107,11 @@ export function createDorindaTenantProvider(cfg: DorindaTenantConfig): TenantPro
        * erasure is INCOMPLETE and names what survived. Collapsing either into "upstream error"
        * would turn a precise, actionable refusal into a shrug.
        */
-      throw new TenantAppError(res.status, p.code ?? 'upstream_error', p.message ?? p.detail ?? text.slice(0, 300));
+      throw new TenantAppError(
+        res.status,
+        p.code ?? 'upstream_error',
+        p.message ?? p.detail ?? text.slice(0, 300),
+      );
     }
     return json as T;
   }
@@ -224,22 +228,30 @@ export function createDorindaTenantProvider(cfg: DorindaTenantConfig): TenantPro
     },
 
     async setComp(ctx, owner, comped) {
-      const r = await call<{ subscription_status?: string; comped?: boolean }>(ctx, '/api/admin/accounts/comp', {
-        method: 'POST',
-        body: { owner, comped },
-        credential: 'admin',
-      });
+      const r = await call<{ subscription_status?: string; comped?: boolean }>(
+        ctx,
+        '/api/admin/accounts/comp',
+        {
+          method: 'POST',
+          body: { owner, comped },
+          credential: 'admin',
+        },
+      );
       return { status: String(r.subscription_status ?? ''), comped: Boolean(r.comped) };
     },
 
     async setLocked(ctx, owner, locked) {
       // The app's flag is `active`, the inverse of a lock. Translated HERE rather than in the UI,
       // so a screen never has to remember which polarity this particular app uses.
-      const r = await call<{ subscription_status?: string; active?: boolean }>(ctx, '/api/admin/accounts/access', {
-        method: 'POST',
-        body: { owner, active: !locked },
-        credential: 'admin',
-      });
+      const r = await call<{ subscription_status?: string; active?: boolean }>(
+        ctx,
+        '/api/admin/accounts/access',
+        {
+          method: 'POST',
+          body: { owner, active: !locked },
+          credential: 'admin',
+        },
+      );
       return { status: String(r.subscription_status ?? ''), locked: r.active === false };
     },
 
@@ -266,7 +278,10 @@ export function createDorindaTenantProvider(cfg: DorindaTenantConfig): TenantPro
       const r = await call<{
         purged?: boolean;
         deleted?: Record<string, number>;
-        platform_teardown?: { deleted?: Record<string, number | boolean>; retained?: Array<{ subsystem: string; reason: string }> };
+        platform_teardown?: {
+          deleted?: Record<string, number | boolean>;
+          retained?: Array<{ subsystem: string; reason: string }>;
+        };
       }>(ctx, '/api/admin/accounts/purge', { method: 'POST', body: { owner }, credential: 'admin' });
 
       return {
@@ -293,9 +308,13 @@ export function createDorindaTenantProvider(cfg: DorindaTenantConfig): TenantPro
     },
 
     async getClock(ctx, owner) {
-      const r = await call<Record<string, unknown>>(ctx, `/api/test/tenant/${encodeURIComponent(owner)}/clock`, {
-        credential: 'test',
-      });
+      const r = await call<Record<string, unknown>>(
+        ctx,
+        `/api/test/tenant/${encodeURIComponent(owner)}/clock`,
+        {
+          credential: 'test',
+        },
+      );
       return {
         owner: String(r['owner'] ?? owner),
         virtualNow: String(r['virtual_now'] ?? ''),
@@ -306,11 +325,15 @@ export function createDorindaTenantProvider(cfg: DorindaTenantConfig): TenantPro
     },
 
     async setClock(ctx, owner, input) {
-      const r = await call<Record<string, unknown>>(ctx, `/api/test/tenant/${encodeURIComponent(owner)}/clock`, {
-        method: 'POST',
-        body: { at: input.at, advance_ms: input.advanceMs, settle: input.settle },
-        credential: 'test',
-      });
+      const r = await call<Record<string, unknown>>(
+        ctx,
+        `/api/test/tenant/${encodeURIComponent(owner)}/clock`,
+        {
+          method: 'POST',
+          body: { at: input.at, advance_ms: input.advanceMs, settle: input.settle },
+          credential: 'test',
+        },
+      );
       const settle = (r['settle'] ?? {}) as Record<string, unknown>;
       return {
         owner: String(r['owner'] ?? owner),

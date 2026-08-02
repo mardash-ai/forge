@@ -93,7 +93,10 @@ export class FsNotificationBackend implements NotificationBackend, MigratableNot
     const map = await this.readMap(appId);
     let removed = 0;
     for (const [k, v] of Object.entries(map)) {
-      if ((v as { owner?: string }).owner === owner) { delete map[k]; removed += 1; }
+      if ((v as { owner?: string }).owner === owner) {
+        delete map[k];
+        removed += 1;
+      }
     }
     if (removed > 0) await this.writeMap(appId, map);
     return removed;

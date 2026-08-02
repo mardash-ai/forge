@@ -11,10 +11,16 @@ import { convergeProduction } from '../src/capabilities/productionize/converge';
 // keys are empty-default so observability can NEVER take the app down.
 
 const base: ProdComposeOptions = {
-  appName: 'demo', port: 3000, host: 'demo.example.com', readinessPath: '/api/health',
+  appName: 'demo',
+  port: 3000,
+  host: 'demo.example.com',
+  readinessPath: '/api/health',
   webImage: 'ghcr.io/x/demo-app@sha256:' + 'a'.repeat(64),
   dataPlaneImage: 'ghcr.io/mardash-ai/forge-data-plane@sha256:' + 'b'.repeat(64),
-  withPostgres: false, withRedis: false, secrets: [], certResolver: 'letsencrypt',
+  withPostgres: false,
+  withRedis: false,
+  secrets: [],
+  certResolver: 'letsencrypt',
 };
 
 function webBlock(compose: string): string {
@@ -38,10 +44,14 @@ describe('C36 productionize observability wiring', () => {
     const c = generateProdCompose({ ...base, observability: true });
 
     // the shared network is declared external and both services join it
-    expect(c).toMatch(/networks:\n {2}proxy:\n {4}external: true\n {2}internal:\n {4}driver: bridge\n {2}observability:\n {4}external: true/);
+    expect(c).toMatch(
+      /networks:\n {2}proxy:\n {4}external: true\n {2}internal:\n {4}driver: bridge\n {2}observability:\n {4}external: true/,
+    );
 
     const web = webBlock(c);
-    expect(web).toContain('OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://langfuse-web:3000/api/public/otel}');
+    expect(web).toContain(
+      'OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://langfuse-web:3000/api/public/otel}',
+    );
     expect(web).toContain('OTEL_SERVICE_NAME=demo'); // app tier → the app's service name
     // empty-default keys — a missing key disables tracing, never fails the deploy (no `:?`)
     expect(web).toContain('LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}');
@@ -55,10 +65,23 @@ describe('C36 productionize observability wiring', () => {
   });
 
   it('.env.prod.example documents the Langfuse OTLP key pair only when observability is on', () => {
-    const off = generateEnvProdExample({ appName: 'demo', host: 'h', withPostgres: false, withRedis: false, secrets: [] });
+    const off = generateEnvProdExample({
+      appName: 'demo',
+      host: 'h',
+      withPostgres: false,
+      withRedis: false,
+      secrets: [],
+    });
     expect(off).not.toContain('LANGFUSE_PUBLIC_KEY');
 
-    const on = generateEnvProdExample({ appName: 'demo', host: 'h', withPostgres: false, withRedis: false, secrets: [], observability: true });
+    const on = generateEnvProdExample({
+      appName: 'demo',
+      host: 'h',
+      withPostgres: false,
+      withRedis: false,
+      secrets: [],
+      observability: true,
+    });
     expect(on).toContain('MCP observability (C36)');
     expect(on).toContain('LANGFUSE_PUBLIC_KEY=');
     expect(on).toContain('LANGFUSE_SECRET_KEY=');
@@ -75,7 +98,14 @@ describe('C36 productionize observability wiring', () => {
   });
 
   it('.env.prod.example documents FORGE_MCP_TRACE_PAYLOADS (payload capture + the false toggle) in the observability block', () => {
-    const on = generateEnvProdExample({ appName: 'demo', host: 'h', withPostgres: false, withRedis: false, secrets: [], observability: true });
+    const on = generateEnvProdExample({
+      appName: 'demo',
+      host: 'h',
+      withPostgres: false,
+      withRedis: false,
+      secrets: [],
+      observability: true,
+    });
     expect(on).toContain('FORGE_MCP_TRACE_PAYLOADS=true');
     expect(on).toContain('set false to disable payload capture');
   });
@@ -89,6 +119,8 @@ describe('C36 productionize observability wiring', () => {
     // persisted on, no flag → carried forward (idempotent re-run)
     expect(convergeProduction({ observability: true }, { ...need }).observability).toBe(true);
     // flag can turn it back off explicitly
-    expect(convergeProduction({ observability: true }, { ...need, observability: false }).observability).toBe(false);
+    expect(convergeProduction({ observability: true }, { ...need, observability: false }).observability).toBe(
+      false,
+    );
   });
 });

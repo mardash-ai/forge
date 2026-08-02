@@ -83,7 +83,10 @@ export const infraConfigSchema = z
 
     /** Foundation-only: identifiers bootstrap needs. */
     org_id: z.string().regex(/^\d+$/).optional(),
-    billing_account: z.string().regex(/^[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}$/).optional(),
+    billing_account: z
+      .string()
+      .regex(/^[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}$/)
+      .optional(),
     /** Display name of the folder projects live under (created by bootstrap if missing). */
     folder: z.string().optional(),
 
@@ -166,7 +169,9 @@ export async function loadRepoStack(startDir: string): Promise<RepoStack> {
 export function requireEnv(config: InfraConfig, env: string) {
   const e = config.envs[env];
   if (!e) {
-    throw new Error(`env "${env}" is not declared in ${CONFIG_FILENAME} — declared: ${Object.keys(config.envs).join(', ')}`);
+    throw new Error(
+      `env "${env}" is not declared in ${CONFIG_FILENAME} — declared: ${Object.keys(config.envs).join(', ')}`,
+    );
   }
   return e;
 }

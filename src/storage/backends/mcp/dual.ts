@@ -15,18 +15,39 @@ import type {
 // NOTE: one-shot reads (consumeGrant) go ONLY to the primary — mirroring a delete-returning to the
 // secondary would let the FS copy be double-spent; the FS mirror is a cold standby, not a second spender.
 export class DualWriteMcpBackend implements McpBackend {
-  constructor(private readonly primary: PgMcpBackend, private readonly secondary: FsMcpBackend) {}
+  constructor(
+    private readonly primary: PgMcpBackend,
+    private readonly secondary: FsMcpBackend,
+  ) {}
 
   // reads → primary
-  getTool(appId: string, name: string): Promise<ToolRegistration | null> { return this.primary.getTool(appId, name); }
-  listTools(appId: string): Promise<ToolRegistration[]> { return this.primary.listTools(appId); }
-  latestInstructions(appId: string): Promise<InstructionBlock | null> { return this.primary.latestInstructions(appId); }
-  getInstructions(appId: string, version: number): Promise<InstructionBlock | null> { return this.primary.getInstructions(appId, version); }
-  listInstructions(appId: string): Promise<InstructionBlock[]> { return this.primary.listInstructions(appId); }
-  getClient(appId: string, clientId: string): Promise<OAuthClient | null> { return this.primary.getClient(appId, clientId); }
-  getConsent(appId: string, clientId: string, owner: string): Promise<Consent | null> { return this.primary.getConsent(appId, clientId, owner); }
-  listConsents(appId: string, owner: string): Promise<Consent[]> { return this.primary.listConsents(appId, owner); }
-  getGrant(appId: string, kind: GrantKind, tokenHash: string): Promise<OAuthGrant | null> { return this.primary.getGrant(appId, kind, tokenHash); }
+  getTool(appId: string, name: string): Promise<ToolRegistration | null> {
+    return this.primary.getTool(appId, name);
+  }
+  listTools(appId: string): Promise<ToolRegistration[]> {
+    return this.primary.listTools(appId);
+  }
+  latestInstructions(appId: string): Promise<InstructionBlock | null> {
+    return this.primary.latestInstructions(appId);
+  }
+  getInstructions(appId: string, version: number): Promise<InstructionBlock | null> {
+    return this.primary.getInstructions(appId, version);
+  }
+  listInstructions(appId: string): Promise<InstructionBlock[]> {
+    return this.primary.listInstructions(appId);
+  }
+  getClient(appId: string, clientId: string): Promise<OAuthClient | null> {
+    return this.primary.getClient(appId, clientId);
+  }
+  getConsent(appId: string, clientId: string, owner: string): Promise<Consent | null> {
+    return this.primary.getConsent(appId, clientId, owner);
+  }
+  listConsents(appId: string, owner: string): Promise<Consent[]> {
+    return this.primary.listConsents(appId, owner);
+  }
+  getGrant(appId: string, kind: GrantKind, tokenHash: string): Promise<OAuthGrant | null> {
+    return this.primary.getGrant(appId, kind, tokenHash);
+  }
 
   // writes → primary then mirror
   async putTool(appId: string, tool: ToolRegistration): Promise<ToolRegistration> {
@@ -39,7 +60,10 @@ export class DualWriteMcpBackend implements McpBackend {
     await this.secondary.deleteTool(appId, name);
     return ok;
   }
-  async appendInstructions(appId: string, input: { text: string; label?: string; created_at: string }): Promise<InstructionBlock> {
+  async appendInstructions(
+    appId: string,
+    input: { text: string; label?: string; created_at: string },
+  ): Promise<InstructionBlock> {
     const b = await this.primary.appendInstructions(appId, input);
     // Mirror the SAME version to keep the standby faithful.
     await this.secondary.importVersion(appId, b);

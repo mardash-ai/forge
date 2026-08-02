@@ -117,15 +117,30 @@ export async function completeConnect(input: CompleteConnectInput): Promise<Comp
   const store = await backend();
   const req = await store.consumeRequest(input.appId, input.state); // one-shot
   if (!req || req.provider !== input.provider) {
-    throw new ForgeError({ code: 'invalid_state', message: 'Unknown or already-used connect request (state mismatch). Start the connect flow again.', status: 400, retry: 'change-input' });
+    throw new ForgeError({
+      code: 'invalid_state',
+      message: 'Unknown or already-used connect request (state mismatch). Start the connect flow again.',
+      status: 400,
+      retry: 'change-input',
+    });
   }
   if (req.expires_at <= nowIso()) {
-    throw new ForgeError({ code: 'invalid_state', message: 'The connect request expired. Start the connect flow again.', status: 400, retry: 'change-input' });
+    throw new ForgeError({
+      code: 'invalid_state',
+      message: 'The connect request expired. Start the connect flow again.',
+      status: 400,
+      retry: 'change-input',
+    });
   }
   // If a session is present on the callback, it MUST be the same user who started (the state alone is
   // one-shot + unguessable, but this closes the gap where a leaked state could be replayed by another user).
   if (input.sessionOwner && input.sessionOwner !== req.owner) {
-    throw new ForgeError({ code: 'owner_mismatch', message: 'The signed-in user does not match the account that started this connection.', status: 403, retry: 'needs-human' });
+    throw new ForgeError({
+      code: 'owner_mismatch',
+      message: 'The signed-in user does not match the account that started this connection.',
+      status: 403,
+      retry: 'needs-human',
+    });
   }
 
   const resolved = await resolveProvider(input.appId, input.provider);
@@ -143,7 +158,13 @@ export async function completeConnect(input: CompleteConnectInput): Promise<Comp
       codeVerifier: req.code_verifier,
     });
   } catch (e) {
-    throw new ForgeError({ code: 'connect_failed', message: `Could not complete the "${descriptor.id}" connection: ${String((e as Error)?.message ?? e)}`, status: 502, retry: 'retry', details: { provider: descriptor.id } });
+    throw new ForgeError({
+      code: 'connect_failed',
+      message: `Could not complete the "${descriptor.id}" connection: ${String((e as Error)?.message ?? e)}`,
+      status: 502,
+      retry: 'retry',
+      details: { provider: descriptor.id },
+    });
   }
 
   const now = nowIso();
@@ -159,7 +180,11 @@ export async function completeConnect(input: CompleteConnectInput): Promise<Comp
     access_expires_at: expiresAt(tokens.expires_in, new Date(now)),
     scopes: grantedScopes,
     status: 'connected',
-    ...(tokens.account_label ? { account_label: tokens.account_label } : existing?.account_label ? { account_label: existing.account_label } : {}),
+    ...(tokens.account_label
+      ? { account_label: tokens.account_label }
+      : existing?.account_label
+        ? { account_label: existing.account_label }
+        : {}),
     connected_at: existing?.connected_at ?? now,
     updated_at: now,
   };
@@ -178,7 +203,8 @@ async function resolveRefreshSealed(
 
 // Only allow a single-slash same-origin path (the C10 safeNext posture) — never an open redirect.
 function safeReturnTo(returnTo: string | undefined): string {
-  if (!returnTo || !returnTo.startsWith('/') || returnTo.startsWith('//') || returnTo.startsWith('/\\')) return '/';
+  if (!returnTo || !returnTo.startsWith('/') || returnTo.startsWith('//') || returnTo.startsWith('/\\'))
+    return '/';
   return returnTo;
 }
 
@@ -222,7 +248,9 @@ export async function disconnect(appId: string, owner: string, provider: string)
   const resolved = await resolveProvider(appId, provider);
   if (resolved?.descriptor.revoke_endpoint) {
     try {
-      const refresh = conn.refresh_sealed ? await openValue(conn.refresh_sealed) : await openValue(conn.access_sealed);
+      const refresh = conn.refresh_sealed
+        ? await openValue(conn.refresh_sealed)
+        : await openValue(conn.access_sealed);
       await getOutboundOAuthClient().revoke({ provider: resolved.descriptor, token: refresh });
     } catch {
       // Never let a provider revoke failure block the local disconnect.
@@ -238,7 +266,13 @@ const refreshLocks = new Map<string, Promise<unknown>>();
 function withRefreshLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = refreshLocks.get(key) ?? Promise.resolve();
   const run = prev.then(fn, fn);
-  refreshLocks.set(key, run.then(() => undefined, () => undefined));
+  refreshLocks.set(
+    key,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
   return run;
 }
 
@@ -257,7 +291,13 @@ export async function getFreshAccessToken(input: GetTokenInput): Promise<FreshTo
     const conn = await store.getConnection(input.appId, input.owner, input.provider);
     if (!conn) throw notConnected(input.provider);
     if (input.requireScope && !conn.scopes.includes(input.requireScope)) {
-      throw new ForgeError({ code: 'insufficient_scope', message: `The "${input.provider}" connection was not granted the required scope "${input.requireScope}". The user must reconnect and grant it.`, status: 403, retry: 'needs-human', details: { provider: input.provider, required_scope: input.requireScope } });
+      throw new ForgeError({
+        code: 'insufficient_scope',
+        message: `The "${input.provider}" connection was not granted the required scope "${input.requireScope}". The user must reconnect and grant it.`,
+        status: 403,
+        retry: 'needs-human',
+        details: { provider: input.provider, required_scope: input.requireScope },
+      });
     }
 
     // Still valid (with skew)? Return the stored access token.

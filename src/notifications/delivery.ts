@@ -155,7 +155,11 @@ async function deliverEmail(
 // notify() — record + fan out. `appName` is passed through so the email channel can resolve the app for
 // C12 (which also defaults to FORGE_APP_NAME). Returns the in_app notification (when requested) plus a
 // per-channel delivery summary (when any external channel was requested).
-export async function notify(appId: string, appName: string | undefined, input: NotifyInput): Promise<DeliveryOutcome> {
+export async function notify(
+  appId: string,
+  appName: string | undefined,
+  input: NotifyInput,
+): Promise<DeliveryOutcome> {
   const channels = normalizeChannels(input.channels);
   const wantInApp = channels.includes('in_app');
   const wantPush = channels.includes('push');

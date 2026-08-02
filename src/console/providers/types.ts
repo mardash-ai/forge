@@ -24,15 +24,7 @@ import type {
 } from '../domain';
 
 export type ProviderKind =
-  | 'inventory'
-  | 'runtime'
-  | 'metrics'
-  | 'logs'
-  | 'pipelines'
-  | 'credentials'
-  | 'cost'
-  | 'alerts'
-  | 'drift';
+  'inventory' | 'runtime' | 'metrics' | 'logs' | 'pipelines' | 'credentials' | 'cost' | 'alerts' | 'drift';
 
 export type Feature =
   | 'inventory.list'
@@ -164,11 +156,7 @@ export interface LogQuery {
 
 export interface LogsProvider extends Provider {
   kind: 'logs';
-  query(
-    q: LogQuery,
-    r: { start: Date; end: Date; limit: number },
-    ctx: ProviderContext,
-  ): Promise<LogEntry[]>;
+  query(q: LogQuery, r: { start: Date; end: Date; limit: number }, ctx: ProviderContext): Promise<LogEntry[]>;
 }
 
 // ── Pipelines — the ONLY interface with writes ─────────────────────────────────────────────────

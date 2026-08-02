@@ -54,7 +54,11 @@ function seal(key: Buffer, plaintext: string): Sealed {
   const iv = randomBytes(12);
   const cipher = createCipheriv(ALGO, key, iv);
   const data = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return { iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), data: data.toString('base64') };
+  return {
+    iv: iv.toString('base64'),
+    tag: cipher.getAuthTag().toString('base64'),
+    data: data.toString('base64'),
+  };
 }
 
 function open(key: Buffer, s: Sealed): string {

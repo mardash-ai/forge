@@ -11,7 +11,10 @@ describe('pricing', () => {
   });
 
   it('prices a known model from the table (opus-4-8 = $5/$25 per 1M)', () => {
-    const { cost, estimated } = priceUsd('anthropic', 'claude-opus-4-8', { inputTokens: 1_000_000, outputTokens: 1_000_000 });
+    const { cost, estimated } = priceUsd('anthropic', 'claude-opus-4-8', {
+      inputTokens: 1_000_000,
+      outputTokens: 1_000_000,
+    });
     expect(cost).toBeCloseTo(30, 6); // 5 + 25
     expect(estimated).toBe(false);
   });
@@ -22,7 +25,10 @@ describe('pricing', () => {
   });
 
   it('falls back to the provider flagship for an unknown model and flags it estimated', () => {
-    const { cost, estimated } = priceUsd('anthropic', 'claude-some-future-model', { inputTokens: 1_000_000, outputTokens: 0 });
+    const { cost, estimated } = priceUsd('anthropic', 'claude-some-future-model', {
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+    });
     expect(cost).toBeCloseTo(5, 6); // anthropic fallback input price
     expect(estimated).toBe(true);
   });
@@ -54,15 +60,26 @@ function fakeFetch(bodies: unknown[]): typeof fetch {
 describe('usage capture in the tool-loop', () => {
   it('sums Anthropic usage across every model round-trip', async () => {
     const traj = await runAgent({
-      provider: 'anthropic', apiKey: 'k', model: 'claude-opus-4-8', system: 's', prompt: 'p', tools: [],
+      provider: 'anthropic',
+      apiKey: 'k',
+      model: 'claude-opus-4-8',
+      system: 's',
+      prompt: 'p',
+      tools: [],
       callTool: async () => ({ ok: true, result: {} }),
       fetchImpl: fakeFetch([
         // step 1: a tool_use turn (usage billed) ...
-        { stop_reason: 'tool_use', usage: { input_tokens: 100, output_tokens: 20 },
-          content: [{ type: 'tool_use', id: 't1', name: 'whats_next', input: {} }] },
+        {
+          stop_reason: 'tool_use',
+          usage: { input_tokens: 100, output_tokens: 20 },
+          content: [{ type: 'tool_use', id: 't1', name: 'whats_next', input: {} }],
+        },
         // step 2: final turn (more usage) — history is re-sent, so input is re-charged
-        { stop_reason: 'end_turn', usage: { input_tokens: 150, output_tokens: 30 },
-          content: [{ type: 'text', text: 'done' }] },
+        {
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 150, output_tokens: 30 },
+          content: [{ type: 'text', text: 'done' }],
+        },
       ]),
     });
     expect(traj.usage).toEqual({ inputTokens: 250, outputTokens: 50 });
@@ -71,11 +88,18 @@ describe('usage capture in the tool-loop', () => {
 
   it('sums OpenAI usage (prompt/completion tokens)', async () => {
     const traj = await runAgent({
-      provider: 'openai', apiKey: 'k', model: 'gpt-4o', system: 's', prompt: 'p', tools: [],
+      provider: 'openai',
+      apiKey: 'k',
+      model: 'gpt-4o',
+      system: 's',
+      prompt: 'p',
+      tools: [],
       callTool: async () => ({ ok: true, result: {} }),
       fetchImpl: fakeFetch([
-        { usage: { prompt_tokens: 200, completion_tokens: 40 },
-          choices: [{ finish_reason: 'stop', message: { content: 'done', tool_calls: [] } }] },
+        {
+          usage: { prompt_tokens: 200, completion_tokens: 40 },
+          choices: [{ finish_reason: 'stop', message: { content: 'done', tool_calls: [] } }],
+        },
       ]),
     });
     expect(traj.usage).toEqual({ inputTokens: 200, outputTokens: 40 });

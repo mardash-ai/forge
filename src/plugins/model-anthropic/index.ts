@@ -47,7 +47,9 @@ export async function resolveModelKey(appId: string): Promise<string | null> {
 // requires an object at the top with a `properties` map; default those if the caller omits
 // them so a bare `{ "type": "object", "properties": {...} }` and looser shapes both work.
 function normalizeSchema(schema: unknown): Record<string, unknown> {
-  const s = (schema && typeof schema === 'object' ? { ...(schema as Record<string, unknown>) } : {}) as Record<string, unknown>;
+  const s = (
+    schema && typeof schema === 'object' ? { ...(schema as Record<string, unknown>) } : {}
+  ) as Record<string, unknown>;
   if (s.type === undefined) s.type = 'object';
   if (s.type === 'object' && s.properties === undefined) s.properties = {};
   return s;
@@ -140,7 +142,8 @@ export const invokeStructured: ModelInvoker = async (input) => {
     throw new Error(`model request failed: ${msg}`);
   }
   const u = (body as { usage?: { input_tokens?: number; output_tokens?: number } })?.usage;
-  if (input.onUsage) input.onUsage({ inputTokens: Number(u?.input_tokens ?? 0), outputTokens: Number(u?.output_tokens ?? 0) });
+  if (input.onUsage)
+    input.onUsage({ inputTokens: Number(u?.input_tokens ?? 0), outputTokens: Number(u?.output_tokens ?? 0) });
   return parseResult(body);
 };
 

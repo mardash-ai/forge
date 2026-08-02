@@ -69,8 +69,13 @@ describe('session token (shared/session — the app mirrors this)', () => {
   it('rejects a tampered payload (signature mismatch)', () => {
     const token = signSessionToken({ userId: 'user_1', email: 'a@b.com', sessionId: 'sess_1' }, SECRET);
     const [h, , s] = token.split('.');
-    const forgedPayload = Buffer.from(JSON.stringify({ userId: 'admin', email: 'x@y.com', sessionId: 'sess_1', iat: 1, exp: 9999999999 }))
-      .toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const forgedPayload = Buffer.from(
+      JSON.stringify({ userId: 'admin', email: 'x@y.com', sessionId: 'sess_1', iat: 1, exp: 9999999999 }),
+    )
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
     expect(verifySessionToken(`${h}.${forgedPayload}.${s}`, SECRET)).toBeNull();
   });
 
@@ -89,7 +94,9 @@ describe('session token (shared/session — the app mirrors this)', () => {
     expect(verifySessionToken('not-a-token', SECRET)).toBeNull();
     expect(verifySessionToken('', SECRET)).toBeNull();
     expect(verifySessionToken(undefined, SECRET)).toBeNull();
-    expect(verifySessionToken(signSessionToken({ userId: 'u', email: 'a@b', sessionId: 's' }, SECRET), '')).toBeNull();
+    expect(
+      verifySessionToken(signSessionToken({ userId: 'u', email: 'a@b', sessionId: 's' }, SECRET), ''),
+    ).toBeNull();
   });
 });
 
@@ -109,7 +116,9 @@ describe('OAuth CSRF state token (P37 — host-independent, no cookie required)'
     expect(verifyOAuthState(token, 'other-secret')).toBeNull();
     // Tamper the payload but keep the old signature.
     const [body, sig] = token.split('.');
-    const forgedBody = Buffer.from(JSON.stringify({ n: 'n1', next: '/evil', app: 'demo', iat: 0, exp: 9999999999 })).toString('base64url');
+    const forgedBody = Buffer.from(
+      JSON.stringify({ n: 'n1', next: '/evil', app: 'demo', iat: 0, exp: 9999999999 }),
+    ).toString('base64url');
     expect(verifyOAuthState(`${forgedBody}.${sig}`, SECRET)).toBeNull();
     // Expired: signed 100s ago with a 5s TTL.
     const past = Math.floor(Date.now() / 1000) - 100;
@@ -152,7 +161,11 @@ describe('session cookie attributes', () => {
   });
 
   it('parseCookies reads a request cookie header', () => {
-    expect(parseCookies('a=1; forge_session=xyz; b=2')).toMatchObject({ a: '1', forge_session: 'xyz', b: '2' });
+    expect(parseCookies('a=1; forge_session=xyz; b=2')).toMatchObject({
+      a: '1',
+      forge_session: 'xyz',
+      b: '2',
+    });
     expect(parseCookies(undefined)).toEqual({});
   });
 });
@@ -253,15 +266,20 @@ describe('identity store — durable, multi-user, unique email', () => {
     expect(u1.email).toBe('jane@example.com');
     const u2 = await authStore.createUser(APP, { email: 'bob@example.com', password_hash: 'h2' });
     expect(u2.id).not.toBe(u1.id);
-    await expect(authStore.createUser(APP, { email: 'JANE@example.com', password_hash: 'h3' })).rejects.toBeInstanceOf(
-      authStore.EmailTakenError,
-    );
+    await expect(
+      authStore.createUser(APP, { email: 'JANE@example.com', password_hash: 'h3' }),
+    ).rejects.toBeInstanceOf(authStore.EmailTakenError);
     expect(await authStore.countUsers(APP)).toBe(2);
     expect((await authStore.findByEmail(APP, 'jane@example.com'))?.id).toBe(u1.id);
   });
 
   it('links OAuth users by provider id', async () => {
-    const u = await authStore.createUser(APP, { email: 'g@example.com', provider: 'google', provider_user_id: 'google-123', email_verified: true });
+    const u = await authStore.createUser(APP, {
+      email: 'g@example.com',
+      provider: 'google',
+      provider_user_id: 'google-123',
+      email_verified: true,
+    });
     expect((await authStore.findByProvider(APP, 'google', 'google-123'))?.id).toBe(u.id);
   });
 
@@ -288,9 +306,18 @@ describe('identity store — durable, multi-user, unique email', () => {
     const APP = 'app_refresh';
     const OPTS = { refreshTtlSeconds: 3600, sessionTtlSeconds: 3600, graceSeconds: 0 };
     async function seed() {
-      const u = await authStore.createUser(APP, { email: `r-${Math.random().toString(36).slice(2)}@ex.com`, password_hash: 'h', email_verified: true });
+      const u = await authStore.createUser(APP, {
+        email: `r-${Math.random().toString(36).slice(2)}@ex.com`,
+        password_hash: 'h',
+        email_verified: true,
+      });
       const s = await authStore.createSession(APP, u.id, 3600);
-      await authStore.putRefreshToken(APP, { tokenHash: 'rt_1', userId: u.id, sessionId: s.id, ttlSeconds: 3600 });
+      await authStore.putRefreshToken(APP, {
+        tokenHash: 'rt_1',
+        userId: u.id,
+        sessionId: s.id,
+        ttlSeconds: 3600,
+      });
       return { u, s };
     }
 
@@ -314,7 +341,12 @@ describe('identity store — durable, multi-user, unique email', () => {
     // Unknown / expired / logout-revoked all read as 'invalid'.
     const b = await seed();
     expect((await authStore.redeemRefreshToken(APP, 'nope', 'x', OPTS)).outcome).toBe('invalid');
-    await authStore.putRefreshToken(APP, { tokenHash: 'rt_exp', userId: b.u.id, sessionId: b.s.id, ttlSeconds: -1 });
+    await authStore.putRefreshToken(APP, {
+      tokenHash: 'rt_exp',
+      userId: b.u.id,
+      sessionId: b.s.id,
+      ttlSeconds: -1,
+    });
     expect((await authStore.redeemRefreshToken(APP, 'rt_exp', 'x', OPTS)).outcome).toBe('invalid');
     await authStore.revokeSessionRefreshTokens(APP, b.s.id);
     expect((await authStore.redeemRefreshToken(APP, 'rt_1', 'x', OPTS)).outcome).toBe('invalid');
@@ -334,7 +366,12 @@ describe('identity store — durable, multi-user, unique email', () => {
 
     // revokeAllUserRefreshTokens kills every token a user holds.
     const e = await seed();
-    await authStore.putRefreshToken(APP, { tokenHash: 'rt_other', userId: e.u.id, sessionId: e.s.id, ttlSeconds: 3600 });
+    await authStore.putRefreshToken(APP, {
+      tokenHash: 'rt_other',
+      userId: e.u.id,
+      sessionId: e.s.id,
+      ttlSeconds: 3600,
+    });
     expect(await authStore.revokeAllUserRefreshTokens(APP, e.u.id)).toBeGreaterThanOrEqual(2);
     expect((await authStore.redeemRefreshToken(APP, 'rt_1', 'z', OPTS)).outcome).toBe('invalid');
   });

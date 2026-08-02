@@ -141,7 +141,7 @@ const DAY_MS = 86_400_000;
 // order for display via `orderActive`/`orderResolved`).
 export function pruneIncidents(
   incidents: Incident[],
-  opts: { now: Date; maxResolved?: number; windowDays?: number } ,
+  opts: { now: Date; maxResolved?: number; windowDays?: number },
 ): Incident[] {
   const maxResolved = opts.maxResolved ?? RESOLVED_HISTORY_MAX;
   const windowMs = (opts.windowDays ?? RESOLVED_HISTORY_WINDOW_DAYS) * DAY_MS;

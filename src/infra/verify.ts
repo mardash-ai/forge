@@ -17,7 +17,11 @@ export interface VerifyResult {
 }
 
 /** Fetch over an explicit IP while keeping the URL's Host + SNI — for pre-DNS-cutover checks. */
-async function fetchVia(url: string, ip: string | undefined, timeoutMs = 15_000): Promise<{ status: number; body: string }> {
+async function fetchVia(
+  url: string,
+  ip: string | undefined,
+  timeoutMs = 15_000,
+): Promise<{ status: number; body: string }> {
   const u = new URL(url);
   if (!ip) {
     const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'manual' });
@@ -26,9 +30,17 @@ async function fetchVia(url: string, ip: string | undefined, timeoutMs = 15_000)
   // Node fetch has no resolve override; do a raw TLS request with SNI = hostname against the IP.
   return new Promise((resolvePromise, reject) => {
     const socket = connect(
-      { host: ip, port: Number(u.port || 443), servername: u.hostname, timeout: timeoutMs, rejectUnauthorized: false },
+      {
+        host: ip,
+        port: Number(u.port || 443),
+        servername: u.hostname,
+        timeout: timeoutMs,
+        rejectUnauthorized: false,
+      },
       () => {
-        socket.write(`GET ${u.pathname}${u.search} HTTP/1.1\r\nHost: ${u.hostname}\r\nConnection: close\r\n\r\n`);
+        socket.write(
+          `GET ${u.pathname}${u.search} HTTP/1.1\r\nHost: ${u.hostname}\r\nConnection: close\r\n\r\n`,
+        );
       },
     );
     let raw = '';
@@ -51,9 +63,11 @@ export async function runVerify(
   const out = (name?: string) => (name ? String(outputs[name] ?? '') : undefined);
 
   for (const check of stack.config.verify) {
-    const r = await runOne(stack, env, check, out).catch(
-      (e): VerifyResult => ({ title: title(check), status: 'fail', detail: (e as Error).message }),
-    );
+    const r = await runOne(stack, env, check, out).catch((e): VerifyResult => ({
+      title: title(check),
+      status: 'fail',
+      detail: (e as Error).message,
+    }));
     results.push(r);
   }
   return results;
@@ -61,11 +75,16 @@ export async function runVerify(
 
 function title(c: VerifyCheck): string {
   switch (c.kind) {
-    case 'dns_resolves': return `dns: ${c.host}`;
-    case 'http': return `http ${c.expect_status}: ${c.url}`;
-    case 'certless_discovery': return `certless discovery: ${c.url}`;
-    case 'cloud_run_ready': return `cloud run ready: ${c.service}`;
-    case 'command': return `command: ${c.run}`;
+    case 'dns_resolves':
+      return `dns: ${c.host}`;
+    case 'http':
+      return `http ${c.expect_status}: ${c.url}`;
+    case 'certless_discovery':
+      return `certless discovery: ${c.url}`;
+    case 'cloud_run_ready':
+      return `cloud run ready: ${c.service}`;
+    case 'command':
+      return `command: ${c.run}`;
   }
 }
 
@@ -82,7 +101,11 @@ async function runOne(
       if (!addr) return { title: t, status: 'fail', detail: 'does not resolve' };
       const expected = out(check.expect_output);
       if (expected && addr.address !== expected) {
-        return { title: t, status: 'fail', detail: `resolves to ${addr.address}, expected ${expected} (output ${check.expect_output})` };
+        return {
+          title: t,
+          status: 'fail',
+          detail: `resolves to ${addr.address}, expected ${expected} (output ${check.expect_output})`,
+        };
       }
       return { title: t, status: 'pass', detail: `resolves to ${addr.address}` };
     }
@@ -107,11 +130,16 @@ async function runOne(
         } else {
           // Say how long it took to come good — a deploy that needed 40s of warm-up is healthy but
           // worth noticing, and silence would hide a creeping start-up regression.
-          const detail = attempts === 1 ? `HTTP ${res.status}` : `HTTP ${res.status} after ${attempts} attempts`;
+          const detail =
+            attempts === 1 ? `HTTP ${res.status}` : `HTTP ${res.status} after ${attempts} attempts`;
           return { title: t, status: 'pass', detail };
         }
         if (Date.now() >= deadline) {
-          return { title: t, status: 'fail', detail: `${last} (${attempts} attempts over ${check.warmup_seconds ?? 60}s)` };
+          return {
+            title: t,
+            status: 'fail',
+            detail: `${last} (${attempts} attempts over ${check.warmup_seconds ?? 60}s)`,
+          };
         }
         await new Promise((r) => setTimeout(r, _fetchViaOverride ? 5 : 3000));
       }
@@ -128,8 +156,15 @@ async function runOne(
       const e = stack.config.envs[env]!;
       const r = await run(
         'gcloud',
-        ['run', 'services', 'describe', check.service, `--project=${e.project_id}`, `--region=${e.region}`,
-          '--format=value(status.conditions[0].status,status.url)'],
+        [
+          'run',
+          'services',
+          'describe',
+          check.service,
+          `--project=${e.project_id}`,
+          `--region=${e.region}`,
+          '--format=value(status.conditions[0].status,status.url)',
+        ],
         { timeoutMs: 60_000, tailLines: 20 },
       );
       const ok = (r.code ?? 1) === 0 && r.combined.trim().startsWith('True');
@@ -178,7 +213,8 @@ const NO_OP_COMMAND = /^\s*(true|:)\s*(#.*)?$/;
  * against the network would be slow, flaky, and unable to reproduce "503 then 200". These two
  * exports exist only for that; production code never touches them.
  */
-let _fetchViaOverride: ((url: string, ip?: string) => Promise<{ status: number; body: string }>) | null = null;
+let _fetchViaOverride: ((url: string, ip?: string) => Promise<{ status: number; body: string }>) | null =
+  null;
 export function __setFetchViaForTest(fn: typeof _fetchViaOverride): void {
   _fetchViaOverride = fn;
 }

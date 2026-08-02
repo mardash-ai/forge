@@ -50,7 +50,13 @@ export function registerSearchRoutes(
     const a = await store.findAppByName(n);
     return a && a.type === 'Application' ? a.id : null;
   };
-  const unknownApp = { error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } };
+  const unknownApp = {
+    error: {
+      code: 'not_found',
+      message: 'unknown app (pass `app` or set FORGE_APP_NAME).',
+      retry: 'change-input',
+    },
+  };
   const invalid = (message: string) => ({ error: { code: 'invalid_input', message, retry: 'change-input' } });
 
   // Validate + normalise one indexable document. Returns the document or an error message.
@@ -66,13 +72,23 @@ export function registerSearchRoutes(
     if (!owner || !owner.trim()) return { err: 'a document requires a non-empty string `owner`.' };
     if (!type || !type.trim()) return { err: 'a document requires a non-empty string `type`.' };
     if (!id || !id.trim()) return { err: 'a document requires a non-empty string `id`.' };
-    if (title === undefined || !title.trim()) return { err: 'a document requires a non-empty string `title`.' };
-    const attrs = b.attrs !== undefined && typeof b.attrs === 'object' && b.attrs !== null ? (b.attrs as Record<string, unknown>) : undefined;
+    if (title === undefined || !title.trim())
+      return { err: 'a document requires a non-empty string `title`.' };
+    const attrs =
+      b.attrs !== undefined && typeof b.attrs === 'object' && b.attrs !== null
+        ? (b.attrs as Record<string, unknown>)
+        : undefined;
     // C19 ACL metadata (all optional; absent ⇒ owner-only). `groupId` is read as a dedicated field, and
     // for continuity with consumers that already stamp it into `attrs`, falls back to `attrs.groupId`.
-    const groupId = str(b.groupId) ?? (attrs && typeof attrs.groupId === 'string' ? attrs.groupId : undefined);
+    const groupId =
+      str(b.groupId) ?? (attrs && typeof attrs.groupId === 'string' ? attrs.groupId : undefined);
     const visibility = str(b.visibility);
-    if (visibility !== undefined && visibility !== 'private' && visibility !== 'group' && visibility !== 'shared') {
+    if (
+      visibility !== undefined &&
+      visibility !== 'private' &&
+      visibility !== 'group' &&
+      visibility !== 'shared'
+    ) {
       return { err: "`visibility` must be one of 'private' | 'group' | 'shared'." };
     }
     const sharedWith = strArr(b.sharedWith);
@@ -83,7 +99,9 @@ export function registerSearchRoutes(
       id,
       title,
       ...(str(b.body) !== undefined ? { body: str(b.body) } : {}),
-      ...(Array.isArray(b.tags) ? { tags: (b.tags as unknown[]).filter((t): t is string => typeof t === 'string') } : {}),
+      ...(Array.isArray(b.tags)
+        ? { tags: (b.tags as unknown[]).filter((t): t is string => typeof t === 'string') }
+        : {}),
       ...(attrs !== undefined ? { attrs } : {}),
       ...(str(b.created_at) !== undefined ? { created_at: str(b.created_at) } : {}),
       ...(str(b.updated_at) !== undefined ? { updated_at: str(b.updated_at) } : {}),
@@ -108,9 +126,12 @@ export function registerSearchRoutes(
   // Remove one document by (owner, type, id) — idempotent.
   app.post('/index/delete', async (req, reply) => {
     const b = (req.body ?? {}) as { app?: string; owner?: string; type?: string; id?: string };
-    if (!b.owner || typeof b.owner !== 'string') return reply.status(422).send(invalid('delete requires a string `owner`.'));
-    if (!b.type || typeof b.type !== 'string') return reply.status(422).send(invalid('delete requires a string `type`.'));
-    if (!b.id || typeof b.id !== 'string') return reply.status(422).send(invalid('delete requires a string `id`.'));
+    if (!b.owner || typeof b.owner !== 'string')
+      return reply.status(422).send(invalid('delete requires a string `owner`.'));
+    if (!b.type || typeof b.type !== 'string')
+      return reply.status(422).send(invalid('delete requires a string `type`.'));
+    if (!b.id || typeof b.id !== 'string')
+      return reply.status(422).send(invalid('delete requires a string `id`.'));
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
     const deleted = await searchStore.delete(app_id, { owner: b.owner, type: b.type, id: b.id });
@@ -120,7 +141,8 @@ export function registerSearchRoutes(
   // Bulk upsert (backfill / cutover). Each element is validated; the first bad one → 422.
   app.post('/reindex', async (req, reply) => {
     const b = (req.body ?? {}) as { app?: string; documents?: unknown };
-    if (!Array.isArray(b.documents)) return reply.status(422).send(invalid('`documents` must be an array of documents.'));
+    if (!Array.isArray(b.documents))
+      return reply.status(422).send(invalid('`documents` must be an array of documents.'));
     const docs: SearchDocument[] = [];
     for (const raw of b.documents) {
       const parsed = parseDoc(raw);
@@ -136,16 +158,27 @@ export function registerSearchRoutes(
   // Search the caller's own documents. Owner-scoped, BM25-ranked, <mark> snippets.
   app.post('/search', async (req, reply) => {
     const b = (req.body ?? {}) as {
-      app?: string; owner?: string; q?: string; types?: unknown;
-      limit?: unknown; offset?: unknown; date_from?: string; date_to?: string; scope?: unknown;
+      app?: string;
+      owner?: string;
+      q?: string;
+      types?: unknown;
+      limit?: unknown;
+      offset?: unknown;
+      date_from?: string;
+      date_to?: string;
+      scope?: unknown;
     };
     // Client-error input (user-invoked read) → 400, never a masked empty 200.
-    if (!b.owner || typeof b.owner !== 'string') return reply.status(400).send(invalid('search requires a string `owner`.'));
-    if (typeof b.q !== 'string' || !b.q.trim()) return reply.status(400).send(invalid('search requires a non-empty query `q`.'));
+    if (!b.owner || typeof b.owner !== 'string')
+      return reply.status(400).send(invalid('search requires a string `owner`.'));
+    if (typeof b.q !== 'string' || !b.q.trim())
+      return reply.status(400).send(invalid('search requires a non-empty query `q`.'));
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
 
-    const types = Array.isArray(b.types) ? (b.types as unknown[]).filter((t): t is string => typeof t === 'string') : undefined;
+    const types = Array.isArray(b.types)
+      ? (b.types as unknown[]).filter((t): t is string => typeof t === 'string')
+      : undefined;
     // C19 access-aware scope (optional). Absent ⇒ owner-only. Only the recognised fields are read;
     // anything else is ignored (a malformed scope simply falls back to owner-only, never a 500).
     let scope: SearchScope | undefined;
@@ -172,7 +205,11 @@ export function registerSearchRoutes(
       // Internal store/ranking failure → degrade, do NOT 500. The app soft-handles this by showing
       // empty results with a "search temporarily unavailable" note.
       return reply.status(503).send({
-        error: { code: 'search_unavailable', message: 'search is temporarily unavailable; try again shortly.', retry: 'backoff' },
+        error: {
+          code: 'search_unavailable',
+          message: 'search is temporarily unavailable; try again shortly.',
+          retry: 'backoff',
+        },
       });
     }
   });

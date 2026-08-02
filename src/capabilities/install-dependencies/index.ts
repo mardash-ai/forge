@@ -14,7 +14,8 @@ type Input = z.infer<typeof inputSchema>;
 export const installDependencies: Capability<Input, DependencyInstall> = {
   name: 'InstallDependencies',
   slug: 'install-dependencies',
-  description: 'Install application dependencies inside Docker (npm) and record a DependencyInstall Resource.',
+  description:
+    'Install application dependencies inside Docker (npm) and record a DependencyInstall Resource.',
   inputSchema,
   resourceType: 'DependencyInstall',
   events: ['DependenciesInstalled'],

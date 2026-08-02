@@ -23,8 +23,7 @@ export function parseOwnerFromRemote(remoteUrl: string): string | undefined {
   if (!url) return undefined;
   // git@github.com:owner/repo.git  |  ssh://git@github.com/owner/repo.git
   // https://github.com/owner/repo(.git)  |  github.com/owner/repo
-  const m =
-    url.match(/[:/]([^/:]+)\/[^/]+?(?:\.git)?\/?$/) /* owner is the path segment before the repo */;
+  const m = url.match(/[:/]([^/:]+)\/[^/]+?(?:\.git)?\/?$/); /* owner is the path segment before the repo */
   if (!m) return undefined;
   const owner = m[1]?.trim();
   return owner && owner !== 'github.com' ? owner : undefined;
@@ -110,7 +109,10 @@ export async function resolveDigest(docker: DockerRunner, ref: string): Promise<
   // Best-effort: a non-zero exit OR a spawn failure (docker/buildx absent) → undefined, never a
   // throw. The assess-phase probe must degrade to "not published yet" rather than abort a release.
   try {
-    const r = await docker(['buildx', 'imagetools', 'inspect', ref, '--format', '{{json .Manifest.Digest}}'], 60_000);
+    const r = await docker(
+      ['buildx', 'imagetools', 'inspect', ref, '--format', '{{json .Manifest.Digest}}'],
+      60_000,
+    );
     if (r.code !== 0) return undefined;
     return parseImageDigest(r.out);
   } catch {
@@ -156,7 +158,11 @@ export interface PollOptions {
 // longer wedge the wait. Transient errors and "not found yet" both just retry — the resilience
 // that recovers the manual flow's "died twice on transient API errors mid-roll." Throws a
 // precise error naming every candidate on timeout.
-export async function waitForAnyDigest(docker: DockerRunner, refs: string[], opts: PollOptions): Promise<DigestHit> {
+export async function waitForAnyDigest(
+  docker: DockerRunner,
+  refs: string[],
+  opts: PollOptions,
+): Promise<DigestHit> {
   const now = opts.now ?? Date.now;
   const sleep = opts.sleep ?? delay;
   const deadline = now() + opts.timeoutMs;
@@ -167,13 +173,18 @@ export async function waitForAnyDigest(docker: DockerRunner, refs: string[], opt
     attempt++;
     opts.onAttempt?.(attempt, now() - (deadline - opts.timeoutMs));
     for (const ref of candidates) {
-      const r = await docker(['buildx', 'imagetools', 'inspect', ref, '--format', '{{json .Manifest.Digest}}'], 60_000);
+      const r = await docker(
+        ['buildx', 'imagetools', 'inspect', ref, '--format', '{{json .Manifest.Digest}}'],
+        60_000,
+      );
       if (r.code === 0) {
         const digest = parseImageDigest(r.out);
         if (digest) return { ref, digest };
         lastReason = 'inspect returned no digest';
       } else {
-        lastReason = isNotFound(r.out) ? 'not published yet' : `transient registry error: ${r.out.trim().split('\n').slice(-1)[0] ?? 'unknown'}`;
+        lastReason = isNotFound(r.out)
+          ? 'not published yet'
+          : `transient registry error: ${r.out.trim().split('\n').slice(-1)[0] ?? 'unknown'}`;
       }
     }
     if (now() >= deadline) {
@@ -198,16 +209,21 @@ export async function buildAndPush(
   opts: { repo: string; ref: string; dockerfile?: string },
 ): Promise<string> {
   const args = [
-    'buildx', 'build',
-    '--platform', 'linux/amd64,linux/arm64',
+    'buildx',
+    'build',
+    '--platform',
+    'linux/amd64,linux/arm64',
     ...(opts.dockerfile ? ['-f', opts.dockerfile] : []),
-    '-t', opts.ref,
+    '-t',
+    opts.ref,
     '--push',
     opts.repo,
   ];
   const r = await docker(args, 30 * 60_000);
   if (r.code !== 0) {
-    throw new Error(`multi-arch build+push of ${opts.ref} failed: ${r.out.trim().split('\n').slice(-3).join(' ')}`);
+    throw new Error(
+      `multi-arch build+push of ${opts.ref} failed: ${r.out.trim().split('\n').slice(-3).join(' ')}`,
+    );
   }
   // Resolve the pushed digest from the registry (buildx does not always echo it parseably).
   const digest = await resolveDigest(docker, opts.ref);

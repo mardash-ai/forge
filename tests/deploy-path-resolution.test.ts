@@ -22,7 +22,9 @@ describe('P16 · resolveWorkspacePath — relative under FORGE_WORKSPACE, absolu
   });
 
   it('resolves the relative --compose-file default under FORGE_WORKSPACE, not CWD', () => {
-    expect(resolveWorkspacePath(WORKSPACE, 'app/compose.prod.yaml')).toBe('/srv/acme-app/app/compose.prod.yaml');
+    expect(resolveWorkspacePath(WORKSPACE, 'app/compose.prod.yaml')).toBe(
+      '/srv/acme-app/app/compose.prod.yaml',
+    );
   });
 
   it('passes an ABSOLUTE --env-file through unchanged (path.join would mis-join it under the workspace)', () => {
@@ -50,7 +52,16 @@ describe('P16 · CLI launch — a relative --env-file reaches forge, it is NOT s
   // Spawn from a scratch dir with NO app/.env.prod — mirrors the container CWD (/forge), so a
   // node-hoisted relative --env-file resolves to a missing file exactly as it did in prod.
   const emptyCwd = mkdtempSync(path.join(tmpdir(), 'forge-p16-'));
-  const args = ['deploy', '--app', 'demo', '--env-file', 'app/.env.prod', '--compose-file', 'app/compose.prod.yaml', '--help'];
+  const args = [
+    'deploy',
+    '--app',
+    'demo',
+    '--env-file',
+    'app/.env.prod',
+    '--compose-file',
+    'app/compose.prod.yaml',
+    '--help',
+  ];
 
   it('FIXED (tsx -- cli …): the CLI starts and parses the flags (no node startup abort)', () => {
     const r = spawnSync(tsxBin, ['--', cli, ...args], { cwd: emptyCwd, encoding: 'utf8' });

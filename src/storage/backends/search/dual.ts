@@ -9,7 +9,10 @@ import type { SearchDocument, SearchQuery, SearchResponse } from '../../../searc
 // FORGE_SEARCH_BACKEND=postgres + FORGE_SEARCH_DUAL_WRITE=1. Search documents are content-addressed by
 // (owner, type, id), so the mirror is faithful.
 export class DualWriteSearchBackend implements SearchBackend {
-  constructor(private readonly primary: PgSearchBackend, private readonly secondary: FsSearchBackend) {}
+  constructor(
+    private readonly primary: PgSearchBackend,
+    private readonly secondary: FsSearchBackend,
+  ) {}
 
   private async mirror(appId: string): Promise<void> {
     await this.secondary.importApp(appId, await this.primary.exportApp(appId));

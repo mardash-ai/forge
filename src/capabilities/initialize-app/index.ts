@@ -11,7 +11,10 @@ import { invalidInput } from '../../shared/errors';
 const DEFAULT_PORT = 3000;
 
 const inputSchema = z.object({
-  name: z.string().min(1).regex(/^[a-z0-9][a-z0-9-]*$/, 'name must be kebab-case'),
+  name: z
+    .string()
+    .min(1)
+    .regex(/^[a-z0-9][a-z0-9-]*$/, 'name must be kebab-case'),
   template: z.string().default('nextjs-web'),
   package_manager: z.enum(['npm']).default('npm'),
   language: z.enum(['typescript']).default('typescript'),
@@ -98,7 +101,12 @@ export const initializeApp: Capability<Input, Application> = {
       resource_type: 'Application',
       resource_id: resource.id,
       app_id: resource.id,
-      data: { name: input.name, platform: input.platform, framework: input.framework, implementation: IMPLEMENTATION },
+      data: {
+        name: input.name,
+        platform: input.platform,
+        framework: input.framework,
+        implementation: IMPLEMENTATION,
+      },
     });
 
     return resource;

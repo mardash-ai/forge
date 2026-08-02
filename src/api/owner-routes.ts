@@ -23,12 +23,24 @@ export function registerOwnerRoutes(
     const a = await store.findAppByName(n);
     return a && a.type === 'Application' ? a.id : null;
   };
-  const unknownApp = { error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } };
+  const unknownApp = {
+    error: {
+      code: 'not_found',
+      message: 'unknown app (pass `app` or set FORGE_APP_NAME).',
+      retry: 'change-input',
+    },
+  };
 
   app.post('/owner/claim-legacy', async (req, reply) => {
     const b = (req.body ?? {}) as { app?: string; owner?: string };
     if (!b.owner || typeof b.owner !== 'string') {
-      return reply.status(422).send({ error: { code: 'invalid_input', message: 'claim-legacy requires a string `owner`.', retry: 'change-input' } });
+      return reply.status(422).send({
+        error: {
+          code: 'invalid_input',
+          message: 'claim-legacy requires a string `owner`.',
+          retry: 'change-input',
+        },
+      });
     }
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);

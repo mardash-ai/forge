@@ -145,7 +145,8 @@ export function renderTemplate(
   const who = typeof data.name === 'string' && data.name ? data.name : '';
   const greetText = who ? `Hi ${who},\n\n` : '';
   const greetHtml = who ? `<p>Hi ${escapeHtml(who)},</p>` : '';
-  const paste = `<p style="color:#6b7280;font-size:13px;">Or paste this link into your browser:<br>` +
+  const paste =
+    `<p style="color:#6b7280;font-size:13px;">Or paste this link into your browser:<br>` +
     `<a href="${eurl}" style="color:#2563eb;word-break:break-all;">${eurl}</a></p>`;
 
   if (name === 'twofa-code') {
@@ -261,7 +262,13 @@ export function buildMimeMessage(opts: {
   headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
   const body: string[] = [];
   for (const p of parts) {
-    body.push(`--${boundary}`, `Content-Type: ${p.type}`, 'Content-Transfer-Encoding: base64', '', base64Wrapped(p.body));
+    body.push(
+      `--${boundary}`,
+      `Content-Type: ${p.type}`,
+      'Content-Transfer-Encoding: base64',
+      '',
+      base64Wrapped(p.body),
+    );
   }
   body.push(`--${boundary}--`);
   return headers.join(CRLF) + CRLF + CRLF + body.join(CRLF);
@@ -416,7 +423,14 @@ export const sendViaSmtp: EmailTransport = async (msg, config) => {
   const toAddr = extractAddress(msg.to);
   const domain = fromAddr.split('@')[1] ?? 'localhost';
   const messageId = `<${randomUUID()}@${domain}>`;
-  const raw = buildMimeMessage({ from: msg.from, to: msg.to, subject: msg.subject, html: msg.html, text: msg.text, messageId });
+  const raw = buildMimeMessage({
+    from: msg.from,
+    to: msg.to,
+    subject: msg.subject,
+    html: msg.html,
+    text: msg.text,
+    messageId,
+  });
   const ehloName = host || 'localhost';
 
   let socket: net.Socket = secure

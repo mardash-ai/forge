@@ -44,14 +44,26 @@ let sent: Array<{ message: OutboundMessage; token: string }>;
 const seedApp = async (): Promise<void> => {
   const now = nowIso();
   await store.saveResource({
-    id: APP_ID, type: 'Application', app_id: APP_ID, created_at: now, updated_at: now,
-    name: APP, repo_path: '/app', platform: 'web', framework: 'nextjs', template: 'nextjs-web', language: 'typescript', package_manager: 'npm',
+    id: APP_ID,
+    type: 'Application',
+    app_id: APP_ID,
+    created_at: now,
+    updated_at: now,
+    name: APP,
+    repo_path: '/app',
+    platform: 'web',
+    framework: 'nextjs',
+    template: 'nextjs-web',
+    language: 'typescript',
+    package_manager: 'npm',
   } as Application);
 };
 
 // Seed a Google connection directly into the (encrypted) connections vault — tokens SEALED at rest, exactly
 // as the real connect flow would store them.
-async function seedConnection(opts: { owner?: string; scopes?: string[]; expiresInSec?: number; withRefresh?: boolean } = {}): Promise<void> {
+async function seedConnection(
+  opts: { owner?: string; scopes?: string[]; expiresInSec?: number; withRefresh?: boolean } = {},
+): Promise<void> {
   const owner = opts.owner ?? OWNER;
   const now = new Date();
   const conn: Connection = {
@@ -73,13 +85,20 @@ async function seedConnection(opts: { owner?: string; scopes?: string[]; expires
 async function signIn(email = 'alice@demo.test'): Promise<{ userId: string; cookie: string }> {
   const user = await authStore.createUser(APP_ID, { email, email_verified: true });
   const session = await authStore.createSession(APP_ID, user.id, 3600);
-  const token = signSessionToken({ userId: user.id, email: user.email, sessionId: session.id }, SESSION_SECRET);
+  const token = signSessionToken(
+    { userId: user.id, email: user.email, sessionId: session.id },
+    SESSION_SECRET,
+  );
   return { userId: user.id, cookie: `forge_session=${token}` };
 }
 
 // The capability input for a minimal send (app + owner explicit so we never depend on FORGE_APP_NAME).
 const send = (over: Record<string, unknown> = {}) =>
-  executeCapability('send-message', { app: APP, owner: OWNER, to: ['bob@example.test'], subject: 'Hello', body: 'Hi there', ...over }, SYSTEM_ACTOR);
+  executeCapability(
+    'send-message',
+    { app: APP, owner: OWNER, to: ['bob@example.test'], subject: 'Hello', body: 'Hi there', ...over },
+    SYSTEM_ACTOR,
+  );
 
 beforeEach(async () => {
   prevDir = process.env.FORGE_STATE_DIR;
@@ -110,9 +129,12 @@ afterEach(async () => {
   resetGmailSender();
   const conns = (await getBackends()).connections;
   if (conns.__truncateAllForTests) await conns.__truncateAllForTests();
-  if (prevDir === undefined) delete process.env.FORGE_STATE_DIR; else process.env.FORGE_STATE_DIR = prevDir;
-  if (prevKey === undefined) delete process.env.FORGE_SECRETS_KEY; else process.env.FORGE_SECRETS_KEY = prevKey;
-  if (prevAppName === undefined) delete process.env.FORGE_APP_NAME; else process.env.FORGE_APP_NAME = prevAppName;
+  if (prevDir === undefined) delete process.env.FORGE_STATE_DIR;
+  else process.env.FORGE_STATE_DIR = prevDir;
+  if (prevKey === undefined) delete process.env.FORGE_SECRETS_KEY;
+  else process.env.FORGE_SECRETS_KEY = prevKey;
+  if (prevAppName === undefined) delete process.env.FORGE_APP_NAME;
+  else process.env.FORGE_APP_NAME = prevAppName;
   await rm(dir, { recursive: true, force: true });
 });
 

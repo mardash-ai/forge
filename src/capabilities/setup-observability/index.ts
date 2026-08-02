@@ -60,9 +60,8 @@ export const setupObservability: Capability<Input, ObservabilityStack> = {
     const status: ObservabilityStack['status'] = 'configured';
 
     // Upsert: there is at most ONE platform ObservabilityStack.
-    const existing = (
-      await ctx.store.listResources({ type: 'ObservabilityStack' })
-    )[0] as ObservabilityStack | undefined;
+    const existing = (await ctx.store.listResources({ type: 'ObservabilityStack' }))[0] as
+      ObservabilityStack | undefined;
 
     const resource: ObservabilityStack = existing
       ? {

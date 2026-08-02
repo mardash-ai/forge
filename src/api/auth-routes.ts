@@ -130,39 +130,59 @@ export function registerAuthRoutes(
     if (fromHeader) return fromHeader;
     return opts.defaultApp?.();
   };
-  const resolveAppId = async (req: FastifyRequest, explicit?: string): Promise<{ id: string; name: string } | null> => {
+  const resolveAppId = async (
+    req: FastifyRequest,
+    explicit?: string,
+  ): Promise<{ id: string; name: string } | null> => {
     const n = resolveAppName(req, explicit);
     if (!n) return null;
     const a = await store.findAppByName(n);
     return a && a.type === 'Application' ? { id: a.id, name: n } : null;
   };
 
-  async function emit(appId: string, type: Parameters<typeof store.appendEvent>[0]['type'], resourceId: string, email?: string, extra?: Record<string, unknown>) {
+  async function emit(
+    appId: string,
+    type: Parameters<typeof store.appendEvent>[0]['type'],
+    resourceId: string,
+    email?: string,
+    extra?: Record<string, unknown>,
+  ) {
     await store.appendEvent({
       type,
       resource_type: 'AuthUser',
       resource_id: resourceId,
       app_id: appId,
       actor: SYSTEM_ACTOR,
-      data: { ...(email ? { email: redactEmail(email) } : {}), implementation: IMPLEMENTATION, ...(extra ?? {}) },
+      data: {
+        ...(email ? { email: redactEmail(email) } : {}),
+        implementation: IMPLEMENTATION,
+        ...(extra ?? {}),
+      },
     });
   }
 
   // ---- request helpers ---------------------------------------------------------
 
   function insecureCookies(): boolean {
-    return process.env.FORGE_AUTH_INSECURE_COOKIES === '1' || process.env.FORGE_AUTH_INSECURE_COOKIES === 'true';
+    return (
+      process.env.FORGE_AUTH_INSECURE_COOKIES === '1' || process.env.FORGE_AUTH_INSECURE_COOKIES === 'true'
+    );
   }
   function requestIsSecure(req: FastifyRequest): boolean {
     if (insecureCookies()) return false;
-    const xf = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]!.trim();
+    const xf = String(req.headers['x-forwarded-proto'] ?? '')
+      .split(',')[0]!
+      .trim();
     if (xf) return xf === 'https';
     return true; // production is behind TLS; local http dev sets FORGE_AUTH_INSECURE_COOKIES
   }
   function publicBase(req: FastifyRequest): string {
     const explicit = process.env.FORGE_AUTH_PUBLIC_URL;
     if (explicit) return explicit.replace(/\/+$/, '');
-    const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]!.trim() || (requestIsSecure(req) ? 'https' : 'http');
+    const proto =
+      String(req.headers['x-forwarded-proto'] ?? '')
+        .split(',')[0]!
+        .trim() || (requestIsSecure(req) ? 'https' : 'http');
     const host = String(req.headers['x-forwarded-host'] ?? req.headers['host'] ?? 'localhost');
     return `${proto}://${host}`;
   }
@@ -207,14 +227,24 @@ export function registerAuthRoutes(
     const session = await authStore.createSession(appId, user.id, DEFAULT_SESSION_TTL_SECONDS);
     const now = Math.floor(Date.now() / 1000);
     // SHORT-lived access token (~15m JWS exp) — locally verifiable, no round-trip.
-    const access = signSessionToken({ userId: user.id, email: user.email, sessionId: session.id }, cfg.sessionSecret!, accessTtlSeconds(), now);
+    const access = signSessionToken(
+      { userId: user.id, email: user.email, sessionId: session.id },
+      cfg.sessionSecret!,
+      accessTtlSeconds(),
+      now,
+    );
     // The access cookie's Max-Age is the (long) session lifetime, so the browser keeps
     // presenting the token even after its short JWS `exp`; the gate then sees it's
     // expired and refreshes. The short-lived part is the JWS `exp`, not the cookie.
     const accessC = sessionCookie(access, { secure, maxAgeSeconds: refreshTtlSeconds() });
     // Opaque, revocable refresh token (~30d) — a new record persists its HASH only.
     const refreshRaw = newToken().token;
-    await authStore.putRefreshToken(appId, { tokenHash: hashToken(refreshRaw), userId: user.id, sessionId: session.id, ttlSeconds: refreshTtlSeconds() });
+    await authStore.putRefreshToken(appId, {
+      tokenHash: hashToken(refreshRaw),
+      userId: user.id,
+      sessionId: session.id,
+      ttlSeconds: refreshTtlSeconds(),
+    });
     const refreshC = refreshCookie(refreshRaw, { secure, maxAgeSeconds: refreshTtlSeconds() });
     await emit(appId, 'UserAuthenticated', user.id, user.email, { method: user.provider ?? 'password' });
     return [accessC, refreshC];
@@ -232,7 +262,11 @@ export function registerAuthRoutes(
     extraCookies: string[] = [],
   ) {
     const cookies = await mintSessionCookies(req, appId, cfg, user);
-    reply.header('set-cookie', [...cookies, ...extraCookies]).code(303).header('location', location).send();
+    reply
+      .header('set-cookie', [...cookies, ...extraCookies])
+      .code(303)
+      .header('location', location)
+      .send();
   }
 
   // Whether the client wants a JSON response (a programmatic caller) vs. the hosted HTML flow (a browser
@@ -248,14 +282,21 @@ export function registerAuthRoutes(
   // The identity flags a consumer needs to decide which account-security forms to offer:
   //   has_password  — the account can change its password (false for a Google-only account)
   //   twofa_enabled — email 2FA is on for this account
-  async function identityFields(appId: string, userId: string): Promise<{ has_password: boolean; twofa_enabled: boolean }> {
+  async function identityFields(
+    appId: string,
+    userId: string,
+  ): Promise<{ has_password: boolean; twofa_enabled: boolean }> {
     const u = await authStore.getUser(appId, userId);
     return { has_password: Boolean(u?.password_hash), twofa_enabled: Boolean(u?.twofa_enabled) };
   }
 
   // The authenticated user behind a live session, or null (used by the session-gated account-security
   // endpoints: password change, 2FA enable/disable).
-  async function authedUser(req: FastifyRequest, appId: string, cfg: AuthConfig): Promise<authStore.StoredUser | null> {
+  async function authedUser(
+    req: FastifyRequest,
+    appId: string,
+    cfg: AuthConfig,
+  ): Promise<authStore.StoredUser | null> {
     const live = await liveSession(req, appId, cfg);
     if (!live) return null;
     return authStore.getUser(appId, live.claims.userId);
@@ -293,7 +334,11 @@ export function registerAuthRoutes(
     // Fact only — never the code or its hash (emit redacts the email).
     await emit(appId, 'TwofaChallengeIssued', user.id, user.email, { purpose });
     try {
-      await executeCapability('send-email', { app: appName, to: user.email, template: 'twofa-code', data: { code: otp.code } }, SYSTEM_ACTOR);
+      await executeCapability(
+        'send-email',
+        { app: appName, to: user.email, template: 'twofa-code', data: { code: otp.code } },
+        SYSTEM_ACTOR,
+      );
     } catch {
       // C12 unconfigured mid-flight (shouldn't happen — we checked ok above) — the stored code simply
       // expires. The client can resend. Never crash the auth flow.
@@ -328,13 +373,37 @@ export function registerAuthRoutes(
   ) {
     const json = wantsJson(req);
     const challengeRaw = newToken().token;
-    const delivered = await issueTwofaCode(app_.name, app_.id, user, twofaLoginId(challengeRaw), 'login', next);
+    const delivered = await issueTwofaCode(
+      app_.name,
+      app_.id,
+      user,
+      twofaLoginId(challengeRaw),
+      'login',
+      next,
+    );
     if (!delivered) {
       // 2FA is on but the code can't be delivered (email unconfigured). Fail CLOSED — never fall back to a
       // password-only session, which would silently bypass the second factor.
-      if (json) return jerr(reply, 503, 'twofa_undeliverable', 'Two-factor codes cannot be delivered right now. Contact support.', 'needs-human');
+      if (json)
+        return jerr(
+          reply,
+          503,
+          'twofa_undeliverable',
+          'Two-factor codes cannot be delivered right now. Contact support.',
+          'needs-human',
+        );
       const theme = await themeFor(app_.id);
-      return htmlReply(reply, 503, loginPage({ next, google: Boolean(cfg.google), error: 'We could not send your verification code. Please try again later.', email: user.email, theme }));
+      return htmlReply(
+        reply,
+        503,
+        loginPage({
+          next,
+          google: Boolean(cfg.google),
+          error: 'We could not send your verification code. Please try again later.',
+          email: user.email,
+          theme,
+        }),
+      );
     }
     if (json) {
       return reply.code(200).send({
@@ -347,7 +416,17 @@ export function registerAuthRoutes(
       });
     }
     const theme = await themeFor(app_.id);
-    return htmlReply(reply, 200, twofaChallengePage({ challenge: challengeRaw, next, app: app_.name, sent_to: redactEmail(user.email), theme }));
+    return htmlReply(
+      reply,
+      200,
+      twofaChallengePage({
+        challenge: challengeRaw,
+        next,
+        app: app_.name,
+        sent_to: redactEmail(user.email),
+        theme,
+      }),
+    );
   }
 
   // Rotate the opaque refresh cookie into a fresh access+refresh pair, setting both
@@ -370,7 +449,10 @@ export function registerAuthRoutes(
       graceSeconds: refreshReuseGraceSeconds(),
     });
     if (res.outcome === 'reuse') {
-      await emit(appId, 'SessionRevoked', res.userId, undefined, { reason: 'refresh_reuse_detected', session_id: res.sessionId });
+      await emit(appId, 'SessionRevoked', res.userId, undefined, {
+        reason: 'refresh_reuse_detected',
+        session_id: res.sessionId,
+      });
       return 'reuse';
     }
     if (res.outcome !== 'rotated') return null;
@@ -379,7 +461,12 @@ export function registerAuthRoutes(
     const secure = requestIsSecure(req);
     const now = Math.floor(Date.now() / 1000);
     const ttl = accessTtlSeconds();
-    const access = signSessionToken({ userId: user.id, email: user.email, sessionId: res.sessionId }, cfg.sessionSecret, ttl, now);
+    const access = signSessionToken(
+      { userId: user.id, email: user.email, sessionId: res.sessionId },
+      cfg.sessionSecret,
+      ttl,
+      now,
+    );
     reply.header('set-cookie', [
       sessionCookie(access, { secure, maxAgeSeconds: refreshTtlSeconds() }),
       refreshCookie(successorRaw, { secure, maxAgeSeconds: refreshTtlSeconds() }),
@@ -424,32 +511,60 @@ export function registerAuthRoutes(
 
   app.get('/auth/login', async (req, reply) => {
     const app_ = await resolveAppId(req);
-    if (!app_) return htmlReply(reply, 404, page({ title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
+    if (!app_)
+      return htmlReply(reply, 404, page({ title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const cfg = await resolveAuthConfig(app_.id);
     const theme = await themeFor(app_.id);
     const q = req.query as { next?: string; error?: string; notice?: string };
-    htmlReply(reply, 200, loginPage({ next: safeNext(q.next), google: Boolean(cfg.google), error: q.error, notice: q.notice, theme }));
+    htmlReply(
+      reply,
+      200,
+      loginPage({
+        next: safeNext(q.next),
+        google: Boolean(cfg.google),
+        error: q.error,
+        notice: q.notice,
+        theme,
+      }),
+    );
   });
 
   app.post('/auth/login', async (req, reply) => {
     const b = body(req);
     const app_ = await resolveAppId(req);
-    if (!app_) return htmlReply(reply, 404, page({ title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
+    if (!app_)
+      return htmlReply(reply, 404, page({ title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const cfg = await resolveAuthConfig(app_.id);
     const theme = await themeFor(app_.id);
     const next = safeNext(b.next);
     const fail = (msg: string) =>
-      htmlReply(reply, 401, loginPage({ next, google: Boolean(cfg.google), error: msg, email: b.email, theme }));
+      htmlReply(
+        reply,
+        401,
+        loginPage({ next, google: Boolean(cfg.google), error: msg, email: b.email, theme }),
+      );
     if (!cfg.sessionSecret) return htmlReply(reply, 503, notConfiguredPage(theme));
 
     const email = String(b.email ?? '');
     const password = String(b.password ?? '');
     const user = await authStore.findByEmail(app_.id, email);
     // Constant-ish message: never reveal whether the email exists.
-    const ok = user ? await verifyPassword(password, user.password_hash) : await verifyPassword(password, undefined);
+    const ok = user
+      ? await verifyPassword(password, user.password_hash)
+      : await verifyPassword(password, undefined);
     if (!user || !ok) return fail('Incorrect email or password.');
     if (!user.email_verified) {
-      return htmlReply(reply, 403, loginPage({ next, google: Boolean(cfg.google), error: 'Please verify your email before signing in. Check your inbox for the verification link.', email: user.email, theme }));
+      return htmlReply(
+        reply,
+        403,
+        loginPage({
+          next,
+          google: Boolean(cfg.google),
+          error: 'Please verify your email before signing in. Check your inbox for the verification link.',
+          email: user.email,
+          theme,
+        }),
+      );
     }
     // OPT-IN 2FA gate: only a user who explicitly enabled it is diverted to a second-factor challenge —
     // a non-2FA account falls straight through to establishSession, byte-for-byte as before.
@@ -463,24 +578,47 @@ export function registerAuthRoutes(
 
   app.get('/auth/signup', async (req, reply) => {
     const app_ = await resolveAppId(req);
-    if (!app_) return htmlReply(reply, 404, page({ title: 'Sign up', bodyHtml: `<p class="err">Unknown app.</p>` }));
+    if (!app_)
+      return htmlReply(reply, 404, page({ title: 'Sign up', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const cfg = await resolveAuthConfig(app_.id);
     const email = await resolveEmailConfig(app_.id);
     const theme = await themeFor(app_.id);
     const q = req.query as { next?: string; error?: string };
-    htmlReply(reply, 200, signupPage({ next: safeNext(q.next), google: Boolean(cfg.google), emailEnabled: email.ok, error: q.error, theme }));
+    htmlReply(
+      reply,
+      200,
+      signupPage({
+        next: safeNext(q.next),
+        google: Boolean(cfg.google),
+        emailEnabled: email.ok,
+        error: q.error,
+        theme,
+      }),
+    );
   });
 
   app.post('/auth/signup', async (req, reply) => {
     const b = body(req);
     const app_ = await resolveAppId(req);
-    if (!app_) return htmlReply(reply, 404, page({ title: 'Sign up', bodyHtml: `<p class="err">Unknown app.</p>` }));
+    if (!app_)
+      return htmlReply(reply, 404, page({ title: 'Sign up', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const cfg = await resolveAuthConfig(app_.id);
     const theme = await themeFor(app_.id);
     const next = safeNext(b.next);
     const emailCfg = await resolveEmailConfig(app_.id);
     const fail = (msg: string, status = 400) =>
-      htmlReply(reply, status, signupPage({ next, google: Boolean(cfg.google), emailEnabled: emailCfg.ok, error: msg, email: b.email, theme }));
+      htmlReply(
+        reply,
+        status,
+        signupPage({
+          next,
+          google: Boolean(cfg.google),
+          emailEnabled: emailCfg.ok,
+          error: msg,
+          email: b.email,
+          theme,
+        }),
+      );
 
     if (!cfg.sessionSecret) return htmlReply(reply, 503, notConfiguredPage(theme));
     const email = String(b.email ?? '').trim();
@@ -490,7 +628,10 @@ export function registerAuthRoutes(
     // Detectable absence (§7): email/pw signup needs C12. If email isn't configured,
     // BLOCK this path cleanly (Google still works) — never crash, never a half-account.
     if (!emailCfg.ok) {
-      return fail('Email/password sign-up is unavailable right now (email delivery is not configured). Try continuing with Google.', 503);
+      return fail(
+        'Email/password sign-up is unavailable right now (email delivery is not configured). Try continuing with Google.',
+        503,
+      );
     }
 
     const password_hash = await hashPassword(password);
@@ -502,7 +643,10 @@ export function registerAuthRoutes(
         // Don't leak existence via a hard error — send to login with a neutral notice.
         return reply
           .code(303)
-          .header('location', `/auth/login?notice=${encodeURIComponent('If that email is registered, sign in or reset your password.')}`)
+          .header(
+            'location',
+            `/auth/login?notice=${encodeURIComponent('If that email is registered, sign in or reset your password.')}`,
+          )
           .send();
       }
       throw e;
@@ -514,12 +658,27 @@ export function registerAuthRoutes(
     await authStore.putVerifyToken(app_.id, hash, user.id, VERIFY_TOKEN_TTL_SECONDS);
     const url = `${publicBase(req)}/auth/verify?token=${token}`;
     try {
-      await executeCapability('send-email', { app: app_.name, to: user.email, template: 'verify-email', data: { url } }, SYSTEM_ACTOR);
+      await executeCapability(
+        'send-email',
+        { app: app_.name, to: user.email, template: 'verify-email', data: { url } },
+        SYSTEM_ACTOR,
+      );
     } catch (e) {
       // C12 unconfigured/failed — surface cleanly; the account exists but stays
       // unverified until a (future) resend succeeds. Never crash.
-      const detail = e instanceof ForgeError && e.code === 'dependency_unavailable' ? ' (email delivery is not configured)' : '';
-      return htmlReply(reply, 200, page({ theme, title: 'Almost there', bodyHtml: `<h1>Check your email</h1><p>We tried to send a verification link to <b>${escapeHtml(redactEmail(user.email))}</b> but delivery didn't go through${escapeHtml(detail)}. Please try again later.</p>` }));
+      const detail =
+        e instanceof ForgeError && e.code === 'dependency_unavailable'
+          ? ' (email delivery is not configured)'
+          : '';
+      return htmlReply(
+        reply,
+        200,
+        page({
+          theme,
+          title: 'Almost there',
+          bodyHtml: `<h1>Check your email</h1><p>We tried to send a verification link to <b>${escapeHtml(redactEmail(user.email))}</b> but delivery didn't go through${escapeHtml(detail)}. Please try again later.</p>`,
+        }),
+      );
     }
     htmlReply(reply, 200, checkEmailPage(user.email, theme));
   });
@@ -528,17 +687,29 @@ export function registerAuthRoutes(
 
   app.get('/auth/verify', async (req, reply) => {
     const app_ = await resolveAppId(req);
-    if (!app_) return htmlReply(reply, 404, page({ title: 'Verify', bodyHtml: `<p class="err">Unknown app.</p>` }));
+    if (!app_)
+      return htmlReply(reply, 404, page({ title: 'Verify', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const token = String((req.query as { token?: string }).token ?? '');
     const userId = token ? await authStore.consumeVerifyToken(app_.id, hashToken(token)) : null;
     if (!userId) {
       const theme = await themeFor(app_.id);
-      return htmlReply(reply, 400, page({ theme, title: 'Verify', bodyHtml: `<h1>Link expired</h1><p>This verification link is invalid or has already been used. Sign in to request a new one.</p><p><a href="/auth/login">Go to sign in</a></p>` }));
+      return htmlReply(
+        reply,
+        400,
+        page({
+          theme,
+          title: 'Verify',
+          bodyHtml: `<h1>Link expired</h1><p>This verification link is invalid or has already been used. Sign in to request a new one.</p><p><a href="/auth/login">Go to sign in</a></p>`,
+        }),
+      );
     }
     await authStore.updateUser(app_.id, userId, { email_verified: true });
     const u = await authStore.getUser(app_.id, userId);
     await emit(app_.id, 'UserVerified', userId, u?.email);
-    reply.code(303).header('location', `/auth/login?notice=${encodeURIComponent('Email verified — you can sign in now.')}`).send();
+    reply
+      .code(303)
+      .header('location', `/auth/login?notice=${encodeURIComponent('Email verified — you can sign in now.')}`)
+      .send();
   });
 
   // ---- password reset ----------------------------------------------------------
@@ -559,7 +730,15 @@ export function registerAuthRoutes(
     const emailCfg = await resolveEmailConfig(app_.id);
     // Always respond identically — never reveal whether an account exists (§ no enumeration).
     const done = () =>
-      htmlReply(reply, 200, page({ theme, title: 'Check your email', bodyHtml: `<h1>Check your email</h1><p>If an account exists for that address, we've sent a link to reset its password.</p>` }));
+      htmlReply(
+        reply,
+        200,
+        page({
+          theme,
+          title: 'Check your email',
+          bodyHtml: `<h1>Check your email</h1><p>If an account exists for that address, we've sent a link to reset its password.</p>`,
+        }),
+      );
     if (!emailCfg.ok || !EMAIL_RE.test(email)) return done();
     const user = await authStore.findByEmail(app_.id, email);
     if (user) {
@@ -568,7 +747,11 @@ export function registerAuthRoutes(
       const url = `${publicBase(req)}/auth/reset?token=${token}`;
       await emit(app_.id, 'PasswordResetRequested', user.id, user.email);
       try {
-        await executeCapability('send-email', { app: app_.name, to: user.email, template: 'reset-password', data: { url } }, SYSTEM_ACTOR);
+        await executeCapability(
+          'send-email',
+          { app: app_.name, to: user.email, template: 'reset-password', data: { url } },
+          SYSTEM_ACTOR,
+        );
       } catch {
         // Swallow — a delivery failure must not reveal the account exists.
       }
@@ -592,11 +775,28 @@ export function registerAuthRoutes(
     const token = String(b.token ?? '');
     const password = String(b.password ?? '');
     if (password.length < MIN_PASSWORD) {
-      return htmlReply(reply, 400, resetPage({ token, app: b.app, error: `Password must be at least ${MIN_PASSWORD} characters.`, theme }));
+      return htmlReply(
+        reply,
+        400,
+        resetPage({
+          token,
+          app: b.app,
+          error: `Password must be at least ${MIN_PASSWORD} characters.`,
+          theme,
+        }),
+      );
     }
     const userId = token ? await authStore.consumeResetToken(app_.id, hashToken(token)) : null;
     if (!userId) {
-      return htmlReply(reply, 400, page({ theme, title: 'Reset password', bodyHtml: `<h1>Link expired</h1><p>This reset link is invalid or has already been used. <a href="/auth/forgot">Request a new one</a>.</p>` }));
+      return htmlReply(
+        reply,
+        400,
+        page({
+          theme,
+          title: 'Reset password',
+          bodyHtml: `<h1>Link expired</h1><p>This reset link is invalid or has already been used. <a href="/auth/forgot">Request a new one</a>.</p>`,
+        }),
+      );
     }
     const password_hash = await hashPassword(password);
     // A reset also VERIFIES the email (they proved control of it) and REVOKES all
@@ -608,9 +808,15 @@ export function registerAuthRoutes(
     const u = await authStore.getUser(app_.id, userId);
     await emit(app_.id, 'PasswordChanged', userId, u?.email);
     reply
-      .header('set-cookie', [clearSessionCookie({ secure: requestIsSecure(req) }), clearRefreshCookie({ secure: requestIsSecure(req) })])
+      .header('set-cookie', [
+        clearSessionCookie({ secure: requestIsSecure(req) }),
+        clearRefreshCookie({ secure: requestIsSecure(req) }),
+      ])
       .code(303)
-      .header('location', `/auth/login?notice=${encodeURIComponent('Password updated — sign in with your new password.')}`)
+      .header(
+        'location',
+        `/auth/login?notice=${encodeURIComponent('Password updated — sign in with your new password.')}`,
+      )
       .send();
   });
 
@@ -618,13 +824,17 @@ export function registerAuthRoutes(
 
   app.get('/auth/google', async (req, reply) => {
     const app_ = await resolveAppId(req);
-    if (!app_) return htmlReply(reply, 404, page({ title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
+    if (!app_)
+      return htmlReply(reply, 404, page({ title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
     const cfg = await resolveAuthConfig(app_.id);
     // Google sign-in needs BOTH the OAuth client AND the session secret — the callback signs a session, and
     // (P37) the CSRF `state` is now an HMAC-signed token keyed by this secret (so it survives a cross-host
     // return with NO host-bound cookie). Without the secret we can't sign state → treat as unavailable.
     if (!cfg.google || !cfg.sessionSecret) {
-      return reply.code(303).header('location', `/auth/login?error=${encodeURIComponent('Google sign-in is not available.')}`).send();
+      return reply
+        .code(303)
+        .header('location', `/auth/login?error=${encodeURIComponent('Google sign-in is not available.')}`)
+        .send();
     }
     const next = safeNext((req.query as { next?: string }).next);
     // CSRF: a SIGNED, self-contained state (nonce + next + app + exp), HMAC'd with the app session secret.
@@ -647,7 +857,11 @@ export function registerAuthRoutes(
     const cookieState = cookieVal(req, OAUTH_STATE_COOKIE);
     const clearState = `${OAUTH_STATE_COOKIE}=; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=0${requestIsSecure(req) ? '; Secure' : ''}`;
     const bail = (msg: string) =>
-      reply.header('set-cookie', clearState).code(303).header('location', `/auth/login?error=${encodeURIComponent(msg)}`).send();
+      reply
+        .header('set-cookie', clearState)
+        .code(303)
+        .header('location', `/auth/login?error=${encodeURIComponent(msg)}`)
+        .send();
 
     if (q.error) return bail('Google sign-in was cancelled.');
     if (!q.code || !q.state) return bail('Google sign-in failed (state mismatch). Please try again.');
@@ -662,8 +876,10 @@ export function registerAuthRoutes(
     // this is what fixes the cross-host MCP-connect return). If the same-host binding cookie is present it
     // must ALSO equal the state (tamper check); its absence on the cross-host path is expected + tolerated.
     const verifiedState = verifyOAuthState(q.state, cfg.sessionSecret);
-    if (!verifiedState || verifiedState.app !== app_.name) return bail('Google sign-in failed (state mismatch). Please try again.');
-    if (cookieState !== undefined && cookieState !== q.state) return bail('Google sign-in failed (state mismatch). Please try again.');
+    if (!verifiedState || verifiedState.app !== app_.name)
+      return bail('Google sign-in failed (state mismatch). Please try again.');
+    if (cookieState !== undefined && cookieState !== q.state)
+      return bail('Google sign-in failed (state mismatch). Please try again.');
     const savedNext = verifiedState.next;
 
     let info;
@@ -803,17 +1019,31 @@ export function registerAuthRoutes(
       await authStore.touchSession(app_.id, live.session.id, DEFAULT_SESSION_TTL_SECONDS);
       const now = Math.floor(Date.now() / 1000);
       const ttl = accessTtlSeconds();
-      const token = signSessionToken({ userId: live.claims.userId, email: live.claims.email, sessionId: live.session.id }, cfg.sessionSecret!, ttl, now);
+      const token = signSessionToken(
+        { userId: live.claims.userId, email: live.claims.email, sessionId: live.session.id },
+        cfg.sessionSecret!,
+        ttl,
+        now,
+      );
       reply.header('set-cookie', sessionCookie(token, { secure, maxAgeSeconds: refreshTtlSeconds() }));
-      return { userId: live.claims.userId, email: live.claims.email, exp: now + ttl, ...(await identityFields(app_.id, live.claims.userId)) };
+      return {
+        userId: live.claims.userId,
+        email: live.claims.email,
+        exp: now + ttl,
+        ...(await identityFields(app_.id, live.claims.userId)),
+      };
     }
     // Access expired/absent — for apps using this accessor (a round-trip pattern) rather
     // than the local-verify gate, transparently rotate the refresh so their effective
     // session length stays ~30d (as before P8), not capped at the 15-min access window.
     const r = await performRefresh(req, reply, app_.id, cfg);
-    if (r && r !== 'reuse') return { userId: r.userId, email: r.email, exp: r.exp, ...(await identityFields(app_.id, r.userId)) };
-    if (r === 'reuse') reply.header('set-cookie', [clearSessionCookie({ secure }), clearRefreshCookie({ secure })]);
-    return reply.code(401).send({ error: { code: 'unauthenticated', message: 'no active session', retry: 'no' } });
+    if (r && r !== 'reuse')
+      return { userId: r.userId, email: r.email, exp: r.exp, ...(await identityFields(app_.id, r.userId)) };
+    if (r === 'reuse')
+      reply.header('set-cookie', [clearSessionCookie({ secure }), clearRefreshCookie({ secure })]);
+    return reply
+      .code(401)
+      .send({ error: { code: 'unauthenticated', message: 'no active session', retry: 'no' } });
   });
 
   // ---- change password (authenticated; password accounts) ---------------------
@@ -825,16 +1055,43 @@ export function registerAuthRoutes(
     const app_ = await resolveAppId(req);
     if (!app_) return reply.code(404).send(unknownApp);
     const cfg = await resolveAuthConfig(app_.id);
-    if (!cfg.sessionSecret) return jerr(reply, 503, 'auth_not_configured', 'Authentication is not configured for this app.', 'needs-human');
+    if (!cfg.sessionSecret)
+      return jerr(
+        reply,
+        503,
+        'auth_not_configured',
+        'Authentication is not configured for this app.',
+        'needs-human',
+      );
     const user = await authedUser(req, app_.id, cfg);
     if (!user) return jerr(reply, 401, 'unauthenticated', 'A valid session is required.', 'no');
-    if (!user.password_hash) return jerr(reply, 409, 'no_password', 'This account has no password (it signs in with Google). Use password reset to set one.', 'no');
+    if (!user.password_hash)
+      return jerr(
+        reply,
+        409,
+        'no_password',
+        'This account has no password (it signs in with Google). Use password reset to set one.',
+        'no',
+      );
     const b = body(req);
     const current = String(b.current_password ?? '');
     const next = String(b.new_password ?? '');
-    if (next.length < MIN_PASSWORD) return jerr(reply, 422, 'weak_password', `New password must be at least ${MIN_PASSWORD} characters.`, 'change-input');
+    if (next.length < MIN_PASSWORD)
+      return jerr(
+        reply,
+        422,
+        'weak_password',
+        `New password must be at least ${MIN_PASSWORD} characters.`,
+        'change-input',
+      );
     if (!(await verifyPassword(current, user.password_hash))) {
-      return jerr(reply, 403, 'current_password_incorrect', 'Your current password is incorrect.', 'change-input');
+      return jerr(
+        reply,
+        403,
+        'current_password_incorrect',
+        'Your current password is incorrect.',
+        'change-input',
+      );
     }
     const password_hash = await hashPassword(next);
     await authStore.updateUser(app_.id, user.id, { password_hash });
@@ -855,22 +1112,55 @@ export function registerAuthRoutes(
     const app_ = await resolveAppId(req);
     if (!app_) return reply.code(404).send(unknownApp);
     const cfg = await resolveAuthConfig(app_.id);
-    if (!cfg.sessionSecret) return jerr(reply, 503, 'auth_not_configured', 'Authentication is not configured for this app.', 'needs-human');
+    if (!cfg.sessionSecret)
+      return jerr(
+        reply,
+        503,
+        'auth_not_configured',
+        'Authentication is not configured for this app.',
+        'needs-human',
+      );
     const user = await authedUser(req, app_.id, cfg);
     if (!user) return jerr(reply, 401, 'unauthenticated', 'A valid session is required.', 'no');
-    if (user.twofa_enabled) return jerr(reply, 409, 'already_enabled', 'Two-factor authentication is already enabled.', 'no');
+    if (user.twofa_enabled)
+      return jerr(reply, 409, 'already_enabled', 'Two-factor authentication is already enabled.', 'no');
     const b = body(req);
     const code = typeof b.code === 'string' ? b.code.trim() : '';
     const id = twofaEnableId(user.id);
     if (!code) {
       const delivered = await issueTwofaCode(app_.name, app_.id, user, id, 'enable');
-      if (!delivered) return jerr(reply, 503, 'email_unavailable', 'Email delivery is not configured, so a 2FA code cannot be sent.', 'needs-human');
-      return reply.code(200).send({ pending: true, delivery: 'email', sent_to: redactEmail(user.email), expires_in: twofaCodeTtlSeconds() });
+      if (!delivered)
+        return jerr(
+          reply,
+          503,
+          'email_unavailable',
+          'Email delivery is not configured, so a 2FA code cannot be sent.',
+          'needs-human',
+        );
+      return reply.code(200).send({
+        pending: true,
+        delivery: 'email',
+        sent_to: redactEmail(user.email),
+        expires_in: twofaCodeTtlSeconds(),
+      });
     }
-    const res = await authStore.redeemTwofaCode(app_.id, id, hashToken(code), { maxAttempts: twofaMaxAttempts() });
-    if (res.outcome === 'invalid') return jerr(reply, 400, 'code_expired', 'No active code — request a new one.', 'change-input');
-    if (res.outcome === 'exhausted') return jerr(reply, 429, 'too_many_attempts', 'Too many incorrect attempts. Request a new code.', 'needs-human');
-    if (res.outcome === 'mismatch') return jerr(reply, 401, 'code_incorrect', 'That code is incorrect.', 'change-input', { attempts_remaining: res.attemptsRemaining });
+    const res = await authStore.redeemTwofaCode(app_.id, id, hashToken(code), {
+      maxAttempts: twofaMaxAttempts(),
+    });
+    if (res.outcome === 'invalid')
+      return jerr(reply, 400, 'code_expired', 'No active code — request a new one.', 'change-input');
+    if (res.outcome === 'exhausted')
+      return jerr(
+        reply,
+        429,
+        'too_many_attempts',
+        'Too many incorrect attempts. Request a new code.',
+        'needs-human',
+      );
+    if (res.outcome === 'mismatch')
+      return jerr(reply, 401, 'code_incorrect', 'That code is incorrect.', 'change-input', {
+        attempts_remaining: res.attemptsRemaining,
+      });
     await authStore.updateUser(app_.id, user.id, { twofa_enabled: true });
     await emit(app_.id, 'TwofaEnabled', user.id, user.email);
     return reply.code(200).send({ twofa_enabled: true });
@@ -883,10 +1173,18 @@ export function registerAuthRoutes(
     const app_ = await resolveAppId(req);
     if (!app_) return reply.code(404).send(unknownApp);
     const cfg = await resolveAuthConfig(app_.id);
-    if (!cfg.sessionSecret) return jerr(reply, 503, 'auth_not_configured', 'Authentication is not configured for this app.', 'needs-human');
+    if (!cfg.sessionSecret)
+      return jerr(
+        reply,
+        503,
+        'auth_not_configured',
+        'Authentication is not configured for this app.',
+        'needs-human',
+      );
     const user = await authedUser(req, app_.id, cfg);
     if (!user) return jerr(reply, 401, 'unauthenticated', 'A valid session is required.', 'no');
-    if (!user.twofa_enabled) return jerr(reply, 409, 'not_enabled', 'Two-factor authentication is not enabled.', 'no');
+    if (!user.twofa_enabled)
+      return jerr(reply, 409, 'not_enabled', 'Two-factor authentication is not enabled.', 'no');
     const b = body(req);
     const password = typeof b.password === 'string' ? b.password : '';
     const code = typeof b.code === 'string' ? b.code.trim() : '';
@@ -898,23 +1196,68 @@ export function registerAuthRoutes(
       return reply.code(200).send({ twofa_enabled: false });
     };
     if (password) {
-      if (!user.password_hash) return jerr(reply, 400, 'no_password', 'This account has no password; verify with an emailed code instead.', 'change-input');
-      if (!(await verifyPassword(password, user.password_hash))) return jerr(reply, 403, 'current_password_incorrect', 'Your current password is incorrect.', 'change-input');
+      if (!user.password_hash)
+        return jerr(
+          reply,
+          400,
+          'no_password',
+          'This account has no password; verify with an emailed code instead.',
+          'change-input',
+        );
+      if (!(await verifyPassword(password, user.password_hash)))
+        return jerr(
+          reply,
+          403,
+          'current_password_incorrect',
+          'Your current password is incorrect.',
+          'change-input',
+        );
       return doDisable();
     }
     if (code) {
-      const res = await authStore.redeemTwofaCode(app_.id, id, hashToken(code), { maxAttempts: twofaMaxAttempts() });
-      if (res.outcome === 'invalid') return jerr(reply, 400, 'code_expired', 'No active code — request a new one.', 'change-input');
-      if (res.outcome === 'exhausted') return jerr(reply, 429, 'too_many_attempts', 'Too many incorrect attempts. Request a new code.', 'needs-human');
-      if (res.outcome === 'mismatch') return jerr(reply, 401, 'code_incorrect', 'That code is incorrect.', 'change-input', { attempts_remaining: res.attemptsRemaining });
+      const res = await authStore.redeemTwofaCode(app_.id, id, hashToken(code), {
+        maxAttempts: twofaMaxAttempts(),
+      });
+      if (res.outcome === 'invalid')
+        return jerr(reply, 400, 'code_expired', 'No active code — request a new one.', 'change-input');
+      if (res.outcome === 'exhausted')
+        return jerr(
+          reply,
+          429,
+          'too_many_attempts',
+          'Too many incorrect attempts. Request a new code.',
+          'needs-human',
+        );
+      if (res.outcome === 'mismatch')
+        return jerr(reply, 401, 'code_incorrect', 'That code is incorrect.', 'change-input', {
+          attempts_remaining: res.attemptsRemaining,
+        });
       return doDisable();
     }
     const delivered = await issueTwofaCode(app_.name, app_.id, user, id, 'disable');
     if (!delivered) {
-      if (user.password_hash) return jerr(reply, 400, 'password_required', 'Provide current_password to disable 2FA (email delivery is unavailable).', 'change-input');
-      return jerr(reply, 503, 'email_unavailable', 'Email delivery is not configured, so a 2FA code cannot be sent.', 'needs-human');
+      if (user.password_hash)
+        return jerr(
+          reply,
+          400,
+          'password_required',
+          'Provide current_password to disable 2FA (email delivery is unavailable).',
+          'change-input',
+        );
+      return jerr(
+        reply,
+        503,
+        'email_unavailable',
+        'Email delivery is not configured, so a 2FA code cannot be sent.',
+        'needs-human',
+      );
     }
-    return reply.code(200).send({ pending: true, delivery: 'email', sent_to: redactEmail(user.email), expires_in: twofaCodeTtlSeconds() });
+    return reply.code(200).send({
+      pending: true,
+      delivery: 'email',
+      sent_to: redactEmail(user.email),
+      expires_in: twofaCodeTtlSeconds(),
+    });
   });
 
   // ---- 2FA login-challenge verify (unauthenticated; completes a gated login) ---
@@ -926,38 +1269,105 @@ export function registerAuthRoutes(
     const app_ = await resolveAppId(req);
     const json = wantsJson(req);
     const theme = await themeFor(app_?.id);
-    if (!app_) return json ? reply.code(404).send(unknownApp) : htmlReply(reply, 404, page({ theme, title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
+    if (!app_)
+      return json
+        ? reply.code(404).send(unknownApp)
+        : htmlReply(
+            reply,
+            404,
+            page({ theme, title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }),
+          );
     const cfg = await resolveAuthConfig(app_.id);
-    if (!cfg.sessionSecret) return json ? jerr(reply, 503, 'auth_not_configured', 'Authentication is not configured for this app.', 'needs-human') : htmlReply(reply, 503, notConfiguredPage(theme));
+    if (!cfg.sessionSecret)
+      return json
+        ? jerr(
+            reply,
+            503,
+            'auth_not_configured',
+            'Authentication is not configured for this app.',
+            'needs-human',
+          )
+        : htmlReply(reply, 503, notConfiguredPage(theme));
     const b = body(req);
     const challenge = String(b.challenge ?? '');
     const code = String(b.code ?? '').trim();
     const next = safeNext(b.next);
     const id = twofaLoginId(challenge);
-    const res = await authStore.redeemTwofaCode(app_.id, id, hashToken(code), { maxAttempts: twofaMaxAttempts() });
+    const res = await authStore.redeemTwofaCode(app_.id, id, hashToken(code), {
+      maxAttempts: twofaMaxAttempts(),
+    });
     if (res.outcome === 'invalid') {
-      if (json) return jerr(reply, 400, 'challenge_invalid', 'This login challenge is invalid or has expired. Sign in again.', 'no');
-      return htmlReply(reply, 400, page({ theme, title: 'Sign in', bodyHtml: `<h1>Challenge expired</h1><p>Your verification code expired. <a href="/auth/login">Sign in again</a>.</p>` }));
+      if (json)
+        return jerr(
+          reply,
+          400,
+          'challenge_invalid',
+          'This login challenge is invalid or has expired. Sign in again.',
+          'no',
+        );
+      return htmlReply(
+        reply,
+        400,
+        page({
+          theme,
+          title: 'Sign in',
+          bodyHtml: `<h1>Challenge expired</h1><p>Your verification code expired. <a href="/auth/login">Sign in again</a>.</p>`,
+        }),
+      );
     }
     if (res.outcome === 'exhausted') {
-      if (json) return jerr(reply, 429, 'too_many_attempts', 'Too many incorrect attempts. Sign in again.', 'no');
-      return htmlReply(reply, 429, page({ theme, title: 'Sign in', bodyHtml: `<h1>Too many attempts</h1><p>Too many incorrect codes. <a href="/auth/login">Sign in again</a>.</p>` }));
+      if (json)
+        return jerr(reply, 429, 'too_many_attempts', 'Too many incorrect attempts. Sign in again.', 'no');
+      return htmlReply(
+        reply,
+        429,
+        page({
+          theme,
+          title: 'Sign in',
+          bodyHtml: `<h1>Too many attempts</h1><p>Too many incorrect codes. <a href="/auth/login">Sign in again</a>.</p>`,
+        }),
+      );
     }
     if (res.outcome === 'mismatch') {
       const left = res.attemptsRemaining;
-      if (json) return jerr(reply, 401, 'code_incorrect', 'That code is incorrect.', 'change-input', { attempts_remaining: left });
-      return htmlReply(reply, 401, twofaChallengePage({ challenge, next, app: app_.name, error: `Incorrect code — ${left} attempt${left === 1 ? '' : 's'} left.`, theme }));
+      if (json)
+        return jerr(reply, 401, 'code_incorrect', 'That code is incorrect.', 'change-input', {
+          attempts_remaining: left,
+        });
+      return htmlReply(
+        reply,
+        401,
+        twofaChallengePage({
+          challenge,
+          next,
+          app: app_.name,
+          error: `Incorrect code — ${left} attempt${left === 1 ? '' : 's'} left.`,
+          theme,
+        }),
+      );
     }
     // outcome === 'ok' — second factor proven; issue the real session.
     const user = await authStore.getUser(app_.id, res.userId);
     if (!user) {
       if (json) return jerr(reply, 400, 'challenge_invalid', 'Account no longer exists.', 'no');
-      return htmlReply(reply, 400, page({ theme, title: 'Sign in', bodyHtml: `<h1>Sign in failed</h1><p><a href="/auth/login">Try again</a>.</p>` }));
+      return htmlReply(
+        reply,
+        400,
+        page({
+          theme,
+          title: 'Sign in',
+          bodyHtml: `<h1>Sign in failed</h1><p><a href="/auth/login">Try again</a>.</p>`,
+        }),
+      );
     }
     await emit(app_.id, 'TwofaChallengeVerified', user.id, user.email, { purpose: 'login' });
     const dest = safeNext(res.next ?? next);
     const cookies = await mintSessionCookies(req, app_.id, cfg, user);
-    if (json) return reply.header('set-cookie', cookies).code(200).send({ userId: user.id, email: user.email, ...(await identityFields(app_.id, user.id)) });
+    if (json)
+      return reply
+        .header('set-cookie', cookies)
+        .code(200)
+        .send({ userId: user.id, email: user.email, ...(await identityFields(app_.id, user.id)) });
     return reply.header('set-cookie', cookies).code(303).header('location', dest).send();
   });
 
@@ -968,7 +1378,14 @@ export function registerAuthRoutes(
     const app_ = await resolveAppId(req);
     const json = wantsJson(req);
     const theme = await themeFor(app_?.id);
-    if (!app_) return json ? reply.code(404).send(unknownApp) : htmlReply(reply, 404, page({ theme, title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
+    if (!app_)
+      return json
+        ? reply.code(404).send(unknownApp)
+        : htmlReply(
+            reply,
+            404,
+            page({ theme, title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }),
+          );
     const b = body(req);
     const challenge = String(b.challenge ?? '');
     const next = safeNext(b.next);
@@ -976,18 +1393,66 @@ export function registerAuthRoutes(
     const rec = challenge ? await authStore.getTwofaCode(app_.id, id) : null;
     const invalid = () =>
       json
-        ? jerr(reply, 400, 'challenge_invalid', 'This login challenge is invalid or has expired. Sign in again.', 'no')
-        : htmlReply(reply, 400, page({ theme, title: 'Sign in', bodyHtml: `<h1>Challenge expired</h1><p><a href="/auth/login">Sign in again</a>.</p>` }));
+        ? jerr(
+            reply,
+            400,
+            'challenge_invalid',
+            'This login challenge is invalid or has expired. Sign in again.',
+            'no',
+          )
+        : htmlReply(
+            reply,
+            400,
+            page({
+              theme,
+              title: 'Sign in',
+              bodyHtml: `<h1>Challenge expired</h1><p><a href="/auth/login">Sign in again</a>.</p>`,
+            }),
+          );
     if (!rec || rec.purpose !== 'login') return invalid();
     const user = await authStore.getUser(app_.id, rec.user_id);
     if (!user) return invalid();
     const delivered = await issueTwofaCode(app_.name, app_.id, user, id, 'login', rec.next);
     if (!delivered) {
-      if (json) return jerr(reply, 503, 'email_unavailable', 'Email delivery is not configured, so a code cannot be sent.', 'needs-human');
-      return htmlReply(reply, 503, twofaChallengePage({ challenge, next: rec.next ?? next, app: app_.name, error: 'We could not send a new code. Try again later.', theme }));
+      if (json)
+        return jerr(
+          reply,
+          503,
+          'email_unavailable',
+          'Email delivery is not configured, so a code cannot be sent.',
+          'needs-human',
+        );
+      return htmlReply(
+        reply,
+        503,
+        twofaChallengePage({
+          challenge,
+          next: rec.next ?? next,
+          app: app_.name,
+          error: 'We could not send a new code. Try again later.',
+          theme,
+        }),
+      );
     }
-    if (json) return reply.code(200).send({ resent: true, delivery: 'email', sent_to: redactEmail(user.email), expires_in: twofaCodeTtlSeconds() });
-    return htmlReply(reply, 200, twofaChallengePage({ challenge, next: rec.next ?? next, app: app_.name, sent_to: redactEmail(user.email), notice: 'We sent a new code.', theme }));
+    if (json)
+      return reply.code(200).send({
+        resent: true,
+        delivery: 'email',
+        sent_to: redactEmail(user.email),
+        expires_in: twofaCodeTtlSeconds(),
+      });
+    return htmlReply(
+      reply,
+      200,
+      twofaChallengePage({
+        challenge,
+        next: rec.next ?? next,
+        app: app_.name,
+        sent_to: redactEmail(user.email),
+        notice: 'We sent a new code.',
+        theme,
+      }),
+    );
   });
 
   // ---- owner migration hook (§8) ----------------------------------------------
@@ -998,9 +1463,12 @@ export function registerAuthRoutes(
     if (!app_) return reply.code(404).send(unknownApp);
     const email = String(b.email ?? '').trim();
     if (!EMAIL_RE.test(email)) {
-      return reply.code(422).send({ error: { code: 'invalid_input', message: 'a valid `email` is required', retry: 'change-input' } });
+      return reply.code(422).send({
+        error: { code: 'invalid_input', message: 'a valid `email` is required', retry: 'change-input' },
+      });
     }
-    const password = typeof b.password === 'string' && b.password.length >= MIN_PASSWORD ? b.password : undefined;
+    const password =
+      typeof b.password === 'string' && b.password.length >= MIN_PASSWORD ? b.password : undefined;
     const password_hash = password ? await hashPassword(password) : undefined;
 
     let user = await authStore.findByEmail(app_.id, email);
@@ -1011,12 +1479,25 @@ export function registerAuthRoutes(
         ...(password_hash ? { password_hash } : {}),
       });
     } else {
-      user = await authStore.createUser(app_.id, { email, is_owner: true, email_verified: true, ...(password_hash ? { password_hash } : {}) });
+      user = await authStore.createUser(app_.id, {
+        email,
+        is_owner: true,
+        email_verified: true,
+        ...(password_hash ? { password_hash } : {}),
+      });
     }
     await emit(app_.id, 'OwnerSeeded', user!.id, user!.email);
     return {
-      owner: { userId: user!.id, email: redactEmail(user!.email), is_owner: true, email_verified: true, has_password: Boolean(user!.password_hash) },
-      note: password ? 'Owner can sign in with the given password.' : 'Owner has no password yet — use /auth/forgot to set one, or sign in with Google.',
+      owner: {
+        userId: user!.id,
+        email: redactEmail(user!.email),
+        is_owner: true,
+        email_verified: true,
+        has_password: Boolean(user!.password_hash),
+      },
+      note: password
+        ? 'Owner can sign in with the given password.'
+        : 'Owner has no password yet — use /auth/forgot to set one, or sign in with Google.',
     };
   });
 
@@ -1064,9 +1545,21 @@ export function registerAuthRoutes(
   });
 }
 
-const needServiceToken = { error: { code: 'unauthorized', message: 'a valid service token is required for this administrative operation.', retry: 'needs-human' } };
+const needServiceToken = {
+  error: {
+    code: 'unauthorized',
+    message: 'a valid service token is required for this administrative operation.',
+    retry: 'needs-human',
+  },
+};
 
-const unknownApp = { error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } };
+const unknownApp = {
+  error: {
+    code: 'not_found',
+    message: 'unknown app (pass `app` or set FORGE_APP_NAME).',
+    retry: 'change-input',
+  },
+};
 
 // ================================================================================
 // Hosted pages — minimal, neutral, self-contained (no app/goal specifics). All
@@ -1074,7 +1567,12 @@ const unknownApp = { error: { code: 'not_found', message: 'unknown app (pass `ap
 // ================================================================================
 
 export function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // Auth-page component CSS — token-driven (C16). Every color/shape reads a `--forge-*`
@@ -1117,7 +1615,14 @@ function alerts(error?: string, notice?: string): string {
   );
 }
 
-function loginPage(o: { next: string; google: boolean; error?: string; notice?: string; email?: string; theme?: Theme }): string {
+function loginPage(o: {
+  next: string;
+  google: boolean;
+  error?: string;
+  notice?: string;
+  email?: string;
+  theme?: Theme;
+}): string {
   const nextField = `<input type="hidden" name="next" value="${escapeHtml(o.next)}">`;
   const googleBtn = o.google
     ? `<a class="oauth" href="/auth/google?next=${encodeURIComponent(o.next)}">Continue with Google</a><div class="sep">or</div>`
@@ -1135,7 +1640,14 @@ function loginPage(o: { next: string; google: boolean; error?: string; notice?: 
   });
 }
 
-function signupPage(o: { next: string; google: boolean; emailEnabled: boolean; error?: string; email?: string; theme?: Theme }): string {
+function signupPage(o: {
+  next: string;
+  google: boolean;
+  emailEnabled: boolean;
+  error?: string;
+  email?: string;
+  theme?: Theme;
+}): string {
   const nextField = `<input type="hidden" name="next" value="${escapeHtml(o.next)}">`;
   const googleBtn = o.google
     ? `<a class="oauth" href="/auth/google?next=${encodeURIComponent(o.next)}">Continue with Google</a><div class="sep">or</div>`
@@ -1197,7 +1709,15 @@ function notConfiguredPage(theme?: Theme): string {
 
 // Hosted "enter your 2FA code" page — shown after a 2FA-enabled user's password/Google sign-in. Posts
 // the emailed code + the pending challenge to /auth/2fa/verify (completing login), with a resend form.
-function twofaChallengePage(o: { challenge: string; next: string; app?: string; error?: string; notice?: string; sent_to?: string; theme?: Theme }): string {
+function twofaChallengePage(o: {
+  challenge: string;
+  next: string;
+  app?: string;
+  error?: string;
+  notice?: string;
+  sent_to?: string;
+  theme?: Theme;
+}): string {
   const hidden =
     `<input type="hidden" name="challenge" value="${escapeHtml(o.challenge)}">` +
     `<input type="hidden" name="next" value="${escapeHtml(o.next)}">` +

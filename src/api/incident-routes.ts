@@ -71,8 +71,16 @@ export function registerIncidentRoutes(
       return null;
     }
   };
-  const unknownApp = { error: { code: 'not_found', message: 'unknown app (pass `app` or set FORGE_APP_NAME).', retry: 'change-input' } };
-  const notFound = { error: { code: 'not_found', message: 'no such incident for this app.', retry: 'change-input' } };
+  const unknownApp = {
+    error: {
+      code: 'not_found',
+      message: 'unknown app (pass `app` or set FORGE_APP_NAME).',
+      retry: 'change-input',
+    },
+  };
+  const notFound = {
+    error: { code: 'not_found', message: 'no such incident for this app.', retry: 'change-input' },
+  };
   const invalid = (message: string) => ({ error: { code: 'invalid_input', message, retry: 'change-input' } });
 
   const emit = async (
@@ -95,8 +103,13 @@ export function registerIncidentRoutes(
   // Create an incident.
   app.post('/status/incidents', async (req, reply) => {
     const b = (req.body ?? {}) as {
-      app?: string; title?: string; status?: string; impact?: string;
-      components?: unknown; affected_components?: unknown; body?: string;
+      app?: string;
+      title?: string;
+      status?: string;
+      impact?: string;
+      components?: unknown;
+      affected_components?: unknown;
+      body?: string;
     };
     if (!b.title || typeof b.title !== 'string' || !b.title.trim()) {
       return reply.status(422).send(invalid('an incident requires a non-empty string `title`.'));
@@ -117,7 +130,10 @@ export function registerIncidentRoutes(
       ...(typeof b.body === 'string' ? { body: b.body } : {}),
     });
     await emit(req, 'IncidentOpened', app_id, inc, {
-      title: inc.title, status: inc.status, impact: inc.impact, affected_components: inc.affected_components,
+      title: inc.title,
+      status: inc.status,
+      impact: inc.impact,
+      affected_components: inc.affected_components,
     });
     return reply.status(200).send({ incident: incidentJson(inc) });
   });
@@ -125,7 +141,8 @@ export function registerIncidentRoutes(
   // Append an update to an incident.
   app.post('/status/incidents/update', async (req, reply) => {
     const b = (req.body ?? {}) as { app?: string; id?: string; status?: string; body?: string };
-    if (!b.id || typeof b.id !== 'string') return reply.status(422).send(invalid('an update requires the incident `id`.'));
+    if (!b.id || typeof b.id !== 'string')
+      return reply.status(422).send(invalid('an update requires the incident `id`.'));
     if (!isIncidentStatus(b.status)) {
       return reply.status(422).send(invalid(`\`status\` must be one of: ${INCIDENT_STATUSES.join(', ')}.`));
     }
@@ -138,7 +155,8 @@ export function registerIncidentRoutes(
     if (!inc) return reply.status(404).send(notFound);
     const type = inc.status === 'resolved' ? 'IncidentResolved' : 'IncidentUpdated';
     await emit(req, type, app_id, inc, {
-      status: inc.status, ...(inc.resolved_at ? { resolved_at: inc.resolved_at } : {}),
+      status: inc.status,
+      ...(inc.resolved_at ? { resolved_at: inc.resolved_at } : {}),
     });
     return reply.status(200).send({ incident: incidentJson(inc) });
   });
@@ -146,7 +164,8 @@ export function registerIncidentRoutes(
   // Resolve an incident (forces status:resolved + appends a final update).
   app.post('/status/incidents/resolve', async (req, reply) => {
     const b = (req.body ?? {}) as { app?: string; id?: string; body?: string };
-    if (!b.id || typeof b.id !== 'string') return reply.status(422).send(invalid('resolve requires the incident `id`.'));
+    if (!b.id || typeof b.id !== 'string')
+      return reply.status(422).send(invalid('resolve requires the incident `id`.'));
     const app_id = await resolveAppKey(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
     const inc = await incidentStore.resolve(app_id, b.id, {

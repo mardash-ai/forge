@@ -10,7 +10,10 @@ import type { BlobBackend, CommitResult, OwnerUsage } from './types';
 // Byte doubling is inherent to a bytes migration and temporary. Selected with FORGE_BLOBS_BACKEND=s3 +
 // FORGE_BLOBS_DUAL_WRITE=1.
 export class DualWriteBlobBackend implements BlobBackend {
-  constructor(private readonly primary: S3BlobBackend, private readonly secondary: BlobStore) {}
+  constructor(
+    private readonly primary: S3BlobBackend,
+    private readonly secondary: BlobStore,
+  ) {}
 
   prepareTemp(): Promise<string> {
     return this.primary.prepareTemp();
@@ -38,7 +41,12 @@ export class DualWriteBlobBackend implements BlobBackend {
     return removed;
   }
 
-  async commit(appId: string, tmpPath: string, meta: BlobMetadata, config: BlobConfig): Promise<CommitResult> {
+  async commit(
+    appId: string,
+    tmpPath: string,
+    meta: BlobMetadata,
+    config: BlobConfig,
+  ): Promise<CommitResult> {
     const res = await this.primary.commit(appId, tmpPath, meta, config);
     if (res.ok) {
       // Mirror to the filesystem — the primary consumed the temp file, so re-read the bytes from it.

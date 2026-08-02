@@ -61,7 +61,13 @@ describe('secrets-local: encrypted at rest, decrypted only for injection', () =>
 });
 
 describe('generateCompose: declared secrets become empty-by-default interpolation lines', () => {
-  const base = { appName: 'demo', port: 3000, withPostgres: false, withRedis: false, devCommand: 'npm run dev' };
+  const base = {
+    appName: 'demo',
+    port: 3000,
+    withPostgres: false,
+    withRedis: false,
+    devCommand: 'npm run dev',
+  };
 
   it('emits one env line per declared secret, empty when unset', () => {
     const yaml = generateCompose({ ...base, secrets: ['ANTHROPIC_API_KEY'] });

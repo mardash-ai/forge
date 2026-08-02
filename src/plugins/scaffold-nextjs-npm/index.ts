@@ -34,56 +34,58 @@ export function scaffold(opts: ScaffoldOptions): ScaffoldResult {
   };
 
   const files: Record<string, string> = {
-    'package.json': JSON.stringify(
-      {
-        name,
-        version: '0.1.0',
-        private: true,
-        scripts,
-        dependencies: {
-          next: NEXT_VERSION,
-          react: '18.3.1',
-          'react-dom': '18.3.1',
+    'package.json':
+      JSON.stringify(
+        {
+          name,
+          version: '0.1.0',
+          private: true,
+          scripts,
+          dependencies: {
+            next: NEXT_VERSION,
+            react: '18.3.1',
+            'react-dom': '18.3.1',
+          },
+          devDependencies: {
+            '@types/node': '22.9.0',
+            '@types/react': '18.3.12',
+            '@types/react-dom': '18.3.1',
+            eslint: '8.57.1',
+            'eslint-config-next': NEXT_VERSION,
+            typescript: '5.6.3',
+            vitest: '2.1.5',
+          },
         },
-        devDependencies: {
-          '@types/node': '22.9.0',
-          '@types/react': '18.3.12',
-          '@types/react-dom': '18.3.1',
-          eslint: '8.57.1',
-          'eslint-config-next': NEXT_VERSION,
-          typescript: '5.6.3',
-          vitest: '2.1.5',
-        },
-      },
-      null,
-      2,
-    ) + '\n',
+        null,
+        2,
+      ) + '\n',
 
-    'tsconfig.json': JSON.stringify(
-      {
-        compilerOptions: {
-          target: 'ES2022',
-          lib: ['dom', 'dom.iterable', 'esnext'],
-          allowJs: true,
-          skipLibCheck: true,
-          strict: true,
-          noEmit: true,
-          esModuleInterop: true,
-          module: 'esnext',
-          moduleResolution: 'bundler',
-          resolveJsonModule: true,
-          isolatedModules: true,
-          jsx: 'preserve',
-          incremental: true,
-          plugins: [{ name: 'next' }],
-          paths: { '@/*': ['./*'] },
+    'tsconfig.json':
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: 'ES2022',
+            lib: ['dom', 'dom.iterable', 'esnext'],
+            allowJs: true,
+            skipLibCheck: true,
+            strict: true,
+            noEmit: true,
+            esModuleInterop: true,
+            module: 'esnext',
+            moduleResolution: 'bundler',
+            resolveJsonModule: true,
+            isolatedModules: true,
+            jsx: 'preserve',
+            incremental: true,
+            plugins: [{ name: 'next' }],
+            paths: { '@/*': ['./*'] },
+          },
+          include: ['next-env.d.ts', '**/*.ts', '**/*.tsx', '.next/types/**/*.ts'],
+          exclude: ['node_modules'],
         },
-        include: ['next-env.d.ts', '**/*.ts', '**/*.tsx', '.next/types/**/*.ts'],
-        exclude: ['node_modules'],
-      },
-      null,
-      2,
-    ) + '\n',
+        null,
+        2,
+      ) + '\n',
 
     // Dev shape: no `output: 'standalone'` (Productionize injects that), but it DOES
     // carry the always-on C10 `/auth/*` data-plane rewrite from birth, so an app that
@@ -91,11 +93,12 @@ export function scaffold(opts: ScaffoldOptions): ScaffoldResult {
     // Productionize's fallback config — one source of truth.
     'next.config.mjs': forgeNextConfig(),
 
-    '.eslintrc.json': JSON.stringify(
-      { extends: 'next/core-web-vitals', ignorePatterns: ['tests/', 'vitest.config.ts'] },
-      null,
-      2,
-    ) + '\n',
+    '.eslintrc.json':
+      JSON.stringify(
+        { extends: 'next/core-web-vitals', ignorePatterns: ['tests/', 'vitest.config.ts'] },
+        null,
+        2,
+      ) + '\n',
 
     'vitest.config.ts': `import { defineConfig } from 'vitest/config';
 

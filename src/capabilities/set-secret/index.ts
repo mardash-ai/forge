@@ -23,7 +23,8 @@ type Input = z.infer<typeof inputSchema>;
 export const setSecretCapability: Capability<Input, Secret> = {
   name: 'SetSecret',
   slug: 'set-secret',
-  description: 'Store an encrypted secret (e.g. an API key) for an Application; injected into its runtime, never persisted in source.',
+  description:
+    'Store an encrypted secret (e.g. an API key) for an Application; injected into its runtime, never persisted in source.',
   inputSchema,
   resourceType: 'Secret',
   events: ['SecretSet'],

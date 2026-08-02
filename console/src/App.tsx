@@ -61,7 +61,12 @@ interface Run {
 interface ServiceEntry {
   key: string;
   display_name: string;
-  bindings: Array<{ kind: string; display: string; confidence: number; evidence: Array<{ rule: string; detail: string }> }>;
+  bindings: Array<{
+    kind: string;
+    display: string;
+    confidence: number;
+    evidence: Array<{ rule: string; detail: string }>;
+  }>;
   confidence: number;
 }
 interface Graph {
@@ -307,7 +312,9 @@ export default function App() {
                         }}
                       />
                     )}
-                    <span style={{ color: on ? 'var(--text-secondary)' : 'var(--text-faint)', display: 'flex' }}>
+                    <span
+                      style={{ color: on ? 'var(--text-secondary)' : 'var(--text-faint)', display: 'flex' }}
+                    >
                       <Icon />
                     </span>
                     <span style={{ flex: 1, minWidth: 0 }}>{label}</span>
@@ -364,7 +371,12 @@ export default function App() {
       </nav>
 
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <TopBar boot={boot.data} dense={dense} onDensity={() => setDense((v) => !v)} onOpenPalette={() => setPalette(true)} />
+        <TopBar
+          boot={boot.data}
+          dense={dense}
+          onDensity={() => setDense((v) => !v)}
+          onOpenPalette={() => setPalette(true)}
+        />
         <main style={{ flex: 1, minWidth: 0, padding: '24px 28px 56px', maxWidth: 1480, width: '100%' }}>
           {screen === 'overview' && <Overview boot={boot.data} />}
           {screen === 'timeline' && <Timeline />}
@@ -448,10 +460,22 @@ function TopBar({
                 color: 'var(--text-primary)',
               }}
             >
-              <span aria-hidden style={{ width: 5, height: 5, borderRadius: 1, background: 'var(--ember-core)' }} />
+              <span
+                aria-hidden
+                style={{ width: 5, height: 5, borderRadius: 1, background: 'var(--ember-core)' }}
+              />
               {boot.env}
             </span>
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <span
+              style={{
+                fontFamily: 'var(--mono)',
+                fontSize: 11.5,
+                color: 'var(--text-muted)',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
               {boot.project} · {boot.region}
             </span>
           </>
@@ -464,7 +488,13 @@ function TopBar({
         {total > 0 && (
           <span
             title={boot?.providers.map((p) => `${p.label}: ${p.ok ? 'ok' : p.detail}`).join('\n')}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12, color: 'var(--text-muted)' }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 7,
+              fontSize: 12,
+              color: 'var(--text-muted)',
+            }}
           >
             <StatusGlyph tone={degraded ? 'warn' : 'ok'} size={9} />
             <span className="mono" style={{ color: degraded ? 'var(--warn-text)' : 'var(--text-secondary)' }}>
@@ -512,11 +542,26 @@ function Head({ screen, title, sub }: { screen: Screen; title: string; sub?: str
       <div className="micro" style={{ marginBottom: 6, color: 'var(--text-faint)' }}>
         {GROUP_OF[screen]}
       </div>
-      <h1 style={{ fontSize: 'var(--t-display)', lineHeight: 'var(--lh-display)', fontWeight: 600, letterSpacing: '-0.025em' }}>
+      <h1
+        style={{
+          fontSize: 'var(--t-display)',
+          lineHeight: 'var(--lh-display)',
+          fontWeight: 600,
+          letterSpacing: '-0.025em',
+        }}
+      >
         {title}
       </h1>
       {sub && (
-        <p style={{ color: 'var(--text-muted)', marginTop: 7, fontSize: 13, lineHeight: '20px', maxWidth: '86ch' }}>
+        <p
+          style={{
+            color: 'var(--text-muted)',
+            marginTop: 7,
+            fontSize: 13,
+            lineHeight: '20px',
+            maxWidth: '86ch',
+          }}
+        >
           {sub}
         </p>
       )}
@@ -571,7 +616,12 @@ function Tiles({ children, min = 190 }: { children: ReactNode; min?: number }) {
 /** External links get a mark, so you know before you click that you are leaving the console. */
 function Ext({ href, children }: { href: string; children: ReactNode }) {
   return (
-    <a href={href} target="_blank" rel="noopener" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener"
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+    >
       {children}
       <ExternalGlyph />
     </a>
@@ -623,7 +673,10 @@ function Overview({ boot }: { boot: Bootstrap | null }) {
           overflow: 'hidden',
         }}
       >
-        <span aria-hidden style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: `var(--${tone})` }} />
+        <span
+          aria-hidden
+          style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: `var(--${tone})` }}
+        />
         <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
           <StatusGlyph tone={tone} size={14} />
           <span
@@ -715,7 +768,11 @@ function Overview({ boot }: { boot: Bootstrap | null }) {
           ) : findings.loading ? (
             <Skeleton rows={3} height="86px" />
           ) : (findings.data?.length ?? 0) === 0 ? (
-            <Empty kind="all-clear" title="No open findings" detail="Every rule ran and none of them fired." />
+            <Empty
+              kind="all-clear"
+              title="No open findings"
+              detail="Every rule ran and none of them fired."
+            />
           ) : (
             <div style={{ display: 'grid', gap: 10 }}>
               {findings.data!.slice(0, 4).map((f) => (
@@ -747,12 +804,17 @@ function FindingCard({ f }: { f: Finding }) {
     >
       {/* Severity as a left bar rather than a full coloured border: the card stays legible and the
           severity is still the first thing the eye hits scanning down a column of them. */}
-      <span aria-hidden style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: `var(--${tone})` }} />
+      <span
+        aria-hidden
+        style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: `var(--${tone})` }}
+      />
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 7, flexWrap: 'wrap' }}>
         <Pill tone={tone}>{f.severity}</Pill>
         <strong style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{f.title}</strong>
       </div>
-      <p style={{ color: 'var(--text-secondary)', fontSize: 13, lineHeight: '20px', maxWidth: '88ch' }}>{f.detail}</p>
+      <p style={{ color: 'var(--text-secondary)', fontSize: 13, lineHeight: '20px', maxWidth: '88ch' }}>
+        {f.detail}
+      </p>
       <div
         style={{
           marginTop: 12,
@@ -765,13 +827,23 @@ function FindingCard({ f }: { f: Finding }) {
       >
         <div>
           <div className="micro">Suggested action</div>
-          <div style={{ color: 'var(--text-secondary)', marginTop: 3, fontSize: 12.5 }}>{f.suggested_action}</div>
+          <div style={{ color: 'var(--text-secondary)', marginTop: 3, fontSize: 12.5 }}>
+            {f.suggested_action}
+          </div>
         </div>
         <div>
           {/* The rule id and the subject were in the payload and never rendered. A finding you
               cannot trace back to the rule that raised it is hard to argue with or to silence. */}
           <div className="micro">Rule · subject</div>
-          <div style={{ marginTop: 3, fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--text-muted)', wordBreak: 'break-word' }}>
+          <div
+            style={{
+              marginTop: 3,
+              fontFamily: 'var(--mono)',
+              fontSize: 11.5,
+              color: 'var(--text-muted)',
+              wordBreak: 'break-word',
+            }}
+          >
             {f.rule}
             {f.subject ? ` · ${f.subject}` : ''}
           </div>
@@ -862,7 +934,8 @@ function Inventory() {
           Billable only
         </Toggle>
         <Note>
-          {items.length} shown · {(q.data ?? []).filter((r) => r.billable).length} of {(q.data ?? []).length} carry a charge
+          {items.length} shown · {(q.data ?? []).filter((r) => r.billable).length} of {(q.data ?? []).length}{' '}
+          carry a charge
         </Note>
       </Toolbar>
 
@@ -871,7 +944,11 @@ function Inventory() {
       ) : q.loading ? (
         <Skeleton rows={8} />
       ) : items.length === 0 ? (
-        <Empty kind="no-results" title="Nothing matches" detail="No billable resources in the current inventory." />
+        <Empty
+          kind="no-results"
+          title="Nothing matches"
+          detail="No billable resources in the current inventory."
+        />
       ) : (
         <div style={{ display: 'grid', gap: 'var(--section-gap)' }}>
           {groups.map(([scope, label, blurb]) => {
@@ -1012,11 +1089,21 @@ function Services() {
 function Pipelines() {
   const q = useApi<Run[]>('/api/pipelines/runs?limit=25');
   const tone = (r: Run): StatusTone =>
-    r.status !== 'completed' ? 'info' : r.conclusion === 'success' ? 'ok' : r.conclusion === 'failure' ? 'crit' : 'neutral';
+    r.status !== 'completed'
+      ? 'info'
+      : r.conclusion === 'success'
+        ? 'ok'
+        : r.conclusion === 'failure'
+          ? 'crit'
+          : 'neutral';
 
   return (
     <>
-      <Head screen="pipelines" title="Pipelines" sub="Recent CI activity across every repository the console reads." />
+      <Head
+        screen="pipelines"
+        title="Pipelines"
+        sub="Recent CI activity across every repository the console reads."
+      />
       {q.error ? (
         <Err msg={q.error} onRetry={q.reload} />
       ) : q.loading ? (
@@ -1038,7 +1125,10 @@ function Pipelines() {
                 <Td>{r.repo.split('/').pop()}</Td>
                 <Td mono>#{r.number}</Td>
                 <Td>
-                  <Status tone={tone(r)} label={r.status === 'completed' ? (r.conclusion ?? '—') : r.status} />
+                  <Status
+                    tone={tone(r)}
+                    label={r.status === 'completed' ? (r.conclusion ?? '—') : r.status}
+                  />
                 </Td>
                 <Td mono>{r.branch}</Td>
                 <Td>{r.actor}</Td>
@@ -1153,8 +1243,7 @@ function Explore() {
   const logs = useApi<LogLine[]>(path, [service, minutes, text, severity, trace, owner]);
 
   const lines = logs.data ?? [];
-  const count = (s: string) =>
-    lines.filter((l) => (l.severity ?? '').toLowerCase() === s).length;
+  const count = (s: string) => lines.filter((l) => (l.severity ?? '').toLowerCase() === s).length;
   const errors = count('error') + count('critical') + count('emergency') + count('alert');
   const warns = count('warning');
 
@@ -1179,7 +1268,14 @@ function Explore() {
             options={[['', 'All services'], ...serviceOptions]}
           />
         ) : (
-          <Field ariaLabel="Service" value={service} onChange={setService} mono width={170} placeholder="all services" />
+          <Field
+            ariaLabel="Service"
+            value={service}
+            onChange={setService}
+            mono
+            width={170}
+            placeholder="all services"
+          />
         )}
         <Segmented
           ariaLabel="Window"
@@ -1212,7 +1308,14 @@ function Explore() {
             options={[['', 'All users'], ...userOptions]}
           />
         )}
-        <Field ariaLabel="Filter text" value={text} onChange={setText} placeholder="contains…" mono width={170} />
+        <Field
+          ariaLabel="Filter text"
+          value={text}
+          onChange={setText}
+          placeholder="contains…"
+          mono
+          width={170}
+        />
       </Toolbar>
 
       {trace && (
@@ -1298,7 +1401,15 @@ function Explore() {
                           }}
                         />
                         <span style={{ color: 'var(--text-faint)' }}>{l.timestamp.slice(11, 23)}</span>
-                        <span style={{ color: tone === 'neutral' ? 'var(--text-faint)' : `var(--${tone}-text, var(--text-secondary))`, fontSize: 11 }}>
+                        <span
+                          style={{
+                            color:
+                              tone === 'neutral'
+                                ? 'var(--text-faint)'
+                                : `var(--${tone}-text, var(--text-secondary))`,
+                            fontSize: 11,
+                          }}
+                        >
                           {sev.slice(0, 5) || '—'}
                         </span>
                         <span
@@ -1316,12 +1427,20 @@ function Explore() {
                             click from a failing line to everything that request did, everywhere. */}
                         {l.trace_id ? (
                           <button
-                            onClick={(e) => { e.stopPropagation(); setTrace(l.trace_id!); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setTrace(l.trace_id!);
+                            }}
                             title="Show every line from this request, across services"
                             style={{
-                              background: 'transparent', border: '1px solid var(--line-strong)',
-                              borderRadius: 'var(--r-sm, 4px)', color: 'var(--text-muted)',
-                              fontSize: 10.5, padding: '0 6px', cursor: 'pointer', fontFamily: 'var(--mono)',
+                              background: 'transparent',
+                              border: '1px solid var(--line-strong)',
+                              borderRadius: 'var(--r-sm, 4px)',
+                              color: 'var(--text-muted)',
+                              fontSize: 10.5,
+                              padding: '0 6px',
+                              cursor: 'pointer',
+                              fontFamily: 'var(--mono)',
                             }}
                           >
                             trace
@@ -1332,7 +1451,9 @@ function Explore() {
                       </div>
 
                       {open && (
-                        <div style={{ padding: '8px 14px 12px 26px', fontFamily: 'var(--mono)', fontSize: 11.5 }}>
+                        <div
+                          style={{ padding: '8px 14px 12px 26px', fontFamily: 'var(--mono)', fontSize: 11.5 }}
+                        >
                           <div style={{ color: 'var(--text-faint)', marginBottom: 6 }}>{l.timestamp}</div>
                           {Object.entries(l.labels ?? {}).length === 0 ? (
                             <Note>no labels on this entry</Note>
@@ -1341,8 +1462,18 @@ function Explore() {
                               <tbody>
                                 {Object.entries(l.labels ?? {}).map(([k, v]) => (
                                   <tr key={k}>
-                                    <td style={{ color: 'var(--text-muted)', paddingRight: 14, verticalAlign: 'top' }}>{k}</td>
-                                    <td style={{ color: 'var(--text-secondary)', wordBreak: 'break-all' }}>{v}</td>
+                                    <td
+                                      style={{
+                                        color: 'var(--text-muted)',
+                                        paddingRight: 14,
+                                        verticalAlign: 'top',
+                                      }}
+                                    >
+                                      {k}
+                                    </td>
+                                    <td style={{ color: 'var(--text-secondary)', wordBreak: 'break-all' }}>
+                                      {v}
+                                    </td>
                                   </tr>
                                 ))}
                               </tbody>
@@ -1399,7 +1530,11 @@ function Credentials() {
       ) : q.loading ? (
         <Skeleton rows={8} />
       ) : rows.length === 0 ? (
-        <Empty kind="no-results" title="Nothing found" detail="No credentials or certificates were returned for this project." />
+        <Empty
+          kind="no-results"
+          title="Nothing found"
+          detail="No credentials or certificates were returned for this project."
+        />
       ) : (
         <div style={{ display: 'grid', gap: 'var(--section-gap)' }}>
           <Tiles>
@@ -1436,7 +1571,9 @@ function Credentials() {
                       {c.expires_at ? (
                         c.expires_at.slice(0, 10)
                       ) : (
-                        <span style={{ color: 'var(--text-faint)' }}>{c.auto_renews ? 'on renewal' : 'no expiry'}</span>
+                        <span style={{ color: 'var(--text-faint)' }}>
+                          {c.auto_renews ? 'on renewal' : 'no expiry'}
+                        </span>
                       )}
                     </Td>
                     <Td right>
@@ -1466,9 +1603,10 @@ function Credentials() {
 // ── Audit ──────────────────────────────────────────────────────────────────────────────────────
 
 function Audit() {
-  const q = useApi<Array<{ at: string; actor: string; action: string; target: string; outcome: string; detail?: string }>>(
-    '/api/audit',
-  );
+  const q =
+    useApi<
+      Array<{ at: string; actor: string; action: string; target: string; outcome: string; detail?: string }>
+    >('/api/audit');
   return (
     <>
       <Head
@@ -1521,7 +1659,9 @@ function Audit() {
 function Palette({ onPick, onClose }: { onPick: (s: Screen) => void; onClose: () => void }) {
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
-  const matches = NAV.filter(([id, label]) => (label + ' ' + id).toLowerCase().includes(q.toLowerCase().trim()));
+  const matches = NAV.filter(([id, label]) =>
+    (label + ' ' + id).toLowerCase().includes(q.toLowerCase().trim()),
+  );
 
   return (
     <div
@@ -1548,7 +1688,15 @@ function Palette({ onPick, onClose }: { onPick: (s: Screen) => void; onClose: ()
           boxShadow: 'var(--shadow-pop)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 14px', borderBottom: '1px solid var(--line)' }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '0 14px',
+            borderBottom: '1px solid var(--line)',
+          }}
+        >
           <LogoMark size={18} />
           <input
             autoFocus
@@ -1583,7 +1731,9 @@ function Palette({ onPick, onClose }: { onPick: (s: Screen) => void; onClose: ()
         </div>
         <div style={{ maxHeight: 340, overflowY: 'auto', padding: '6px 0' }}>
           {matches.length === 0 ? (
-            <div style={{ padding: '22px 18px', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' }}>
+            <div
+              style={{ padding: '22px 18px', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' }}
+            >
               No screen matches “{q}”.
             </div>
           ) : (
@@ -1611,17 +1761,29 @@ function Palette({ onPick, onClose }: { onPick: (s: Screen) => void; onClose: ()
                   {on && (
                     <span
                       aria-hidden
-                      style={{ position: 'absolute', left: 0, top: 4, bottom: 4, width: 3, borderRadius: '0 2px 2px 0', background: 'var(--filament)' }}
+                      style={{
+                        position: 'absolute',
+                        left: 0,
+                        top: 4,
+                        bottom: 4,
+                        width: 3,
+                        borderRadius: '0 2px 2px 0',
+                        background: 'var(--filament)',
+                      }}
                     />
                   )}
-                  <span style={{ color: on ? 'var(--text-secondary)' : 'var(--text-faint)', display: 'flex' }}>
+                  <span
+                    style={{ color: on ? 'var(--text-secondary)' : 'var(--text-faint)', display: 'flex' }}
+                  >
                     <Icon />
                   </span>
                   <span style={{ flex: 1 }}>{label}</span>
                   <span className="micro" style={{ color: 'var(--text-faint)' }}>
                     {GROUP_OF[id]}
                   </span>
-                  <span style={{ color: 'var(--text-faint)', fontFamily: 'var(--mono)', fontSize: 11 }}>{id}</span>
+                  <span style={{ color: 'var(--text-faint)', fontFamily: 'var(--mono)', fontSize: 11 }}>
+                    {id}
+                  </span>
                 </button>
               );
             })
@@ -1701,7 +1863,8 @@ function Timeline() {
       return n;
     });
 
-  const tone = (e: TEvent): StatusTone => (e.outcome === 'ok' ? 'ok' : e.outcome === 'failed' ? 'crit' : 'info');
+  const tone = (e: TEvent): StatusTone =>
+    e.outcome === 'ok' ? 'ok' : e.outcome === 'failed' ? 'crit' : 'info';
 
   // Group into days, preserving the server's ordering within each day.
   const days: Array<[string, TEvent[]]> = [];
@@ -1771,14 +1934,30 @@ function Timeline() {
                   >
                     <span
                       className="mono"
-                      style={{ color: 'var(--text-faint)', fontSize: 11.5, textAlign: 'right', paddingTop: 2 }}
+                      style={{
+                        color: 'var(--text-faint)',
+                        fontSize: 11.5,
+                        textAlign: 'right',
+                        paddingTop: 2,
+                      }}
                     >
-                      {new Date(e.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}
+                      {new Date(e.at).toLocaleTimeString(undefined, {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false,
+                      })}
                     </span>
 
                     {/* The spine. One continuous line down the day, with the event pinned to it —
                         this is the "one axis" the screen is named for. */}
-                    <span style={{ position: 'relative', alignSelf: 'stretch', display: 'flex', justifyContent: 'center' }}>
+                    <span
+                      style={{
+                        position: 'relative',
+                        alignSelf: 'stretch',
+                        display: 'flex',
+                        justifyContent: 'center',
+                      }}
+                    >
                       <span
                         aria-hidden
                         style={{
@@ -1794,7 +1973,15 @@ function Timeline() {
                       </span>
                     </span>
 
-                    <div style={{ minWidth: 0, display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                    <div
+                      style={{
+                        minWidth: 0,
+                        display: 'flex',
+                        gap: 10,
+                        alignItems: 'baseline',
+                        flexWrap: 'wrap',
+                      }}
+                    >
                       {/* The KIND is a category, not a status, so it is achromatic. Colouring it by
                           outcome painted sixty-eight identical green chips down the page — hue
                           spent on a label that never varies. The outcome is carried by the glyph on
@@ -1822,7 +2009,9 @@ function Timeline() {
                           {e.link ? <Ext href={e.link}>{e.title}</Ext> : e.title}
                         </div>
                         {e.detail && (
-                          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{e.detail}</div>
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                            {e.detail}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -1856,7 +2045,9 @@ function Deploys() {
   const services = (inv.data ?? []).filter((r) => r.kind === 'compute.service').map((r) => r.name);
   const [svc, setSvc] = useState<string>(() => new URLSearchParams(location.search).get('svc') ?? '');
   const active = svc || services[0] || '';
-  const revs = useApi<Rev[]>(active ? `/api/runtime/revisions?service=${encodeURIComponent(active)}` : null, [active]);
+  const revs = useApi<Rev[]>(active ? `/api/runtime/revisions?service=${encodeURIComponent(active)}` : null, [
+    active,
+  ]);
 
   useEffect(() => {
     if (!active) return;
@@ -1892,7 +2083,11 @@ function Deploys() {
       ) : revs.loading ? (
         <Skeleton rows={6} />
       ) : (revs.data?.length ?? 0) === 0 ? (
-        <Empty kind="no-results" title="No revisions" detail={`Cloud Run returned no revisions for ${active}.`} />
+        <Empty
+          kind="no-results"
+          title="No revisions"
+          detail={`Cloud Run returned no revisions for ${active}.`}
+        />
       ) : (
         <div style={{ display: 'grid', gap: 'var(--section-gap)' }}>
           <Tiles min={200}>
@@ -1908,7 +2103,11 @@ function Deploys() {
                     : `${serving.length} revisions`
               }
               detail={
-                serving.length === 1 ? serving[0]!.id : serving.length === 0 ? 'no revision holds traffic' : 'traffic is split'
+                serving.length === 1
+                  ? serving[0]!.id
+                  : serving.length === 0
+                    ? 'no revision holds traffic'
+                    : 'traffic is split'
               }
               tone={serving.length > 0 && serving.every((r) => r.ready) ? 'neutral' : 'crit'}
             />
@@ -1951,17 +2150,17 @@ function Deploys() {
                       {r.id}
                     </Td>
                     <Td right>
-                      {live ? <Pill tone="ok">{r.traffic_percent}% live</Pill> : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                      {live ? (
+                        <Pill tone="ok">{r.traffic_percent}% live</Pill>
+                      ) : (
+                        <span style={{ color: 'var(--text-faint)' }}>—</span>
+                      )}
                     </Td>
                     <Td>
                       <Status tone={r.ready ? 'ok' : 'crit'} label={r.ready ? 'ready' : 'not ready'} />
                     </Td>
                     <Td mono>
-                      {r.image_digest ? (
-                        r.image_digest.slice(0, 19)
-                      ) : (
-                        <Pill tone="warn">tag only</Pill>
-                      )}
+                      {r.image_digest ? r.image_digest.slice(0, 19) : <Pill tone="warn">tag only</Pill>}
                     </Td>
                     <Td mono>
                       {r.min_instances ?? 0}–{r.max_instances ?? '∞'}
@@ -1981,8 +2180,8 @@ function Deploys() {
               A rollback runs through CI, not from this page — that is what gives it the read-back, the
               behaviour gate and a run URL as its receipt. Dispatch{' '}
               <code style={{ fontFamily: 'var(--mono)', color: 'var(--text-primary)' }}>release.yml</code> for{' '}
-              <code style={{ fontFamily: 'var(--mono)', color: 'var(--text-primary)' }}>{active}</code> with the digest
-              above.
+              <code style={{ fontFamily: 'var(--mono)', color: 'var(--text-primary)' }}>{active}</code> with
+              the digest above.
             </p>
           </Card>
         </div>
@@ -2095,7 +2294,13 @@ interface Stack {
   mixed_pins: boolean;
 }
 
-interface PinDrift { repo: string; file: string; pinned: string; latest: string; behind: number }
+interface PinDrift {
+  repo: string;
+  file: string;
+  pinned: string;
+  latest: string;
+  behind: number;
+}
 
 function Drift() {
   const q = useApi<{ stacks: Stack[]; latest_release: string | null; pin_drift: PinDrift[] }>('/api/drift');
@@ -2122,7 +2327,11 @@ function Drift() {
             <StatTile label="Stacks" value={stacks.length} detail="reading published state hashes" />
             <StatTile
               label="Newest forge release"
-              value={q.data?.latest_release ?? <Unknown reason="The release feed did not answer, so the console cannot say what the newest release is." />}
+              value={
+                q.data?.latest_release ?? (
+                  <Unknown reason="The release feed did not answer, so the console cannot say what the newest release is." />
+                )
+              }
             />
             <StatTile
               label="Mixed pins"
@@ -2134,11 +2343,12 @@ function Drift() {
 
           <Card eyebrow="Why this screen exists" title="A green check over a stale declaration">
             <p style={{ color: 'var(--text-secondary)', fontSize: 13, lineHeight: '21px', maxWidth: '84ch' }}>
-              The foundation once ran <strong style={{ color: 'var(--text-primary)' }}>six forge releases behind</strong>.
-              Cloud NAT was never created, so every non-Google outbound call hung — and{' '}
-              <code style={{ fontFamily: 'var(--mono)', color: 'var(--text-primary)' }}>apply</code> and the drift job both
-              reported success the whole time, because the stack matched its own stale declaration. Neither check was
-              wrong; they were both answering a question nobody had asked.
+              The foundation once ran{' '}
+              <strong style={{ color: 'var(--text-primary)' }}>six forge releases behind</strong>. Cloud NAT
+              was never created, so every non-Google outbound call hung — and{' '}
+              <code style={{ fontFamily: 'var(--mono)', color: 'var(--text-primary)' }}>apply</code> and the
+              drift job both reported success the whole time, because the stack matched its own stale
+              declaration. Neither check was wrong; they were both answering a question nobody had asked.
             </p>
           </Card>
 
@@ -2176,7 +2386,9 @@ function Drift() {
                         {/* mixed_pins and module_refs were in the payload and never drawn. A stack
                             pinning two different module refs is the shape the six-releases-behind
                             incident had. */}
-                        <span style={{ display: 'inline-flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span
+                          style={{ display: 'inline-flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}
+                        >
                           {s.mixed_pins && <Pill tone="warn">mixed</Pill>}
                           <span className="mono" style={{ color: 'var(--text-muted)', fontSize: 11.5 }}>
                             {s.module_refs.length ? s.module_refs.join(', ') : '—'}
@@ -2206,7 +2418,9 @@ interface Budget {
 }
 
 function Cost() {
-  const q = useApi<{ budgets: Budget[]; actuals: null; actuals_detail: string; billable: Resource[] }>('/api/cost');
+  const q = useApi<{ budgets: Budget[]; actuals: null; actuals_detail: string; billable: Resource[] }>(
+    '/api/cost',
+  );
   const budgets = q.data?.budgets ?? [];
   const billable = q.data?.billable ?? [];
   const budgeted = budgets.reduce((a, b) => a + b.amount_usd, 0);
@@ -2227,10 +2441,19 @@ function Cost() {
           <Tiles>
             <StatTile
               label="Actual spend"
-              value={<Unknown reason={q.data?.actuals_detail ?? 'No BigQuery billing export is configured.'} label="not visible" />}
+              value={
+                <Unknown
+                  reason={q.data?.actuals_detail ?? 'No BigQuery billing export is configured.'}
+                  label="not visible"
+                />
+              }
               detail="no billing export"
             />
-            <StatTile label="Budgeted" value={budgets.length ? `$${budgeted.toLocaleString()}` : '—'} detail={`${budgets.length} budget${budgets.length === 1 ? '' : 's'}`} />
+            <StatTile
+              label="Budgeted"
+              value={budgets.length ? `$${budgeted.toLocaleString()}` : '—'}
+              detail={`${budgets.length} budget${budgets.length === 1 ? '' : 's'}`}
+            />
             <StatTile label="Billable resources" value={billable.length} detail="carry a charge" />
           </Tiles>
 
@@ -2288,7 +2511,11 @@ function Cost() {
             pad={false}
           >
             {billable.length === 0 ? (
-              <Empty kind="no-results" title="Nothing billable" detail="No resource in the inventory carries a charge." />
+              <Empty
+                kind="no-results"
+                title="Nothing billable"
+                detail="No resource in the inventory carries a charge."
+              />
             ) : (
               <Table head={['Name', 'Type', 'Scope', 'Location']}>
                 {billable.map((r) => (
@@ -2346,7 +2573,11 @@ function Quota() {
       ) : q.loading ? (
         <Skeleton rows={6} />
       ) : rows.length === 0 ? (
-        <Empty kind="no-results" title="No limits reported" detail="No quota gauges were returned for this project." />
+        <Empty
+          kind="no-results"
+          title="No limits reported"
+          detail="No quota gauges were returned for this project."
+        />
       ) : (
         <div style={{ display: 'grid', gap: 'var(--section-gap)' }}>
           <Tiles>
@@ -2380,7 +2611,10 @@ function Quota() {
                     </Td>
                     <Td right mono>
                       {g.limit === null ? (
-                        <Unknown reason={g.detail || 'This provider publishes no ceiling for this limit.'} label="none published" />
+                        <Unknown
+                          reason={g.detail || 'This provider publishes no ceiling for this limit.'}
+                          label="none published"
+                        />
                       ) : (
                         g.limit
                       )}
@@ -2486,7 +2720,13 @@ function Docs() {
       />
 
       <Toolbar>
-        <Field ariaLabel="Filter documentation" value={q} onChange={setQ} placeholder="Filter pages…" width={240} />
+        <Field
+          ariaLabel="Filter documentation"
+          value={q}
+          onChange={setQ}
+          placeholder="Filter pages…"
+          width={240}
+        />
         <Note>
           {sources.reduce((n, s) => n + s.pages.length, 0)} pages · {sources.length} sources
         </Note>
@@ -2499,15 +2739,36 @@ function Docs() {
           <Skeleton rows={8} />
         </Card>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 260px) 1fr', gap: 'var(--section-gap)', alignItems: 'start' }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(200px, 260px) 1fr',
+            gap: 'var(--section-gap)',
+            alignItems: 'start',
+          }}
+        >
           <Card pad={false}>
-            <nav aria-label="Documentation pages" style={{ padding: '8px 0', maxHeight: '70vh', overflowY: 'auto' }}>
+            <nav
+              aria-label="Documentation pages"
+              style={{ padding: '8px 0', maxHeight: '70vh', overflowY: 'auto' }}
+            >
               {filtered.map((s) => (
                 <div key={s.id} style={{ padding: '6px 0' }}>
-                  <div style={{ padding: '6px 14px 4px', fontSize: 11, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                  <div
+                    style={{
+                      padding: '6px 14px 4px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      letterSpacing: '.04em',
+                      textTransform: 'uppercase',
+                      color: 'var(--text-muted)',
+                    }}
+                  >
                     {s.label}
                   </div>
-                  <div style={{ padding: '0 14px 6px', fontSize: 11, color: 'var(--text-muted)' }}>{s.origin}</div>
+                  <div style={{ padding: '0 14px 6px', fontSize: 11, color: 'var(--text-muted)' }}>
+                    {s.origin}
+                  </div>
                   {/* A source that could not be reached says so HERE, next to the sources that
                       answered — an empty group with no explanation reads as "there are no docs". */}
                   {s.error && (
@@ -2521,15 +2782,25 @@ function Docs() {
                     return (
                       <button
                         key={id}
-                        onClick={() => { setPage(id); scrollTo(0, 0); }}
+                        onClick={() => {
+                          setPage(id);
+                          scrollTo(0, 0);
+                        }}
                         aria-current={on ? 'page' : undefined}
                         style={{
-                          display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
-                          padding: '5px 14px', fontSize: 13.5, lineHeight: 1.35,
+                          display: 'block',
+                          width: '100%',
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                          padding: '5px 14px',
+                          fontSize: 13.5,
+                          lineHeight: 1.35,
                           background: on ? 'var(--bg-inset)' : 'transparent',
                           borderLeft: `2px solid ${on ? 'var(--accent, #4c8dff)' : 'transparent'}`,
                           color: on ? 'var(--text-primary)' : 'var(--text-secondary)',
-                          border: 'none', borderLeftWidth: 2, borderLeftStyle: 'solid',
+                          border: 'none',
+                          borderLeftWidth: 2,
+                          borderLeftStyle: 'solid',
                         }}
                       >
                         {p.title}
@@ -2593,7 +2864,10 @@ async function mutate<T>(path: string, body: unknown): Promise<T> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
-  const json = (await res.json().catch(() => ({}))) as { data?: T; error?: { code?: string; message?: string } };
+  const json = (await res.json().catch(() => ({}))) as {
+    data?: T;
+    error?: { code?: string; message?: string };
+  };
   if (!res.ok) throw new Error(json.error?.message ?? `request failed (${res.status})`);
   return json.data as T;
 }
@@ -2623,14 +2897,14 @@ function Accounts() {
 
   const list = useApi<{ data?: TenantAccountRow[] } | TenantAccountRow[]>('/api/tenants/accounts');
   const accounts: TenantAccountRow[] = Array.isArray(list.data) ? list.data : [];
-  const detail = useApi<{ app: { facts: Array<{ label: string; value: string; note?: string }>; error?: string } }>(
-    selected ? `/api/tenants/accounts/detail?owner=${encodeURIComponent(selected)}` : null,
-    [selected],
-  );
+  const detail = useApi<{
+    app: { facts: Array<{ label: string; value: string; note?: string }>; error?: string };
+  }>(selected ? `/api/tenants/accounts/detail?owner=${encodeURIComponent(selected)}` : null, [selected]);
 
   const needle = q.trim().toLowerCase();
   const rows = accounts.filter(
-    (a) => !needle || (a.email ?? '').toLowerCase().includes(needle) || a.owner.toLowerCase().includes(needle),
+    (a) =>
+      !needle || (a.email ?? '').toLowerCase().includes(needle) || a.owner.toLowerCase().includes(needle),
   );
   const target = accounts.find((a) => a.owner === selected) ?? null;
 
@@ -2673,7 +2947,13 @@ function Accounts() {
       ) : (
         <>
           <Toolbar>
-            <Field ariaLabel="Filter accounts" value={q} onChange={setQ} placeholder="email or owner id…" width={260} />
+            <Field
+              ariaLabel="Filter accounts"
+              value={q}
+              onChange={setQ}
+              placeholder="email or owner id…"
+              width={260}
+            />
             <Note>
               {rows.length} of {accounts.length} · {accounts.filter((a) => a.isTest).length} test
             </Note>
@@ -2694,7 +2974,10 @@ function Accounts() {
             <Card pad={false}>
               <Table head={['Email', 'Owner', 'Provider', 'Status', 'Flags', '']}>
                 {rows.map((a) => (
-                  <tr key={a.owner} style={{ background: a.owner === selected ? 'var(--bg-inset)' : undefined }}>
+                  <tr
+                    key={a.owner}
+                    style={{ background: a.owner === selected ? 'var(--bg-inset)' : undefined }}
+                  >
                     <Td primary>{a.email ?? '—'}</Td>
                     <Td mono>{a.owner}</Td>
                     <Td>{a.provider ?? '—'}</Td>
@@ -2752,7 +3035,10 @@ function Accounts() {
                 )}
               </Card>
 
-              <Card title="Entitlement" subtitle="Neither of these touches Stripe — both are platform overlays.">
+              <Card
+                title="Entitlement"
+                subtitle="Neither of these touches Stripe — both are platform overlays."
+              >
                 <Toolbar>
                   <Button
                     disabled={busy !== null}
@@ -2809,10 +3095,13 @@ function Accounts() {
                       }
                       onClick={() =>
                         run('purge', async () => {
-                          const out = await mutate<{ retained?: Array<{ subsystem: string; reason: string }> }>(
-                            '/api/tenants/accounts/purge',
-                            { owner: target.owner, confirm_email: confirmEmail.trim(), reason: reason.trim() },
-                          );
+                          const out = await mutate<{
+                            retained?: Array<{ subsystem: string; reason: string }>;
+                          }>('/api/tenants/accounts/purge', {
+                            owner: target.owner,
+                            confirm_email: confirmEmail.trim(),
+                            reason: reason.trim(),
+                          });
                           // An empty `retained` is the ONLY thing that means "nothing left behind".
                           if (out?.retained?.length) {
                             throw new Error(
@@ -2935,14 +3224,20 @@ function TestTenants() {
           <Card pad={false}>
             <Table head={['Email', 'Owner', 'Status', '']}>
               {tenants.map((t) => (
-                <tr key={t.owner} style={{ background: t.owner === selected ? 'var(--bg-inset)' : undefined }}>
+                <tr
+                  key={t.owner}
+                  style={{ background: t.owner === selected ? 'var(--bg-inset)' : undefined }}
+                >
                   <Td primary>{t.email ?? '—'}</Td>
                   <Td mono>{t.owner}</Td>
                   <Td>
                     <Status tone={statusTone(t)} label={t.subscriptionStatus ?? 'none'} />
                   </Td>
                   <Td right>
-                    <Button variant="ghost" onClick={() => setSelected(t.owner === selected ? null : t.owner)}>
+                    <Button
+                      variant="ghost"
+                      onClick={() => setSelected(t.owner === selected ? null : t.owner)}
+                    >
                       {t.owner === selected ? 'Close' : 'Open'}
                     </Button>
                   </Td>
@@ -2975,7 +3270,9 @@ function TestTenants() {
                       <tr>
                         <Td>Generation</Td>
                         {/* 0 means the tenant was never moved and is on real time — not "no data". */}
-                        <Td mono>{clock.data?.generation === 0 ? '0 · never moved' : (clock.data?.generation ?? '—')}</Td>
+                        <Td mono>
+                          {clock.data?.generation === 0 ? '0 · never moved' : (clock.data?.generation ?? '—')}
+                        </Td>
                       </tr>
                       <tr>
                         <Td>Scope</Td>
@@ -3000,7 +3297,9 @@ function TestTenants() {
                       <Button
                         disabled={busy !== null}
                         onClick={() =>
-                          run('clear clock', () => mutate('/api/tenants/test/clock', { owner: selected, clear: true }))
+                          run('clear clock', () =>
+                            mutate('/api/tenants/test/clock', { owner: selected, clear: true }),
+                          )
                         }
                       >
                         Back to real time
@@ -3068,7 +3367,9 @@ interface ConnectionsData {
  */
 function Connections() {
   const [hours, setHours] = useState('24');
-  const data = useApi<ConnectionsData>(`/api/tenants/connections?hours=${encodeURIComponent(hours)}`, [hours]);
+  const data = useApi<ConnectionsData>(`/api/tenants/connections?hours=${encodeURIComponent(hours)}`, [
+    hours,
+  ]);
   const d = data.data;
   const unconfigured = (data.error ?? '').includes('not configured');
 
@@ -3122,26 +3423,50 @@ function Connections() {
           </Toolbar>
 
           {d?.streamsError && (
-            <Err msg={`live channel feed unavailable — ${d.streamsError}. Channel counts show “—”, not zero.`} onRetry={data.reload} />
+            <Err
+              msg={`live channel feed unavailable — ${d.streamsError}. Channel counts show “—”, not zero.`}
+              onRetry={data.reload}
+            />
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--section-gap)' }}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+              gap: 'var(--section-gap)',
+            }}
+          >
             <StatTile label="AI connections" value={String(d?.totals.connections ?? 0)} />
-            <StatTile label={`Active in ${d?.recentWithinHours ?? 24}h`} value={String(d?.totals.activeRecently ?? 0)} />
+            <StatTile
+              label={`Active in ${d?.recentWithinHours ?? 24}h`}
+              value={String(d?.totals.activeRecently ?? 0)}
+            />
             <StatTile label="Channels held now" value={channels(d?.totals.toolRefreshChannels ?? 0)} />
             <StatTile label="Revoked" value={String(d?.totals.revoked ?? 0)} />
           </div>
 
           <div style={{ marginTop: 'var(--section-gap)' }}>
-            <Card title="By client" subtitle="A client with connections but NO held channel will not see tool changes until it reconnects — that is the usual answer to “why can't it see the new tool?”." pad={false}>
+            <Card
+              title="By client"
+              subtitle="A client with connections but NO held channel will not see tool changes until it reconnects — that is the usual answer to “why can't it see the new tool?”."
+              pad={false}
+            >
               <Table head={['Client', 'Connections', 'Active', 'Channels now', 'Revoked', 'Last seen']}>
                 {(d?.byClient ?? []).map((c) => (
                   <tr key={c.client}>
                     <Td primary>{c.client}</Td>
-                    <Td right mono>{c.connections}</Td>
-                    <Td right mono>{c.activeRecently}</Td>
-                    <Td right mono>{channels(c.toolRefreshChannels)}</Td>
-                    <Td right mono>{c.revoked}</Td>
+                    <Td right mono>
+                      {c.connections}
+                    </Td>
+                    <Td right mono>
+                      {c.activeRecently}
+                    </Td>
+                    <Td right mono>
+                      {channels(c.toolRefreshChannels)}
+                    </Td>
+                    <Td right mono>
+                      {c.revoked}
+                    </Td>
                     <Td mono>{c.lastSeenAt ? relative(c.lastSeenAt) : 'never'}</Td>
                   </tr>
                 ))}
@@ -3156,7 +3481,9 @@ function Connections() {
                   {(d?.bySource ?? []).map((s) => (
                     <tr key={s.source}>
                       <Td primary>{s.source}</Td>
-                      <Td right mono>{channels(s.toolRefreshChannels)}</Td>
+                      <Td right mono>
+                        {channels(s.toolRefreshChannels)}
+                      </Td>
                     </tr>
                   ))}
                 </Table>
@@ -3249,7 +3576,12 @@ function Boards() {
             )}
             {/* After a Grafana deploy every public token is wiped (its database is ephemeral).
                 This forces a re-resolve rather than leaving someone staring at a dead frame. */}
-            <Button variant="ghost" onClick={() => { fetch('/api/boards?refresh=1').then(() => data.reload()); }}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                fetch('/api/boards?refresh=1').then(() => data.reload());
+              }}
+            >
               Re-link
             </Button>
           </Toolbar>
@@ -3265,7 +3597,13 @@ function Boards() {
                 key={current.uid}
                 src={`${current.embedUrl}?theme=dark`}
                 title={current.title}
-                style={{ width: '100%', height: '78vh', border: 0, borderRadius: 'var(--r-lg)', display: 'block' }}
+                style={{
+                  width: '100%',
+                  height: '78vh',
+                  border: 0,
+                  borderRadius: 'var(--r-lg)',
+                  display: 'block',
+                }}
                 /*
                  * `allow-same-origin` is REQUIRED and is not the loosening it looks like.
                  *

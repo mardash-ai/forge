@@ -355,7 +355,11 @@ function readableOn(color: string, fallback: string): string {
   const m = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(color);
   if (!m) return fallback;
   let hex = m[1]!;
-  if (hex.length === 3) hex = hex.split('').map((c) => c + c).join('');
+  if (hex.length === 3)
+    hex = hex
+      .split('')
+      .map((c) => c + c)
+      .join('');
   const r = parseInt(hex.slice(0, 2), 16) / 255;
   const g = parseInt(hex.slice(2, 4), 16) / 255;
   const b = parseInt(hex.slice(4, 6), 16) / 255;

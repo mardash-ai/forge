@@ -16,9 +16,7 @@ export const FRAMEWORKS_BY_PLATFORM: Record<Platform, readonly string[]> = {
   cli: ['node'],
 };
 
-export const ALL_FRAMEWORKS = Array.from(
-  new Set(Object.values(FRAMEWORKS_BY_PLATFORM).flat()),
-);
+export const ALL_FRAMEWORKS = Array.from(new Set(Object.values(FRAMEWORKS_BY_PLATFORM).flat()));
 
 export function isSupported(platform: string, framework: string): boolean {
   if (!(PLATFORMS as readonly string[]).includes(platform)) return false;
@@ -32,9 +30,7 @@ export const IMPLEMENTED_TARGETS: Array<{ platform: Platform; framework: string 
 ];
 
 export function isImplemented(platform: string, framework: string): boolean {
-  return IMPLEMENTED_TARGETS.some(
-    (t) => t.platform === platform && t.framework === framework,
-  );
+  return IMPLEMENTED_TARGETS.some((t) => t.platform === platform && t.framework === framework);
 }
 
 // The seven core domain concepts — documented here so the vocabulary stays close

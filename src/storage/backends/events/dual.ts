@@ -9,7 +9,10 @@ import type { AppEvent } from '../../../events/app-events';
 // store). The rare owner-migration mirrors the whole app. An operator can flip reads back to the FS
 // backend with no data loss. Selected with FORGE_EVENTS_BACKEND=postgres + FORGE_EVENTS_DUAL_WRITE=1.
 export class DualWriteEventBackend implements EventBackend {
-  constructor(private readonly primary: PgEventBackend, private readonly secondary: FsEventBackend) {}
+  constructor(
+    private readonly primary: PgEventBackend,
+    private readonly secondary: FsEventBackend,
+  ) {}
 
   list(appId: string, opts: AppEventListOpts): Promise<AppEvent[]> {
     return this.primary.list(appId, opts);
