@@ -1,0 +1,55 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Runbooks & Links · Dorinda Internals</title><style>
+:root{--bg:#0b1220;--panel:#111a2e;--ink:#e6edf7;--mut:#8b98ad;--line:#233150;
+--blue:#4c8dff;--green:#2fbf71;--amber:#f0b429;--red:#ef5350;--purple:#a78bfa;--cyan:#22d3ee}
+*{box-sizing:border-box;margin:0}
+body{font:15px/1.6 ui-sans-serif,-apple-system,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--ink);display:flex;min-height:100vh}
+nav{width:230px;background:var(--panel);border-right:1px solid var(--line);padding:24px 0;position:fixed;height:100vh}
+nav .logo{font-weight:800;font-size:18px;padding:0 22px 18px;color:#fff}
+nav .logo span{color:var(--blue)}
+nav a{display:block;padding:9px 22px;color:var(--mut);text-decoration:none;font-size:14px;border-left:3px solid transparent}
+nav a:hover{color:var(--ink)} nav a.on{color:#fff;border-left-color:var(--blue);background:#16233f}
+main{margin-left:230px;padding:40px 48px;max-width:1120px;width:100%}
+h1{font-size:30px;margin-bottom:6px} h2{font-size:20px;margin:34px 0 12px;padding-top:10px;border-top:1px solid var(--line)}
+h3{font-size:16px;margin:20px 0 8px} p{color:#c4cede;margin:8px 0} .sub{color:var(--mut);font-size:15px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+code{background:#1b2740;padding:2px 6px;border-radius:4px;color:#9fc3ff}
+pre{background:#0d1526;border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;color:#c8d6ee;margin:10px 0}
+table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
+th{color:var(--mut);text-align:left;font-weight:600;padding:8px 10px;border-bottom:2px solid var(--line)}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.pill{display:inline-block;padding:1px 9px;border-radius:20px;font-size:12px;font-weight:600}
+.p-read{background:#123c2a;color:#4ade80}.p-write{background:#3c2a12;color:#fbbf24}
+.p-danger{background:#3c1212;color:#f87171}.p-gate{background:#241a3f;color:#c4b5fd}
+.svgwrap{background:#0d1526;border:1px solid var(--line);border-radius:10px;padding:10px;margin:14px 0;overflow-x:auto}
+.svgwrap img{display:block;margin:auto;max-width:100%}
+a{color:var(--blue)}
+.callout{border-left:4px solid var(--amber);background:#1c1a10;padding:12px 16px;border-radius:0 8px 8px 0;margin:12px 0;color:#e8dcae}
+.ok{border-left-color:var(--green);background:#0f1f17;color:#b9e8cd}
+.big{font-size:40px;font-weight:800} .kpis{display:flex;gap:14px;flex-wrap:wrap}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 22px;text-align:center}
+.kpi .n{font-size:26px;font-weight:800;color:#fff}.kpi .l{color:var(--mut);font-size:12px}
+</style></head><body>
+<nav><div class="logo">dorinda<span>/devs</span></div><a href="/index">Overview</a><a href="/topology">System Topology</a><a href="/infra">Shared Infra & forge</a><a href="/mcp">MCP Tools</a><a href="/apis">APIs & Routing</a><a href="/clis">CLIs</a><a href="/sdks">Connectors & SDKs</a><a href="/ci">CI/CD</a><a href="/gcp">Google Cloud</a><a href="/runbooks">Runbooks & Links</a></nav>
+<main><h1>Runbooks & Links</h1>
+<h2>Canonical documents (in git)</h2>
+<table>
+<tr><td><code>dorinda-shared-infra/RUNBOOK.md</code></td><td>every step OUTSIDE provisioning logic — 🔒 un-automatable vs 🔧 CLI-gap backlog</td></tr>
+<tr><td><code>dorinda-orchestrator/PRODUCTIONALIZATION_PLAN.md</code></td><td>architecture · CLI contract · cost model (§9: ~$112/mo)</td></tr>
+<tr><td><code>dorinda-orchestrator/ROLLOUT.md</code></td><td>phase-by-phase execution + gates</td></tr>
+<tr><td><code>dorinda-orchestrator/ACCEPTANCE_TESTING.md</code></td><td>the acceptance protocol — 31 tools × both hosts + deep Gmail/Calendar + §5f mTLS</td></tr>
+<tr><td><code>dorinda-orchestrator/MORNING_REPORT.md</code></td><td>the cutover-night record</td></tr></table>
+<h2>Live surfaces</h2>
+<table>
+<tr><td>Grafana (metrics)</td><td><a href="https://grafana.dorinda.ai">grafana.dorinda.ai</a> — on GCP (Cloud Run <code>dorinda-grafana</code>) since Phase 2b</td></tr>
+<tr><td>GCP console</td><td>project <code>dorinda-prod</code> · region us-east1</td></tr>
+<tr><td>Repos</td><td>github.com/mardash-ai/{forge · dorinda-api · dorinda-web · dorinda-site · dorinda-shared-infra · dorinda-ci-runners · dorinda-devs}</td></tr></table>
+<h2>Break-glass</h2>
+<table>
+<tr><td>Roll traffic back to the box</td><td>⚠️ <b>Two steps now, not one.</b> The box's 11 Dorinda containers were <b>stopped</b> on 2026-07-31 as the final cutover validation, so rollback is: ① <code>docker start</code> them over SSH (nothing was deleted — volumes and the old database are intact), then ② point the A records back to <code>71.105.68.194</code>. The GoDaddy credential in <code>dorinda-api/release/godaddy-api-key</code> is a <b>Personal Access Token</b>, stored as <code>&lt;name&gt;:&lt;token&gt;</code>. Use <code>Authorization: Bearer &lt;token&gt;</code> — the token is the part <b>after</b> the first colon. The classic <code>sso-key KEY:SECRET</code> scheme is retired by GoDaddy and returns <b>401</b>; that 401 is a wrong-scheme error, not an expired credential.</td></tr>
+<tr><td>Roll a bad code deploy</td><td><code>forge infra release-image</code> with the previous digest (AR keeps history)</td></tr>
+<tr><td>Runner PAT expiry (Aug 28)</td><td>mint new PAT → <code>gcloud secrets versions add github-runner-pat</code> → cycle the MIG instance</td></tr></table>
+<p class="sub" style="margin-top:48px;border-top:1px solid var(--line);padding-top:14px">Dorinda internal developer portal · generated 2026-07-30 (cutover night) · behind basic auth — do not share.</p>
+</main></body></html>

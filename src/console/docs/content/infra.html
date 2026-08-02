@@ -1,0 +1,62 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shared Infra & forge · Dorinda Internals</title><style>
+:root{--bg:#0b1220;--panel:#111a2e;--ink:#e6edf7;--mut:#8b98ad;--line:#233150;
+--blue:#4c8dff;--green:#2fbf71;--amber:#f0b429;--red:#ef5350;--purple:#a78bfa;--cyan:#22d3ee}
+*{box-sizing:border-box;margin:0}
+body{font:15px/1.6 ui-sans-serif,-apple-system,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--ink);display:flex;min-height:100vh}
+nav{width:230px;background:var(--panel);border-right:1px solid var(--line);padding:24px 0;position:fixed;height:100vh}
+nav .logo{font-weight:800;font-size:18px;padding:0 22px 18px;color:#fff}
+nav .logo span{color:var(--blue)}
+nav a{display:block;padding:9px 22px;color:var(--mut);text-decoration:none;font-size:14px;border-left:3px solid transparent}
+nav a:hover{color:var(--ink)} nav a.on{color:#fff;border-left-color:var(--blue);background:#16233f}
+main{margin-left:230px;padding:40px 48px;max-width:1120px;width:100%}
+h1{font-size:30px;margin-bottom:6px} h2{font-size:20px;margin:34px 0 12px;padding-top:10px;border-top:1px solid var(--line)}
+h3{font-size:16px;margin:20px 0 8px} p{color:#c4cede;margin:8px 0} .sub{color:var(--mut);font-size:15px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+code{background:#1b2740;padding:2px 6px;border-radius:4px;color:#9fc3ff}
+pre{background:#0d1526;border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;color:#c8d6ee;margin:10px 0}
+table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
+th{color:var(--mut);text-align:left;font-weight:600;padding:8px 10px;border-bottom:2px solid var(--line)}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.pill{display:inline-block;padding:1px 9px;border-radius:20px;font-size:12px;font-weight:600}
+.p-read{background:#123c2a;color:#4ade80}.p-write{background:#3c2a12;color:#fbbf24}
+.p-danger{background:#3c1212;color:#f87171}.p-gate{background:#241a3f;color:#c4b5fd}
+.svgwrap{background:#0d1526;border:1px solid var(--line);border-radius:10px;padding:10px;margin:14px 0;overflow-x:auto}
+.svgwrap img{display:block;margin:auto;max-width:100%}
+a{color:var(--blue)}
+.callout{border-left:4px solid var(--amber);background:#1c1a10;padding:12px 16px;border-radius:0 8px 8px 0;margin:12px 0;color:#e8dcae}
+.ok{border-left-color:var(--green);background:#0f1f17;color:#b9e8cd}
+.big{font-size:40px;font-weight:800} .kpis{display:flex;gap:14px;flex-wrap:wrap}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 22px;text-align:center}
+.kpi .n{font-size:26px;font-weight:800;color:#fff}.kpi .l{color:var(--mut);font-size:12px}
+</style></head><body>
+<nav><div class="logo">dorinda<span>/devs</span></div><a href="/index">Overview</a><a href="/topology">System Topology</a><a href="/infra">Shared Infra & forge</a><a href="/mcp">MCP Tools</a><a href="/apis">APIs & Routing</a><a href="/clis">CLIs</a><a href="/sdks">Connectors & SDKs</a><a href="/ci">CI/CD</a><a href="/gcp">Google Cloud</a><a href="/runbooks">Runbooks & Links</a></nav>
+<main><h1>Shared Infra & forge</h1>
+<p class="sub">forge owns HOW a product stack is built (reusable Terraform modules + the CLI); <code>dorinda-shared-infra</code> owns WHAT Dorinda's stack is.</p>
+<h2>The platform contract (v1)</h2>
+<p>Foundation apply publishes <code>gs://dorinda-tf-state/contract/prod-a.json</code>. Services consume THESE VALUES ONLY — never foundation state. Removing/renaming an output is a major bump, and applies refuse while any consumer still declares the old major.</p>
+<pre>vpc_network · subnet_id · dns_zone · main_ip · mcp_ip · url_map_main
+mtls_trust_config · artifact_registry_host · secret_project</pre>
+<h2>Module set (forge <code>terraform/modules/</code>)</h2>
+<table><tr><th>Module</th><th>Owns</th><th>The lesson baked in</th></tr>
+<tr><td><code>network</code></td><td>VPC, subnet, PSA, Cloud NAT</td><td>Direct VPC egress (no connectors, $0); NAT exists because internal Cloud Run→Cloud Run needs ALL_TRAFFIC egress</td></tr>
+<tr><td><code>edge</code></td><td>DNS zone, certs, TWO LB entries, TrustConfig</td><td>the mTLS host gets its own IP+proxy; the main proxy never requests a client cert (browser cert-picker hazard); DNS-authorization certs provision pre-cutover</td></tr>
+<tr><td><code>database</code></td><td>Cloud SQL + backups/PITR + generated password → Secret Manager</td><td>Enterprise edition explicitly (the provider defaults to the +$90 tier); private IP only</td></tr>
+<tr><td><code>service</code></td><td>Cloud Run v2, SA, AR repo, secret containers/files, NEG+backend</td><td>secret VALUES never touch Terraform; image is ignore_changes — release-image moves code</td></tr>
+<tr><td><code>backend</code></td><td>a second backend over an existing service</td><td>api + mcp are two hosts, one app — only mcp's backend injects cert headers</td></tr>
+<tr><td><code>runner</code></td><td>Spot MIG(1) GitHub Actions runner</td><td>the runner stack's own pipeline runs on HOSTED runners — never depend on the runner you manage</td></tr></table>
+<h2>Cutover night: 17 releases, every one a live lesson</h2>
+<table><tr><th>v</th><th>What reality taught</th></tr>
+<tr><td>0.79.1</td><td>a CA bundle is not a trust anchor (root vs intermediates)</td></tr>
+<tr><td>0.79.2</td><td>ServerTlsPolicy refuses bucket-defaulted URL maps</td></tr>
+<tr><td>0.79.3</td><td>trust-config refs canonicalize to project NUMBER — first live save by the §3.7 read-back</td></tr>
+<tr><td>0.79.4</td><td>Spot+DELETE can't live in a MIG; contract var must be <code>any</code></td></tr>
+<tr><td>0.79.5</td><td>custom_request_headers is an attribute, not a block</td></tr>
+<tr><td>0.79.7</td><td>Workspace orgs reject allUsers → invoker_iam_disabled</td></tr>
+<tr><td>0.79.8</td><td>API back-fills service-level scaling{} — second read-back save</td></tr>
+<tr><td>0.79.9–11</td><td>stateless services must be replaceable; taints from partial applies; the untaint verb</td></tr>
+<tr><td>0.79.12–16</td><td>NAT · secret files · backend module · release-image with revision-Ready read-back · ENTERPRISE edition · external secrets</td></tr></table>
+<p class="sub" style="margin-top:48px;border-top:1px solid var(--line);padding-top:14px">Dorinda internal developer portal · generated 2026-07-30 (cutover night) · behind basic auth — do not share.</p>
+</main></body></html>

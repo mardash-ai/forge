@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="470" viewBox="0 0 1040 470" font-family="ui-sans-serif,sans-serif">
+<style>text{fill:#e6edf7;font-size:13px}.t{font-weight:700}.s{fill:#8b98ad;font-size:11px}.call{fill:#fbbf24;font-size:12px;font-weight:600}</style>
+<text x="20" y="26" class="t" font-size="16">Kicking off a run by hand + reading a run (illustrated)</text>
+<rect x="20" y="44" width="480" height="180" rx="10" fill="#0d1117" stroke="#30363d"/>
+<text x="40" y="74" class="t">release</text>
+<text x="40" y="94" class="s">This workflow has a workflow_dispatch trigger</text>
+<rect x="330" y="60" width="150" height="34" rx="6" fill="#238636"/>
+<text x="352" y="82" class="t">Run workflow ▾</text>
+<rect x="290" y="104" width="190" height="76" rx="8" fill="#161b22" stroke="#30363d"/>
+<text x="306" y="128" class="s">Branch: main</text>
+<rect x="306" y="140" width="120" height="28" rx="6" fill="#238636"/><text x="322" y="159">Run workflow</text>
+<path d="M405 60 C560 30 620 60 640 90" stroke="#fbbf24" stroke-width="2" fill="none"/>
+<text x="560" y="52" class="call">③ manual kick-off: Actions → pick workflow →</text>
+<text x="560" y="68" class="call">    Run workflow → main → Run. CLI equivalent:</text>
+<text x="560" y="86" class="call">    gh workflow run release.yml -R mardash-ai/&lt;repo&gt;</text>
+<rect x="20" y="250" width="1000" height="200" rx="10" fill="#0d1117" stroke="#30363d"/>
+<text x="40" y="280" class="t">release #12</text><text x="140" y="280" class="s">· main · 2m41s · Re-run all jobs ↻</text>
+<rect x="36" y="296" width="240" height="140" rx="8" fill="#161b22" stroke="#30363d"/>
+<circle cx="58" cy="322" r="7" fill="#238636"/><text x="74" y="327">release</text>
+<text x="56" y="352" class="s">✓ Checkout ×2 (repo + forge)</text>
+<text x="56" y="370" class="s">✓ Auth to GCP (WIF)</text>
+<text x="56" y="388" class="s">✓ Build + push (amd64)</text>
+<text x="56" y="406" class="s">✓ Roll by digest (Ready ✓)</text>
+<path d="M280 390 L330 390" stroke="#fbbf24" stroke-width="2"/>
+<text x="336" y="378" class="call">④ click any step to stream its log. The LAST line of a green roll is</text>
+<text x="336" y="394" class="call">    "release: &lt;svc&gt; → &lt;image@sha256:…&gt; (revision Ready ✓)" — that read-back</text>
+<text x="336" y="410" class="call">    IS the proof; a run that ends without it did not ship.</text>
+<text x="620" y="290" class="call">⑤ Re-run all jobs = safe everywhere: applies converge,</text>
+<text x="620" y="306" class="call">    releases re-roll the same digest idempotently.</text>
+</svg>

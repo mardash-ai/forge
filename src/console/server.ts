@@ -25,7 +25,7 @@ import { buildServiceGraph } from './correlate/graph';
 import { runFindings } from './findings';
 import { buildTimeline } from './timeline';
 import { computeQuotas } from './quota';
-import { docsConfigured, fetchDocAsset, fetchDocIndex, fetchDocPage } from './docs';
+import { builtinSource, webManifestSource, indexAll, findSource, unqualify, type DocSource } from './docs';
 import { createGcpInventoryProvider } from '../plugins/console-gcp/inventory';
 import { createCloudMonitoringProvider, createManagedPrometheusProvider } from '../plugins/console-gcp/metrics';
 import { createCloudLoggingProvider } from '../plugins/console-gcp/logs';
@@ -541,44 +541,58 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     return envelope(events, [...runRes.sources, ...invRes.sources]);
   });
 
-  // ── Docs, proxied from the developer portal (see docs.ts for why it is not copied) ──
+  // ── Docs, aggregated from every source (see docs.ts for the built-in vs live rule) ──
 
-  const docsSource = {
-    origin: process.env.CONSOLE_DOCS_ORIGIN ?? 'https://devs.dorinda.ai',
-    user: process.env.CONSOLE_DOCS_USER ?? '',
-    pass: process.env.CONSOLE_DOCS_PASS ?? '',
-  };
+  /*
+   * Registry order is READING order in the UI: platform internals first (the architecture you need
+   * to hold the system in your head), then each app's own help pages.
+   *
+   * `dorinda-devs` is absent on purpose — it is being decommissioned, and its durable pages are now
+   * the built-in source. Its two hand-transcribed cloud snapshots were dropped rather than imported;
+   * the Inventory, Cost, Credentials and Headroom screens answer those questions from the live API.
+   */
+  const docSources: DocSource[] = [
+    builtinSource(join(process.cwd(), 'src', 'console', 'docs', 'content')),
+    webManifestSource({
+      id: 'app',
+      label: 'Dorinda app flows',
+      origin: process.env.CONSOLE_APP_DOCS_ORIGIN ?? 'https://app.dorinda.ai',
+    }),
+  ];
 
-  app.get('/api/docs', async (_req, reply) => {
-    if (!docsConfigured(docsSource)) {
-      return reply.code(501).send({
-        error: {
-          code: 'not_configured',
-          message: 'no developer-portal credentials configured, so docs cannot be fetched',
-        },
-      });
-    }
-    const pages = await fetchDocIndex(docsSource, AbortSignal.timeout(15_000));
-    return envelope({ pages, origin: docsSource.origin });
+  app.get('/api/docs', async () => {
+    // Never 501 as a whole: one unreachable source reports itself and the others still render.
+    return envelope({ sources: await indexAll(docSources, AbortSignal.timeout(15_000)) });
   });
 
   app.get('/api/docs/page', async (req, reply) => {
     const q = req.query as { p?: string };
-    if (!docsConfigured(docsSource)) {
-      return reply.code(501).send({ error: { code: 'not_configured', message: 'docs source not configured' } });
+    const ref = unqualify(q.p ?? '');
+    if (!ref) {
+      return reply.code(400).send({ error: { code: 'invalid_page', message: 'page id must be `source:page`' } });
+    }
+    const source = findSource(docSources, ref.sourceId);
+    if (!source) {
+      return reply.code(404).send({ error: { code: 'unknown_source', message: `no doc source ${ref.sourceId}` } });
     }
     try {
-      return envelope(await fetchDocPage(docsSource, q.p ?? 'index', AbortSignal.timeout(15_000)));
+      return envelope(await source.getPage(ref.pageId, AbortSignal.timeout(15_000)));
     } catch (e) {
       return reply.code(502).send({ error: { code: 'docs_unavailable', message: (e as Error).message } });
     }
   });
 
+  // Assets are namespaced by source: a built-in SVG and a remote one must not collide, and a path
+  // from one source must never resolve against another's origin.
   app.get('/docs/asset/*', async (req, reply) => {
-    if (!docsConfigured(docsSource)) return reply.code(501).send('docs source not configured');
-    const path = (req.params as Record<string, string>)['*'] ?? '';
+    const raw = (req.params as Record<string, string>)['*'] ?? '';
+    const slash = raw.indexOf('/');
+    const sourceId = slash === -1 ? '' : raw.slice(0, slash);
+    const path = slash === -1 ? '' : raw.slice(slash + 1);
+    const source = findSource(docSources, sourceId);
+    if (!source) return reply.code(404).send('unknown doc source');
     try {
-      const a = await fetchDocAsset(docsSource, path, AbortSignal.timeout(15_000));
+      const a = await source.getAsset(path, AbortSignal.timeout(15_000));
       return reply.type(a.contentType).header('cache-control', 'private, max-age=300').send(a.body);
     } catch (e) {
       return reply.code(502).send((e as Error).message);

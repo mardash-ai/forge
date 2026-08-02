@@ -1,0 +1,195 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CI/CD Pipelines · Dorinda Internals</title><style>
+:root{--bg:#0b1220;--panel:#111a2e;--ink:#e6edf7;--mut:#8b98ad;--line:#233150;
+--blue:#4c8dff;--green:#2fbf71;--amber:#f0b429;--red:#ef5350;--purple:#a78bfa;--cyan:#22d3ee}
+*{box-sizing:border-box;margin:0}
+body{font:15px/1.6 ui-sans-serif,-apple-system,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--ink);display:flex;min-height:100vh}
+nav{width:230px;background:var(--panel);border-right:1px solid var(--line);padding:24px 0;position:fixed;height:100vh}
+nav .logo{font-weight:800;font-size:18px;padding:0 22px 18px;color:#fff}
+nav .logo span{color:var(--blue)}
+nav a{display:block;padding:9px 22px;color:var(--mut);text-decoration:none;font-size:14px;border-left:3px solid transparent}
+nav a:hover{color:var(--ink)} nav a.on{color:#fff;border-left-color:var(--blue);background:#16233f}
+main{margin-left:230px;padding:40px 48px;max-width:1120px;width:100%}
+h1{font-size:30px;margin-bottom:6px} h2{font-size:20px;margin:34px 0 12px;padding-top:10px;border-top:1px solid var(--line)}
+h3{font-size:16px;margin:20px 0 8px} p{color:#c4cede;margin:8px 0} .sub{color:var(--mut);font-size:15px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+code{background:#1b2740;padding:2px 6px;border-radius:4px;color:#9fc3ff}
+pre{background:#0d1526;border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;color:#c8d6ee;margin:10px 0}
+table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
+th{color:var(--mut);text-align:left;font-weight:600;padding:8px 10px;border-bottom:2px solid var(--line)}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.pill{display:inline-block;padding:1px 9px;border-radius:20px;font-size:12px;font-weight:600}
+.p-read{background:#123c2a;color:#4ade80}.p-write{background:#3c2a12;color:#fbbf24}
+.p-danger{background:#3c1212;color:#f87171}.p-gate{background:#241a3f;color:#c4b5fd}
+.svgwrap{background:#0d1526;border:1px solid var(--line);border-radius:10px;padding:10px;margin:14px 0;overflow-x:auto}
+.svgwrap img{display:block;margin:auto;max-width:100%}
+a{color:var(--blue)}
+.callout{border-left:4px solid var(--amber);background:#1c1a10;padding:12px 16px;border-radius:0 8px 8px 0;margin:12px 0;color:#e8dcae}
+.ok{border-left-color:var(--green);background:#0f1f17;color:#b9e8cd}
+.big{font-size:40px;font-weight:800} .kpis{display:flex;gap:14px;flex-wrap:wrap}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 22px;text-align:center}
+.kpi .n{font-size:26px;font-weight:800;color:#fff}.kpi .l{color:var(--mut);font-size:12px}
+</style></head><body>
+<nav><div class="logo">dorinda<span>/devs</span></div><a href="/index">Overview</a><a href="/topology">System Topology</a><a href="/infra">Shared Infra & forge</a><a href="/mcp">MCP Tools</a><a href="/apis">APIs & Routing</a><a href="/clis">CLIs</a><a href="/sdks">Connectors & SDKs</a><a href="/ci">CI/CD</a><a href="/gcp">Google Cloud</a><a href="/runbooks">Runbooks & Links</a></nav>
+<main><h1>CI/CD — how everything ships</h1>
+<p class="sub">Two planes, one rule: <b>humans merge; CI ships.</b> Infra changes apply via <code>forge infra</code> in CI; code reaches Cloud Run only via the release pipelines. Local applies are spent (§3.8) and local releases are retired.</p>
+
+<div class="callout">🧾 <b>Honesty note:</b> during cutover night (2026-07-30) the FIRST images were rolled from a laptop under time pressure — the release pipelines didn't exist yet. That gap is now closed: all five services have <code>release.yml</code>, and the laptop path is dead (expired ADC, and nothing left that needs it).</div>
+
+<h2>The pipeline inventory</h2>
+<table><tr><th>Workflow</th><th>Lives in</th><th>Triggers</th><th>What it does</th></tr>
+<tr><td><code>infra.yml</code></td><td>all 6 repos · <code>.github/workflows/</code></td><td>PR → plan · merge (infra paths) → apply+verify · <b>nightly cron → drift gate</b> · manual</td><td>the ONLY way infrastructure changes. Apply re-plans until empty (§3.7); a red verify fails the run</td></tr>
+<tr><td><code>release.yml</code></td><td>site · web · api · devs</td><td>merge (app paths) → ship · manual</td><td>build on the in-VPC runner → push to Artifact Registry → <code>forge infra release-image</code> — digest-pinned, waits for the revision to go <b>Ready</b></td></tr>
+<tr><td><code>ci.yml</code></td><td>dorinda-api</td><td>every push + PR</td><td>typecheck · tests · contract check · npm-audit gate (expiring exceptions — next@14 due <b>2026-09-01</b>)</td></tr>
+<tr><td><code>db-migrate.yml</code></td><td>dorinda-api</td><td><b>manual only</b></td><td>schema migrations from INSIDE the VPC (private-IP Cloud SQL is unreachable from anywhere else)</td></tr></table>
+
+<h2>Where it runs</h2>
+<table><tr><th>Runner</th><th>Used by</th><th>Why</th></tr>
+<tr><td><b>self-hosted</b> (Spot VM in the VPC)</td><td>infra applies, releases, migrations</td><td>holds WIF-federated GCP identity; can reach the private DB; unmetered minutes</td></tr>
+<tr><td>GitHub-hosted</td><td><code>ci.yml</code> tests · the runner stack's own <code>infra.yml</code></td><td>tests need no GCP; and the stack that MANAGES the runner must never depend on it</td></tr></table>
+
+<h2>Walkthrough — the UI</h2>
+<p class="sub">Illustrated mockups (annotated — drawn rather than screenshots so the callouts stay accurate as GitHub's chrome changes).</p>
+<div class="svgwrap"><img src="/ci-ui-1.svg" alt="Actions tab"></div>
+<div class="svgwrap"><img src="/ci-ui-2.svg" alt="dispatch and run detail"></div>
+
+
+
+<h2>Per-service pipeline flows</h2>
+<p class="sub">One diagram per service: every workflow it has, what each stage runs, and — in the purple panel — <b>the state that must already exist</b> for the stage to pass. Most CI failures in this system are missing state, not broken code.</p>
+
+<div class="callout">🔑 <b>How to read them.</b> Blue = infrastructure plane · green = code plane · cyan = quality gates · amber-bordered boxes are the steps that <b>refuse to lie</b> (read-backs, contract gates, audit gates). Every arrow is sequential: a stage never starts until the one before it passed.</div>
+
+
+<h3>Where the release actually happens</h3>
+<p class="sub">A fair question about the diagrams below: every lane ends in a <b>check</b>, never in a "ship" box. That is deliberate, and it is the single most important thing to understand about this pipeline.</p>
+<div class="svgwrap"><img src="/ci-planes.svg" alt="Two planes: where shipping happens vs where verification happens"></div>
+<div class="callout">📌 <b>Read it this way.</b> <b>Blue lanes ship no code at all</b> — <code>infra.yml</code>'s deliverable <i>is</i> converged infrastructure, so a behaviour check is its natural end. <b>Green lanes ship code</b>, and the release is box 3 (<code>release-image</code>, where traffic moves); box 4 is the proof it landed. Ending at "release" would be exactly the false-green this system exists to prevent — we hit it live: <code>gcloud run services update</code> exited 0, the config updated, the container failed to import, and the old revision kept serving.</div>
+<div class="callout" style="border-color:#f87171">⚠️ <b>The honest limitation.</b> The gate runs <i>after</i> the change lands. A red gate does <b>not</b> roll back — it tells you fast. Recovery is a human running <code>release-image</code> with the previous digest (see <a href="/runbooks">Runbooks</a>).</div>
+<h3>The foundation — everything else waits on this</h3>
+<div class="svgwrap"><img src="/ci-flow-shared-infra.svg" alt="dorinda-shared-infra pipeline"></div>
+
+<h3>dorinda-api — the most complex (4 workflows)</h3>
+<div class="svgwrap"><img src="/ci-flow-api.svg" alt="dorinda-api pipeline"></div>
+
+<h3>dorinda-web — the browser BFF</h3>
+<div class="svgwrap"><img src="/ci-flow-web.svg" alt="dorinda-web pipeline"></div>
+
+<h3>dorinda-site — the simplest</h3>
+<div class="svgwrap"><img src="/ci-flow-site.svg" alt="dorinda-site pipeline"></div>
+
+<h3>dorinda-devs — this portal</h3>
+<div class="svgwrap"><img src="/ci-flow-devs.svg" alt="dorinda-devs pipeline"></div>
+
+<h3>dorinda-metrics — the Grafana pane</h3>
+<div class="svgwrap"><img src="/ci-flow-metrics.svg" alt="dorinda-metrics pipeline"></div>
+
+<h3>dorinda-ci-runners — the pool that runs everything else</h3>
+<div class="svgwrap"><img src="/ci-flow-runners.svg" alt="dorinda-ci-runners pipeline"></div>
+
+<h3>forge — the platform every stack consumes</h3>
+<div class="svgwrap"><img src="/ci-flow-forge.svg" alt="forge pipeline"></div>
+
+
+<h3>What each gate is allowed to count as proof</h3>
+<p class="sub">Added in forge 0.79.21 after the cutover: a release refuses to roll if the stack cannot tell a working release from a broken one.</p>
+<table>
+<tr><th>Check</th><th>Counts as a release gate?</th><th>Why</th></tr>
+<tr><td><code>cloud_run_ready</code></td><td>❌ no</td><td><code>release-image</code> already reads back revision-Ready — this re-proves what is known</td></tr>
+<tr><td><code>dns_resolves</code></td><td>❌ no</td><td>proves a name exists, not that anything answers on it</td></tr>
+<tr><td><code>command</code> running <code>true</code>/<code>:</code></td><td>❌ no</td><td>a placeholder must not satisfy the gate it was left standing in for (this exact stub was live in dorinda-api)</td></tr>
+<tr><td><code>http</code> with a status + body assertion</td><td>✅ yes</td><td>makes a real request over the real path</td></tr>
+<tr><td><code>certless_discovery</code></td><td>✅ yes</td><td>proves the OpenAI portal's certless fetch still works</td></tr>
+<tr><td><code>command</code> running a real script</td><td>✅ yes</td><td>e.g. <code>verify-mcp-edge.sh</code> — the full 5-clause mTLS edge contract</td></tr>
+</table>
+<p class="sub">Deliberate exception: <code>--allow-unverified-release</code>, which says out loud that the release proved only that it booted.</p>
+
+<h3>The probe that would have caught the cutover</h3>
+<p class="sub"><code>/api/health</code> is dependency-free <i>on purpose</i> — it reports process liveness, so it returns 200 while every upstream is broken. <code>/api/health/deep</code> is its opposite, and it is what the api's release gate asserts:</p>
+<table>
+<tr><th>Check</th><th>Catches</th></tr>
+<tr><td><code>database</code></td><td>Cloud SQL unreachable from the VPC</td></tr>
+<tr><td><code>data_plane</code></td><td>the forge sidecar down or unroutable</td></tr>
+<tr><td><code>data_plane_app_callback</code></td><td><b>the cutover's worst bug</b> — the data-plane calling back to a local address, so every handler dies while both health probes stay green</td></tr>
+<tr><td><code>external_egress</code></td><td><b>the missing Cloud NAT</b> — Stripe and SMTP hanging while the service looks perfect</td></tr>
+</table>
+<div class="callout">🧭 <b>The rule going forward:</b> when a release ships a failure this endpoint would not have caught, the fix includes a new check here. Otherwise the gate only ever catches the bugs we already know about.</div>
+<h3>The order that matters</h3>
+<p class="sub">When several things change at once, this is the dependency order — violating it produces confusing failures rather than clear ones.</p>
+<table><tr><th>#</th><th>Stack</th><th>Why it goes here</th></tr>
+<tr><td>1</td><td><b>forge</b></td><td>releases the modules + CLI everything pins</td></tr>
+<tr><td>2</td><td><b>dorinda-shared-infra</b></td><td>publishes the platform contract — every other stack's plan refuses without it</td></tr>
+<tr><td>3</td><td><b>dorinda-ci-runners</b></td><td>the pool the rest of CI runs on</td></tr>
+<tr><td>4</td><td>api · web · site · devs · metrics</td><td>independent of each other; each needs a <code>host_backends</code> line back in the foundation to be reachable</td></tr>
+</table>
+<h2>Every workflow, explained</h2>
+<p class="sub">One card per workflow: what it exists for, when it fires on its own, when <i>you</i> run it, and what green/red actually mean. Grouped by repo.</p>
+
+<h3>In every service repo — <code>infra.yml</code> <span class="pill p-gate">the only way infrastructure changes</span></h3>
+<div class="card">
+<p><b>What it's for:</b> applying <i>that repo's</i> declared stack (its <code>infra/*.tf</code> + <code>forge.infra.json</code>) to GCP via <code>forge infra</code>. The repo you're in is the stack it manages — shared-infra's manages the VPC/LB/DNS/certs; a service repo's manages its Cloud Run service, secrets containers, backend.</p>
+<p><b>Fires on its own:</b> ① <b>PRs touching <code>infra/**</code></b> → runs <code>lint + plan</code> only (read-only — the plan is your review artifact). ② <b>Merges touching those paths</b> → <code>apply</code> (with the re-plan-until-empty read-back) then <code>verify</code> (the repo's declared behavior checks — a red verify fails the run). ③ <b>Nightly at 06:17 UTC</b> → the drift gate: <code>status</code> exits 2 if GCP no longer matches git.</p>
+<p><b>Run it by hand when:</b> you want an on-demand drift check (dispatch = plan only, safe), or after fixing an external blocker (e.g. a secret value was missing) — "Re-run failed jobs" resumes exactly where it died; applies are idempotent.</p>
+<p><b>Green:</b> declared == applied == verified-working. <b>Red on a merge:</b> the apply or verify failed — read the last step's log; it names the resource. <b>Red on the schedule:</b> DRIFT — someone/something changed GCP outside git. That's the alarm working; the log shows the exact diff.</p>
+<p class="sub">Special case — <b>dorinda-ci-runners'</b> copy runs on GitHub-<i>hosted</i> runners: the stack that manages the self-hosted pool must never depend on the pool it manages.</p>
+</div>
+
+<h3>site · web · api · devs — <code>release.yml</code> <span class="pill p-write">the only way code ships</span></h3>
+<div class="card">
+<p><b>What it's for:</b> moving <i>code</i> (a container image) onto the already-provisioned Cloud Run service. Build on the in-VPC runner → push to Artifact Registry → <code>forge infra release-image</code>: digest-pinned, then <b>waits for the new revision to go Ready</b> and re-reads the served image. Infra deliberately ignores image changes — this pipeline is the code plane.</p>
+<p><b>Fires on its own:</b> merges to main touching <i>app</i> paths (each repo's list is in its YAML — e.g. api: <code>app/src/**</code>, <code>app/migrations/**</code>; devs: <code>site/**</code>, <code>server.mjs</code>).</p>
+<p><b>Run it by hand when:</b> you need a redeploy with no code change (config/secret value changed — Cloud Run resolves secret <code>latest</code> at revision creation, so a new revision is what picks it up), or a previous run died on a Spot preemption.</p>
+<p><b>Green:</b> the LAST log line reads <code>release: &lt;svc&gt; → &lt;image@sha256:…&gt; (revision Ready ✓)</code> — that read-back is the proof; without it, nothing shipped. <b>Red:</b> build failure (readable), or "revision NOT ready" — the new image boots broken and <b>traffic stays on the previous revision</b> (Cloud Run keeps serving last-Ready; a red release never takes prod down).</p>
+</div>
+
+<h3>dorinda-api — <code>ci.yml</code> <span class="pill p-read">quality gates</span></h3>
+<div class="card">
+<p><b>What it's for:</b> the merge-quality bar: typecheck, the offline test suite (DB-gated tests self-skip), the MCP <b>contract check</b> (tool surface vs <code>contract/mcp-tools.json</code> — drift here is a safety bug), and the <b>npm-audit gate</b> — ASVS V14, the CASA-critical control. Known findings are accepted via <i>expiring exceptions</i> (<code>scripts/audit-gate.mjs</code>): next@14's HIGHs expire <b>2026-09-01</b>, at which point the build goes red until the Next 16 migration lands.</p>
+<p><b>Fires on its own:</b> every push and PR — no path filter, it's cheap and always relevant. Runs on GitHub-hosted runners (needs no GCP).</p>
+<p><b>Run it by hand when:</b> never needed — push and it runs. <b>Red:</b> a genuine test/type/contract failure, a NEW high/critical CVE, or an expired exception. Don't weaken the gate; fix or consciously extend the exception in a reviewed commit.</p>
+</div>
+
+<h3>dorinda-api — <code>db-migrate.yml</code> <span class="pill p-danger">manual only, deliberately</span></h3>
+<div class="card">
+<p><b>What it's for:</b> applying <code>app/migrations/*.sql</code> to Cloud SQL from inside the VPC — the private-IP database is unreachable from anywhere else, including your laptop. Reads <code>DATABASE_URL</code> from Secret Manager at run time.</p>
+<p><b>Run it when:</b> a merge added a migration file, BEFORE dispatching/letting the api release roll (schema first, then code). <b>Caution:</b> the runner is minimal (no tracking table yet) — re-running already-applied migrations errors on CREATE; that error is noisy but harmless. A tracked runner is on the hardening list, after which this step folds into the api release pipeline automatically.</p>
+</div>
+
+<h3>site · web · api — <code>publish.yml</code> <span class="pill p-gate">LEGACY — the box era</span></h3>
+<div class="card">
+<p><b>What it was for:</b> the pre-GCP path — multi-arch image builds pushed to GHCR for the Mac's compose stack (<code>fast-deploy-*</code> / <code>forge release</code> on the box). Manual-dispatch only since 2026-07-20 (it was the top Actions-minutes consumer).</p>
+<p><b>Run it when:</b> <b>don't.</b> It still works and stays until the box is decommissioned (it's part of the rollback story), then gets deleted with the rest of the box tooling (Phase 5).</p>
+</div>
+
+<h3>forge — <code>ci.yml</code> + <code>image-smoke.yml</code> <span class="pill p-read">platform quality</span></h3>
+<div class="card">
+<p><b>What they're for:</b> forge's own bar. <code>ci.yml</code>: unit tests + typecheck, then the same suite again against a real Postgres + MinIO ("green on both backends" is enforced, not claimed). <code>image-smoke.yml</code>: boots the built images and probes them.</p>
+<p><b>Fire on their own:</b> every PR and push to main (forge is public — Actions is free and unmetered here). <b>Run by hand:</b> not needed.</p>
+</div>
+
+<h3>forge — <code>publish-image.yml</code> + <code>publish-data-plane.yml</code> <span class="pill p-write">platform releases</span></h3>
+<div class="card">
+<p><b>What they're for:</b> publishing the forge control-plane and data-plane images to GHCR when a version tag (<code>vX.Y.Z</code>) is pushed — the release half of forge's release-then-adopt discipline. Consumers then adopt by bumping a pinned ref/digest in a reviewed commit.</p>
+<p><b>Fire on their own:</b> tag pushes (that's what "forge 0.79.x was released 17 times on cutover night" actually did). <b>Run by hand when:</b> a tag build flaked. <b>Note:</b> these publish <b>arm64</b> (the box's architecture); the GCP data-plane image was rebuilt amd64 from the pinned tag — adding multi-arch here is on the hardening list.</p>
+</div>
+<h2>Cookbook</h2>
+<table><tr><th>I want to…</th><th>Do</th></tr>
+<tr><td>ship a code change</td><td>merge to main. The release pipeline fires on app paths; watch Actions for <i>revision Ready ✓</i></td></tr>
+<tr><td>change infrastructure</td><td>edit <code>infra/*.tf</code> or <code>forge.infra.json</code> → PR shows the plan → merge applies + verifies</td></tr>
+<tr><td>redeploy without a change</td><td>Actions → release → Run workflow (or <code>gh workflow run release.yml -R mardash-ai/&lt;repo&gt;</code>)</td></tr>
+<tr><td>run DB migrations</td><td>Actions → db-migrate → Run workflow (dorinda-api)</td></tr>
+<tr><td>roll BACK code</td><td><code>gh workflow run release.yml</code> won't help — re-run the OLD commit's release run (Re-run all jobs), or release-image the previous digest from AR's history via a dispatch on that commit</td></tr>
+<tr><td>check for drift now</td><td>Actions → infra → Run workflow (dispatch runs plan; scheduled runs gate on it)</td></tr>
+<tr><td>see why a run failed</td><td>open the run → click the red step → the log ends with the real error; infra failures name the resource</td></tr></table>
+
+<h2>The guard rails (why you can't hurt yourself)</h2>
+<table><tr><th>Guard</th><th>Mechanism</th></tr>
+<tr><td>no credentials to leak</td><td>CI authenticates via Workload Identity Federation — OIDC tokens minted per run, locked to <code>mardash-ai</code> repos; <b>zero service-account keys exist</b></td></tr>
+<tr><td>a zero exit code is not evidence</td><td>applies re-plan until empty; releases wait for the revision to be <b>Ready</b> and verify the served digest</td></tr>
+<tr><td>drift cannot hide</td><td>nightly scheduled plan per stack — a console change breaks a build by morning</td></tr>
+<tr><td>images are immutable facts</td><td>rolls are digest-pinned (<code>@sha256:…</code>) — a tag can lie, a digest cannot</td></tr>
+<tr><td>prod destroys</td><td>never in CI; locally demands <code>--i-know-this-is-prod</code></td></tr></table>
+<p class="sub" style="margin-top:48px;border-top:1px solid var(--line);padding-top:14px">Dorinda internal developer portal · generated 2026-07-30 (cutover night) · behind basic auth — do not share.</p>
+</main></body></html>

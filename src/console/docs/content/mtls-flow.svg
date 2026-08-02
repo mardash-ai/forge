@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="430" viewBox="0 0 1040 430" font-family="ui-sans-serif,sans-serif">
+<style>text{fill:#e6edf7;font-size:13px}.t{font-weight:700}.s{fill:#8b98ad;font-size:11px}</style>
+<defs><marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker></defs>
+<text x="20" y="26" class="t" font-size="16">mcp.dorinda.ai — three callers, three outcomes (permissive edge, fail-closed app)</text>
+<!-- lanes -->
+<rect x="20" y="50" width="1000" height="110" rx="10" fill="#0f1f17" stroke="#2fbf71"/>
+<text x="36" y="76" class="t" fill="#4ade80">✅ OpenAI connector (real cert, chains to OpenAI CA)</text>
+<text x="36" y="100" class="s">TLS completes → edge verifies chain → forwards X-Client-Cert-Leaf + X-Client-Cert-Chain-Verified: true</text>
+<text x="36" y="120" class="s">app re-parses the leaf itself → SAN == mtls.prod.connectors.openai.com → chain verdict true</text>
+<text x="860" y="105" class="t" fill="#4ade80" font-size="20">→ 200 /mcp</text>
+<rect x="20" y="172" width="1000" height="110" rx="10" fill="#241d10" stroke="#f0b429"/>
+<text x="36" y="198" class="t" fill="#fbbf24">📄 Certless (OpenAI submission portal · discovery)</text>
+<text x="36" y="222" class="s">TLS completes WITHOUT a cert (this is why the mode is ALLOW_INVALID_OR_MISSING — REJECT_INVALID broke the Create-plugin flow once)</text>
+<text x="36" y="242" class="s">/.well-known/* served publicly · but POST /mcp → app sees no cert</text>
+<text x="810" y="215" class="t" fill="#4ade80" font-size="16">→ 200 discovery</text>
+<text x="810" y="245" class="t" fill="#f87171" font-size="16">→ 403 /mcp</text>
+<rect x="20" y="294" width="1000" height="110" rx="10" fill="#251114" stroke="#ef5350"/>
+<text x="36" y="320" class="t" fill="#f87171">🕵️ Forged cert (right SAN, self-signed — anyone can mint one)</text>
+<text x="36" y="344" class="s">TLS completes (permissive edge) → chain verification FAILS → edge forwards NO leaf, no verdict</text>
+<text x="36" y="364" class="s">app: missing cert/verdict = failure, never success · proven live 2026-07-30 with a real forged cert</text>
+<text x="860" y="350" class="t" fill="#f87171" font-size="20">→ 403 /mcp</text>
+<text x="20" y="424" class="s">Design rule: the edge is permissive so discovery works; the APP is the enforcement point and fails closed. Traefik did this at the handshake; GCP moves it one layer up — same outcome, verified by verify-mcp-edge.sh (5/5).</text>
+</svg>

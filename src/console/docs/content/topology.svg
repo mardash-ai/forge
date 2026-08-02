@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="620" viewBox="0 0 1040 620" font-family="ui-sans-serif,sans-serif">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#2fbf71"/></marker>
+<marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#a78bfa"/></marker></defs>
+<style>text{fill:#e6edf7;font-size:13px}.t{font-weight:700;font-size:14px}.s{fill:#8b98ad;font-size:11px}.b{rx:8}</style>
+
+<text x="20" y="26" class="t" font-size="16">Dorinda on GCP — production topology (live since 2026-07-30)</text>
+
+<!-- clients -->
+<rect x="20" y="50" width="150" height="46" class="b" fill="#1b2740" stroke="#4c8dff"/><text x="42" y="70">🧑 Browsers</text><text x="42" y="87" class="s">app · site</text>
+<rect x="20" y="106" width="150" height="46" class="b" fill="#1b2740" stroke="#22d3ee"/><text x="42" y="126">🤖 Claude</text><text x="42" y="143" class="s">certless → api</text>
+<rect x="20" y="162" width="150" height="46" class="b" fill="#1b2740" stroke="#a78bfa"/><text x="42" y="182">🤖 ChatGPT</text><text x="42" y="199" class="s">mTLS cert → mcp</text>
+
+<!-- DNS -->
+<rect x="230" y="98" width="130" height="70" class="b" fill="#111a2e" stroke="#f0b429"/><text x="248" y="122" class="t">GoDaddy DNS</text><text x="248" y="140" class="s">A @,app,api → LB-1</text><text x="248" y="155" class="s">A mcp → LB-2</text>
+
+<!-- two LB entries -->
+<rect x="420" y="50" width="200" height="88" class="b" fill="#14243f" stroke="#4c8dff" stroke-width="2"/>
+<text x="438" y="74" class="t">Global LB · main</text><text x="438" y="92" class="s">34.54.142.191 · managed certs</text><text x="438" y="108" class="s">NO client cert ever requested</text><text x="438" y="124" class="s">(browser cert-picker hazard)</text>
+<rect x="420" y="158" width="200" height="88" class="b" fill="#20143f" stroke="#a78bfa" stroke-width="2"/>
+<text x="438" y="182" class="t">Global LB · mcp</text><text x="438" y="200" class="s">8.232.233.202 · ServerTlsPolicy</text><text x="438" y="216" class="s">ALLOW_INVALID_OR_MISSING</text><text x="438" y="232" class="s">TrustConfig = OpenAI CA</text>
+
+<!-- cloud run row -->
+<rect x="700" y="34" width="150" height="52" class="b" fill="#112b1e" stroke="#2fbf71"/><text x="716" y="56" class="t">dorinda-site</text><text x="716" y="74" class="s">Cloud Run · Next.js</text>
+<rect x="700" y="96" width="150" height="52" class="b" fill="#112b1e" stroke="#2fbf71"/><text x="716" y="118" class="t">dorinda-web</text><text x="716" y="136" class="s">BFF · SSR · cookies</text>
+<rect x="700" y="158" width="150" height="72" class="b" fill="#112b1e" stroke="#2fbf71" stroke-width="2"/><text x="716" y="180" class="t">dorinda-api</text><text x="716" y="197" class="s">REST + 31 MCP tools</text><text x="716" y="213" class="s">mTLS guard (fail closed)</text>
+<rect x="700" y="250" width="150" height="58" class="b" fill="#112b1e" stroke="#2fbf71"/><text x="716" y="272" class="t">forge data-plane</text><text x="716" y="289" class="s">auth · billing · OAuth</text>
+
+<!-- data tier -->
+<rect x="900" y="120" width="120" height="150" class="b" fill="#2b1c10" stroke="#f0b429" stroke-width="2"/>
+<text x="914" y="144" class="t">Cloud SQL</text><text x="914" y="162" class="s">Postgres 16</text><text x="914" y="178" class="s">dorinda_api</text><text x="914" y="194" class="s">forge_platform</text><text x="914" y="216" class="s" fill="#4ade80">backups + PITR ✓</text><text x="914" y="232" class="s">private IP only</text><text x="914" y="248" class="s">zonal (HA later)</text>
+
+<!-- vpc box -->
+<rect x="688" y="20" width="344" height="300" rx="12" fill="none" stroke="#233150" stroke-dasharray="6 4"/>
+<text x="700" y="336" class="s">VPC "dorinda" · Direct VPC egress · Cloud NAT for Stripe/SMTP</text>
+
+<!-- third parties -->
+<rect x="700" y="380" width="110" height="44" class="b" fill="#1b2740" stroke="#8b98ad"/><text x="714" y="398">Stripe</text><text x="714" y="414" class="s">webhooks in</text>
+<rect x="822" y="380" width="110" height="44" class="b" fill="#1b2740" stroke="#8b98ad"/><text x="836" y="398">Google</text><text x="836" y="414" class="s">Gmail · Calendar</text>
+<rect x="944" y="380" width="88" height="44" class="b" fill="#1b2740" stroke="#8b98ad"/><text x="958" y="398">SMTP</text><text x="958" y="414" class="s">email out</text>
+
+<!-- legacy box -->
+<rect x="20" y="380" width="360" height="120" rx="10" fill="#160f0f" stroke="#ef5350" stroke-dasharray="5 4"/>
+<text x="36" y="404" class="t" fill="#f87171">The Mac (rollback · being retired)</text>
+<text x="36" y="424" class="s">wildcard *.dorinda.ai still → box:</text>
+<text x="36" y="442" class="s">grafana.dorinda.ai (metrics pane, until Phase 2b)</text>
+<text x="36" y="460" class="s">old prod stack: untouched, off-path</text>
+<text x="36" y="482" class="s" fill="#f0b429">rollback = one GoDaddy API call per host</text>
+
+<!-- CI -->
+<rect x="430" y="380" width="240" height="120" rx="10" fill="#101726" stroke="#22d3ee"/>
+<text x="446" y="404" class="t">CI (GitHub Actions)</text>
+<text x="446" y="424" class="s">self-hosted Spot runner IN the VPC</text>
+<text x="446" y="442" class="s">WIF — zero service-account keys</text>
+<text x="446" y="460" class="s">merge → forge infra apply + verify</text>
+<text x="446" y="478" class="s">code → forge infra release-image</text>
+
+<!-- edges -->
+<path d="M170 73 L420 80" stroke="#4c8dff" stroke-width="2" marker-end="url(#a)"/>
+<path d="M170 129 L420 100" stroke="#22d3ee" stroke-width="2" marker-end="url(#a)"/>
+<path d="M170 185 L420 200" stroke="#a78bfa" stroke-width="2" marker-end="url(#ap)"/>
+<path d="M620 66 L700 60" stroke="#2fbf71" stroke-width="2" marker-end="url(#ag)"/>
+<path d="M620 88 L700 120" stroke="#2fbf71" stroke-width="2" marker-end="url(#ag)"/>
+<path d="M620 110 L700 185 " stroke="#2fbf71" stroke-width="2" marker-end="url(#ag)"/>
+<path d="M620 202 L700 196" stroke="#a78bfa" stroke-width="2" marker-end="url(#ap)"/>
+<path d="M850 194 L900 194" stroke="#f0b429" stroke-width="2" marker-end="url(#a)"/>
+<path d="M850 279 L900 250" stroke="#f0b429" stroke-width="2" marker-end="url(#a)"/>
+<path d="M775 230 L775 250" stroke="#2fbf71" stroke-width="2" marker-end="url(#ag)"/>
+<path d="M775 308 L755 380" stroke="#8b98ad" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M800 308 L870 380" stroke="#8b98ad" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M830 300 L975 380" stroke="#8b98ad" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="640" y="55" class="s">host routes</text>
+<text x="625" y="225" class="s">+cert headers</text>
+</svg>

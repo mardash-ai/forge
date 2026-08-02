@@ -443,7 +443,7 @@ describe('docs — absorbed by reference, never copied', () => {
   });
 
   it('strips scripts and inline handlers from fetched content', () => {
-    const doc = extractDoc(page, 'gcp', 'fallback');
+    const doc = extractDoc(page, 'platform', 'gcp', 'fallback');
     expect(doc.html).not.toContain('alert(1)');
     expect(doc.html).not.toContain('<script');
   });
@@ -451,14 +451,16 @@ describe('docs — absorbed by reference, never copied', () => {
   it('rewrites portal links to console routes and images to the proxied path', () => {
     // The portal's images sit behind its basic auth, so a raw <img src="/x.svg"> would 401 in the
     // browser and render as a broken image with no explanation.
-    const doc = extractDoc(page, 'gcp', 'fallback');
-    expect(doc.html).toContain('src="/docs/asset/gcp-topology.svg"');
-    expect(doc.html).toContain('href="?s=docs&p=runbooks"');
+    const doc = extractDoc(page, 'platform', 'gcp', 'fallback');
+    expect(doc.html).toContain('src="/docs/asset/platform/gcp-topology.svg"');
+    expect(doc.html).toContain('href="?s=docs&p=platform:runbooks"');
   });
 
-  it('takes only <main>, so the portal cannot restyle the console from its own <head>', () => {
-    const doc = extractDoc(page, 'gcp', 'fallback');
-    expect(doc.html).not.toContain('<style');
+  it('takes only <main>, so a page cannot inject its own nav into the console shell', () => {
+    // The page's CSS is kept (scoped — see the scoping suite below), but its STRUCTURE is not:
+    // a fetched <nav> rendered inside the console would give the reader a second, competing
+    // navigation that goes nowhere.
+    const doc = extractDoc(page, 'platform', 'gcp', 'fallback');
     expect(doc.html).not.toContain('<nav');
     expect(doc.title).toBe('Google Cloud');
   });
@@ -579,5 +581,229 @@ describe('CI pin adoption — a shipped fix nobody pins is a fix nobody has (F-1
     const m = /mardash-ai\/forge[\s\S]{0,120}?ref:\s*(v[0-9][0-9.]*)/.exec(wf);
     expect(m?.[1]).toBe('v0.79.24');
     expect(m?.[1]).not.toBe('v9.9.9');
+  });
+});
+
+describe('docs — many sources, one pane', () => {
+  it('namespaces page ids, so two sources publishing `index` cannot collide', async () => {
+    const { qualify, unqualify } = await import('../src/console/docs');
+    expect(qualify('app', 'admin-purge')).toBe('app:admin-purge');
+    expect(unqualify('platform:topology')).toEqual({ sourceId: 'platform', pageId: 'topology' });
+    // A bare id is REFUSED rather than defaulted to a source — defaulting would silently serve one
+    // source's page under another's link, which is the exact failure namespacing exists to prevent.
+    expect(unqualify('topology')).toBeNull();
+    expect(unqualify('../etc/passwd')).toBeNull();
+  });
+
+  it('scopes assets to their own source — a path from one must not resolve against another', async () => {
+    const { extractDoc } = await import('../src/console/docs');
+    const html = '<main><img src="/topology.svg"><a href="/runbooks">R</a></main>';
+    const a = extractDoc(html, 'platform', 'x', 'x');
+    const b = extractDoc(html, 'app', 'x', 'x');
+    expect(a.html).toContain('src="/docs/asset/platform/topology.svg"');
+    expect(b.html).toContain('src="/docs/asset/app/topology.svg"');
+    expect(a.html).toContain('href="?s=docs&p=platform:runbooks"');
+    expect(b.html).toContain('href="?s=docs&p=app:runbooks"');
+  });
+
+  it('reads a page that uses <body> rather than <main>, confining its <style> to the embed', async () => {
+    const { extractDoc } = await import('../src/console/docs');
+    // dorinda-web's help pages wrap content in a plain <div class="wrap"> with a <style> block and
+    // no <main>. Falling back to the raw string would let that CSS reach the console shell and
+    // restyle the whole pane — which is what a naive "just render it" would do.
+    const page = `<title>Flow · purge</title><style>body{background:red}</style>
+      <body><div class="wrap"><h1>Purge an account</h1><p>body</p></div></body>`;
+    const doc = extractDoc(page, 'app', 'admin-purge', 'fallback');
+    expect(doc.title).toBe('Purge an account');
+    expect(doc.html).toContain('Purge an account');
+    // The rule survives, CONFINED. `body{background:red}` reaching the shell would repaint the
+    // whole console; `.doc-embed{background:red}` paints only the embedded document.
+    expect(doc.html).toContain('.doc-embed{background:red}');
+    expect(doc.html).not.toMatch(/(^|[^-\w.])body\s*\{/);
+  });
+
+  it('titles the built-in pages from their own <h1>, so the index cannot disagree with the page', async () => {
+    const { builtinSource } = await import('../src/console/docs');
+    const { join } = await import('node:path');
+    const src = builtinSource(join(process.cwd(), 'src', 'console', 'docs', 'content'));
+    const pages = await src.listPages(AbortSignal.timeout(5_000));
+    const byId = new Map(pages.map((p) => [p.id, p.title]));
+    expect(byId.get('topology')).toBe('System Topology');
+    expect(byId.get('ci')).toBe('CI/CD — how everything ships');
+    // The two hand-transcribed cloud snapshots were DROPPED, not imported. The console answers
+    // those questions live; a stale snapshot beside a live view is worse than no snapshot.
+    expect(byId.has('gcp')).toBe(false);
+  });
+
+  it('every asset a bundled page references is actually bundled', async () => {
+    // A moved page whose diagram did not move renders as a broken image with no explanation.
+    const { readdir, readFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const dir = join(process.cwd(), 'src', 'console', 'docs', 'content');
+    const files = await readdir(dir);
+    const missing: string[] = [];
+    for (const f of files.filter((x) => x.endsWith('.html'))) {
+      const html = await readFile(join(dir, f), 'utf8');
+      for (const m of html.matchAll(/(?:src|data)="\/?([a-zA-Z0-9._-]+\.svg)"/g)) {
+        if (!files.includes(m[1]!)) missing.push(`${f} → ${m[1]}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('one unreachable source reports itself and does NOT blank the others', async () => {
+    const { indexAll } = await import('../src/console/docs');
+    const ok = {
+      id: 'ok', label: 'Fine', origin: 'x', configured: () => true,
+      listPages: async () => [{ id: 'a', title: 'A' }],
+      getPage: async () => ({ id: 'ok:a', title: 'A', html: '', styled: false }),
+      getAsset: async () => ({ body: Buffer.from(''), contentType: 'x' }),
+    };
+    const down = { ...ok, id: 'down', label: 'Down', listPages: async () => { throw new Error('502'); } };
+    const unset = { ...ok, id: 'unset', label: 'Unset', configured: () => false };
+
+    const out = await indexAll([ok, down, unset], AbortSignal.timeout(5_000));
+    expect(out.find((s) => s.id === 'ok')?.pages).toHaveLength(1);
+    // Reported, not swallowed — an empty Docs screen with no explanation is the failure here.
+    expect(out.find((s) => s.id === 'down')?.error).toContain('502');
+    expect(out.find((s) => s.id === 'unset')?.error).toBe('not configured');
+  });
+
+  it('a live source serves ONLY ids its manifest publishes', async () => {
+    const { webManifestSource } = await import('../src/console/docs');
+    const calls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (u: string) => {
+      calls.push(String(u));
+      if (String(u).endsWith('manifest.json')) {
+        return new Response(JSON.stringify([{ slug: 'login', title: 'Log in', file: 'login.html' }]));
+      }
+      return new Response('<body><h1>Log in</h1></body>');
+    }) as never;
+    try {
+      const src = webManifestSource({ id: 'app', label: 'App', origin: 'https://app.example' });
+      expect((await src.getPage('login', AbortSignal.timeout(5_000))).title).toBe('Log in');
+      // An unpublished id is refused — otherwise this proxy becomes a fetch-anything primitive
+      // pointed at our own hosts, reachable by anyone who can reach the console.
+      await expect(src.getPage('secret', AbortSignal.timeout(5_000))).rejects.toThrow(/unknown page/);
+      expect(calls.some((c) => c.includes('secret.html'))).toBe(false);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
+describe('docs — a page keeps its own CSS but cannot restyle the console', () => {
+  it('confines every selector to the embed scope', async () => {
+    const { scopeCss } = await import('../src/console/docs');
+    const out = scopeCss('.card{color:red} h1,h2{margin:0}');
+    expect(out).toContain('.doc-embed .card{color:red}');
+    expect(out).toContain('.doc-embed h1,.doc-embed h2{margin:0}');
+  });
+
+  it('neutralises the selectors that would otherwise own the whole page', async () => {
+    const { scopeCss } = await import('../src/console/docs');
+    // `body{background:#fff}` unscoped repaints the console. `:root{--ink:...}` unscoped overrides
+    // the console's OWN design tokens — the more dangerous of the two, because it looks like it
+    // worked while quietly changing every other screen's colours.
+    const out = scopeCss(':root{--ink:#000}body{background:#fff}html.dark{color:#eee}');
+    expect(out).toContain('.doc-embed{--ink:#000}');
+    expect(out).toContain('.doc-embed{background:#fff}');
+    expect(out).toContain('.doc-embed.dark{color:#eee}');
+    expect(out).not.toMatch(/(^|[^-\w.])body\s*\{/);
+    expect(out).not.toMatch(/:root\s*\{/);
+  });
+
+  it('recurses into @media and passes @keyframes / @font-face through untouched', async () => {
+    const { scopeCss } = await import('../src/console/docs');
+    const out = scopeCss('@media (max-width:600px){.card{padding:4px}} @keyframes spin{from{opacity:0}to{opacity:1}}');
+    expect(out).toContain('@media (max-width:600px){.doc-embed .card{padding:4px}}');
+    // Prefixing `from`/`to` would not scope the animation — it would break it, silently.
+    expect(out).toContain('@keyframes spin{from{opacity:0}to{opacity:1}}');
+    expect(out).not.toContain('.doc-embed from');
+  });
+
+  it('collects styles from the HEAD, where these pages actually put them', async () => {
+    const { extractDoc, DOC_SCOPE } = await import('../src/console/docs');
+    // Reading only the extracted <body> would find no <style> and produce a silently unstyled
+    // document — which is exactly what shipped before this was fixed.
+    const page = `<title>T</title><style>.wrap{max-width:820px}</style><body><div class="wrap"><h1>T</h1></div></body>`;
+    const doc = extractDoc(page, 'app', 'x', 'x');
+    expect(doc.html).toContain(`.${DOC_SCOPE} .wrap{max-width:820px}`);
+    expect(doc.html).toContain('<h1>T</h1>');
+  });
+
+  it('still strips scripts and handlers — keeping CSS is not keeping behaviour', async () => {
+    const { extractDoc } = await import('../src/console/docs');
+    const doc = extractDoc(
+      `<style>.a{color:red}</style><body><p onclick="steal()">x</p><script>alert(1)</script></body>`,
+      'app', 'x', 'x',
+    );
+    expect(doc.html).toContain('.doc-embed .a{color:red}');
+    expect(doc.html).not.toContain('alert(1)');
+    expect(doc.html).not.toContain('onclick');
+  });
+
+  it('scopes the REAL purge page, whose SVG diagram is entirely class-positioned', async () => {
+    // The page that exposed this: ~70 KB with an inline sequence diagram where every label's
+    // position and colour comes from a .seq-* class. Unscoped-and-stripped it renders as text
+    // piled at the origin, indistinguishable from a broken page.
+    const { readFile } = await import('node:fs/promises');
+    const { extractDoc } = await import('../src/console/docs');
+    const src = await readFile(
+      new URL('../../dorinda-web/public/docs/admin-purge.html', import.meta.url).pathname,
+      'utf8',
+    ).catch(() => null);
+    if (!src) return; // dorinda-web not checked out beside forge — skip rather than fail.
+    const doc = extractDoc(src, 'app', 'admin-purge', 'x');
+    expect(doc.html).toContain('.doc-embed .seq-lbl');
+    expect(doc.html).not.toMatch(/(^|[^-\w.])body\s*\{/);
+  });
+});
+
+describe('docs — a document\'s own chrome must not become the embed\'s layout', () => {
+  it('drops box layout from html/body/:root rules but keeps their look', async () => {
+    const { scopeCss } = await import('../src/console/docs');
+    // The devs portal sets `body{display:flex}` so a fixed sidebar sits beside its content. Mapped
+    // onto the embed that made the container a flex ROW, and every heading, paragraph and table
+    // laid out as a narrow vertical strip — unreadable, and it looked like a content bug.
+    const out = scopeCss('body{display:flex;min-height:100vh;background:#0b1220;color:#e6edf7;font:15px sans-serif}');
+    expect(out).toContain('background:#0b1220');
+    expect(out).toContain('color:#e6edf7');
+    expect(out).not.toContain('display:flex');
+    expect(out).not.toContain('min-height');
+  });
+
+  it('keeps custom properties declared on :root — they are the page\'s design tokens', async () => {
+    const { scopeCss } = await import('../src/console/docs');
+    const out = scopeCss(':root{--ink:#e6edf7;--bg:#0b1220;padding:40px}');
+    expect(out).toContain('--ink:#e6edf7');
+    expect(out).toContain('--bg:#0b1220');
+    expect(out).not.toContain('padding:40px');
+  });
+
+  it('leaves layout on NON-document selectors alone', async () => {
+    const { scopeCss } = await import('../src/console/docs');
+    // Only the container rule is special. A page's own `.grid{display:grid}` is its content's
+    // layout and must survive, or the document loses its structure.
+    const out = scopeCss('.grid{display:grid;gap:14px}');
+    expect(out).toContain('.doc-embed .grid{display:grid;gap:14px}');
+  });
+
+  it('drops a document rule that is ONLY layout, rather than emitting an empty one', async () => {
+    const { scopeCss } = await import('../src/console/docs');
+    expect(scopeCss('body{display:flex;margin:0}').trim()).toBe('');
+  });
+
+  it('the REAL bundled portal pages no longer flex the embed', async () => {
+    const { readFile, readdir } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const { extractDoc } = await import('../src/console/docs');
+    const dir = join(process.cwd(), 'src', 'console', 'docs', 'content');
+    for (const f of (await readdir(dir)).filter((x) => x.endsWith('.html'))) {
+      const doc = extractDoc(await readFile(join(dir, f), 'utf8'), 'platform', f, f);
+      const containerRule = /\.doc-embed\{([^}]*)\}/.exec(doc.html)?.[1] ?? '';
+      expect(containerRule, `${f} pushes layout onto the embed`).not.toMatch(/display\s*:/);
+    }
   });
 });

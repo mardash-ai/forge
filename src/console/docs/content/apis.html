@@ -1,0 +1,50 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>APIs & Routing · Dorinda Internals</title><style>
+:root{--bg:#0b1220;--panel:#111a2e;--ink:#e6edf7;--mut:#8b98ad;--line:#233150;
+--blue:#4c8dff;--green:#2fbf71;--amber:#f0b429;--red:#ef5350;--purple:#a78bfa;--cyan:#22d3ee}
+*{box-sizing:border-box;margin:0}
+body{font:15px/1.6 ui-sans-serif,-apple-system,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--ink);display:flex;min-height:100vh}
+nav{width:230px;background:var(--panel);border-right:1px solid var(--line);padding:24px 0;position:fixed;height:100vh}
+nav .logo{font-weight:800;font-size:18px;padding:0 22px 18px;color:#fff}
+nav .logo span{color:var(--blue)}
+nav a{display:block;padding:9px 22px;color:var(--mut);text-decoration:none;font-size:14px;border-left:3px solid transparent}
+nav a:hover{color:var(--ink)} nav a.on{color:#fff;border-left-color:var(--blue);background:#16233f}
+main{margin-left:230px;padding:40px 48px;max-width:1120px;width:100%}
+h1{font-size:30px;margin-bottom:6px} h2{font-size:20px;margin:34px 0 12px;padding-top:10px;border-top:1px solid var(--line)}
+h3{font-size:16px;margin:20px 0 8px} p{color:#c4cede;margin:8px 0} .sub{color:var(--mut);font-size:15px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+code{background:#1b2740;padding:2px 6px;border-radius:4px;color:#9fc3ff}
+pre{background:#0d1526;border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;color:#c8d6ee;margin:10px 0}
+table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
+th{color:var(--mut);text-align:left;font-weight:600;padding:8px 10px;border-bottom:2px solid var(--line)}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.pill{display:inline-block;padding:1px 9px;border-radius:20px;font-size:12px;font-weight:600}
+.p-read{background:#123c2a;color:#4ade80}.p-write{background:#3c2a12;color:#fbbf24}
+.p-danger{background:#3c1212;color:#f87171}.p-gate{background:#241a3f;color:#c4b5fd}
+.svgwrap{background:#0d1526;border:1px solid var(--line);border-radius:10px;padding:10px;margin:14px 0;overflow-x:auto}
+.svgwrap img{display:block;margin:auto;max-width:100%}
+a{color:var(--blue)}
+.callout{border-left:4px solid var(--amber);background:#1c1a10;padding:12px 16px;border-radius:0 8px 8px 0;margin:12px 0;color:#e8dcae}
+.ok{border-left-color:var(--green);background:#0f1f17;color:#b9e8cd}
+.big{font-size:40px;font-weight:800} .kpis{display:flex;gap:14px;flex-wrap:wrap}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 22px;text-align:center}
+.kpi .n{font-size:26px;font-weight:800;color:#fff}.kpi .l{color:var(--mut);font-size:12px}
+</style></head><body>
+<nav><div class="logo">dorinda<span>/devs</span></div><a href="/index">Overview</a><a href="/topology">System Topology</a><a href="/infra">Shared Infra & forge</a><a href="/mcp">MCP Tools</a><a href="/apis">APIs & Routing</a><a href="/clis">CLIs</a><a href="/sdks">Connectors & SDKs</a><a href="/ci">CI/CD</a><a href="/gcp">Google Cloud</a><a href="/runbooks">Runbooks & Links</a></nav>
+<main><h1>APIs & Routing</h1>
+<p class="sub">One declarative authorization map (<code>src/domain/authz-map.ts</code>) is the single source of truth for every REST route AND MCP tool — enforced through one function.</p>
+<div class="svgwrap"><img src="/callgraph.svg" alt="call graph"></div>
+<h2>Surfaces</h2>
+<table><tr><th>Surface</th><th>Base</th><th>Consumers</th><th>Auth</th></tr>
+<tr><td>REST API</td><td><code>api.dorinda.ai/api/*</code></td><td>dorinda-web BFF (service token), admin tools</td><td>session cookie via BFF · AUTH_SERVICE_TOKEN service-to-service · ADMIN_API_TOKEN</td></tr>
+<tr><td>MCP</td><td><code>{api,mcp}.dorinda.ai/mcp</code></td><td>Claude · ChatGPT</td><td>OAuth (forge data-plane is the AS) · +mTLS on mcp</td></tr>
+<tr><td>Platform</td><td><code>/auth/* /billing/*</code></td><td>browsers via the BFF proxy</td><td>forge data-plane (C10 auth · C33 billing · Stripe webhooks)</td></tr>
+<tr><td>Health</td><td><code>/api/health</code></td><td>LB, CI verify</td><td>none (liveness only)</td></tr></table>
+<h2>Governance on writes (C29)</h2>
+<p>Low-risk writes auto-run; anything leaving the account (real email, calendar mutations seen by others) stages an <b>approval</b> a human resolves. The approval floor is enforced in dispatch — not a convention.</p>
+<h2>Households & visibility (C31)</h2>
+<p>Roles owner/adult/teen/assistant with 13 permission tokens; resource visibility private/group/shared with reader/writer grants; teens+assistants get <code>resource.share_up</code> — they can share TO the owner only, and the wider step is the owner's.</p>
+<p class="sub" style="margin-top:48px;border-top:1px solid var(--line);padding-top:14px">Dorinda internal developer portal · generated 2026-07-30 (cutover night) · behind basic auth — do not share.</p>
+</main></body></html>

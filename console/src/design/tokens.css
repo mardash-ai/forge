@@ -300,3 +300,9 @@ input, select { font: inherit; }
   border-left: 2px solid var(--line-strong); color: var(--text-muted);
 }
 .doc hr { border: none; border-top: 1px solid var(--line-faint); margin: 22px 0; }
+
+/* An embedded document is a guest: it brings its own design (scoped server-side by `scopeCss`), and
+   this only stops it from breaking the page around it. A wide sequence diagram must SCROLL inside
+   its own panel rather than widen the console and put a horizontal scrollbar on the whole app. */
+.doc-embed { overflow-x: auto; border-radius: var(--r-lg); }
+.doc-embed img, .doc-embed svg { max-width: 100%; height: auto; }

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="360" viewBox="0 0 1040 360" font-family="ui-sans-serif,sans-serif">
+<style>text{fill:#e6edf7;font-size:13px}.t{font-weight:700}.s{fill:#8b98ad;font-size:11px}</style>
+<defs><marker id="c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker></defs>
+<text x="20" y="26" class="t" font-size="16">Who calls whom — the runtime call graph</text>
+<rect x="20" y="60" width="150" height="46" rx="8" fill="#1b2740" stroke="#4c8dff"/><text x="40" y="88">browser</text>
+<rect x="240" y="60" width="170" height="46" rx="8" fill="#112b1e" stroke="#2fbf71"/><text x="258" y="82" class="t">dorinda-web</text><text x="258" y="98" class="s">BFF: cookies, SSR</text>
+<rect x="480" y="60" width="170" height="46" rx="8" fill="#112b1e" stroke="#2fbf71"/><text x="498" y="82" class="t">dorinda-api</text><text x="498" y="98" class="s">REST + authz map</text>
+<rect x="720" y="40" width="170" height="46" rx="8" fill="#112b1e" stroke="#2fbf71"/><text x="738" y="62" class="t">forge data-plane</text><text x="738" y="78" class="s">/auth /billing OAuth MCP-AS</text>
+<rect x="720" y="120" width="170" height="46" rx="8" fill="#2b1c10" stroke="#f0b429"/><text x="738" y="142" class="t">Cloud SQL</text><text x="738" y="158" class="s">dorinda_api · forge_platform</text>
+<rect x="20" y="150" width="150" height="46" rx="8" fill="#1b2740" stroke="#22d3ee"/><text x="40" y="172">Claude</text><text x="40" y="188" class="s">Bearer via api host</text>
+<rect x="20" y="240" width="150" height="46" rx="8" fill="#1b2740" stroke="#a78bfa"/><text x="40" y="262">ChatGPT</text><text x="40" y="278" class="s">mTLS via mcp host</text>
+<rect x="480" y="240" width="170" height="46" rx="8" fill="#112b1e" stroke="#2fbf71"/><text x="498" y="262" class="t">MCP tool exec (dispatch)</text><text x="498" y="278" class="s">executes tool CALLS (registration is a separate boot hook)</text>
+<rect x="720" y="240" width="170" height="46" rx="8" fill="#1b2740" stroke="#8b98ad"/><text x="738" y="262">Google APIs</text><text x="738" y="278" class="s">Gmail · Calendar (user OAuth)</text>
+<path d="M170 83 L240 83" stroke="#4c8dff" stroke-width="2" marker-end="url(#c)"/><text x="182" y="76" class="s">HttpOnly</text>
+<path d="M410 83 L480 83" stroke="#2fbf71" stroke-width="2" marker-end="url(#c)"/><text x="424" y="76" class="s">service token</text>
+<path d="M650 75 L720 63" stroke="#2fbf71" stroke-width="2" marker-end="url(#c)"/><text x="658" y="60" class="s">auth/billing proxy</text>
+<path d="M650 95 L720 140" stroke="#f0b429" stroke-width="2" marker-end="url(#c)"/><text x="668" y="122" class="s">DATABASE_URL</text>
+<path d="M805 86 L805 120" stroke="#f0b429" stroke-width="2" marker-end="url(#c)"/>
+<path d="M170 173 L480 100" stroke="#22d3ee" stroke-width="2" marker-end="url(#c)"/>
+<path d="M170 263 L480 263" stroke="#a78bfa" stroke-width="2" marker-end="url(#c)"/><text x="240" y="256" class="s">cert headers from LB-2</text>
+<path d="M565 240 L565 106" stroke="#2fbf71" stroke-width="2" marker-end="url(#c)"/>
+<path d="M650 250 L720 258" stroke="#8b98ad" stroke-width="2" marker-end="url(#c)"/><text x="656" y="242" class="s">READS: direct, w/ vault token</text>
+<path d="M655 275 C690 300 720 290 745 286" stroke="#f0b429" stroke-width="2" fill="none" marker-end="url(#c)"/><text x="600" y="308" class="s" fill="#fbbf24">get token: C24 vault (DP) — app never stores tokens</text>
+<path d="M620 240 C660 180 690 120 720 86" stroke="#a78bfa" stroke-width="2" fill="none" marker-end="url(#c)"/><text x="586" y="150" class="s" fill="#c4b5fd">SENDS: fully brokered by DP — app never sees a token</text>
+<text x="20" y="340" class="s">Integration rule: grants+custody centralized in the DP (C24 vault); reads call Google DIRECT with a vault-issued short-lived token; sends are fully DP-brokered. Boundary rule: app.dorinda.ai is dorinda-web's BFF only; api.dorinda.ai is the client-agnostic backend; machine-facing traffic (MCP, Stripe webhooks) never touches the BFF.</text>
+</svg>

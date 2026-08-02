@@ -2306,25 +2306,53 @@ function Quota() {
  * The developer portal, served inside the console — fetched, never copied. See `src/console/docs.ts`
  * for why: a second copy of every platform fact is how docs start disagreeing with reality.
  */
+interface DocSourceIndex {
+  id: string;
+  label: string;
+  origin: string;
+  pages: Array<{ id: string; title: string }>;
+  error?: string;
+}
+
+/**
+ * Docs — every source, one pane.
+ *
+ * The index is a filterable LIST grouped by source, not a segmented control. Two sources publish
+ * roughly fifty pages between them; a segmented row would overflow its container and the pages past
+ * the fold would simply be unreachable — the failure mode where a control that works at four items
+ * silently stops working at forty.
+ *
+ * Each group states its provenance, because "which of these is live and which is bundled" changes
+ * how much you trust a page that disagrees with what you are looking at.
+ */
 function Docs() {
-  const [page, setPage] = useState(() => new URLSearchParams(location.search).get('p') ?? 'index');
-  const index = useApi<{ pages: Array<{ id: string; title: string }>; origin: string }>('/api/docs');
-  const doc = useApi<{ id: string; title: string; html: string }>(`/api/docs/page?p=${encodeURIComponent(page)}`, [page]);
-  const pages = index.data?.pages ?? [];
+  const [page, setPage] = useState(() => new URLSearchParams(location.search).get('p') ?? '');
+  const [q, setQ] = useState('');
+  const index = useApi<{ sources: DocSourceIndex[] }>('/api/docs');
+  const sources = index.data?.sources ?? [];
+
+  // Land on the first available page rather than guessing an id. Guessing `index` produced a 502
+  // on a source that has no page by that name, which reads as "docs are broken".
+  const firstPage = sources.flatMap((s) => s.pages.map((p) => `${s.id}:${p.id}`))[0] ?? '';
+  const active = page || firstPage;
+  const doc = useApi<{ id: string; title: string; html: string; styled: boolean }>(
+    active ? `/api/docs/page?p=${encodeURIComponent(active)}` : null,
+    [active],
+  );
 
   useEffect(() => {
+    if (!active) return;
     const u = new URL(location.href);
-    u.searchParams.set('p', page);
+    u.searchParams.set('p', active);
     history.replaceState(null, '', u);
-  }, [page]);
+  }, [active]);
 
-  // The proxied content uses ordinary anchors; intercept them so navigation stays in the SPA.
+  // Proxied content uses ordinary anchors; intercept them so navigation stays in the SPA.
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       const a = (e.target as HTMLElement)?.closest?.('a');
       if (!a) return;
-      const href = a.getAttribute('href') ?? '';
-      const m = /^\?s=docs&p=([a-z0-9_-]+)$/.exec(href);
+      const m = /^\?s=docs&p=([a-z0-9_-]+:[a-zA-Z0-9._-]+)$/.exec(a.getAttribute('href') ?? '');
       if (m) {
         e.preventDefault();
         setPage(m[1]!);
@@ -2335,52 +2363,102 @@ function Docs() {
     return () => document.removeEventListener('click', onClick);
   }, []);
 
-  // "Not configured" is a STATE, not a failure — it deserves the unconfigured plate and its
-  // instructions, not a red error box implying something broke. Only the index error was checked
-  // before, so an unconfigured origin surfaced as a critical alarm from the page fetch instead.
-  const unconfigured = `${index.error ?? ''} ${doc.error ?? ''}`.includes('not configured');
+  const needle = q.trim().toLowerCase();
+  const filtered = sources
+    .map((s) => ({ ...s, pages: s.pages.filter((p) => !needle || p.title.toLowerCase().includes(needle)) }))
+    .filter((s) => s.pages.length > 0 || s.error || !needle);
 
   return (
     <>
       <Head
         screen="docs"
         title="Docs"
-        sub="The developer portal, in the console. Fetched live from its source — never a second copy that could start disagreeing with it."
+        sub="Every source, one pane. Platform internals are bundled with the console; an app's own help pages are fetched live from it, so there is never a second copy to disagree with the code."
       />
-      {pages.length > 0 && (
-        <Toolbar>
-          <Segmented
-            ariaLabel="Documentation page"
-            value={page}
-            onChange={setPage}
-            options={pages.map((p) => [p.id, p.title] as const)}
-          />
-          {index.data?.origin && <Note>from {index.data.origin}</Note>}
-        </Toolbar>
-      )}
 
-      {unconfigured ? (
+      <Toolbar>
+        <Field ariaLabel="Filter documentation" value={q} onChange={setQ} placeholder="Filter pages…" width={240} />
+        <Note>
+          {sources.reduce((n, s) => n + s.pages.length, 0)} pages · {sources.length} sources
+        </Note>
+      </Toolbar>
+
+      {index.error ? (
+        <Err msg={index.error} onRetry={index.reload} />
+      ) : index.loading ? (
         <Card>
-          <Empty
-            kind="unconfigured"
-            title="Docs source not configured"
-            detail="The console has no credentials for the developer portal, so it cannot fetch its pages. Set CONSOLE_DOCS_ORIGIN and its basic-auth pair."
-          />
-        </Card>
-      ) : doc.error ? (
-        <Err msg={doc.error} onRetry={doc.reload} />
-      ) : doc.loading ? (
-        <Card>
-          <Skeleton rows={10} />
+          <Skeleton rows={8} />
         </Card>
       ) : (
-        <Card pad={false}>
-          <div
-            className="doc"
-            style={{ padding: '20px 26px 34px' }}
-            dangerouslySetInnerHTML={{ __html: doc.data?.html ?? '' }}
-          />
-        </Card>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 260px) 1fr', gap: 'var(--section-gap)', alignItems: 'start' }}>
+          <Card pad={false}>
+            <nav aria-label="Documentation pages" style={{ padding: '8px 0', maxHeight: '70vh', overflowY: 'auto' }}>
+              {filtered.map((s) => (
+                <div key={s.id} style={{ padding: '6px 0' }}>
+                  <div style={{ padding: '6px 14px 4px', fontSize: 11, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                    {s.label}
+                  </div>
+                  <div style={{ padding: '0 14px 6px', fontSize: 11, color: 'var(--text-muted)' }}>{s.origin}</div>
+                  {/* A source that could not be reached says so HERE, next to the sources that
+                      answered — an empty group with no explanation reads as "there are no docs". */}
+                  {s.error && (
+                    <div style={{ padding: '2px 14px 8px', fontSize: 11.5, color: 'var(--warn, #f0b429)' }}>
+                      unavailable — {s.error}
+                    </div>
+                  )}
+                  {s.pages.map((p) => {
+                    const id = `${s.id}:${p.id}`;
+                    const on = id === active;
+                    return (
+                      <button
+                        key={id}
+                        onClick={() => { setPage(id); scrollTo(0, 0); }}
+                        aria-current={on ? 'page' : undefined}
+                        style={{
+                          display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+                          padding: '5px 14px', fontSize: 13.5, lineHeight: 1.35,
+                          background: on ? 'var(--bg-inset)' : 'transparent',
+                          borderLeft: `2px solid ${on ? 'var(--accent, #4c8dff)' : 'transparent'}`,
+                          color: on ? 'var(--text-primary)' : 'var(--text-secondary)',
+                          border: 'none', borderLeftWidth: 2, borderLeftStyle: 'solid',
+                        }}
+                      >
+                        {p.title}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </nav>
+          </Card>
+
+          {doc.error ? (
+            <Err msg={doc.error} onRetry={doc.reload} />
+          ) : doc.loading ? (
+            <Card>
+              <Skeleton rows={10} />
+            </Card>
+          ) : !active ? (
+            <Card>
+              <Empty
+                kind="unconfigured"
+                title="No documentation sources are reachable"
+                detail="Platform internals ship with the console, so an empty list here means the bundled content is missing from the image — check that src/console/docs/content survived the build."
+              />
+            </Card>
+          ) : (
+            <Card pad={false}>
+              {/* `doc-embed` is the scope every rule in the page's own stylesheet is confined to
+                  (see scopeCss in src/console/docs.ts). Renaming it here silently unstyles every
+                  fetched document, so the name is asserted by a test on the server side. */}
+              <div
+                className={doc.data?.styled ? 'doc-embed' : 'doc doc-embed'}
+                style={{ padding: '20px 26px 34px' }}
+                dangerouslySetInnerHTML={{ __html: doc.data?.html ?? '' }}
+              />
+            </Card>
+          )}
+        </div>
       )}
     </>
   );

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="440" viewBox="0 0 1040 440" font-family="ui-sans-serif,sans-serif">
+<style>text{fill:#e6edf7;font-size:13px}.t{font-weight:700}.s{fill:#8b98ad;font-size:11px}.g{fill:#4ade80}.r{fill:#f87171}.call{fill:#fbbf24;font-size:12px;font-weight:600}</style>
+<text x="20" y="26" class="t" font-size="16">The Actions tab — repo → Actions (illustrated; annotations in yellow)</text>
+<rect x="20" y="44" width="1000" height="360" rx="10" fill="#0d1117" stroke="#30363d"/>
+<rect x="20" y="44" width="1000" height="46" rx="10" fill="#161b22"/>
+<text x="40" y="72">mardash-ai / <tspan class="t">dorinda-api</tspan></text>
+<text x="300" y="72" class="s">Code · Issues · Pull requests · <tspan fill="#fff" font-weight="700">Actions</tspan> · Security</text>
+<rect x="36" y="104" width="210" height="284" rx="8" fill="#0d1117" stroke="#30363d"/>
+<text x="52" y="130" class="s">All workflows</text>
+<text x="52" y="156" class="t">ci</text>
+<text x="52" y="182" class="t">infra</text>
+<text x="52" y="208" class="t">release</text>
+<text x="52" y="234" class="t">db-migrate</text>
+<path d="M250 200 L300 200" stroke="#fbbf24" stroke-width="2"/>
+<text x="306" y="196" class="call">① every pipeline = one YAML in .github/workflows/</text>
+<text x="306" y="212" class="call">    pick one to see its runs + the Run workflow button</text>
+<rect x="270" y="230" width="730" height="52" rx="8" fill="#161b22" stroke="#30363d"/>
+<circle cx="292" cy="256" r="8" fill="#238636"/><text x="288" y="261" font-size="11">✓</text>
+<text x="312" y="252" class="t">2a: the release pipeline — code reaches Cloud Run ONLY through CI</text>
+<text x="312" y="270" class="s">release #12 · main · pushed by mark · 2m 41s</text>
+<rect x="270" y="292" width="730" height="52" rx="8" fill="#161b22" stroke="#30363d"/>
+<circle cx="292" cy="318" r="8" fill="#da3633"/><text x="289" y="323" font-size="11">✗</text>
+<text x="312" y="314" class="t">nightly drift check</text>
+<text x="312" y="332" class="s">infra #31 · schedule · 1m 02s</text>
+<path d="M1000 318 L960 318" stroke="#fbbf24" stroke-width="2"/>
+<text x="700" y="360" class="call">② a red SCHEDULED infra run = DRIFT — something in GCP no longer matches git.</text>
+<text x="700" y="376" class="call">    That is the alarm working; read the run log for the diff.</text>
+</svg>

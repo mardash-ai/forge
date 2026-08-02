@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1060" height="640" viewBox="0 0 1060 640" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif">
+<defs>
+<marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8b98ad"/></marker>
+</defs>
+<style>
+text{fill:#e6edf7}.h{font-size:17px;font-weight:800}.sub{font-size:12.5px;fill:#8b98ad}
+.lane{font-size:13px;font-weight:800}.trig{font-size:11px;fill:#c4cede}
+.step{font-size:12px;font-weight:600}.note{font-size:10.5px;fill:#8b98ad}
+.ok{font-size:12px;font-weight:700;fill:#4ade80}.st{font-size:11.5px;fill:#c4cede}.stk{font-size:11.5px;font-weight:700;fill:#fbbf24}
+</style>
+<rect width="1060" height="640" fill="#0b1220"/>
+<text x="24" y="30" class="h">dorinda-api — the backend (api.dorinda.ai + mcp.dorinda.ai)</text>
+<text x="24" y="50" class="sub">The only stateful service. Four workflows — the most complex pipeline in the product.</text>
+<rect x="24" y="74" width="1012" height="84" rx="9" fill="#111a2e" stroke="#22d3ee" stroke-width="1.5"/>
+<rect x="24" y="74" width="5" height="84" rx="2" fill="#22d3ee"/>
+<text x="42" y="96" class="lane" fill="#22d3ee">ci.yml</text>
+<text x="42" y="114" class="trig">▶ every push + PR (GitHub-hosted — no GCP needed)</text>
+<rect x="42" y="122" width="152" height="26" rx="6" fill="#16233f" stroke="#22d3ee"/>
+<text x="52" y="138" class="step">typecheck</text>
+<text x="52" y="152" class="note">tsc --noEmit</text>
+<path d="M194 140 L212 140" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="216" y="122" width="152" height="26" rx="6" fill="#16233f" stroke="#22d3ee"/>
+<text x="226" y="138" class="step">vitest</text>
+<text x="226" y="152" class="note">DB tests self-skip</text>
+<path d="M368 140 L386 140" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="390" y="122" width="152" height="26" rx="6" fill="#16233f" stroke="#22d3ee"/>
+<text x="400" y="138" class="step">contract:check</text>
+<text x="400" y="152" class="note">tool surface vs contract</text>
+<path d="M542 140 L560 140" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="564" y="122" width="152" height="26" rx="6" fill="#241a10" stroke="#f0b429"/>
+<text x="574" y="138" class="step">audit gate</text>
+<text x="574" y="152" class="note">ASVS V14 · expiring exceptions</text>
+<text x="738" y="144" class="ok">✓ mergeable</text>
+<rect x="24" y="170" width="1012" height="84" rx="9" fill="#111a2e" stroke="#4c8dff" stroke-width="1.5"/>
+<rect x="24" y="170" width="5" height="84" rx="2" fill="#4c8dff"/>
+<text x="42" y="192" class="lane" fill="#4c8dff">infra.yml</text>
+<text x="42" y="210" class="trig">▶ PR → plan · merge(infra/**) → apply+verify · nightly 06:17 UTC → drift</text>
+<rect x="42" y="218" width="152" height="26" rx="6" fill="#16233f" stroke="#4c8dff"/>
+<text x="52" y="234" class="step">lint</text>
+<text x="52" y="248" class="note">schema · pins · fmt · validate</text>
+<path d="M194 236 L212 236" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="216" y="218" width="152" height="26" rx="6" fill="#16233f" stroke="#4c8dff"/>
+<text x="226" y="234" class="step">plan</text>
+<text x="226" y="248" class="note">contract gate first</text>
+<path d="M368 236 L386 236" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="390" y="218" width="152" height="26" rx="6" fill="#241a10" stroke="#f0b429"/>
+<text x="400" y="234" class="step">apply</text>
+<text x="400" y="248" class="note">§3.7 re-plan until empty</text>
+<path d="M542 236 L560 236" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="564" y="218" width="152" height="26" rx="6" fill="#241a10" stroke="#f0b429"/>
+<text x="574" y="234" class="step">verify</text>
+<text x="574" y="248" class="note">behaviour, not existence</text>
+<text x="738" y="240" class="ok">✓ converged</text>
+<rect x="24" y="266" width="1012" height="84" rx="9" fill="#111a2e" stroke="#f0b429" stroke-width="1.5"/>
+<rect x="24" y="266" width="5" height="84" rx="2" fill="#f0b429"/>
+<text x="42" y="288" class="lane" fill="#f0b429">db-migrate.yml</text>
+<text x="42" y="306" class="trig">▶ MANUAL ONLY — run BEFORE the release that needs the schema</text>
+<rect x="42" y="314" width="152" height="26" rx="6" fill="#16233f" stroke="#f0b429"/>
+<text x="52" y="330" class="step">auth (WIF)</text>
+<text x="52" y="344" class="note">in-VPC runner</text>
+<path d="M194 332 L212 332" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="216" y="314" width="152" height="26" rx="6" fill="#16233f" stroke="#f0b429"/>
+<text x="226" y="330" class="step">read DATABASE_URL</text>
+<text x="226" y="344" class="note">from Secret Manager</text>
+<path d="M368 332 L386 332" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="390" y="314" width="152" height="26" rx="6" fill="#241a10" stroke="#f0b429"/>
+<text x="400" y="330" class="step">migrate.mjs</text>
+<text x="400" y="344" class="note">private-IP Cloud SQL</text>
+<text x="564" y="336" class="ok">✓ schema current</text>
+<rect x="24" y="362" width="1012" height="84" rx="9" fill="#111a2e" stroke="#2fbf71" stroke-width="1.5"/>
+<rect x="24" y="362" width="5" height="84" rx="2" fill="#2fbf71"/>
+<text x="42" y="384" class="lane" fill="#2fbf71">release.yml</text>
+<text x="42" y="402" class="trig">▶ merge(app paths) · manual dispatch</text>
+<rect x="42" y="410" width="152" height="26" rx="6" fill="#16233f" stroke="#2fbf71"/>
+<text x="52" y="426" class="step">build (amd64)</text>
+<text x="52" y="440" class="note">on the in-VPC runner</text>
+<path d="M194 428 L212 428" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="216" y="410" width="152" height="26" rx="6" fill="#16233f" stroke="#2fbf71"/>
+<text x="226" y="426" class="step">push → AR</text>
+<text x="226" y="440" class="note">tagged by commit sha</text>
+<path d="M368 428 L386 428" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="390" y="410" width="152" height="26" rx="6" fill="#241a10" stroke="#f0b429"/>
+<text x="400" y="426" class="step">release-image</text>
+<text x="400" y="440" class="note">digest-pinned</text>
+<path d="M542 428 L560 428" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="564" y="410" width="152" height="26" rx="6" fill="#241a10" stroke="#f0b429"/>
+<text x="574" y="426" class="step">read-back</text>
+<text x="574" y="440" class="note">revision must be Ready</text>
+<text x="738" y="432" class="ok">✓ api + mcp serving</text>
+<rect x="24" y="464" width="1012" height="190" rx="9" fill="#141020" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="42" y="486" class="lane" fill="#c4b5fd">🔑 State that must already exist (else the stage fails, loudly)</text>
+<text x="42" y="506" class="stk">WIF binding for the repo</text><text x="330" y="506" class="st">bootstrap registered it: repo ∈ github.repos in dorinda-shared-infra</text>
+<text x="42" y="526" class="stk">Self-hosted runner ONLINE</text><text x="330" y="526" class="st">ci-runner MIG healthy; else jobs queue forever (silent)</text>
+<text x="42" y="546" class="stk">Platform contract published</text><text x="330" y="546" class="st">gs://dorinda-tf-state/contract/prod-a.json — else plan refuses</text>
+<text x="42" y="566" class="stk">Module pins all equal</text><text x="330" y="566" class="st">lint fails on mixed refs (0.79.20) — the Cloud-NAT class of bug</text>
+<text x="42" y="586" class="stk">6 secret VALUES present</text><text x="330" y="586" class="st">session/service/admin/forge-key + composed DB URLs</text>
+<text x="42" y="606" class="stk">FORGE_APP_CALLBACK_URL</text><text x="330" y="606" class="st">else MCP tool calls die: handler_status_error</text>
+<text x="42" y="626" class="stk">Cloud NAT reachable</text><text x="330" y="626" class="st">else Stripe/SMTP hang — trial + email silently fail</text>
+<text x="42" y="646" class="stk">Schema migrated BEFORE the roll</text><text x="330" y="646" class="st">code expecting new columns will 500 otherwise</text>
+</svg>

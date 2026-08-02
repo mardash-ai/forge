@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1060" height="520" viewBox="0 0 1060 520" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif">
+<defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8b98ad"/></marker></defs>
+<style>text{fill:#e6edf7}.h{font-size:17px;font-weight:800}.sub{font-size:12.5px;fill:#8b98ad}
+.lane{font-size:13px;font-weight:800}.step{font-size:12px;font-weight:600}.note{font-size:10.5px;fill:#8b98ad}
+.ok{font-size:12px;font-weight:700;fill:#4ade80}.bad{font-size:12px;font-weight:700;fill:#f87171}
+.q{font-size:12.5px;font-weight:700}.qa{font-size:11.5px;fill:#c4cede}</style>
+<rect width="1060" height="520" fill="#0b1220"/>
+<text x="24" y="30" class="h">Why every pipeline ends in a check, not a ship</text>
+<text x="24" y="50" class="sub">"Release" is a step in the middle. The last step is always the one that could still say no.</text>
+<rect x="24" y="74" width="1012" height="86" rx="9" fill="#111a2e" stroke="#4c8dff" stroke-width="1.5"/>
+<rect x="24" y="74" width="5" height="86" rx="2" fill="#4c8dff"/>
+<text x="42" y="96" class="lane" fill="#4c8dff">INFRA plane — infra.yml</text>
+<rect x="42" y="108" width="176" height="42" rx="6" fill="#16233f" stroke="#4c8dff" stroke-width="1"/>
+<text x="52" y="126" class="step">lint / plan</text>
+<text x="52" y="142" class="note">schema · pins · contract</text>
+<path d="M218 130 L240 130" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#a2)"/>
+<rect x="244" y="108" width="176" height="42" rx="6" fill="#0f2a1c" stroke="#2fbf71" stroke-width="2"/>
+<text x="254" y="126" class="step">apply</text>
+<text x="254" y="142" class="note">⬅ the change lands HERE</text>
+<path d="M420 130 L442 130" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#a2)"/>
+<rect x="446" y="108" width="176" height="42" rx="6" fill="#241a10" stroke="#f0b429" stroke-width="1"/>
+<text x="456" y="126" class="step">verify</text>
+<text x="456" y="142" class="note">behaviour: does it ANSWER?</text>
+<text x="648" y="134" class="ok">✓ converged</text>
+<rect x="24" y="174" width="1012" height="86" rx="9" fill="#111a2e" stroke="#2fbf71" stroke-width="1.5"/>
+<rect x="24" y="174" width="5" height="86" rx="2" fill="#2fbf71"/>
+<text x="42" y="196" class="lane" fill="#2fbf71">CODE plane — release.yml</text>
+<rect x="42" y="208" width="176" height="42" rx="6" fill="#16233f" stroke="#2fbf71" stroke-width="1"/>
+<text x="52" y="226" class="step">build → push</text>
+<text x="52" y="242" class="note">image in Artifact Registry</text>
+<path d="M218 230 L240 230" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#a2)"/>
+<rect x="244" y="208" width="176" height="42" rx="6" fill="#0f2a1c" stroke="#2fbf71" stroke-width="2"/>
+<text x="254" y="226" class="step">release-image</text>
+<text x="254" y="242" class="note">⬅ traffic MOVES here</text>
+<path d="M420 230 L442 230" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#a2)"/>
+<rect x="446" y="208" width="176" height="42" rx="6" fill="#241a10" stroke="#f0b429" stroke-width="1"/>
+<text x="456" y="226" class="step">Ready + verify</text>
+<text x="456" y="242" class="note">booted, AND answers</text>
+<text x="648" y="234" class="ok">✓ serving</text>
+<rect x="24" y="284" width="1012" height="112" rx="9" fill="#241014" stroke="#f87171" stroke-width="1.5"/>
+<text x="42" y="308" class="lane" fill="#fca5a5">⚠ What the green box does NOT mean</text>
+<text x="42" y="330" class="qa">The ship step (green) happens BEFORE the gate (amber). A failing gate turns the pipeline red — it does</text>
+<text x="42" y="348" class="qa">not roll anything back. The change is already applied; the new revision is already serving traffic.</text>
+<text x="42" y="370" class="qa">A red gate means: <tspan fill="#fca5a5" font-weight="700">a human rolls back</tspan> (previous digest via release-image) — CI will not do it for you.</text>
+<text x="42" y="388" class="qa">The gate&#8217;s job is to make sure you <tspan font-weight="700">find out in 40 seconds instead of next Tuesday.</tspan></text>
+<rect x="24" y="414" width="1012" height="86" rx="9" fill="#141020" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="42" y="438" class="lane" fill="#c4b5fd">Ready is not working — why the gate needs a check that makes a REQUEST</text>
+<text x="42" y="460" class="qa">The cutover&#8217;s worst bug: FORGE_APP_CALLBACK_URL was unset. Build green · push green · revision <tspan fill="#4ade80" font-weight="700">Ready ✓</tspan> ·</text>
+<text x="42" y="478" class="qa">/api/health <tspan fill="#4ade80" font-weight="700">200</tspan> — and every MCP tool call died with handler_status_error. So cloud_run_ready and dns_resolves</text>
+<text x="42" y="496" class="qa">no longer satisfy the gate (forge 0.79.21): they re-prove what the read-back already proved.</text>
+</svg>

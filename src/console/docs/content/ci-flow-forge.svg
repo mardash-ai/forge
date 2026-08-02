@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1060" height="460" viewBox="0 0 1060 460" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif">
+<defs>
+<marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8b98ad"/></marker>
+</defs>
+<style>
+text{fill:#e6edf7}.h{font-size:17px;font-weight:800}.sub{font-size:12.5px;fill:#8b98ad}
+.lane{font-size:13px;font-weight:800}.trig{font-size:11px;fill:#c4cede}
+.step{font-size:12px;font-weight:600}.note{font-size:10.5px;fill:#8b98ad}
+.ok{font-size:12px;font-weight:700;fill:#4ade80}.st{font-size:11.5px;fill:#c4cede}.stk{font-size:11.5px;font-weight:700;fill:#fbbf24}
+</style>
+<rect width="1060" height="460" fill="#0b1220"/>
+<text x="24" y="30" class="h">forge — the platform (public repo)</text>
+<text x="24" y="50" class="sub">Ships the CLI + Terraform modules every stack consumes. Consumers ADOPT by bumping a pinned ref — deliberately manual, never automatic.</text>
+<rect x="24" y="74" width="1012" height="84" rx="9" fill="#111a2e" stroke="#22d3ee" stroke-width="1.5"/>
+<rect x="24" y="74" width="5" height="84" rx="2" fill="#22d3ee"/>
+<text x="42" y="96" class="lane" fill="#22d3ee">ci.yml</text>
+<text x="42" y="114" class="trig">▶ every PR + push to main (free/unmetered — public repo)</text>
+<rect x="42" y="122" width="152" height="26" rx="6" fill="#16233f" stroke="#22d3ee"/>
+<text x="52" y="138" class="step">test</text>
+<text x="52" y="152" class="note">unit + typecheck</text>
+<path d="M194 140 L212 140" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="216" y="122" width="152" height="26" rx="6" fill="#241a10" stroke="#f0b429"/>
+<text x="226" y="138" class="step">test-postgres</text>
+<text x="226" y="152" class="note">same suite vs real PG + MinIO</text>
+<text x="390" y="144" class="ok">✓ green on both backends</text>
+<rect x="24" y="170" width="1012" height="84" rx="9" fill="#111a2e" stroke="#2fbf71" stroke-width="1.5"/>
+<rect x="24" y="170" width="5" height="84" rx="2" fill="#2fbf71"/>
+<text x="42" y="192" class="lane" fill="#2fbf71">publish-image.yml / publish-data-plane.yml</text>
+<text x="42" y="210" class="trig">▶ tag push v* (data-plane also on main push)</text>
+<rect x="42" y="218" width="152" height="26" rx="6" fill="#241a10" stroke="#f0b429"/>
+<text x="52" y="234" class="step">test</text>
+<text x="52" y="248" class="note">suite + typecheck IN-workflow</text>
+<path d="M194 236 L212 236" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="216" y="218" width="152" height="26" rx="6" fill="#16233f" stroke="#2fbf71"/>
+<text x="226" y="234" class="step">build + push</text>
+<text x="226" y="248" class="note">GHCR, digest recorded</text>
+<path d="M368 236 L386 236" stroke="#8b98ad" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="390" y="218" width="152" height="26" rx="6" fill="#241a10" stroke="#f0b429"/>
+<text x="400" y="234" class="step">consumer adopts</text>
+<text x="400" y="248" class="note">?ref bump in a REVIEWED commit</text>
+<text x="564" y="240" class="ok">✓ released</text>
+<rect x="24" y="272" width="1012" height="130" rx="9" fill="#141020" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="42" y="294" class="lane" fill="#c4b5fd">🔑 State that must already exist (else the stage fails, loudly)</text>
+<text x="42" y="314" class="stk">the test job gates publish</text><text x="330" y="314" class="st">needs:[test] added 0.79.20 — before that a tag shipped RED code</text>
+<text x="42" y="334" class="stk">tags are created by a human</text><text x="330" y="334" class="st">release is a decision, not an automatic consequence of green</text>
+<text x="42" y="354" class="stk">consumers pin by ref</text><text x="330" y="354" class="st">your prod stack never mutates because forge tagged something</text>
+<text x="42" y="374" class="stk">all-or-nothing adoption</text><text x="330" y="374" class="st">lint fails on mixed pins — the Cloud-NAT six-releases-behind bug</text>
+<text x="42" y="394" class="stk">⚠ publishes are arm64</text><text x="330" y="394" class="st">GCP images are rebuilt amd64 from the tag — multi-arch is queued</text>
+</svg>
