@@ -9,6 +9,28 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-02
+
+### Added
+- **A Dashboards screen that embeds the real Grafana boards.** Sub-navigation is built live from
+  whatever is in the configured Grafana folder, each board renders in-place with its own panels,
+  legends, axes and time picker, and there is a link out to the full board.
+  - The console does NOT redraw these. Reimplementing charting would be work whose only achievement
+    is a second thing to keep in step; framing Grafana gets axes, tooltips and zoom for free and
+    permanently in step with the dashboard.
+  - **Public-dashboard tokens are resolved live and re-published when missing.** Grafana's database
+    here is SQLite on an ephemeral filesystem, so every redeploy wipes them. Anything holding a
+    token as configuration would rot silently and frame a dead URL; this is self-healing instead,
+    because a fix that depends on someone remembering to republish is not a fix.
+  - Published with the **time picker on** (not being able to widen the window is what made the
+    previous single-metric screen useless) and **annotations off** (they can carry free text an
+    author never intended to publish).
+  - One unpublishable board reports itself beside the others rather than blanking the list.
+
+### Changed
+- Grafana now sets `allow_embedding`. It remains login-gated; the only thing reachable without auth
+  is a board explicitly published behind a 32-character unguessable read-only token.
+
 ## [1.1.2] - 2026-08-02
 
 ### Added

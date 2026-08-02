@@ -1242,3 +1242,143 @@ describe('Grafana time macros resolve, rather than reaching Prometheus verbatim'
     expect(p95?.targets[0]?.expr).not.toContain('[5m]');
   });
 });
+
+describe('embedded Grafana boards — self-healing across a redeploy', () => {
+  function stub(handler: (url: string, init: RequestInit) => unknown) {
+    const calls: Array<{ url: string; method: string }> = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
+      calls.push({ url: String(url), method: init.method ?? 'GET' });
+      const out = handler(String(url), init);
+      if (out instanceof Response) return out;
+      return new Response(JSON.stringify(out ?? {}), { headers: { 'content-type': 'application/json' } });
+    }) as never;
+    return { calls, restore: () => { globalThis.fetch = real; } };
+  }
+  const cfg = { origin: 'https://g.test', user: 'u', pass: 'p', folder: 'Dorinda' };
+
+  it('offers only the configured folder', async () => {
+    const { createGrafanaBoards } = await import('../src/console/grafana-boards');
+    const f = stub((url) =>
+      url.includes('/api/search')
+        ? [
+            { uid: 'a', title: 'Product — top-line', url: '/d/a', folderTitle: 'Dorinda' },
+            { uid: 'b', title: 'Someone else', url: '/d/b', folderTitle: 'Other' },
+            { uid: 'c', title: 'Loose board', url: '/d/c' },
+          ]
+        : { accessToken: 'tok', isEnabled: true },
+    );
+    try {
+      const out = await createGrafanaBoards(cfg).list(AbortSignal.timeout(5_000));
+      expect(out.boards.map((b) => b.uid)).toEqual(['a']);
+    } finally {
+      f.restore();
+    }
+  });
+
+  it('PUBLISHES a board whose token is gone — the redeploy case', async () => {
+    /*
+     * Grafana's database here is SQLite on an ephemeral filesystem, so every redeploy wipes public
+     * dashboard tokens. If the console only READ them, each board would silently stop embedding
+     * until a human noticed and republished — a fix that depends on someone remembering, which is
+     * not a fix.
+     */
+    const { createGrafanaBoards } = await import('../src/console/grafana-boards');
+    const f = stub((url, init) => {
+      if (url.includes('/api/search')) return [{ uid: 'a', title: 'A', url: '/d/a', folderTitle: 'Dorinda' }];
+      if ((init.method ?? 'GET') === 'GET') return new Response('not found', { status: 404 });
+      return { accessToken: 'fresh-token' };
+    });
+    try {
+      const out = await createGrafanaBoards(cfg).list(AbortSignal.timeout(5_000));
+      expect(out.boards[0]!.embedUrl).toBe('https://g.test/public-dashboards/fresh-token');
+      expect(f.calls.some((c) => c.method === 'POST')).toBe(true);
+    } finally {
+      f.restore();
+    }
+  });
+
+  it('reuses an existing enabled token instead of republishing', async () => {
+    const { createGrafanaBoards } = await import('../src/console/grafana-boards');
+    const f = stub((url) =>
+      url.includes('/api/search')
+        ? [{ uid: 'a', title: 'A', url: '/d/a', folderTitle: 'Dorinda' }]
+        : { accessToken: 'existing', isEnabled: true },
+    );
+    try {
+      const out = await createGrafanaBoards(cfg).list(AbortSignal.timeout(5_000));
+      expect(out.boards[0]!.embedUrl).toContain('existing');
+      expect(f.calls.some((c) => c.method === 'POST')).toBe(false);
+    } finally {
+      f.restore();
+    }
+  });
+
+  it('one unpublishable board does not blank the others', async () => {
+    const { createGrafanaBoards } = await import('../src/console/grafana-boards');
+    const f = stub((url, init) => {
+      if (url.includes('/api/search'))
+        return [
+          { uid: 'ok', title: 'Product — top-line', url: '/d/ok', folderTitle: 'Dorinda' },
+          { uid: 'bad', title: 'Broken', url: '/d/bad', folderTitle: 'Dorinda' },
+        ];
+      if (url.includes('/bad/')) return new Response('nope', { status: 500 });
+      return { accessToken: 'tok', isEnabled: true };
+    });
+    try {
+      const out = await createGrafanaBoards(cfg).list(AbortSignal.timeout(5_000));
+      const bad = out.boards.find((b) => b.uid === 'bad')!;
+      const ok = out.boards.find((b) => b.uid === 'ok')!;
+      expect(ok.embedUrl).toBeTruthy();
+      expect(bad.embedUrl).toBeUndefined();
+      // Reported next to the ones that worked, never silently dropped from the list.
+      expect(bad.error).toContain('500');
+    } finally {
+      f.restore();
+    }
+  });
+
+  it('publishes with the time picker ON and annotations OFF', async () => {
+    const { createGrafanaBoards } = await import('../src/console/grafana-boards');
+    let body: Record<string, unknown> = {};
+    const real = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
+      if (String(url).includes('/api/search'))
+        return new Response(JSON.stringify([{ uid: 'a', title: 'A', url: '/d/a', folderTitle: 'Dorinda' }]), {
+          headers: { 'content-type': 'application/json' },
+        });
+      if ((init.method ?? 'GET') === 'GET') return new Response('x', { status: 404 });
+      body = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({ accessToken: 't' }), { headers: { 'content-type': 'application/json' } });
+    }) as never;
+    try {
+      await createGrafanaBoards(cfg).list(AbortSignal.timeout(5_000));
+      // Not being able to widen the window is what made the previous screen useless.
+      expect(body['timeSelectionEnabled']).toBe(true);
+      // Annotations can carry free text an author never meant to publish.
+      expect(body['annotationsEnabled']).toBe(false);
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
+  it('puts the product board first', async () => {
+    const { createGrafanaBoards } = await import('../src/console/grafana-boards');
+    const f = stub((url) =>
+      url.includes('/api/search')
+        ? [
+            { uid: 'z', title: 'Background Plane', url: '/d/z', folderTitle: 'Dorinda' },
+            { uid: 'p', title: 'Product — top-line', url: '/d/p', folderTitle: 'Dorinda' },
+            { uid: 'a', title: 'A board', url: '/d/a', folderTitle: 'Dorinda' },
+          ]
+        : { accessToken: 't', isEnabled: true },
+    );
+    try {
+      const out = await createGrafanaBoards(cfg).list(AbortSignal.timeout(5_000));
+      // Someone opening this screen is asking "how is the product", not "what is alphabetically first".
+      expect(out.boards[0]!.title).toContain('Product');
+    } finally {
+      f.restore();
+    }
+  });
+});

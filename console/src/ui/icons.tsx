@@ -340,6 +340,16 @@ const IconConnections = () => (
   </I>
 );
 
+/** A panel grid — a board of widgets, distinct from Explore's single-signal glyph. */
+const IconBoards = () => (
+  <I>
+    <rect x="2.2" y="2.4" width="5.2" height="5.2" rx="1" />
+    <rect x="8.6" y="2.4" width="5.2" height="5.2" rx="1" />
+    <rect x="2.2" y="8.8" width="5.2" height="4.8" rx="1" />
+    <rect x="8.6" y="8.8" width="5.2" height="4.8" rx="1" />
+  </I>
+);
+
 export const RAIL_ICON = {
   overview: IconOverview,
   timeline: IconTimeline,
@@ -356,6 +366,7 @@ export const RAIL_ICON = {
   accounts: IconAccounts,
   connections: IconConnections,
   testtenants: IconTestTenants,
+  boards: IconBoards,
   explore: IconExplore,
   audit: IconAudit,
   docs: IconDocs,

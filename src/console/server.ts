@@ -27,6 +27,7 @@ import { buildTimeline } from './timeline';
 import { computeQuotas } from './quota';
 import { builtinSource, webManifestSource, indexAll, findSource, unqualify, type DocSource } from './docs';
 import { createGrafanaCatalog, resolveGrafanaMacros } from './metrics-catalog';
+import { createGrafanaBoards } from './grafana-boards';
 import { createGcpInventoryProvider } from '../plugins/console-gcp/inventory';
 import { createCloudMonitoringProvider, createManagedPrometheusProvider } from '../plugins/console-gcp/metrics';
 import { createCloudLoggingProvider } from '../plugins/console-gcp/logs';
@@ -332,6 +333,26 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
   });
 
   app.get('/api/metrics/catalog', async () => envelope(await catalog.get(AbortSignal.timeout(10_000))));
+
+  /*
+   * The Dorinda-folder boards, embedded rather than redrawn.
+   *
+   * Tokens are resolved live and re-published when missing — Grafana's database here is SQLite on an
+   * ephemeral filesystem, so a redeploy wipes every token and any URL held as configuration would
+   * rot silently.
+   */
+  const boards = createGrafanaBoards({
+    origin: process.env.CONSOLE_GRAFANA_URL,
+    user: process.env.CONSOLE_GRAFANA_USER,
+    pass: process.env.CONSOLE_GRAFANA_PASS,
+    folder: process.env.CONSOLE_GRAFANA_FOLDER ?? 'Dorinda',
+  });
+
+  app.get('/api/boards', async (req) => {
+    // `?refresh=1` forces a re-resolve, which is the recovery path straight after a Grafana deploy.
+    if ((req.query as { refresh?: string }).refresh) boards.invalidate();
+    return envelope(await boards.list(AbortSignal.timeout(20_000)));
+  });
 
   app.get('/api/metrics', async (req) => {
     const q = req.query as { intent?: string; service?: string; minutes?: string; metric?: string };

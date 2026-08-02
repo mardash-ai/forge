@@ -138,6 +138,7 @@ const NAV_GROUPS: ReadonlyArray<readonly [string, ReadonlyArray<readonly [Screen
   [
     'Investigate',
     [
+      ['boards', 'Dashboards'],
       ['explore', 'Explore'],
       ['audit', 'Audit'],
       ['docs', 'Docs'],
@@ -165,6 +166,7 @@ type Screen =
   | 'accounts'
   | 'connections'
   | 'testtenants'
+  | 'boards'
   | 'explore'
   | 'audit'
   | 'docs';
@@ -392,6 +394,7 @@ export default function App() {
           {screen === 'quota' && <Quota />}
           {screen === 'explore' && <Explore />}
           {screen === 'audit' && <Audit />}
+          {screen === 'boards' && <Boards />}
           {screen === 'accounts' && <Accounts />}
           {screen === 'connections' && <Connections />}
           {screen === 'testtenants' && <TestTenants />}
@@ -3115,6 +3118,130 @@ function Connections() {
                 </Table>
               </Card>
             </div>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+interface BoardsPayload {
+  folder: string;
+  origin: string;
+  boards: Array<{ uid: string; title: string; url: string; embedUrl?: string; error?: string }>;
+  error?: string;
+}
+
+/**
+ * Dashboards — the real Grafana boards, framed.
+ *
+ * The console does not redraw these. Grafana already renders axes, legends, tooltips, zoom and a
+ * time picker; reimplementing that would be work whose only achievement is a second thing to keep
+ * in step. So this screen is navigation and framing, and everything inside the frame is Grafana's.
+ */
+function Boards() {
+  const [active, setActive] = useState(() => new URLSearchParams(location.search).get('b') ?? '');
+  const data = useApi<BoardsPayload>('/api/boards');
+  const boards = data.data?.boards ?? [];
+  const current = boards.find((b) => b.uid === active) ?? boards[0] ?? null;
+
+  useEffect(() => {
+    if (!current) return;
+    const u = new URL(location.href);
+    u.searchParams.set('b', current.uid);
+    history.replaceState(null, '', u);
+  }, [current?.uid]);
+
+  const unconfigured = (data.error ?? data.data?.error ?? '').includes('not configured');
+
+  return (
+    <>
+      <Head
+        screen="boards"
+        title="Dashboards"
+        sub="The Grafana boards themselves, in the console — same panels, same time picker, nothing redrawn. Open the full board when you want to drill in."
+      />
+
+      {unconfigured ? (
+        <Card>
+          <Empty
+            kind="unconfigured"
+            title="Grafana is not configured"
+            detail="The console has no CONSOLE_GRAFANA_URL / credentials, so it cannot list or publish boards."
+          />
+        </Card>
+      ) : data.error ? (
+        <Err msg={data.error} onRetry={data.reload} />
+      ) : data.loading ? (
+        <Card>
+          <Skeleton rows={10} />
+        </Card>
+      ) : boards.length === 0 ? (
+        <Card>
+          <Empty
+            kind="no-results"
+            title={`No dashboards in the “${data.data?.folder}” folder`}
+            detail="Only that folder is offered — the console is a pane over the estate, not a Grafana file browser."
+          />
+        </Card>
+      ) : (
+        <>
+          <Toolbar>
+            <Segmented
+              ariaLabel="Dashboard"
+              value={current?.uid ?? ''}
+              onChange={setActive}
+              options={boards.map((b) => [b.uid, b.title] as const)}
+            />
+            {current && (
+              <a
+                href={current.url}
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: 'var(--text-muted)', fontSize: 12.5, textDecoration: 'none' }}
+              >
+                open in Grafana ↗
+              </a>
+            )}
+            {/* After a Grafana deploy every public token is wiped (its database is ephemeral).
+                This forces a re-resolve rather than leaving someone staring at a dead frame. */}
+            <Button variant="ghost" onClick={() => { fetch('/api/boards?refresh=1').then(() => data.reload()); }}>
+              Re-link
+            </Button>
+          </Toolbar>
+
+          {current?.error ? (
+            <Err
+              msg={`“${current.title}” could not be published for embedding — ${current.error}. Open it in Grafana instead.`}
+              onRetry={data.reload}
+            />
+          ) : current?.embedUrl ? (
+            <Card pad={false}>
+              <iframe
+                key={current.uid}
+                src={`${current.embedUrl}?theme=dark`}
+                title={current.title}
+                style={{ width: '100%', height: '78vh', border: 0, borderRadius: 'var(--r-lg)', display: 'block' }}
+                /*
+                 * `allow-same-origin` is REQUIRED and is not the loosening it looks like.
+                 *
+                 * Without it the frame gets a unique opaque origin, which denies Grafana its own
+                 * storage and asset loading — it boots to "Grafana has failed to load its
+                 * application files", verified in a browser before this comment was written.
+                 *
+                 * It does NOT grant the console's origin. The frame's document is on
+                 * grafana.dorinda.ai, a different origin from the console, so `allow-same-origin`
+                 * restores GRAFANA's origin and ordinary same-origin policy still stops it reaching
+                 * anything of ours. The sandbox continues to withhold top-navigation and downloads.
+                 */
+                sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+                referrerPolicy="no-referrer"
+              />
+            </Card>
+          ) : (
+            <Card>
+              <Empty kind="unconfigured" title="Not embeddable" detail="This board has no public link yet." />
+            </Card>
           )}
         </>
       )}
