@@ -58,7 +58,19 @@ export function registerTenantRoutes(
 ): void {
   app.delete('/tenant/:owner', async (req, reply) => {
     const { owner } = req.params as { owner: string };
-    const body = (req.body ?? {}) as { app?: string; confirm_email?: string; dry_run?: boolean };
+    /*
+     * Read the confirmation from the QUERY as well as the body. A DELETE with a body is legal but
+     * unevenly supported — proxies and some HTTP clients drop it — and a confirmation guard that
+     * silently disappears in transit would turn every call into a 400 at best, or (if it had been
+     * written to skip the check on absence) an unguarded deletion at worst.
+     */
+    const q = (req.query ?? {}) as { confirm_email?: string; dry_run?: string };
+    const rawBody = (req.body ?? {}) as { app?: string; confirm_email?: string; dry_run?: boolean };
+    const body = {
+      app: rawBody.app,
+      confirm_email: rawBody.confirm_email ?? q.confirm_email,
+      dry_run: rawBody.dry_run ?? q.dry_run === 'true',
+    };
 
     const app_ = await resolveAppId(req, opts.defaultApp);
     if (!app_) {

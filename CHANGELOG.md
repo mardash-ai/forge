@@ -9,6 +9,15 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-08-02
+
+### Fixed
+- **`DELETE /tenant/:owner` accepts `confirm_email` / `dry_run` from the query string as well as the
+  body.** A DELETE with a body is legal but unevenly supported — proxies and several HTTP clients
+  drop it, including the one dorinda-api uses. A confirmation guard that vanishes in transit is
+  worse than none: it turns every call into a 400, and a future "skip the check if absent" tweak
+  would turn it into an unguarded deletion.
+
 ## [1.0.0] - 2026-08-02
 
 ### Added
