@@ -1196,3 +1196,49 @@ describe('every dashboard panel points at a datasource that EXISTS', () => {
     ).toEqual([]);
   });
 });
+
+describe('Grafana time macros resolve, rather than reaching Prometheus verbatim', () => {
+  it('substitutes $__range, $__range_s and $__rate_interval', async () => {
+    const { resolveGrafanaMacros } = await import('../src/console/metrics-catalog');
+    const out = resolveGrafanaMacros(
+      'histogram_quantile(0.95, sum by (le) (increase(m_bucket[$__range])))',
+      6 * 3600,
+    );
+    expect(out).toContain('[21600s]');
+    expect(out).not.toContain('$__range');
+    expect(resolveGrafanaMacros('x[$__range_s]', 3600)).toBe('x[3600]');
+    expect(resolveGrafanaMacros('rate(x[$__rate_interval])', 3600)).toMatch(/rate\(x\[\d+s\]\)/);
+  });
+
+  it('never emits a sub-minute window, which Prometheus would reject as useless', async () => {
+    const { resolveGrafanaMacros } = await import('../src/console/metrics-catalog');
+    expect(resolveGrafanaMacros('x[$__range]', 5)).toBe('x[60s]');
+    expect(resolveGrafanaMacros('rate(x[$__rate_interval])', 5)).toBe('rate(x[60s])');
+  });
+
+  it('leaves an expression with no macros untouched', async () => {
+    const { resolveGrafanaMacros } = await import('../src/console/metrics-catalog');
+    const e = 'sum(rate(mcp_tool_calls_total[5m])) * 60';
+    expect(resolveGrafanaMacros(e, 3600)).toBe(e);
+  });
+
+  it('the p95 panel uses $__range — a 5m rate is ZERO at this traffic level', async () => {
+    /*
+     * Measured, not assumed. Over 6h of real production traffic:
+     *   sum by (le) (rate(bucket[5m]))      → 160 points, ALL ZERO
+     *   histogram_quantile(.95, …[1h])      → EMPTY (all-zero histogram ⇒ NaN ⇒ series dropped)
+     *   histogram_quantile(.95, …[6h])      → 8 points, p95 = 97.5ms
+     *
+     * So the panel read "no data" while the histogram beneath it was perfectly healthy — the same
+     * shape of lie as an empty store, from a query that is simply too narrow for the traffic.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const path = new URL('../../dorinda-metrics/dashboards/dorinda-product-topline.json', import.meta.url).pathname;
+    const raw = await readFile(path, 'utf8').catch(() => null);
+    if (!raw) return;
+    const dash = JSON.parse(raw) as { panels: Array<{ title: string; targets: Array<{ expr: string }> }> };
+    const p95 = dash.panels.find((p) => p.title.includes('p95'));
+    expect(p95?.targets[0]?.expr).toContain('$__range');
+    expect(p95?.targets[0]?.expr).not.toContain('[5m]');
+  });
+});

@@ -34,6 +34,30 @@
  * named absence than a confident wrong answer.
  */
 
+/**
+ * Substitute Grafana's built-in time macros with concrete durations.
+ *
+ * A dashboard panel legitimately writes `[$__range]` or `[$__rate_interval]`; Grafana resolves those
+ * at render time from the selected window. The console has its own window, so it resolves them the
+ * same way — passing them through verbatim would send Prometheus a query it cannot parse, and the
+ * panel would fail for a reason that has nothing to do with the metric.
+ *
+ * This is not cosmetic. `$__range` is the ONLY practical form for a quantile over sparse data: at a
+ * few calls an hour, `rate(...[5m])` is zero in every window, `histogram_quantile` of an all-zero
+ * histogram is NaN, and the series vanishes — a panel that reads "no data" while the histogram
+ * beneath it is healthy.
+ */
+export function resolveGrafanaMacros(expr: string, rangeSeconds: number): string {
+  const range = `${Math.max(60, Math.round(rangeSeconds))}s`;
+  // Grafana's own rule of thumb: at least 4x the scrape interval, and never below the step.
+  const rateInterval = `${Math.max(60, Math.round(rangeSeconds / 120) * 4)}s`;
+  return expr
+    .replace(/\$__range_s\b/g, String(Math.round(rangeSeconds)))
+    .replace(/\$__range\b/g, range)
+    .replace(/\$__rate_interval\b/g, rateInterval)
+    .replace(/\$__interval\b/g, rateInterval);
+}
+
 export interface CatalogMetric {
   /** Stable id derived from the panel, used in URLs. */
   id: string;

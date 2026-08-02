@@ -26,7 +26,7 @@ import { runFindings } from './findings';
 import { buildTimeline } from './timeline';
 import { computeQuotas } from './quota';
 import { builtinSource, webManifestSource, indexAll, findSource, unqualify, type DocSource } from './docs';
-import { createGrafanaCatalog } from './metrics-catalog';
+import { createGrafanaCatalog, resolveGrafanaMacros } from './metrics-catalog';
 import { createGcpInventoryProvider } from '../plugins/console-gcp/inventory';
 import { createCloudMonitoringProvider, createManagedPrometheusProvider } from '../plugins/console-gcp/metrics';
 import { createCloudLoggingProvider } from '../plugins/console-gcp/logs';
@@ -363,7 +363,11 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
       if (!native) {
         return envelope({ series: [], provider_id: 'none', empty_reason: 'not_supported', detail: 'no provider can run raw PromQL' });
       }
-      const r = await native.queryNative!(m.expr, range, c);
+      // Grafana macros are resolved against the console's OWN window, exactly as Grafana resolves
+      // them against the dashboard's. Passing `[$__range]` through would be a parse error at
+      // Prometheus, and the panel would fail for a reason unrelated to the metric.
+      const expr = resolveGrafanaMacros(m.expr, minutes * 60);
+      const r = await native.queryNative!(expr, range, c);
       return envelope(r, [{ provider_id: native.id, ok: true }]);
     }
     const target = { runtime_id: q.service ?? 'dorinda-api', env: ENV };
