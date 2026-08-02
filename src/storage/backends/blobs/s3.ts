@@ -83,6 +83,16 @@ export class S3BlobBackend implements BlobBackend, MigratableBlobBackend {
     return `${appId}/${blobId}`;
   }
 
+  async deleteByOwner(appId: string, owner: string): Promise<number> {
+    // Deliberately list-then-delete rather than one bulk metadata DELETE: `delete()` removes the
+    // BYTES as well, and a bulk metadata wipe would orphan every object in storage — invisible,
+    // unreferenced, and still billed.
+    const items = await this.list(appId, owner);
+    let removed = 0;
+    for (const it of items) if (await this.delete(appId, owner, it.blob_id)) removed += 1;
+    return removed;
+  }
+
   async prepareTemp(): Promise<string> {
     const dir = path.join(tmpdir(), 'forge-blob-uploads');
     await mkdir(dir, { recursive: true });

@@ -30,6 +30,15 @@ export interface NotificationBackend {
   clear(appId: string, key: string, owner?: string): Promise<boolean>;
   list(appId: string, opts: NotificationListOpts): Promise<Notification[]>; // newest-first
   assignOwner(appId: string, owner: string): Promise<number>; // one-time claim-legacy migration
+  /**
+   * Remove EVERY row this owner has, and report how many.
+   *
+   * Added for whole-account teardown (C34). Before this the only delete was per-{key,id,endpoint},
+   * so erasing an account meant enumerating its rows first — and for two of these backends the
+   * enumeration was not even exposed over HTTP, which made a complete deletion impossible from
+   * outside. A cascade that cannot reach a subsystem leaves residue that outlives the account.
+   */
+  deleteByOwner(appId: string, owner: string): Promise<number>;
   close?(): Promise<void>;
   __truncateAllForTests?(): Promise<void>;
 }

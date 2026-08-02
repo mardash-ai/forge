@@ -171,4 +171,9 @@ export class PgNotificationBackend implements NotificationBackend, MigratableNot
   async __truncateAllForTests(): Promise<void> {
     await this.pool.query('TRUNCATE forge_notifications');
   }
+  async deleteByOwner(appId: string, owner: string): Promise<number> {
+    const r = await this.pool.query('DELETE FROM forge_notifications WHERE app_id=$1 AND owner=$2', [appId, owner]);
+    return r.rowCount ?? 0;
+  }
+
 }

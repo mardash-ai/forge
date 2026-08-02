@@ -18,6 +18,16 @@ export class DualWritePushBackend implements PushBackend {
     return this.primary.listSubscriptions(appId, owner);
   }
 
+  async deleteByOwner(appId: string, owner: string): Promise<number> {
+    const n = await this.primary.deleteByOwner(appId, owner);
+    try {
+      await this.secondary.deleteByOwner(appId, owner);
+    } catch {
+      // the primary is already clean; a mirror failure must not strand a half-erased account
+    }
+    return n;
+  }
+
   async registerSubscription(appId: string, input: PushSubscriptionInput): Promise<PushSubscriptionRecord> {
     const rec = await this.primary.registerSubscription(appId, input);
     await this.mirror(appId);

@@ -28,6 +28,16 @@ export class DualWriteBlobBackend implements BlobBackend {
     return this.primary.openRange(appId, blobId, range);
   }
 
+  async deleteByOwner(appId: string, owner: string): Promise<number> {
+    // Deliberately list-then-delete rather than one bulk metadata DELETE: `delete()` removes the
+    // BYTES as well, and a bulk metadata wipe would orphan every object in storage — invisible,
+    // unreferenced, and still billed.
+    const items = await this.list(appId, owner);
+    let removed = 0;
+    for (const it of items) if (await this.delete(appId, owner, it.blob_id)) removed += 1;
+    return removed;
+  }
+
   async commit(appId: string, tmpPath: string, meta: BlobMetadata, config: BlobConfig): Promise<CommitResult> {
     const res = await this.primary.commit(appId, tmpPath, meta, config);
     if (res.ok) {

@@ -28,6 +28,7 @@ import { initOtel } from '../plugins/otel/index';
 import { registerConnectRoutes } from '../api/connect-routes';
 import { registerMembershipRoutes } from '../api/membership-routes';
 import { registerBillingRoutes } from '../api/billing-routes';
+import { registerTenantRoutes } from '../api/tenant-routes';
 import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
 
@@ -207,6 +208,8 @@ registerMembershipRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 // bytes; the app never imports a Stripe SDK, sees the key, or parses an event. Payment-source-agnostic
 // (stripe live; apple/google reserved). Defaults the app to this sidecar's FORGE_APP_NAME.
 registerBillingRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
+// C34 whole-tenant teardown — the app calls this over the internal network to erase an account.
+registerTenantRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 
 // In production there is no `./forge provision`, so seed a minimal Application
 // record for the app this sidecar serves — enough for schedule-job/inspect to

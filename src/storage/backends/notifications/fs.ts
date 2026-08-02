@@ -89,6 +89,16 @@ export class FsNotificationBackend implements NotificationBackend, MigratableNot
     });
   }
 
+  async deleteByOwner(appId: string, owner: string): Promise<number> {
+    const map = await this.readMap(appId);
+    let removed = 0;
+    for (const [k, v] of Object.entries(map)) {
+      if ((v as { owner?: string }).owner === owner) { delete map[k]; removed += 1; }
+    }
+    if (removed > 0) await this.writeMap(appId, map);
+    return removed;
+  }
+
   async clear(appId: string, key: string, owner?: string): Promise<boolean> {
     return this.withLock(appId, async () => {
       const map = await this.readMap(appId);

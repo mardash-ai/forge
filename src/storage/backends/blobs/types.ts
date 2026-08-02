@@ -33,6 +33,15 @@ export interface BlobBackend {
   get(appId: string, owner: string, blobId: string): Promise<BlobMetadata | null>;
   // Owner-scoped delete of metadata + bytes; idempotent-by-effect.
   delete(appId: string, owner: string, blobId: string): Promise<boolean>;
+  /**
+   * Remove EVERY row this owner has, and report how many.
+   *
+   * Added for whole-account teardown (C34). Erasing an account previously meant enumerating the
+   * owner's rows and deleting them one by one — and for push, the enumeration was not exposed over
+   * HTTP at all, so a complete deletion was impossible from outside the process.
+   */
+  deleteByOwner(appId: string, owner: string): Promise<number>;
+
   // The owner's blobs, newest-first.
   list(appId: string, owner: string): Promise<BlobMetadata[]>;
   // Per-owner usage (bytes + object count) for the quota readout.

@@ -154,4 +154,9 @@ export class PgEventBackend implements EventBackend, MigratableEventBackend {
   async __truncateAllForTests(): Promise<void> {
     await this.pool.query('TRUNCATE forge_app_events');
   }
+  async deleteByOwner(appId: string, owner: string): Promise<number> {
+    const r = await this.pool.query('DELETE FROM forge_app_events WHERE app_id=$1 AND owner=$2', [appId, owner]);
+    return r.rowCount ?? 0;
+  }
+
 }

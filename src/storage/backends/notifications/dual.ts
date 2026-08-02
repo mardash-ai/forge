@@ -19,6 +19,18 @@ export class DualWriteNotificationBackend implements NotificationBackend {
     return this.primary.list(appId, opts);
   }
 
+  async deleteByOwner(appId: string, owner: string): Promise<number> {
+    // Erasure must reach BOTH stores, or a cutover resurrects the deleted rows. The primary's count
+    // is authoritative; the secondary is mirrored best-effort and never fails the delete.
+    const n = await this.primary.deleteByOwner(appId, owner);
+    try {
+      await this.secondary.deleteByOwner(appId, owner);
+    } catch {
+      // a mirror failure must not strand a half-erased account — the primary is already clean
+    }
+    return n;
+  }
+
   async upsert(appId: string, input: NotificationUpsertInput): Promise<Notification> {
     const n = await this.primary.upsert(appId, input);
     await this.mirror(appId);

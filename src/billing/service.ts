@@ -14,6 +14,7 @@ import {
   deriveEntitlement,
   deriveEntitlements,
   defaultPlan,
+  planByKey,
 } from './entitlements';
 import {
   emptyProviderRefs,
@@ -653,10 +654,29 @@ export interface AdminCompResult {
   comped: boolean; // the resulting comp state
   changed: boolean; // whether this call actually changed anything
   status: SubscriptionStatus; // the record status after the call (`active` while comped)
+  plan_key: string | null; // the plan the comp sits on — what plan-gated entitlements resolve from
   had_subscription: boolean; // whether a real subscription-of-record existed before the call
 }
 
-export async function setAdminComp(appId: string, subscriber: string, comped: boolean): Promise<AdminCompResult> {
+/**
+ * Comp an account: full entitlements, no Stripe, no revenue records, no expiry.
+ *
+ * `planKey` matters more than it looks. Comp originally forced `status: 'active'` and nothing else,
+ * which left the record on the DEFAULT plan — so an app gating a feature on `status` was satisfied,
+ * while an app gating on a PLAN ENTITLEMENT KEY was not. A comped account would pass the access
+ * check and then be refused the feature, which reads as a product bug and is very hard to place.
+ *
+ * Dorinda hit exactly this: household invites gate on `entitlements['household.enabled']`, so a
+ * comped account still got `403 upgrade_required`. Passing `planKey` sets the plan the comp is on,
+ * so "entitled, not billed, not expiring" holds for plan-gated features too — which is what a
+ * verification, demo or acceptance-test account actually needs.
+ */
+export async function setAdminComp(
+  appId: string,
+  subscriber: string,
+  comped: boolean,
+  planKey?: string,
+): Promise<AdminCompResult> {
   const store = await backend();
   const out = await store.mutate<AdminCompResult>(appId, (state) => {
     const now = nowIso();
@@ -666,9 +686,16 @@ export async function setAdminComp(appId: string, subscriber: string, comped: bo
     const base = existing ?? noneRecord(appId, subscriber, defaultPlan(state.catalog)?.plan_key ?? null, now);
     const currentlyComped = Boolean(base.admin_comped_at);
 
-    if (comped === currentlyComped) {
-      // Idempotent no-op (already in the requested state).
-      return { state, result: { subscriber, comped, changed: false, status: base.status, had_subscription: hadSubscription } };
+    // A plan the catalog does not define is a caller error, not something to silently ignore — a
+    // comp that lands on the wrong plan fails later, somewhere unrelated, as a missing entitlement.
+    if (comped && planKey !== undefined && !planByKey(state.catalog, planKey)) {
+      const known = (state.catalog?.plans ?? []).map((p) => p.plan_key).join(', ');
+      throw new Error(`unknown plan_key '${planKey}'. Known: ${known || '(catalog empty)'}`);
+    }
+
+    if (comped === currentlyComped && (planKey === undefined || base.plan_key === planKey)) {
+      // Idempotent no-op (already in the requested state, on the requested plan).
+      return { state, result: { subscriber, comped, changed: false, status: base.status, plan_key: base.plan_key, had_subscription: hadSubscription } };
     }
 
     const record: SubscriptionRecord = comped
@@ -682,6 +709,9 @@ export async function setAdminComp(appId: string, subscriber: string, comped: bo
           admin_locked_at: null,
           admin_lock_prev_status: null,
           status: 'active', // full entitlements, permanently
+          // Only when asked. Omitting it preserves the previous behaviour exactly, so an existing
+          // caller cannot be silently moved to a different plan by this change.
+          plan_key: planKey ?? base.plan_key,
           version,
           updated_at: now,
         }
@@ -695,7 +725,7 @@ export async function setAdminComp(appId: string, subscriber: string, comped: bo
         };
     return {
       state: { ...state, subscriptions: { ...state.subscriptions, [subscriber]: record } },
-      result: { subscriber, comped, changed: true, status: record.status, had_subscription: hadSubscription },
+      result: { subscriber, comped, changed: true, status: record.status, plan_key: record.plan_key, had_subscription: hadSubscription },
     };
   });
 

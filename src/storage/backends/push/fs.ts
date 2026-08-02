@@ -100,6 +100,12 @@ export class FsPushBackend implements PushBackend, MigratablePushBackend {
     });
   }
 
+  async deleteByOwner(appId: string, owner: string): Promise<number> {
+    const subs = await this.listSubscriptions(appId, owner);
+    for (const sub of subs) await this.unregisterSubscription(appId, sub.endpoint, owner);
+    return subs.length;
+  }
+
   async listSubscriptions(appId: string, owner: string): Promise<PushSubscriptionRecord[]> {
     return Object.values((await this.read(appId)).subscriptions)
       .filter((s) => s.owner === owner)

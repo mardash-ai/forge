@@ -360,7 +360,7 @@ export function registerBillingRoutes(app: FastifyInstance, opts: { defaultApp?:
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
     if (!(await hasValidServiceToken(req, app_.id))) return reply.status(401).send(needAuth);
-    const b = (req.body ?? {}) as { subscriber?: string; comped?: boolean };
+    const b = (req.body ?? {}) as { subscriber?: string; comped?: boolean; plan_key?: string };
     const subscriber = trimmed(b.subscriber);
     if (!subscriber || typeof b.comped !== 'boolean') {
       return reply.status(422).send({ error: { code: 'invalid_input', message: '`subscriber` (string) and `comped` (boolean) are required.', retry: 'change-input' } });

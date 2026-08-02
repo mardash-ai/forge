@@ -23,6 +23,7 @@ import { registerMcpRoutes } from './mcp-routes';
 import { registerConnectRoutes } from './connect-routes';
 import { registerMembershipRoutes } from './membership-routes';
 import { registerBillingRoutes } from './billing-routes';
+import { registerTenantRoutes } from './tenant-routes';
 import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
 
@@ -181,6 +182,9 @@ registerMembershipRoutes(app);
 // holds the Stripe key and verifies the signature from raw bytes; the app never imports a Stripe SDK, sees
 // the key, or parses an event. Payment-source-agnostic (stripe live; apple/google reserved). Both planes.
 registerBillingRoutes(app);
+// C34 whole-tenant teardown — registered on BOTH planes: the app calls it over the internal
+// network (data), and an operator may call it from the control plane.
+registerTenantRoutes(app);
 
 // Event APIs.
 app.get('/events', async (req) => {

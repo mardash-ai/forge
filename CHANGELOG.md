@@ -9,6 +9,42 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-02
+
+### Added
+- **`DELETE /tenant/:owner` — ONE call that removes everything the platform holds for an owner.**
+  Erasing an account used to mean the consumer orchestrating four or five separate service-gated
+  calls in an order it had to get right, reimplemented per consumer. Now the ordering lives here and
+  is tested once. Registered on both planes.
+
+  **Partial-tolerant by design** — these are five external systems with no shared transaction, and
+  billing 503s transiently. It attempts everything and returns `retained[]` naming exactly what did
+  not go, plus `complete`. Aborting on first failure would strand accounts half-deleted; a silent
+  partial success would claim an erasure that never happened.
+
+  **Safety:** service token · a `confirm_email` that must match the account (catches the
+  correct-looking-but-wrong id, the failure with no undo) · `dry_run` · idempotent (re-tearing-down
+  an absent owner succeeds) · audited on every call, at ERROR when anything was retained.
+
+  ⚠️ **No test-tenant allow-list, deliberately** — deleting real accounts is the point.
+
+- **`deleteByOwner` on five backends that had no per-owner delete at all**: app events (which had no
+  delete of *any* kind, so a purged account's history outlived it), push (whose subscriptions could
+  not even be *enumerated* over HTTP, making complete deletion impossible from outside the process),
+  search, blobs and notifications. Implemented across pg/fs/dual.
+
+  Blobs and push list-then-delete rather than bulk-wiping metadata: a bulk delete would orphan every
+  object in storage — unreferenced, invisible, still billed.
+
+### Changed
+- **`POST /billing/admin/comp` accepts an optional `plan_key`.** Comp previously forced
+  `status: 'active'` and left the record on the DEFAULT plan, so an app gating on *status* was
+  satisfied while an app gating on a *plan entitlement key* was not — the account passed the access
+  check and was then refused the feature, which reads as a product bug and is hard to place.
+  Dorinda hit exactly this: household invites gate on `entitlements['household.enabled']`, so a
+  comped account still got `403 upgrade_required`. Omitting `plan_key` preserves the old behaviour
+  exactly; an unknown key is a 422 rather than a silent landing on the wrong plan.
+
 ## [0.99.0] - 2026-08-01
 
 ### Changed

@@ -39,6 +39,15 @@ export interface PushBackend {
   unregisterSubscription(appId: string, endpoint: string, owner?: string): Promise<boolean>;
   // Every live subscription for one owner (the fan-out target for a push notification).
   listSubscriptions(appId: string, owner: string): Promise<PushSubscriptionRecord[]>;
+  /**
+   * Remove EVERY row this owner has, and report how many.
+   *
+   * Added for whole-account teardown (C34). Erasing an account previously meant enumerating the
+   * owner's rows and deleting them one by one — and for push, the enumeration was not exposed over
+   * HTTP at all, so a complete deletion was impossible from outside the process.
+   */
+  deleteByOwner(appId: string, owner: string): Promise<number>;
+
   // Prune a dead endpoint (a push service returned 404/410). Endpoint-only (we prune what we just tried).
   pruneSubscription(appId: string, endpoint: string): Promise<boolean>;
 

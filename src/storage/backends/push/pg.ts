@@ -162,4 +162,12 @@ export class PgPushBackend implements PushBackend, MigratablePushBackend {
   async __truncateAllForTests(): Promise<void> {
     await this.pool.query('TRUNCATE forge_push_subscriptions, forge_push_deliveries');
   }
+  async deleteByOwner(appId: string, owner: string): Promise<number> {
+    // BOTH tables. Deleting only the subscriptions would leave queued deliveries addressed to a
+    // person who no longer exists — they would fail to send and log an error naming a deleted user.
+    const subs = await this.pool.query('DELETE FROM forge_push_subscriptions WHERE app_id=$1 AND owner=$2', [appId, owner]);
+    await this.pool.query('DELETE FROM forge_push_deliveries WHERE app_id=$1 AND owner=$2', [appId, owner]).catch(() => undefined);
+    return subs.rowCount ?? 0;
+  }
+
 }

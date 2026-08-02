@@ -36,6 +36,22 @@ export class FsEventBackend implements EventBackend, MigratableEventBackend {
     return out;
   }
 
+  async deleteByOwner(appId: string, owner: string): Promise<number> {
+    // The log is append-only by design, so removing an owner means rewriting it without their
+    // lines. Written via a temp file + rename so a crash mid-write cannot truncate the log — losing
+    // OTHER owners' history to an erasure would be a far worse bug than the one being fixed.
+    const all = await this.readAll(appId);
+    const kept = all.filter((e) => e.owner !== owner);
+    const removed = all.length - kept.length;
+    if (removed === 0) return 0;
+    await mkdir(appEventsDir(), { recursive: true });
+    const file = appEventsFile(appId);
+    const tmp = `${file}.${process.pid}.tmp`;
+    await writeFile(tmp, kept.map((e) => JSON.stringify(e)).join('\n') + (kept.length ? '\n' : ''));
+    await rename(tmp, file);
+    return removed;
+  }
+
   async append(appId: string, input: AppEventInput): Promise<AppEvent> {
     const event: AppEvent = {
       id: newId('aevt'),

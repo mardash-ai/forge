@@ -103,6 +103,14 @@ export class BlobStore implements BlobBackend, MigratableBlobBackend {
   // field is only known once the multipart body is parsed). It lives in a staging dir under blobsDir(),
   // i.e. the SAME filesystem/volume as every app's final byte dir, so the commit rename is atomic (never
   // a cross-device copy) regardless of which app it lands in.
+  async deleteByOwner(appId: string, owner: string): Promise<number> {
+    // list-then-delete so the BYTES go too — a bulk metadata wipe orphans every object in storage.
+    const items = await this.list(appId, owner);
+    let removed = 0;
+    for (const it of items) if (await this.delete(appId, owner, it.blob_id)) removed += 1;
+    return removed;
+  }
+
   async prepareTemp(): Promise<string> {
     const dir = path.join(blobsDir(), 'uploads');
     await mkdir(dir, { recursive: true });
