@@ -9,6 +9,15 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-08-02
+
+### Fixed
+- **The Explore **Trace** pivot returned a SUBSET.** It filtered only on the LogEntry `trace` field,
+  which Cloud Run stamps on its request logs; an app writing structured JSON puts the same id in
+  `jsonPayload.trace_id`. Identical id, two fields — so a pivot returned the request logs alone
+  (3 entries where there were 9, measured live). The clause now matches both, grouped so other
+  filters apply to both arms.
+
 ## [1.4.1] - 2026-08-02
 
 ### Added
