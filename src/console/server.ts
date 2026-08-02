@@ -40,6 +40,8 @@ import {
   type DriftProvider,
 } from '../plugins/console-gcp/ops';
 import { createGitHubPipelinesProvider } from '../plugins/console-github/pipelines';
+import { createDorindaTenantProvider, TenantAppError } from '../plugins/console-dorinda/tenants';
+import type { TenantProvider } from './providers/tenants';
 
 const PORT = Number(process.env.PORT ?? 3000);
 const PROJECT = process.env.CONSOLE_GCP_PROJECT ?? 'dorinda-prod';
@@ -155,7 +157,18 @@ export function createAuth(): ConsoleAuth {
 
 // ── Write actions — the audited surface ────────────────────────────────────────────────────────
 
-export const WRITE_ROUTES = ['/api/actions/dispatch'] as const;
+export const WRITE_ROUTES = [
+  '/api/actions/dispatch',
+  // ── The Data section. Every one of these changes a real account or a real tenant's data, so
+  // every one of them is audited BY CONSTRUCTION: this list is what the guard test checks a
+  // mutating route against, and an unlisted POST/DELETE fails the build rather than shipping.
+  '/api/tenants/accounts/comp',
+  '/api/tenants/accounts/lock',
+  '/api/tenants/accounts/purge',
+  '/api/tenants/test/seed',
+  '/api/tenants/test/reset',
+  '/api/tenants/test/clock',
+] as const;
 
 interface AuditRow {
   at: string;
@@ -206,8 +219,29 @@ const MIME: Record<string, string> = {
   '.ico': 'image/x-icon',
 };
 
+/**
+ * Every route this server registers, as `METHOD /full/path`.
+ *
+ * Recorded from Fastify's own `onRoute` hook rather than parsed out of `printRoutes()`, which
+ * renders a tree for humans and COLLAPSES shared prefixes: six routes under `/api/tenants/...`
+ * print as `/comp`, `/lock`, `/purge`.
+ *
+ * That was survivable while every write route sat at the top level and printed in full — the audit
+ * guard worked, and it failed loudly the moment routes nested. The reason to fix it properly rather
+ * than adjust the parser is the case that would NOT fail loudly: a nested path whose collapsed
+ * fragment happens to match a declared entry would pass the guard while checking a different route
+ * than the one registered.
+ */
+export const REGISTERED_ROUTES: string[] = [];
+
 export function buildServer(registry = buildRegistry(), auth = createAuth()): FastifyInstance {
   const app = Fastify({ logger: false, bodyLimit: 1_000_000 });
+
+  REGISTERED_ROUTES.length = 0;
+  app.addHook('onRoute', (r) => {
+    const methods = Array.isArray(r.method) ? r.method : [r.method];
+    for (const m of methods) REGISTERED_ROUTES.push(`${m} ${r.url}`);
+  });
 
   // Health is public — a probe cannot hold a credential, and it reveals nothing.
   app.get('/healthz', async () => ({ status: 'ok', service: 'forge-console', env: ENV }));
@@ -596,6 +630,214 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
       return reply.type(a.contentType).header('cache-control', 'private, max-age=300').send(a.body);
     } catch (e) {
       return reply.code(502).send((e as Error).message);
+    }
+  });
+
+  // ── Data — accounts and test tenants ──────────────────────────────────────────────────────────
+
+  /*
+   * The console reaches an app's data through the APP's own HTTP surface, never its database.
+   *
+   * That is slower than a query and it is the point: the app keeps its invariants — dorinda's
+   * transactional local delete, the tombstone that signs a deleted user out, the two-marker
+   * test-tenant guard — and the console never becomes a second, unaudited way to mutate a
+   * datastore. Forge reaching into a consumer schema would also break the boundary its own tenant
+   * cascade is deliberately careful to respect.
+   */
+  const tenants: TenantProvider[] = [
+    createDorindaTenantProvider({
+      origin: process.env.CONSOLE_DORINDA_API_ORIGIN ?? 'https://api.dorinda.ai',
+      adminToken: process.env.CONSOLE_DORINDA_ADMIN_TOKEN,
+      testToken: process.env.CONSOLE_DORINDA_TEST_TOKEN,
+    }),
+  ];
+  const tenantProvider = (app_?: string): TenantProvider | undefined =>
+    app_ ? tenants.find((t) => t.app === app_) : tenants[0];
+
+  /** Map the APP's own error through, so a refusal reads as a refusal and not as "upstream error". */
+  function tenantFail(reply: FastifyReply, e: unknown) {
+    if (e instanceof TenantAppError) {
+      return reply.code(e.status).send({ error: { code: e.code, message: e.message } });
+    }
+    return reply.code(502).send({ error: { code: 'tenant_unavailable', message: (e as Error).message } });
+  }
+
+  /** Resolve the provider or answer 501 — an unconfigured app is a STATE, not a failure. */
+  function withTenants(
+    req: FastifyRequest,
+    reply: FastifyReply,
+  ): TenantProvider | null {
+    const t = tenantProvider((req.query as { app?: string })?.app ?? (req.body as { app?: string })?.app);
+    if (!t) {
+      reply.code(501).send({ error: { code: 'not_configured', message: 'no tenant provider is configured' } });
+      return null;
+    }
+    return t;
+  }
+
+  app.get('/api/tenants/accounts', async (req, reply) => {
+    const t = withTenants(req, reply);
+    if (!t) return;
+    if (!t.supports('accounts.list')) {
+      return reply.code(501).send({
+        error: {
+          code: 'not_configured',
+          // Named precisely: "not configured" with no name sends an operator hunting.
+          message: 'no CONSOLE_DORINDA_ADMIN_TOKEN configured, so accounts cannot be read',
+        },
+      });
+    }
+    try {
+      return envelope(await t.listAccounts(ctx()));
+    } catch (e) {
+      return tenantFail(reply, e);
+    }
+  });
+
+  app.get('/api/tenants/accounts/detail', async (req, reply) => {
+    const t = withTenants(req, reply);
+    if (!t) return;
+    const owner = (req.query as { owner?: string }).owner ?? '';
+    if (!owner) return reply.code(400).send({ error: { code: 'bad_request', message: 'owner is required' } });
+    try {
+      return envelope(await t.getAccount(ctx(), owner));
+    } catch (e) {
+      return tenantFail(reply, e);
+    }
+  });
+
+  app.post('/api/tenants/accounts/comp', async (req, reply) => {
+    const t = withTenants(req, reply);
+    if (!t) return;
+    const body = req.body as { owner?: string; comped?: boolean };
+    if (!body?.owner || typeof body.comped !== 'boolean') {
+      return reply.code(400).send({ error: { code: 'bad_request', message: 'owner and comped are required' } });
+    }
+    try {
+      return envelope(
+        await audited(actorOf(req), `account.comp.${body.comped ? 'grant' : 'revoke'}`, body.owner, () =>
+          t.setComp(ctx(), body.owner!, body.comped!),
+        ),
+      );
+    } catch (e) {
+      return tenantFail(reply, e);
+    }
+  });
+
+  app.post('/api/tenants/accounts/lock', async (req, reply) => {
+    const t = withTenants(req, reply);
+    if (!t) return;
+    const body = req.body as { owner?: string; locked?: boolean };
+    if (!body?.owner || typeof body.locked !== 'boolean') {
+      return reply.code(400).send({ error: { code: 'bad_request', message: 'owner and locked are required' } });
+    }
+    try {
+      return envelope(
+        await audited(actorOf(req), `account.${body.locked ? 'lock' : 'unlock'}`, body.owner, () =>
+          t.setLocked(ctx(), body.owner!, body.locked!),
+        ),
+      );
+    } catch (e) {
+      return tenantFail(reply, e);
+    }
+  });
+
+  app.post('/api/tenants/accounts/purge', async (req, reply) => {
+    const t = withTenants(req, reply);
+    if (!t) return;
+    const body = req.body as { owner?: string; confirm_email?: string; reason?: string };
+    if (!body?.owner || !body.confirm_email) {
+      return reply.code(400).send({
+        error: { code: 'bad_request', message: 'owner and confirm_email are required' },
+      });
+    }
+    /*
+     * A REASON is required, exactly as it is for a pipeline dispatch — and more so.
+     *
+     * This is the one console action that destroys a person's account. The audit row is the only
+     * record of WHY it happened, and "someone with the operator password did it at 03:12" is not an
+     * answer anybody can act on later.
+     */
+    if (!body.reason || body.reason.trim().length < 3) {
+      return reply.code(422).send({
+        error: { code: 'reason_required', message: 'a reason is required to purge an account' },
+      });
+    }
+    try {
+      const out = await audited(actorOf(req), 'account.purge', `${body.owner} · ${body.reason.trim()}`, () =>
+        t.purge(ctx(), body.owner!, body.confirm_email!),
+      );
+      return envelope(out);
+    } catch (e) {
+      return tenantFail(reply, e);
+    }
+  });
+
+  app.get('/api/tenants/test', async (req, reply) => {
+    const t = withTenants(req, reply);
+    if (!t) return;
+    try {
+      return envelope({ tenants: await t.listTestTenants(ctx()), canWrite: t.supports('test.reset') });
+    } catch (e) {
+      return tenantFail(reply, e);
+    }
+  });
+
+  app.post('/api/tenants/test/reset', async (req, reply) => {
+    const t = withTenants(req, reply);
+    if (!t) return;
+    const body = req.body as { owner?: string };
+    if (!body?.owner) return reply.code(400).send({ error: { code: 'bad_request', message: 'owner is required' } });
+    try {
+      return envelope(await audited(actorOf(req), 'test.reset', body.owner, () => t.reset(ctx(), body.owner!)));
+    } catch (e) {
+      return tenantFail(reply, e);
+    }
+  });
+
+  app.post('/api/tenants/test/seed', async (req, reply) => {
+    const t = withTenants(req, reply);
+    if (!t) return;
+    const body = req.body as { owner?: string; fixture?: unknown };
+    if (!body?.owner) return reply.code(400).send({ error: { code: 'bad_request', message: 'owner is required' } });
+    try {
+      return envelope(
+        await audited(actorOf(req), 'test.seed', body.owner, () => t.seed(ctx(), body.owner!, body.fixture ?? {})),
+      );
+    } catch (e) {
+      return tenantFail(reply, e);
+    }
+  });
+
+  app.get('/api/tenants/test/clock', async (req, reply) => {
+    const t = withTenants(req, reply);
+    if (!t) return;
+    const owner = (req.query as { owner?: string }).owner ?? '';
+    if (!owner) return reply.code(400).send({ error: { code: 'bad_request', message: 'owner is required' } });
+    try {
+      return envelope(await t.getClock(ctx(), owner));
+    } catch (e) {
+      return tenantFail(reply, e);
+    }
+  });
+
+  app.post('/api/tenants/test/clock', async (req, reply) => {
+    const t = withTenants(req, reply);
+    if (!t) return;
+    const body = req.body as { owner?: string; at?: string; advance_ms?: number; settle?: boolean; clear?: boolean };
+    if (!body?.owner) return reply.code(400).send({ error: { code: 'bad_request', message: 'owner is required' } });
+    try {
+      if (body.clear) {
+        await audited(actorOf(req), 'test.clock.clear', body.owner, () => t.clearClock(ctx(), body.owner!));
+        return envelope({ owner: body.owner, cleared: true });
+      }
+      return envelope(
+        await audited(actorOf(req), 'test.clock.set', body.owner, () =>
+          t.setClock(ctx(), body.owner!, { at: body.at, advanceMs: body.advance_ms, settle: body.settle }),
+        ),
+      );
+    } catch (e) {
+      return tenantFail(reply, e);
     }
   });
 

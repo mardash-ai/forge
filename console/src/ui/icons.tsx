@@ -314,6 +314,23 @@ const IconDocs = () => (
   </I>
 );
 
+/** A person — the Accounts rail. The Data group is about people, not machines. */
+const IconAccounts = () => (
+  <I>
+    <circle cx="8" cy="5.6" r="2.8" />
+    <path d="M2.9 13.4c0-2.6 2.3-4.2 5.1-4.2s5.1 1.6 5.1 4.2" />
+  </I>
+);
+
+/** A person in a dashed frame — a fixture, not a customer. Distinct at 10px from IconAccounts. */
+const IconTestTenants = () => (
+  <I>
+    <rect x="2.2" y="2.4" width="11.6" height="11.2" rx="1.6" strokeDasharray="2.4 1.8" />
+    <circle cx="8" cy="6.4" r="1.9" />
+    <path d="M5 11.6c0-1.6 1.4-2.5 3-2.5s3 .9 3 2.5" />
+  </I>
+);
+
 export const RAIL_ICON = {
   overview: IconOverview,
   timeline: IconTimeline,
@@ -327,6 +344,8 @@ export const RAIL_ICON = {
   credentials: IconCredentials,
   cost: IconCost,
   quota: IconHeadroom,
+  accounts: IconAccounts,
+  testtenants: IconTestTenants,
   explore: IconExplore,
   audit: IconAudit,
   docs: IconDocs,

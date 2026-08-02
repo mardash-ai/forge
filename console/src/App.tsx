@@ -126,6 +126,15 @@ const NAV_GROUPS: ReadonlyArray<readonly [string, ReadonlyArray<readonly [Screen
     ],
   ],
   [
+    // Not "Estate": this group is about the people the platform serves, not the machines that
+    // serve them. An operator arrives here holding a person's email, not a service name.
+    'Data',
+    [
+      ['accounts', 'Accounts'],
+      ['testtenants', 'Test tenants'],
+    ],
+  ],
+  [
     'Investigate',
     [
       ['explore', 'Explore'],
@@ -152,6 +161,8 @@ type Screen =
   | 'credentials'
   | 'cost'
   | 'quota'
+  | 'accounts'
+  | 'testtenants'
   | 'explore'
   | 'audit'
   | 'docs';
@@ -379,6 +390,8 @@ export default function App() {
           {screen === 'quota' && <Quota />}
           {screen === 'explore' && <Explore />}
           {screen === 'audit' && <Audit />}
+          {screen === 'accounts' && <Accounts />}
+          {screen === 'testtenants' && <TestTenants />}
           {screen === 'docs' && <Docs />}
         </main>
       </div>
@@ -2459,6 +2472,473 @@ function Docs() {
             </Card>
           )}
         </div>
+      )}
+    </>
+  );
+}
+
+// ── Data ───────────────────────────────────────────────────────────────────────────────────────
+
+interface TenantAccountRow {
+  owner: string;
+  email: string | null;
+  provider: string | null;
+  createdAt: string | null;
+  subscriptionStatus: string | null;
+  comped: boolean;
+  locked: boolean;
+  isTest: boolean;
+}
+
+/** POST through the console's audited surface, surfacing the app's own code and message. */
+async function mutate<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = (await res.json().catch(() => ({}))) as { data?: T; error?: { code?: string; message?: string } };
+  if (!res.ok) throw new Error(json.error?.message ?? `request failed (${res.status})`);
+  return json.data as T;
+}
+
+function statusTone(a: TenantAccountRow): StatusTone {
+  if (a.locked) return 'crit';
+  if (a.comped) return 'info';
+  if (a.subscriptionStatus === 'active') return 'ok';
+  return 'neutral';
+}
+
+/**
+ * Accounts — find a person, see their state, act on it.
+ *
+ * The purge flow is deliberately the slowest thing on this screen. Everything else is a toggle;
+ * this one asks you to type the account's email, because the failure it guards has no undo and the
+ * realistic mistake is acting on the row above or below the one you meant.
+ */
+function Accounts() {
+  const [q, setQ] = useState('');
+  const [selected, setSelected] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [confirmEmail, setConfirmEmail] = useState('');
+  const [reason, setReason] = useState('');
+
+  const list = useApi<{ data?: TenantAccountRow[] } | TenantAccountRow[]>('/api/tenants/accounts');
+  const accounts: TenantAccountRow[] = Array.isArray(list.data) ? list.data : [];
+  const detail = useApi<{ app: { facts: Array<{ label: string; value: string; note?: string }>; error?: string } }>(
+    selected ? `/api/tenants/accounts/detail?owner=${encodeURIComponent(selected)}` : null,
+    [selected],
+  );
+
+  const needle = q.trim().toLowerCase();
+  const rows = accounts.filter(
+    (a) => !needle || (a.email ?? '').toLowerCase().includes(needle) || a.owner.toLowerCase().includes(needle),
+  );
+  const target = accounts.find((a) => a.owner === selected) ?? null;
+
+  async function run(label: string, fn: () => Promise<unknown>) {
+    setBusy(label);
+    setErr(null);
+    setNote(null);
+    try {
+      await fn();
+      setNote(`${label} — done`);
+      list.reload();
+      detail.reload();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const unconfigured = (list.error ?? '').includes('not configured');
+
+  return (
+    <>
+      <Head
+        screen="accounts"
+        title="Accounts"
+        sub="Every account the platform knows, and the operator actions that change one. Reads come from the platform; anything destructive goes through the app's own surface, audited."
+      />
+
+      {unconfigured ? (
+        <Card>
+          <Empty
+            kind="unconfigured"
+            title="No app credential configured"
+            detail="The console has no CONSOLE_DORINDA_ADMIN_TOKEN, so it cannot read accounts. This is a missing credential, not an empty estate."
+          />
+        </Card>
+      ) : list.error ? (
+        <Err msg={list.error} onRetry={list.reload} />
+      ) : (
+        <>
+          <Toolbar>
+            <Field ariaLabel="Filter accounts" value={q} onChange={setQ} placeholder="email or owner id…" width={260} />
+            <Note>
+              {rows.length} of {accounts.length} · {accounts.filter((a) => a.isTest).length} test
+            </Note>
+          </Toolbar>
+
+          {err && <Err msg={err} />}
+          {note && (
+            <Card>
+              <Note>{note}</Note>
+            </Card>
+          )}
+
+          {list.loading ? (
+            <Card>
+              <Skeleton rows={8} />
+            </Card>
+          ) : (
+            <Card pad={false}>
+              <Table head={['Email', 'Owner', 'Provider', 'Status', 'Flags', '']}>
+                {rows.map((a) => (
+                  <tr key={a.owner} style={{ background: a.owner === selected ? 'var(--bg-inset)' : undefined }}>
+                    <Td primary>{a.email ?? '—'}</Td>
+                    <Td mono>{a.owner}</Td>
+                    <Td>{a.provider ?? '—'}</Td>
+                    <Td>
+                      <Status tone={statusTone(a)} label={a.subscriptionStatus ?? 'none'} />
+                    </Td>
+                    <Td>
+                      {/* The test flag rides on the ORDINARY list on purpose: someone about to
+                          purge needs to see in the same row whether this is a fixture or a person. */}
+                      {a.isTest && <Pill tone="info">test tenant</Pill>}
+                      {a.comped && <Pill tone="info">comped</Pill>}
+                      {a.locked && <Pill tone="crit">locked</Pill>}
+                    </Td>
+                    <Td right>
+                      <Button
+                        variant="ghost"
+                        onClick={() => {
+                          setSelected(a.owner === selected ? null : a.owner);
+                          setConfirmEmail('');
+                          setReason('');
+                          setErr(null);
+                          setNote(null);
+                        }}
+                      >
+                        {a.owner === selected ? 'Close' : 'Open'}
+                      </Button>
+                    </Td>
+                  </tr>
+                ))}
+              </Table>
+            </Card>
+          )}
+
+          {target && (
+            <div style={{ display: 'grid', gap: 'var(--section-gap)', marginTop: 'var(--section-gap)' }}>
+              <Card title={target.email ?? target.owner} subtitle={target.owner}>
+                {detail.loading ? (
+                  <Skeleton rows={4} />
+                ) : detail.data?.app.error ? (
+                  // The app being unreachable is reported, never rendered as an empty account —
+                  // "no household, no connections" and "we could not ask" look identical otherwise.
+                  <Err msg={`app data unavailable — ${detail.data.app.error}`} onRetry={detail.reload} />
+                ) : (
+                  <Table head={['', '']}>
+                    {(detail.data?.app.facts ?? []).map((f) => (
+                      <tr key={f.label}>
+                        <Td>{f.label}</Td>
+                        <Td primary>
+                          {f.value}
+                          {f.note && <Note> {f.note}</Note>}
+                        </Td>
+                      </tr>
+                    ))}
+                  </Table>
+                )}
+              </Card>
+
+              <Card title="Entitlement" subtitle="Neither of these touches Stripe — both are platform overlays.">
+                <Toolbar>
+                  <Button
+                    disabled={busy !== null}
+                    onClick={() =>
+                      run(target.comped ? 'un-comp' : 'comp', () =>
+                        mutate('/api/tenants/accounts/comp', { owner: target.owner, comped: !target.comped }),
+                      )
+                    }
+                  >
+                    {target.comped ? 'Remove comp' : 'Comp (permanent full access)'}
+                  </Button>
+                  <Button
+                    disabled={busy !== null}
+                    onClick={() =>
+                      run(target.locked ? 'unlock' : 'lock', () =>
+                        mutate('/api/tenants/accounts/lock', { owner: target.owner, locked: !target.locked }),
+                      )
+                    }
+                  >
+                    {target.locked ? 'Unlock' : 'Lock (reproduce trial-expired)'}
+                  </Button>
+                </Toolbar>
+              </Card>
+
+              <Card
+                title="Delete this account"
+                subtitle="Irreversible. Removes the app's own rows and every platform subsystem — connectors are revoked at the provider, billing is cancelled, the login is deleted."
+              >
+                <div style={{ display: 'grid', gap: 10, maxWidth: 520 }}>
+                  {/* Typing the email is the ONLY control that catches acting on the wrong row.
+                      A yes/no dialog does not, because the mistake is never "I didn't mean to
+                      delete an account" — it is "I didn't mean to delete THAT one". */}
+                  <Field
+                    ariaLabel="Confirm the account email"
+                    value={confirmEmail}
+                    onChange={setConfirmEmail}
+                    placeholder={`type ${target.email ?? 'the account email'} to confirm`}
+                    width={480}
+                  />
+                  <Field
+                    ariaLabel="Reason for deletion"
+                    value={reason}
+                    onChange={setReason}
+                    placeholder="reason — it lands in the audit row"
+                    width={480}
+                  />
+                  <div>
+                    <Button
+                      variant="danger"
+                      disabled={
+                        busy !== null ||
+                        reason.trim().length < 3 ||
+                        confirmEmail.trim().toLowerCase() !== (target.email ?? '').trim().toLowerCase()
+                      }
+                      onClick={() =>
+                        run('purge', async () => {
+                          const out = await mutate<{ retained?: Array<{ subsystem: string; reason: string }> }>(
+                            '/api/tenants/accounts/purge',
+                            { owner: target.owner, confirm_email: confirmEmail.trim(), reason: reason.trim() },
+                          );
+                          // An empty `retained` is the ONLY thing that means "nothing left behind".
+                          if (out?.retained?.length) {
+                            throw new Error(
+                              `INCOMPLETE — these survived and the account is NOT fully erased: ${out.retained
+                                .map((r) => `${r.subsystem} (${r.reason})`)
+                                .join('; ')}. The cascade is idempotent; retry by owner id.`,
+                            );
+                          }
+                          setSelected(null);
+                        })
+                      }
+                    >
+                      {busy === 'purge' ? 'Deleting…' : 'Delete account permanently'}
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * Test tenants — the fixtures the acceptance harness drives.
+ *
+ * Separate from Accounts on purpose. Reset and purge are not the same operation at different
+ * intensities, they run on different surfaces behind different credentials, and putting them on one
+ * screen would be an invitation to reach for the wrong one.
+ */
+function TestTenants() {
+  const [selected, setSelected] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [advance, setAdvance] = useState('24');
+
+  const list = useApi<{ tenants: TenantAccountRow[]; canWrite: boolean }>('/api/tenants/test');
+  const tenants = list.data?.tenants ?? [];
+  const clock = useApi<{ virtualNow: string; realNow: string; generation: number; scope: string[] }>(
+    selected ? `/api/tenants/test/clock?owner=${encodeURIComponent(selected)}` : null,
+    [selected],
+  );
+
+  async function run(label: string, fn: () => Promise<unknown>) {
+    setBusy(label);
+    setErr(null);
+    setNote(null);
+    try {
+      const out = (await fn()) as { settle?: { settled: boolean; totalFired: number; warnings: string[] } };
+      if (out?.settle && !out.settle.settled) {
+        // Not an error: a world that will not stop changing is a FINDING about the product — most
+        // likely a firing path re-arming itself — and the operator should read it as such.
+        setNote(`${label} — did NOT settle. ${out.settle.warnings.join(' · ')}`);
+      } else if (out?.settle) {
+        setNote(`${label} — settled, ${out.settle.totalFired} fired`);
+      } else {
+        setNote(`${label} — done`);
+      }
+      clock.reload();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const unconfigured = (list.error ?? '').includes('not configured');
+
+  return (
+    <>
+      <Head
+        screen="testtenants"
+        title="Test tenants"
+        sub="Flagged fixtures the acceptance harness drives. Reset empties one without destroying it; the clock moves its time forward so scheduled work fires in seconds instead of days."
+      />
+
+      {unconfigured ? (
+        <Card>
+          <Empty
+            kind="unconfigured"
+            title="No app credential configured"
+            detail="The console has no CONSOLE_DORINDA_ADMIN_TOKEN, so it cannot list tenants."
+          />
+        </Card>
+      ) : list.error ? (
+        <Err msg={list.error} onRetry={list.reload} />
+      ) : list.loading ? (
+        <Card>
+          <Skeleton rows={6} />
+        </Card>
+      ) : tenants.length === 0 ? (
+        <Card>
+          <Empty
+            kind="no-results"
+            title="No test tenants"
+            detail="A tenant qualifies only with BOTH the test_tenant flag and an @dorinda.test address. Neither is settable through any API — that is deliberate, and it is why an account cannot be nominated as a fixture and then erased."
+          />
+        </Card>
+      ) : (
+        <>
+          {err && <Err msg={err} />}
+          {note && (
+            <Card>
+              <Note>{note}</Note>
+            </Card>
+          )}
+          {!list.data?.canWrite && (
+            <Card>
+              <Empty
+                kind="unconfigured"
+                title="Read-only"
+                detail="No CONSOLE_DORINDA_TEST_TOKEN configured, so tenants can be listed but not reset, seeded or time-shifted. A distinct credential from the admin token, deliberately."
+              />
+            </Card>
+          )}
+
+          <Card pad={false}>
+            <Table head={['Email', 'Owner', 'Status', '']}>
+              {tenants.map((t) => (
+                <tr key={t.owner} style={{ background: t.owner === selected ? 'var(--bg-inset)' : undefined }}>
+                  <Td primary>{t.email ?? '—'}</Td>
+                  <Td mono>{t.owner}</Td>
+                  <Td>
+                    <Status tone={statusTone(t)} label={t.subscriptionStatus ?? 'none'} />
+                  </Td>
+                  <Td right>
+                    <Button variant="ghost" onClick={() => setSelected(t.owner === selected ? null : t.owner)}>
+                      {t.owner === selected ? 'Close' : 'Open'}
+                    </Button>
+                  </Td>
+                </tr>
+              ))}
+            </Table>
+          </Card>
+
+          {selected && list.data?.canWrite && (
+            <div style={{ display: 'grid', gap: 'var(--section-gap)', marginTop: 'var(--section-gap)' }}>
+              <Card
+                title="Virtual clock"
+                subtitle="Moving the clock also SETTLES: every firing path runs at the new time until nothing more happens. Scoped to this tenant's household — a real customer's work is never fired."
+              >
+                {clock.loading ? (
+                  <Skeleton rows={3} />
+                ) : (
+                  <>
+                    <Table head={['', '']}>
+                      <tr>
+                        <Td>Virtual now</Td>
+                        <Td mono primary>
+                          {clock.data?.virtualNow ?? '—'}
+                        </Td>
+                      </tr>
+                      <tr>
+                        <Td>Real now</Td>
+                        <Td mono>{clock.data?.realNow ?? '—'}</Td>
+                      </tr>
+                      <tr>
+                        <Td>Generation</Td>
+                        {/* 0 means the tenant was never moved and is on real time — not "no data". */}
+                        <Td mono>{clock.data?.generation === 0 ? '0 · never moved' : (clock.data?.generation ?? '—')}</Td>
+                      </tr>
+                      <tr>
+                        <Td>Scope</Td>
+                        <Td mono>{(clock.data?.scope ?? []).join(', ') || '—'}</Td>
+                      </tr>
+                    </Table>
+                    <Toolbar>
+                      <Field ariaLabel="Hours to advance" value={advance} onChange={setAdvance} width={90} />
+                      <Button
+                        disabled={busy !== null || !Number.isFinite(Number(advance))}
+                        onClick={() =>
+                          run(`advance ${advance}h`, () =>
+                            mutate('/api/tenants/test/clock', {
+                              owner: selected,
+                              advance_ms: Number(advance) * 3_600_000,
+                            }),
+                          )
+                        }
+                      >
+                        Advance hours + settle
+                      </Button>
+                      <Button
+                        disabled={busy !== null}
+                        onClick={() =>
+                          run('clear clock', () => mutate('/api/tenants/test/clock', { owner: selected, clear: true }))
+                        }
+                      >
+                        Back to real time
+                      </Button>
+                    </Toolbar>
+                  </>
+                )}
+              </Card>
+
+              <Card
+                title="Data"
+                subtitle="Reset empties the tenant and its household but KEEPS the account, its login and its connected AI — otherwise every run would need a human to re-authorise a connector in a browser."
+              >
+                <Toolbar>
+                  <Button
+                    disabled={busy !== null}
+                    onClick={() => run('reset', () => mutate('/api/tenants/test/reset', { owner: selected }))}
+                  >
+                    {busy === 'reset' ? 'Resetting…' : 'Reset to empty'}
+                  </Button>
+                  <Button
+                    disabled={busy !== null}
+                    onClick={() =>
+                      run('seed', () => mutate('/api/tenants/test/seed', { owner: selected, fixture: {} }))
+                    }
+                    title="Seeds an empty fixture — the harness supplies real ones over the API."
+                  >
+                    Seed (empty fixture)
+                  </Button>
+                </Toolbar>
+              </Card>
+            </div>
+          )}
+        </>
       )}
     </>
   );

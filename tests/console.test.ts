@@ -274,17 +274,27 @@ describe('server — auth and the write surface', () => {
   it('EVERY mutating route is declared in the audited write table', async () => {
     // The guard that matters: adding a POST/PUT/DELETE route without registering it as an audited
     // write action breaks the build, rather than shipping an unaudited way to change production.
+    const { REGISTERED_ROUTES } = await import('../src/console/server');
     const app = buildServer();
     await app.ready();
     const declared = new Set<string>(WRITE_ROUTES);
-    const mutating: string[] = [];
-    for (const line of app.printRoutes({ commonPrefix: false }).split('\n')) {
-      const m = /^\s*[│└├─\s]*(\/\S*)\s+\((.+)\)/.exec(line);
-      if (!m) continue;
-      const [, path, methods] = m;
-      if (/POST|PUT|PATCH|DELETE/.test(methods!) && !declared.has(path!)) mutating.push(`${methods} ${path}`);
-    }
+    /*
+     * Read from Fastify's onRoute hook, NOT from printRoutes().
+     *
+     * printRoutes() renders a tree for humans and collapses shared prefixes: six routes under
+     * /api/tenants/... print as `/comp`, `/lock`, `/purge`. Parsing that worked while every write
+     * route was top-level and broke loudly once they nested. The dangerous case is the quiet one —
+     * a collapsed fragment that happens to match a declared entry would pass this guard while
+     * checking a different route than the one actually registered.
+     */
+    const mutating = REGISTERED_ROUTES.filter((r) => {
+      const [method, path] = r.split(' ');
+      return /^(POST|PUT|PATCH|DELETE)$/.test(method!) && !declared.has(path!);
+    });
     expect(mutating).toEqual([]);
+    // And the enumeration itself must be real — an empty list would make this vacuous.
+    expect(REGISTERED_ROUTES.length).toBeGreaterThan(10);
+    expect(REGISTERED_ROUTES).toContain('POST /api/tenants/accounts/purge');
     await app.close();
   });
 
@@ -804,6 +814,137 @@ describe('docs — a document\'s own chrome must not become the embed\'s layout'
       const doc = extractDoc(await readFile(join(dir, f), 'utf8'), 'platform', f, f);
       const containerRule = /\.doc-embed\{([^}]*)\}/.exec(doc.html)?.[1] ?? '';
       expect(containerRule, `${f} pushes layout onto the embed`).not.toMatch(/display\s*:/);
+    }
+  });
+});
+
+describe('tenant provider — two credentials, two surfaces', () => {
+  const ctx = { env: 'prod-a' as never, signal: AbortSignal.timeout(5_000), now: new Date() };
+
+  function stubFetch(handler: (url: string, init: RequestInit) => unknown) {
+    const calls: Array<{ url: string; headers: Record<string, string>; body: unknown; method: string }> = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
+      const headers = (init.headers ?? {}) as Record<string, string>;
+      calls.push({
+        url: String(url),
+        headers,
+        body: init.body ? JSON.parse(String(init.body)) : undefined,
+        method: init.method ?? 'GET',
+      });
+      const out = handler(String(url), init);
+      if (out instanceof Response) return out;
+      return new Response(JSON.stringify(out ?? {}), { headers: { 'content-type': 'application/json' } });
+    }) as never;
+    return { calls, restore: () => { globalThis.fetch = real; } };
+  }
+
+  it('sends the ADMIN token to /api/admin and the TEST token to /api/test — never the reverse', async () => {
+    // The separation that bounds the blast radius: AUTH-style tokens leak, and the admin token can
+    // erase a real account while the test token structurally cannot touch one.
+    const { createDorindaTenantProvider } = await import('../src/plugins/console-dorinda/tenants');
+    const p = createDorindaTenantProvider({ origin: 'https://api.test', adminToken: 'ADMIN', testToken: 'TEST' });
+    const f = stubFetch((url) => (url.includes('/api/admin/accounts') ? { accounts: [] } : {}));
+    try {
+      await p.listAccounts(ctx);
+      await p.reset(ctx, 'owner_1');
+      const admin = f.calls.find((c) => c.url.includes('/api/admin/'))!;
+      const test = f.calls.find((c) => c.url.includes('/api/test/'))!;
+      expect(admin.headers['x-admin-token']).toBe('ADMIN');
+      expect(admin.headers['x-dorinda-test-token']).toBeUndefined();
+      expect(test.headers['x-dorinda-test-token']).toBe('TEST');
+      expect(test.headers['x-admin-token']).toBeUndefined();
+    } finally {
+      f.restore();
+    }
+  });
+
+  it('reports UNCONFIGURED per credential rather than falling back to the other', async () => {
+    // A fallback is exactly how a reset would one day arrive at the purge surface.
+    const { createDorindaTenantProvider } = await import('../src/plugins/console-dorinda/tenants');
+    const p = createDorindaTenantProvider({ origin: 'https://api.test', adminToken: 'ADMIN' });
+    expect(p.supports('accounts.purge')).toBe(true);
+    expect(p.supports('test.reset')).toBe(false);
+    const f = stubFetch(() => ({}));
+    try {
+      await expect(p.reset(ctx, 'o')).rejects.toMatchObject({ code: 'not_configured' });
+      expect(f.calls).toHaveLength(0); // it did not try the admin token instead
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("carries the APP's status and code through — a refusal must read as a refusal", async () => {
+    // `403 not_a_test_tenant` and `503 platform_teardown_incomplete` are the two answers an operator
+    // most needs exactly. Flattened to 502 "upstream error" they become a shrug.
+    const { createDorindaTenantProvider } = await import('../src/plugins/console-dorinda/tenants');
+    const p = createDorindaTenantProvider({ origin: 'https://api.test', testToken: 'TEST' });
+    const f = stubFetch(
+      () =>
+        new Response(JSON.stringify({ error: { code: 'not_a_test_tenant', message: 'owner x is NOT flagged' } }), {
+          status: 403,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    try {
+      await expect(p.reset(ctx, 'x')).rejects.toMatchObject({ status: 403, code: 'not_a_test_tenant' });
+    } finally {
+      f.restore();
+    }
+  });
+
+  it('refuses a purge whose confirmation does not match what the console displayed', async () => {
+    // Checked HERE as well as in the app. The app checks against the identity forge holds; this
+    // checks against the row the operator was looking at, which closes the stale-list case where
+    // the email they can SEE belongs to a different owner id.
+    const { createDorindaTenantProvider } = await import('../src/plugins/console-dorinda/tenants');
+    const p = createDorindaTenantProvider({ origin: 'https://api.test', adminToken: 'ADMIN' });
+    const f = stubFetch((url) =>
+      url.includes('/api/admin/accounts?owner=')
+        ? { owner: 'owner_1', email: 'real@x.test', household: {}, connectionCount: 0 }
+        : { accounts: [{ owner: 'owner_1', email: 'real@x.test' }] },
+    );
+    try {
+      await expect(p.purge(ctx, 'owner_1', 'typo@x.test')).rejects.toMatchObject({ code: 'confirmation_mismatch' });
+      // …and it never reached the purge endpoint.
+      expect(f.calls.some((c) => c.url.includes('/purge'))).toBe(false);
+    } finally {
+      f.restore();
+    }
+  });
+
+  it('translates lock to the app\'s inverse `active` flag', async () => {
+    // The app models this as active/inactive. Translating in the provider means no screen has to
+    // remember which polarity a given app uses.
+    const { createDorindaTenantProvider } = await import('../src/plugins/console-dorinda/tenants');
+    const p = createDorindaTenantProvider({ origin: 'https://api.test', adminToken: 'ADMIN' });
+    const f = stubFetch(() => ({ subscription_status: 'paused', active: false }));
+    try {
+      const out = await p.setLocked(ctx, 'owner_1', true);
+      expect(f.calls[0]!.body).toEqual({ owner: 'owner_1', active: false });
+      expect(out.locked).toBe(true);
+    } finally {
+      f.restore();
+    }
+  });
+
+  it('derives the test-tenant list from the ONE account list', async () => {
+    // Two endpoints could disagree about which owners are test tenants; one cannot.
+    const { createDorindaTenantProvider } = await import('../src/plugins/console-dorinda/tenants');
+    const p = createDorindaTenantProvider({ origin: 'https://api.test', adminToken: 'ADMIN' });
+    const f = stubFetch(() => ({
+      accounts: [
+        { owner: 'real', email: 'a@b.com', test_tenant: false },
+        { owner: 'test', email: 'r@dorinda.test', test_tenant: true },
+      ],
+    }));
+    try {
+      expect((await p.listTestTenants(ctx)).map((t) => t.owner)).toEqual(['test']);
+      const all = await p.listAccounts(ctx);
+      // …and the flag is on the ordinary list too, so an operator about to purge can see it.
+      expect(all.find((a) => a.owner === 'test')?.isTest).toBe(true);
+    } finally {
+      f.restore();
     }
   });
 });
