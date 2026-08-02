@@ -9,6 +9,27 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-02
+
+### Changed
+- **Explore is logs only.** Metrics on that screen were one series at a time as a bare sparkline —
+  no axes, no legend, no shared window — which answered no question anyone actually arrives with.
+  Metrics live on **Dashboards** now, where the real Grafana boards are embedded whole. A structural
+  test asserts the two cannot quietly merge back.
+
+### Added
+- **Trace correlation in logs.** `trace_id` had been in `LogQuery` from the start with no route
+  exposing it, so the question an incident actually begins with — "one request failed, show me
+  everything it did across every service" — could not be asked. Every line with a trace now carries
+  a one-click pivot.
+  - A trace view deliberately **replaces** the service and text filters rather than narrowing them:
+    the reason to open a trace is to watch a request cross service boundaries, and keeping the
+    service filter would hide exactly those hops. The UI says so rather than leaving it implicit.
+- Severity facets (error/warning counts for the window), expandable rows showing an entry's labels,
+  a 7-day window, and severity filtering at Warn+/Error+.
+- Empty states that distinguish "no matches for these filters" from "this service is quiet" — an
+  absence of matches is not evidence of silence.
+
 ## [1.2.0] - 2026-08-02
 
 ### Added

@@ -404,7 +404,14 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
   });
 
   app.get('/api/logs', async (req) => {
-    const q = req.query as { service?: string; text?: string; severity?: string; minutes?: string; limit?: string };
+    const q = req.query as {
+      service?: string;
+      text?: string;
+      severity?: string;
+      minutes?: string;
+      limit?: string;
+      trace?: string;
+    };
     const end = new Date();
     const minutes = Number(q.minutes ?? 60);
     const c = ctx();
@@ -416,6 +423,15 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
           ...(q.service ? { runtime_id: q.service } : {}),
           ...(q.text ? { text: q.text } : {}),
           ...(q.severity ? { severity_at_least: q.severity as never } : {}),
+          /*
+           * Trace correlation, which the provider always supported and the route never exposed.
+           *
+           * This is the question an incident actually starts from: "one request failed — show me
+           * everything that request did, across every service it touched." Without it an operator
+           * greps a message string and hopes, which finds the line they already had and none of the
+           * ones around it.
+           */
+          ...(q.trace ? { trace_id: q.trace } : {}),
         },
         { start: new Date(end.getTime() - minutes * 60_000), end, limit },
         c,

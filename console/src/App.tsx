@@ -9,7 +9,6 @@ import {
   Pill,
   Provenance,
   Segmented,
-  Series,
   Skeleton,
   StatTile,
   Status,
@@ -75,20 +74,6 @@ interface Bootstrap {
   region: string;
   auth: string;
   providers: Array<{ provider_id: string; label: string; kind: string; ok: boolean; detail: string }>;
-}
-interface LogRow {
-  timestamp: string;
-  severity: string;
-  message: string;
-  labels: Record<string, string>;
-  trace_id?: string;
-  insert_id?: string;
-}
-interface MetricAnswer {
-  series: Array<{ labels: Record<string, string>; points: Array<{ t: number; v: number | null }> }>;
-  provider_id: string;
-  empty_reason?: string;
-  detail?: string;
 }
 
 /**
@@ -1069,80 +1054,90 @@ function Pipelines() {
   );
 }
 
-// ── Explore (metrics + logs on one surface) ────────────────────────────────────────────────────
+// ── Explore — logs ─────────────────────────────────────────────────────────────────────────────
+
+interface LogLine {
+  timestamp: string;
+  severity: string;
+  message: string;
+  labels?: Record<string, string>;
+  trace_id?: string;
+  insert_id: string;
+}
+
+const SEV_TONE: Record<string, StatusTone> = {
+  emergency: 'crit',
+  alert: 'crit',
+  critical: 'crit',
+  error: 'crit',
+  warning: 'warn',
+  notice: 'info',
+  info: 'info',
+  debug: 'neutral',
+};
 
 /**
- * DEEP-LINKABLE. Every knob on this screen lives in the URL (`svc`, `sig`, `mins`, `q`, `intent`),
- * because the answer to "what did you actually look at?" has to be a link somebody else can open.
- * An acceptance run that reports "logs looked fine" without a URL is asking to be taken on trust,
- * which is the opposite of the point.
+ * EXPLORE — logs, and only logs.
+ *
+ * Metrics used to share this screen as a single sparkline with no axes and no shared window, which
+ * answered no question anyone actually arrives with. Metrics now live on **Dashboards**, where the
+ * real Grafana boards are embedded whole. This screen does the thing Grafana is worst at here:
+ * reading Cloud Logging, which is where every log in this estate already lives.
+ *
+ * DEEP-LINKABLE. Every knob is in the URL (`svc`, `mins`, `q`, `sev`, `trace`), because "what did
+ * you actually look at?" has to be answerable with a link somebody else can open. An acceptance run
+ * that reports "logs looked fine" without a URL is asking to be taken on trust.
  */
 function Explore() {
   const qs = new URLSearchParams(location.search);
   const [service, setService] = useState(qs.get('svc') || 'dorinda-api');
-  const [signal, setSignal] = useState<'metrics' | 'logs'>((qs.get('sig') as 'metrics' | 'logs') || 'metrics');
   const [minutes, setMinutes] = useState(Number(qs.get('mins')) || 60);
   const [text, setText] = useState(qs.get('q') || '');
-  const [intent, setIntent] = useState(qs.get('intent') || 'request_rate');
-  /*
-   * The product metrics come from the Grafana dashboard, not from this file.
-   *
-   * A catalog entry is addressed as `product:<panel-id>`; anything else is one of the console's
-   * built-in infrastructure intents. Keeping ONE `intent` param means every metric on this screen
-   * stays deep-linkable the same way, whichever store defines it.
-   */
-  const catalog = useApi<{ source: { title: string; url?: string }; metrics: Array<{ id: string; title: string; description?: string; unit?: string }>; error?: string }>('/api/metrics/catalog');
-  const catalogMetrics = catalog.data?.metrics ?? [];
-  const productId = intent.startsWith('product:') ? intent.slice('product:'.length) : null;
-  const activeCatalog = catalogMetrics.find((m) => m.id === productId) ?? null;
+  const [severity, setSeverity] = useState(qs.get('sev') || '');
+  const [trace, setTrace] = useState(qs.get('trace') || '');
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   useEffect(() => {
     const u = new URL(location.href);
     u.searchParams.set('svc', service);
-    u.searchParams.set('sig', signal);
     u.searchParams.set('mins', String(minutes));
-    u.searchParams.set('intent', intent);
+    u.searchParams.set('sev', severity);
+    u.searchParams.set('trace', trace);
     if (text) u.searchParams.set('q', text);
     else u.searchParams.delete('q');
     history.replaceState(null, '', u);
-  }, [service, signal, minutes, text, intent]);
+  }, [service, minutes, text, severity, trace]);
 
-  const metrics = useApi<MetricAnswer>(
-    signal === 'metrics'
-      ? productId
-        ? `/api/metrics?metric=${encodeURIComponent(productId)}&minutes=${minutes}`
-        : `/api/metrics?intent=${encodeURIComponent(intent)}&service=${encodeURIComponent(service)}&minutes=${minutes}`
-      : null,
-    [service, minutes, intent, productId],
-  );
-  const logs = useApi<LogRow[]>(
-    signal === 'logs'
-      ? `/api/logs?service=${encodeURIComponent(service)}&minutes=${minutes}&limit=200${text ? `&text=${encodeURIComponent(text)}` : ''}`
-      : null,
-    [service, minutes, text],
-  );
+  /*
+   * A trace filter REPLACES the others rather than narrowing them.
+   *
+   * "Show me everything this one request did" is a different question from "show me errors in this
+   * service", and the whole value is seeing the request cross service boundaries. Keeping the
+   * service filter applied would hide exactly the hops you opened the trace to find.
+   */
+  const path = trace
+    ? `/api/logs?trace=${encodeURIComponent(trace)}&minutes=${minutes}&limit=500`
+    : `/api/logs?service=${encodeURIComponent(service)}&minutes=${minutes}&limit=300` +
+      (text ? `&text=${encodeURIComponent(text)}` : '') +
+      (severity ? `&severity=${encodeURIComponent(severity)}` : '');
+  const logs = useApi<LogLine[]>(path, [service, minutes, text, severity, trace]);
 
-  const points = metrics.data?.series[0]?.points ?? [];
-  const hasSamples = points.some((p) => p.v !== null);
+  const lines = logs.data ?? [];
+  const count = (s: string) =>
+    lines.filter((l) => (l.severity ?? '').toLowerCase() === s).length;
+  const errors = count('error') + count('critical') + count('emergency') + count('alert');
+  const warns = count('warning');
 
   return (
     <>
       <Head
         screen="explore"
         title="Explore"
-        sub="Metrics and logs over one scope. Switching signal keeps the scope, because the question is about the service, not about which Google product answers it."
+        sub="Logs from Cloud Logging, where every log in this estate already lives. Metrics moved to Dashboards, which embeds the real Grafana boards rather than redrawing one series at a time."
       />
+
       <Toolbar>
-        <Field ariaLabel="Service" value={service} onChange={setService} placeholder="service" mono width={210} />
-        <Segmented
-          ariaLabel="Signal"
-          value={signal}
-          onChange={setSignal}
-          options={[
-            ['metrics', 'Metrics'],
-            ['logs', 'Logs'],
-          ]}
-        />
+        <Field ariaLabel="Service" value={service} onChange={setService} mono width={170} placeholder="service" />
         <Segmented
           ariaLabel="Window"
           value={String(minutes)}
@@ -1152,167 +1147,164 @@ function Explore() {
             ['60', '1h'],
             ['360', '6h'],
             ['1440', '24h'],
+            ['10080', '7d'],
           ]}
         />
-        {/* A result narrower than the question must say so, loudly. Reading "no errors" off a pane that
-          quietly covered 20 minutes of the 3 hours you asked for is how a false all-clear happens —
-          it happened during the acceptance run that produced this code. */}
-      {signal === 'logs' && logs.note && (
-        <div
-          style={{
-            border: '1px solid var(--warn)',
-            background: 'var(--warn-wash)',
-            color: 'var(--warn-text)',
-            padding: '10px 13px',
-            borderRadius: 'var(--r-lg)',
-            fontSize: 12.5,
-            marginBottom: 12,
-          }}
-        >
-          {logs.note}
-        </div>
-      )}
-
-      {signal === 'metrics' ? (
-          <>
-            {/* Product metrics lead, because "is the product working" is the question people arrive
-                with; the infrastructure intents answer "is the machine working", which is a
-                different and usually later question. */}
-            {catalogMetrics.length > 0 && (
-              <Segmented
-                ariaLabel="Product metric"
-                value={productId ? intent : ''}
-                onChange={setIntent}
-                options={catalogMetrics.map((m) => [`product:${m.id}`, m.title] as const)}
-              />
-            )}
-            <Segmented
-              ariaLabel="Infrastructure metric"
-              value={productId ? '' : intent}
-              onChange={setIntent}
-              options={[
-                ['request_rate', 'Rate'],
-                ['error_rate', 'Errors'],
-                ['latency_p95', 'p95'],
-              ]}
-            />
-            {catalog.data?.error && (
-              /* Named, not hidden. The console deliberately keeps NO local copy of these queries —
-                 a stale copy that renders happily while disagreeing with the dashboard is the exact
-                 failure the shared definition exists to prevent. */
-              <Note>product metrics unavailable — {catalog.data.error}</Note>
-            )}
-          </>
-        ) : (
-          /* Free-text filter. An acceptance run needs to point at ONE flow's lines, not the stream. */
-          <Field ariaLabel="Filter logs" value={text} onChange={setText} placeholder="filter text" mono width={210} />
-        )}
+        <Segmented
+          ariaLabel="Minimum severity"
+          value={severity}
+          onChange={setSeverity}
+          options={[
+            ['', 'All'],
+            ['WARNING', 'Warn+'],
+            ['ERROR', 'Error+'],
+          ]}
+        />
+        <Field ariaLabel="Filter text" value={text} onChange={setText} placeholder="contains…" mono width={190} />
       </Toolbar>
 
-      {signal === 'metrics' ? (
-        <Card
-          eyebrow={metrics.data ? `answered by ${metrics.data.provider_id}` : intent.replace(/_/g, ' ')}
-          title={
-            activeCatalog
-              ? activeCatalog.title
-              : intent === 'error_rate'
-                ? 'Error rate'
-                : intent === 'latency_p95'
-                  ? 'Latency p95'
-                  : 'Request rate'
-          }
-          subtitle={
-            activeCatalog
-              ? // The panel's own description, written once in the dashboard and read here — so the
-                // explanation cannot drift from the query it explains either.
-                `${activeCatalog.description ?? ''} Defined in ${catalog.data?.source.title ?? 'the Grafana dashboard'}; the console reads it rather than restating it.`
-              : 'Which store answered is part of the reading, not a footnote — two metric backends disagree more often than either admits.'
-          }
-        >
-          {metrics.error ? (
-            <Err msg={metrics.error} onRetry={metrics.reload} />
-          ) : metrics.loading ? (
-            <Skeleton rows={1} height="180px" />
-          ) : hasSamples ? (
-            <Series points={points} label="request rate" />
-          ) : (
-            /* ⛔ THE RULE: empty is never drawn as a flat line at zero. It says WHY, and the two
-               whys are completely different problems. */
-            <Empty
-              kind={metrics.data?.empty_reason === 'never_ingested' ? 'unconfigured' : 'no-results'}
-              title={
-                metrics.data?.empty_reason === 'never_ingested'
-                  ? 'No data has ever been ingested'
-                  : 'No samples in this window'
-              }
-              detail={
-                metrics.data?.detail ??
-                (metrics.data?.empty_reason === 'never_ingested'
-                  ? 'This series has never received a point. Something is not emitting, which a zero line would have hidden.'
-                  : 'The store answered and returned nothing for this window. Widen it, or check that the service is receiving traffic at all.')
-              }
-            />
-          )}
+      {trace && (
+        <Card>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <Pill tone="info">trace</Pill>
+            <code style={{ fontSize: 12.5 }}>{trace}</code>
+            {/* Stated explicitly: a trace view spans services on purpose, and the service filter
+                above is deliberately NOT applied. Otherwise the cross-service hops — the reason to
+                open a trace at all — would be filtered out without saying so. */}
+            <Note>every service this request touched · service and text filters do not apply</Note>
+            <Button variant="ghost" onClick={() => setTrace('')}>
+              Clear
+            </Button>
+          </div>
         </Card>
+      )}
+
+      {logs.error ? (
+        <Err msg={logs.error} onRetry={logs.reload} />
       ) : (
-        <Card pad={false}>
-          {logs.error ? (
-            <div style={{ padding: 16 }}>
-              <Err msg={logs.error} onRetry={logs.reload} />
-            </div>
-          ) : logs.loading ? (
-            <div style={{ padding: 16 }}>
-              <Skeleton rows={10} height="22px" />
-            </div>
-          ) : (logs.data?.length ?? 0) === 0 ? (
-            <Empty kind="no-results" title="No log lines" detail={`Nothing from ${service} in the last hour.`} />
-          ) : (
-            <div style={{ maxHeight: 640, overflow: 'auto' }}>
-              {logs.data!.map((l) => {
-                const sev =
-                  l.severity === 'error' || l.severity === 'critical'
-                    ? 'crit'
-                    : l.severity === 'warning'
-                      ? 'warn'
-                      : 'neutral';
-                return (
-                  <div
-                    key={l.insert_id ?? l.timestamp + l.message}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '3px 96px 1fr',
-                      gap: 11,
-                      padding: '4px 14px 4px 0',
-                      borderBottom: '1px solid var(--line-faint)',
-                      alignItems: 'baseline',
-                      fontFamily: 'var(--mono)',
-                      fontSize: 12,
-                      lineHeight: '18px',
-                    }}
-                  >
-                    <span
-                      aria-hidden
-                      style={{
-                        alignSelf: 'stretch',
-                        background: sev === 'neutral' ? 'var(--line-strong)' : `var(--${sev})`,
-                      }}
-                    />
-                    <span style={{ color: 'var(--text-faint)' }}>{l.timestamp.slice(11, 23)}</span>
-                    <span
-                      style={{
-                        color: sev === 'crit' ? 'var(--crit-text)' : 'var(--text-secondary)',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      {l.message}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
+        <>
+          {!logs.loading && lines.length > 0 && (
+            <Toolbar>
+              <Note>
+                {lines.length} lines · {errors} error{errors === 1 ? '' : 's'} · {warns} warning
+                {warns === 1 ? '' : 's'}
+              </Note>
+              {logs.note && (
+                /* ⛔ The truncation warning from the API, surfaced rather than swallowed. Logs come
+                   back newest-first, so hitting the row limit means the answer covers a SMALLER
+                   window than the question — and an "all clear" read off a silently truncated
+                   result is the false green this console exists to end. */
+                <Status tone="warn" label={logs.note} />
+              )}
+            </Toolbar>
           )}
-        </Card>
+
+          <Card pad={false}>
+            {logs.loading ? (
+              <div style={{ padding: 16 }}>
+                <Skeleton rows={12} height="20px" />
+              </div>
+            ) : lines.length === 0 ? (
+              <Empty
+                kind="no-results"
+                title="No matching log lines"
+                detail={
+                  trace
+                    ? `Nothing for trace ${trace} in this window. Traces age out — widen the window before concluding the request never happened.`
+                    : `Nothing from ${service}${severity ? ` at ${severity}+` : ''}${text ? ` containing “${text}”` : ''} in this window. That is an absence of matches, not proof the service is quiet — clear the filters to check.`
+                }
+              />
+            ) : (
+              <div style={{ maxHeight: '68vh', overflow: 'auto' }}>
+                {lines.map((l) => {
+                  const sev = (l.severity ?? '').toLowerCase();
+                  const tone = SEV_TONE[sev] ?? 'neutral';
+                  const key = l.insert_id ?? l.timestamp + l.message;
+                  const open = expanded === key;
+                  return (
+                    <div key={key} style={{ borderBottom: '1px solid var(--line-faint)' }}>
+                      <div
+                        onClick={() => setExpanded(open ? null : key)}
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '3px 92px 62px 1fr auto',
+                          gap: 11,
+                          padding: '4px 12px 4px 0',
+                          alignItems: 'baseline',
+                          fontFamily: 'var(--mono)',
+                          fontSize: 12,
+                          lineHeight: '18px',
+                          cursor: 'pointer',
+                          background: open ? 'var(--bg-inset)' : undefined,
+                        }}
+                      >
+                        <span
+                          aria-hidden
+                          style={{
+                            alignSelf: 'stretch',
+                            background: tone === 'neutral' ? 'var(--line-strong)' : `var(--${tone})`,
+                          }}
+                        />
+                        <span style={{ color: 'var(--text-faint)' }}>{l.timestamp.slice(11, 23)}</span>
+                        <span style={{ color: tone === 'neutral' ? 'var(--text-faint)' : `var(--${tone}-text, var(--text-secondary))`, fontSize: 11 }}>
+                          {sev.slice(0, 5) || '—'}
+                        </span>
+                        <span
+                          style={{
+                            color: tone === 'crit' ? 'var(--crit-text)' : 'var(--text-secondary)',
+                            whiteSpace: open ? 'pre-wrap' : 'nowrap',
+                            overflow: open ? undefined : 'hidden',
+                            textOverflow: open ? undefined : 'ellipsis',
+                            wordBreak: 'break-word',
+                          }}
+                        >
+                          {l.message}
+                        </span>
+                        {/* The pivot that makes this screen worth opening during an incident: one
+                            click from a failing line to everything that request did, everywhere. */}
+                        {l.trace_id ? (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setTrace(l.trace_id!); }}
+                            title="Show every line from this request, across services"
+                            style={{
+                              background: 'transparent', border: '1px solid var(--line-strong)',
+                              borderRadius: 'var(--r-sm, 4px)', color: 'var(--text-muted)',
+                              fontSize: 10.5, padding: '0 6px', cursor: 'pointer', fontFamily: 'var(--mono)',
+                            }}
+                          >
+                            trace
+                          </button>
+                        ) : (
+                          <span />
+                        )}
+                      </div>
+
+                      {open && (
+                        <div style={{ padding: '8px 14px 12px 26px', fontFamily: 'var(--mono)', fontSize: 11.5 }}>
+                          <div style={{ color: 'var(--text-faint)', marginBottom: 6 }}>{l.timestamp}</div>
+                          {Object.entries(l.labels ?? {}).length === 0 ? (
+                            <Note>no labels on this entry</Note>
+                          ) : (
+                            <table style={{ borderCollapse: 'collapse' }}>
+                              <tbody>
+                                {Object.entries(l.labels ?? {}).map(([k, v]) => (
+                                  <tr key={k}>
+                                    <td style={{ color: 'var(--text-muted)', paddingRight: 14, verticalAlign: 'top' }}>{k}</td>
+                                    <td style={{ color: 'var(--text-secondary)', wordBreak: 'break-all' }}>{v}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+        </>
       )}
     </>
   );

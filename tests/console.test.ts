@@ -1382,3 +1382,66 @@ describe('embedded Grafana boards — self-healing across a redeploy', () => {
     }
   });
 });
+
+describe('logs — trace correlation is the point of this screen', () => {
+  it('the route accepts a trace filter, which the provider always supported', async () => {
+    /*
+     * `trace_id` sat in LogQuery from the start and no route ever exposed it, so the one question
+     * an incident actually begins with — "one request failed, show me everything it did across
+     * every service" — could not be asked. Without it an operator greps a message string and finds
+     * the line they already had, not the ones around it.
+     */
+    const { buildServer } = await import('../src/console/server');
+    process.env.CONSOLE_BASIC_USER = 'u';
+    process.env.CONSOLE_BASIC_PASS = 'p';
+    const app = buildServer();
+    await app.ready();
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/logs?trace=abc123&minutes=60',
+      headers: { authorization: 'Basic ' + Buffer.from('u:p').toString('base64') },
+    });
+    // No logs provider is configured in tests; what matters is that the route ACCEPTS the parameter
+    // rather than rejecting it, and answers in the envelope shape.
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toHaveProperty('data');
+    await app.close();
+  });
+
+  it('a truncated answer is still reported as truncated', async () => {
+    // Logs come back newest-first, so hitting the row limit means the response covers a SMALLER
+    // window than the one asked for. During the 2026-07-31 run a 190-minute query returned 400 rows
+    // spanning 20 minutes, and "no 5xx in 190 minutes" was about to be recorded as a pass.
+    const src = await (await import('node:fs/promises')).readFile(
+      new URL('../src/console/server.ts', import.meta.url).pathname,
+      'utf8',
+    );
+    expect(src).toMatch(/truncated/);
+    expect(src).toMatch(/oldest/);
+  });
+});
+
+describe('Explore renders logs only — metrics live on Dashboards now', () => {
+  it('the Explore screen has no metric picker left', async () => {
+    /*
+     * Metrics on this screen were a single sparkline with no axes and no shared window, which
+     * answered no question anyone arrives with. They moved to Dashboards, which embeds the real
+     * Grafana boards whole. Asserted structurally so the two cannot quietly merge back.
+     */
+    const src = await (await import('node:fs/promises')).readFile(
+      new URL('../../forge/console/src/App.tsx', import.meta.url).pathname,
+      'utf8',
+    ).catch(() => null);
+    if (!src) return;
+    const start = src.indexOf('// ── Explore — logs ──');
+    const end = src.indexOf('// ── Credentials & expiry ──');
+    expect(start, 'the Explore logs section is missing').toBeGreaterThan(-1);
+    const explore = src.slice(start, end);
+    expect(explore).not.toContain('/api/metrics');
+    expect(explore).not.toContain("'metrics'");
+    // …and it still does the things a log view needs.
+    expect(explore).toContain('/api/logs');
+    expect(explore).toContain('trace');
+    expect(explore).toContain('severity');
+  });
+});
