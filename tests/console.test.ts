@@ -1151,3 +1151,48 @@ describe('connections — a false zero is worse than no answer', () => {
     expect(noAdmin.supports('connections.read')).toBe(false);
   });
 });
+
+describe('every dashboard panel points at a datasource that EXISTS', () => {
+  it('no panel references an undeclared datasource uid', async () => {
+    /*
+     * The failure this catches, which shipped once: `dorinda-product-topline` went out with an
+     * INVENTED uid (`gmp`) while provisioning declares `forge-prometheus`. Every panel pointed at a
+     * datasource that does not exist, so the whole board read "no data" — and the queries themselves
+     * were fine, which is exactly why it was not obvious.
+     *
+     * It also slipped through because the queries were validated against Managed Prometheus
+     * DIRECTLY and the dashboard was never loaded. "Verify the pane, not the store" is written down
+     * in this estate; this is the mechanical version of that rule, so it does not depend on
+     * remembering it.
+     */
+    const { readFile, readdir } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const base = new URL('../../dorinda-metrics', import.meta.url).pathname;
+
+    const dsRaw = await readFile(join(base, 'provisioning/datasources/datasources.yaml'), 'utf8').catch(() => null);
+    if (!dsRaw) return; // dorinda-metrics not checked out beside forge — skip rather than fail.
+
+    // Cheap YAML read: every `uid:` in the datasource provisioning file.
+    const declared = new Set([...dsRaw.matchAll(/^\s*uid:\s*([A-Za-z0-9_-]+)/gm)].map((m) => m[1]!));
+    expect(declared.size, 'no datasource uids parsed — the provisioning format changed').toBeGreaterThan(0);
+
+    const dir = join(base, 'dashboards');
+    const offenders: string[] = [];
+    for (const f of (await readdir(dir)).filter((x) => x.endsWith('.json'))) {
+      const dash = JSON.parse(await readFile(join(dir, f), 'utf8')) as {
+        panels?: Array<{ title?: string; datasource?: { uid?: string } }>;
+      };
+      for (const p of dash.panels ?? []) {
+        const uid = p.datasource?.uid;
+        // A templated uid ("${ds}") is resolved by Grafana at render time, not by us.
+        if (!uid || uid.startsWith('$')) continue;
+        if (!declared.has(uid)) offenders.push(`${f} → "${p.title}" uses datasource "${uid}"`);
+      }
+    }
+    expect(
+      offenders,
+      `these panels reference a datasource uid that provisioning does not declare, so they render ` +
+        `"no data" no matter how correct their queries are`,
+    ).toEqual([]);
+  });
+});
