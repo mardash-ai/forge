@@ -107,6 +107,15 @@ export interface TestTenantRow {
   memberEmails: string[];
   /** Per-entity row counts. All zero ⇒ empty; anything ⇒ seeded. */
   counts: Record<string, number>;
+  /**
+   * The fixture CURRENTLY applied, as sent — null when never seeded directly, or reset since.
+   *
+   * A household member normally has null even when populated: members are created by the OWNER's
+   * fixture, so the document that produced them belongs to the owner, and copying it onto each
+   * member would claim they were seeded directly.
+   */
+  lastFixture: unknown | null;
+  lastSeededAt: string | null;
 }
 
 export interface TestTenantClock {

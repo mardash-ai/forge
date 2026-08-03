@@ -204,6 +204,8 @@ export function createDorindaTenantProvider(cfg: DorindaTenantConfig): TenantPro
         isHouseholdOwner: Boolean(t['isHouseholdOwner']),
         memberEmails: (t['memberEmails'] as string[]) ?? [],
         counts: (t['counts'] as Record<string, number>) ?? {},
+        lastFixture: t['lastFixture'] ?? null,
+        lastSeededAt: (t['lastSeededAt'] as string | null) ?? null,
       }));
     },
 

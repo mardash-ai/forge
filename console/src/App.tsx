@@ -3319,6 +3319,14 @@ interface TestTenantRow {
   isHouseholdOwner: boolean;
   memberEmails: string[];
   counts: Record<string, number>;
+  /**
+   * The fixture CURRENTLY applied, as sent — null when never seeded directly, or reset since.
+   *
+   * A household MEMBER normally has null even when it holds data: members are created by the
+   * OWNER's fixture, so the document that produced them belongs to the owner.
+   */
+  lastFixture?: unknown | null;
+  lastSeededAt?: string | null;
 }
 
 /**
@@ -4004,6 +4012,33 @@ function TestTenants() {
                 title="Seed"
                 subtitle="Populates the tenant through the SAME creation path a real user takes, so the harness can never exercise semantics no real path shares. Idempotent by natural key — re-seeding reports skipped rather than duplicating."
               >
+                {/*
+                  State FIRST, before the editor. The mistake this prevents is re-seeding something
+                  already populated because the textarea looked like a blank slate.
+                */}
+                {selectedTenant && seededRows(selectedTenant) > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <Status
+                      tone="warn"
+                      label={
+                        selectedTenant.lastFixture
+                          ? `Already seeded${selectedTenant.lastSeededAt ? ` · ${relative(selectedTenant.lastSeededAt)}` : ''} — the fixture below is the one that produced it`
+                          : 'Already seeded — but the fixture that produced it was not recorded (seeded before this was tracked, or created through the app)'
+                      }
+                    />
+                  </div>
+                )}
+                {selectedTenant &&
+                  seededRows(selectedTenant) > 0 &&
+                  !selectedTenant.lastFixture &&
+                  !selectedTenant.isHouseholdOwner && (
+                    <div style={{ marginBottom: 12 }}>
+                      <Note>
+                        This is a household member with no fixture of its own — it was created by its owner's
+                        fixture. Open the owner to see the document that produced this household.
+                      </Note>
+                    </div>
+                  )}
                 <Toolbar>
                   <Select
                     ariaLabel="Fixture preset"
