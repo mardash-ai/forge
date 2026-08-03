@@ -23,6 +23,7 @@ import {
 } from './ui/kit';
 import { ExternalGlyph, LogoMark, RAIL_ICON, StatusGlyph, SvgDefs, Wordmark } from './ui/icons';
 import { duration, relative, useApi } from './lib/api';
+import { fixtureForSelection } from './lib/seed-editor';
 
 // ── Types mirroring the server's domain model ──────────────────────────────────────────────────
 
@@ -3834,10 +3835,20 @@ function TestTenants() {
                           setConfirmDelete('');
                           // A credential shown for one tenant must never linger while another is open.
                           setPassword(null);
-                          // The preset may not apply to the newly selected tenant (an owner fixture on
-                          // a member always 403s), so fall back to one that does.
-                          setPreset('empty');
-                          setFixture(JSON.stringify(FIXTURES[0]![2], null, 2));
+                          /*
+                           * Restore the fixture that produced THIS tenant's state, when it has one.
+                           *
+                           * Opening a populated tenant and being shown an unrelated preset is how a
+                           * re-seed becomes an accident: the editor looks authoritative, so whatever
+                           * sits in it reads as "what this tenant contains".
+                           *
+                           * A member usually has none — it was created by its owner's fixture — and a
+                           * preset may not even apply to it (an owner fixture on a member always
+                           * 403s), so the fallback is one that always can.
+                           */
+                          const chosen = fixtureForSelection(next ? t : null, FIXTURES[0]![2]);
+                          setPreset(chosen.preset);
+                          setFixture(chosen.fixture);
                           setNote(null);
                           setErr(null);
                         }}
@@ -4064,7 +4075,15 @@ function TestTenants() {
                     ariaLabel="Fixture preset"
                     value={preset}
                     onChange={applyPreset}
-                    options={applicableFixtures.map(([k, label]) => [k, label] as const)}
+                    options={[
+                      // Shown ONLY when the tenant carries its own fixture. Without it the select
+                      // has no option matching `preset: ''` and browsers display the first one —
+                      // which read as "Empty — no data" while the editor held a full fixture.
+                      ...(selectedTenant?.lastFixture
+                        ? ([['', "This tenant's own fixture (currently applied)"]] as const)
+                        : []),
+                      ...applicableFixtures.map(([k, label]) => [k, label] as const),
+                    ]}
                     width={330}
                   />
                   <Button

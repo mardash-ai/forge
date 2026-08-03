@@ -1595,6 +1595,42 @@ describe('embedded Grafana boards — self-healing across a redeploy', () => {
   });
 });
 
+describe('the Seed editor shows what actually produced a tenant', () => {
+  /*
+   * This exists because the bug it prevents was INVISIBLE to every check I ran.
+   *
+   * The restore was written inline in a click handler. A later edit to it silently failed to apply
+   * — the anchor's indentation had shifted when the table gained a nesting level, and `replace()`
+   * no-ops rather than erroring. The type change and the LABEL change did land, so the banner read
+   * "Already seeded — the fixture below is the one that produced it" while the editor showed `{}`.
+   * Typecheck passed, every test passed, and grepping for strings from the change found them.
+   *
+   * The decision is a pure function now, so it can be asserted rather than inferred from source.
+   */
+  it("restores the tenant's own fixture, and marks no preset as selected", async () => {
+    const { fixtureForSelection } = await import('../console/src/lib/seed-editor');
+    const own = { people: [{ displayName: 'Dr. Alvarez' }] };
+    const out = fixtureForSelection({ lastFixture: own }, { fallback: true });
+    // The editor holds THIS tenant's fixture…
+    expect(JSON.parse(out.fixture)).toEqual(own);
+    // …and no preset reads as selected, because none of them is what is applied.
+    expect(out.preset).toBe('');
+  });
+
+  it('falls back to a preset when the tenant has no fixture of its own', async () => {
+    const { fixtureForSelection } = await import('../console/src/lib/seed-editor');
+    // A household MEMBER is the normal case here: created by its owner's fixture, so it holds none.
+    const out = fixtureForSelection({ lastFixture: null }, { empty: true });
+    expect(out.preset).toBe('empty');
+    expect(JSON.parse(out.fixture)).toEqual({ empty: true });
+  });
+
+  it('falls back when nothing is selected at all', async () => {
+    const { fixtureForSelection } = await import('../console/src/lib/seed-editor');
+    expect(fixtureForSelection(null, {}).preset).toBe('empty');
+  });
+});
+
 describe('logs — trace correlation is the point of this screen', () => {
   it('the route accepts a trace filter, which the provider always supported', async () => {
     /*

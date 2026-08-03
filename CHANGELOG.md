@@ -9,6 +9,20 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-08-03
+
+### Fixed
+- **The Seed editor said "Already seeded — the fixture below is the one that produced it" beside an
+  empty `{}`.** The restore logic was written inline in a click handler and a later edit to it
+  SILENTLY failed to apply — the anchor's indentation had shifted when the tenant table gained a
+  nesting level, and `String.replace` no-ops rather than erroring. The type and label changes did
+  land, so the banner was right and the editor was wrong.
+
+  The decision is now a pure module (`console/src/lib/seed-editor.ts`) with tests, one of them
+  proven to fail without the restore. The dropdown also gains an explicit
+  **"This tenant's own fixture"** entry: a `<select>` whose value matches no option displays the
+  FIRST one, which is why it read "Empty — no data" beside a full fixture.
+
 ## [1.14.0] - 2026-08-03
 
 ### Fixed
