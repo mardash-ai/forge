@@ -1229,6 +1229,17 @@ function Explore() {
   }, [service, minutes, text, severity, trace, owner]);
 
   /*
+   * Test data is EXCLUDED by default.
+   *
+   * Fixtures run in production here — deliberately, because a staging environment is a cost the
+   * business has chosen not to carry — so an operator log view that included them would be useless
+   * the moment a test run happened. The person looking is nearly always asking about a real user.
+   *
+   * `test` inverts it, which is how you check that instrumentation works at all; `all` shows both.
+   */
+  const [dataSet, setDataSet] = useState<'production' | 'test' | 'all'>('production');
+
+  /*
    * A trace filter REPLACES the others rather than narrowing them.
    *
    * "Show me everything this one request did" is a different question from "show me errors in this
@@ -1236,13 +1247,15 @@ function Explore() {
    * service filter applied would hide exactly the hops you opened the trace to find.
    */
   const path = trace
-    ? `/api/logs?trace=${encodeURIComponent(trace)}&minutes=${minutes}&limit=500`
-    : `/api/logs?minutes=${minutes}&limit=300` +
+    ? // A trace pivot ignores the test/production split too: you are looking at ONE request, and
+      // whether it came from a fixture is not a reason to hide half of it.
+      `/api/logs?trace=${encodeURIComponent(trace)}&minutes=${minutes}&limit=500&data_set=all`
+    : `/api/logs?minutes=${minutes}&limit=300&data_set=${dataSet}` +
       (service ? `&service=${encodeURIComponent(service)}` : '') +
       (owner ? `&owner=${encodeURIComponent(owner)}` : '') +
       (text ? `&text=${encodeURIComponent(text)}` : '') +
       (severity ? `&severity=${encodeURIComponent(severity)}` : '');
-  const logs = useApi<LogLine[]>(path, [service, minutes, text, severity, trace, owner]);
+  const logs = useApi<LogLine[]>(path, [service, minutes, text, severity, trace, owner, dataSet]);
 
   const lines = logs.data ?? [];
   const count = (s: string) => lines.filter((l) => (l.severity ?? '').toLowerCase() === s).length;
@@ -1310,6 +1323,25 @@ function Explore() {
             options={[['', 'All users'], ...userOptions]}
           />
         )}
+        {/*
+          The test/production split. PRODUCTION is the default and deliberately the first option:
+          fixtures run in this same estate, so a view that included them would be useless the moment
+          a test run happened, and the person looking is nearly always asking about a real user.
+
+          "Production" also covers entries with NO test field — boot, webhooks, unauthenticated
+          requests. Those were never attributed either way, and an unexplained incident is far more
+          likely to be hiding in an unattributed line than in a fixture.
+        */}
+        <Segmented
+          ariaLabel="Data set"
+          value={dataSet}
+          onChange={(v) => setDataSet(v as 'production' | 'test' | 'all')}
+          options={[
+            ['production', 'Production'],
+            ['test', 'Test only'],
+            ['all', 'Both'],
+          ]}
+        />
         <Field
           ariaLabel="Filter text"
           value={text}

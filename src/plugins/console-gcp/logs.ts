@@ -65,6 +65,18 @@ export function buildFilter(q: LogQuery): string {
   // is expressible. Routing owner through `native` would have silently discarded the service and
   // severity filters, which is the sort of narrowing that answers a different question than asked.
   if (q.owner) parts.push(`jsonPayload.owner="${clean(q.owner)}"`);
+
+  /*
+   * The test/production split.
+   *
+   * `production` must match entries with `test=false` AND entries with NO `test` field at all —
+   * boot, webhooks, anything unauthenticated. Matching only `test="false"` would silently hide every
+   * unattributed line, which is exactly where an unexplained incident tends to live.
+   *
+   * `test` is the strict inverse: only entries positively marked as fixture traffic.
+   */
+  if (q.data_set === 'production') parts.push(`NOT jsonPayload.test="true"`);
+  else if (q.data_set === 'test') parts.push(`jsonPayload.test="true"`);
   if (q.text) parts.push(`"${clean(q.text)}"`);
   return parts.join(' AND ');
 }

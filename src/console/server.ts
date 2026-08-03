@@ -444,6 +444,7 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
       limit?: string;
       trace?: string;
       owner?: string;
+      data_set?: string;
     };
     const end = new Date();
     const minutes = Number(q.minutes ?? 60);
@@ -465,6 +466,15 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
            * ones around it.
            */
           ...(q.trace ? { trace_id: q.trace } : {}),
+          /*
+           * The test/production split, defaulting to PRODUCTION.
+           *
+           * Defaulted here rather than in the UI so the API answers the same way to any caller — a
+           * curl, a future CLI, a script. A log view that silently includes fixture traffic is one an
+           * operator learns to distrust, and this estate deliberately runs fixtures in production
+           * because a staging environment is a cost the business has chosen not to carry.
+           */
+          data_set: (q.data_set as 'production' | 'test' | 'all') ?? 'production',
           /*
            * Filter by OWNER ID, never by email.
            *

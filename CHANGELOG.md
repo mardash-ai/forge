@@ -9,6 +9,21 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-08-03
+
+### Console — logs are PRODUCTION-only by default
+
+Fixtures run in the production estate (there is no staging environment, deliberately, on cost), so
+an operator log view that mixed them in was useless the moment a test run happened. The Explore
+screen now has a **Data set** control — **Production** (the default), **Test only**, **Both**.
+
+- `production` is a NEGATION (`NOT jsonPayload.test="true"`), not `test="false"`. Boot lines,
+  webhooks and unauthenticated requests carry no `test` field at all, and matching only the explicit
+  false would silently drop every one of them — an unexplained incident is far likelier to be hiding
+  in an unattributed line than in a fixture.
+- A **trace pivot ignores the split** (`data_set=all`): you are looking at one request, and where it
+  came from is not a reason to show half of it.
+
 ## [1.15.0] - 2026-08-03
 
 ### Fixed

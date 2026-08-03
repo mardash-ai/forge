@@ -151,6 +151,21 @@ export interface LogQuery {
    * is identical while the durable artefact carries no personal data.
    */
   owner?: string;
+  /**
+   * Which side of the test/production split to show.
+   *
+   * `production` is the DEFAULT everywhere it is offered. An estate that runs fixtures alongside real
+   * customers — deliberately, because a staging environment costs money — has an operator log view
+   * that is useless the moment a test run drowns it. The person looking is nearly always asking about
+   * a real user.
+   *
+   * `test` inverts it, for validating that instrumentation works at all. `all` shows both.
+   *
+   * ⚠️ An entry with NO `test` field is neither: boot lines, webhooks and unauthenticated requests
+   * were never attributed either way. Those are treated as production, because a real incident is far
+   * more likely to be hiding in an unattributed line than a fixture is.
+   */
+  data_set?: 'production' | 'test' | 'all';
   native?: string;
 }
 

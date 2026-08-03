@@ -1813,6 +1813,42 @@ describe('log filters combine — owner is a clause, not an override', () => {
     expect(sentBody!['settle']).toBe(false);
   });
 
+  it('production EXCLUDES test data, and still includes unattributed lines', async () => {
+    /*
+     * The subtle half. `production` cannot be `jsonPayload.test="false"`: boot lines, webhooks and
+     * unauthenticated requests carry NO `test` field at all, having never been attributed either
+     * way. Matching only the explicit false would silently drop every one of them — and an
+     * unexplained incident is far more likely to be hiding in an unattributed line than in a
+     * fixture. So it is a NEGATION, which matches both false and absent.
+     */
+    const { buildFilter } = await import('../src/plugins/console-gcp/logs');
+    const prod = buildFilter({ data_set: 'production' } as never);
+    expect(prod).toContain('NOT jsonPayload.test="true"');
+    expect(prod).not.toContain('jsonPayload.test="false"');
+
+    // `test` is the strict inverse: only what is positively marked as fixture traffic.
+    expect(buildFilter({ data_set: 'test' } as never)).toBe('jsonPayload.test="true"');
+
+    // `all` adds no clause at all.
+    expect(buildFilter({ data_set: 'all' } as never)).toBe('');
+  });
+
+  it('the data-set clause combines with the others rather than replacing them', async () => {
+    // "this user's errors in dorinda-api, production only" has to be expressible — a filter that
+    // silently answered a broader question would be worse than one that failed.
+    const { buildFilter } = await import('../src/plugins/console-gcp/logs');
+    const f = buildFilter({
+      data_set: 'production',
+      owner: 'user_x',
+      runtime_id: 'dorinda-api',
+      severity_at_least: 'error',
+    } as never);
+    expect(f).toContain('NOT jsonPayload.test="true"');
+    expect(f).toContain('jsonPayload.owner="user_x"');
+    expect(f).toContain('resource.labels.service_name="dorinda-api"');
+    expect(f).toContain('severity>=ERROR');
+  });
+
   it('a trace pivot matches BOTH the LogEntry trace field and a payload trace_id', async () => {
     /*
      * The same trace id lives in two places, and matching one returns a SUBSET.
