@@ -9,6 +9,22 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-08-03
+
+### Added
+- **Delete a test tenant from the console** — `POST /api/tenants/test/delete`, running the app's full
+  account cascade behind the test-tenant guard, so create → seed → delete is complete in one place.
+  Requires the operator to retype the tenant's email, the same control the real purge uses: the
+  realistic mistake is never "I didn't mean to delete a tenant", it is "I didn't mean to delete THAT
+  one".
+
+### Changed
+- **Test tenants no longer appear on the Accounts screen.** They used to show with a "test tenant"
+  pill. Every action on that screen — comp, lock, purge — is built for REAL accounts, and each new
+  one will be too; a fixture in the same table is a standing invitation to apply an operation to it
+  that was never designed for it. The count states how many are hidden rather than silently omitting
+  them, and the accounts API still returns every account so an audit read is unchanged.
+
 ## [1.9.0] - 2026-08-03
 
 ### Changed

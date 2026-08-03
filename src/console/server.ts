@@ -175,6 +175,7 @@ export const WRITE_ROUTES = [
   '/api/tenants/accounts/lock',
   '/api/tenants/accounts/purge',
   '/api/tenants/test/create',
+  '/api/tenants/test/delete',
   '/api/tenants/test/seed',
   '/api/tenants/test/reset',
   '/api/tenants/test/clock',
@@ -961,6 +962,26 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
             password: body.password,
           }),
         ),
+      );
+    } catch (e) {
+      return tenantFail(reply, e);
+    }
+  });
+
+  /*
+   * ERASE a test tenant. Audited like every write, and requires the operator to retype the EMAIL —
+   * the same control the real purge uses, for the same reason: the realistic mistake is never "I
+   * didn't mean to delete a tenant", it is "I didn't mean to delete THAT one".
+   */
+  app.post('/api/tenants/test/delete', async (req, reply) => {
+    const t = withTenants(req, reply);
+    if (!t) return;
+    const body = req.body as { owner?: string; confirmEmail?: string };
+    if (!body?.owner)
+      return reply.code(400).send({ error: { code: 'bad_request', message: 'owner is required' } });
+    try {
+      return envelope(
+        await audited(actorOf(req), 'test.delete', body.owner, () => t.deleteTestTenant(ctx(), body.owner!)),
       );
     } catch (e) {
       return tenantFail(reply, e);

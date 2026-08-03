@@ -125,6 +125,7 @@ export function createDorindaTenantProvider(cfg: DorindaTenantConfig): TenantPro
     'test.list': Boolean(cfg.adminToken), // the flag rides on the admin account list
     'connections.read': Boolean(cfg.adminToken),
     'test.create': Boolean(cfg.testToken),
+    'test.delete': Boolean(cfg.testToken),
     'test.seed': Boolean(cfg.testToken),
     'test.reset': Boolean(cfg.testToken),
     'test.clock': Boolean(cfg.testToken),
@@ -308,6 +309,18 @@ export function createDorindaTenantProvider(cfg: DorindaTenantConfig): TenantPro
         email: String(r['email'] ?? input.email),
         comped: Boolean(r['comped']),
         warnings: (r['warnings'] as string[]) ?? [],
+      };
+    },
+
+    async deleteTestTenant(ctx, owner) {
+      const r = await call<Record<string, unknown>>(ctx, `/api/test/tenants/${encodeURIComponent(owner)}`, {
+        method: 'DELETE',
+        credential: 'test',
+      });
+      return {
+        owner: String(r['owner'] ?? owner),
+        email: String(r['email'] ?? ''),
+        deleted: (r['deleted'] as Record<string, unknown>) ?? {},
       };
     },
 

@@ -2897,7 +2897,24 @@ function Accounts() {
   const [reason, setReason] = useState('');
 
   const list = useApi<{ data?: TenantAccountRow[] } | TenantAccountRow[]>('/api/tenants/accounts');
-  const accounts: TenantAccountRow[] = Array.isArray(list.data) ? list.data : [];
+  /*
+   * ⛔ TEST TENANTS ARE EXCLUDED HERE, and belong ONLY to the Test tenants screen.
+   *
+   * They used to appear in this list with a "test tenant" pill, on the reasoning that an operator
+   * about to purge something should see in the same row whether it is a fixture or a person. That
+   * argument is weaker than the one for separating them: every action on this screen — comp, lock,
+   * purge — is built for REAL accounts, and each new one will be too. A fixture sitting in the same
+   * table is a standing invitation to apply an operation to it that was never designed for it, and
+   * the failure would be discovered by doing it.
+   *
+   * Filtered in the UI rather than the API on purpose: the accounts endpoint stays the honest
+   * "every account" read that a purge audit or a support question needs, and only this SCREEN takes
+   * the narrower view. `isTest` remains on the row so the exclusion is checkable rather than
+   * inferred from an email pattern.
+   */
+  const allAccounts: TenantAccountRow[] = Array.isArray(list.data) ? list.data : [];
+  const accounts = allAccounts.filter((a) => !a.isTest);
+  const hiddenTestCount = allAccounts.length - accounts.length;
   const detail = useApi<{
     app: { facts: Array<{ label: string; value: string; note?: string }>; error?: string };
   }>(selected ? `/api/tenants/accounts/detail?owner=${encodeURIComponent(selected)}` : null, [selected]);
@@ -2956,7 +2973,10 @@ function Accounts() {
               width={260}
             />
             <Note>
-              {rows.length} of {accounts.length} · {accounts.filter((a) => a.isTest).length} test
+              {rows.length} of {accounts.length}
+              {/* Stated, not silently omitted: a count that quietly excludes rows is how someone
+                  concludes an account is missing and goes looking in the database. */}
+              {hiddenTestCount > 0 && <> · {hiddenTestCount} test tenant(s) hidden — see Test tenants</>}
             </Note>
           </Toolbar>
 
@@ -2988,7 +3008,6 @@ function Accounts() {
                     <Td>
                       {/* The test flag rides on the ORDINARY list on purpose: someone about to
                           purge needs to see in the same row whether this is a fixture or a person. */}
-                      {a.isTest && <Pill tone="info">test tenant</Pill>}
                       {a.comped && <Pill tone="info">comped</Pill>}
                       {a.locked && <Pill tone="crit">locked</Pill>}
                     </Td>
@@ -3365,6 +3384,9 @@ function TestTenants() {
     hasPassword: boolean;
   } | null>(null);
 
+  // Delete controls. The typed email is the guard — see the card below.
+  const [confirmDelete, setConfirmDelete] = useState('');
+
   // Seed controls.
   const [preset, setPreset] = useState('starter');
   const [fixture, setFixture] = useState(() => JSON.stringify(FIXTURES[1]![2], null, 2));
@@ -3419,6 +3441,7 @@ function TestTenants() {
 
   const unconfigured = (list.error ?? '').includes('not configured');
   const canWrite = Boolean(list.data?.canWrite);
+  const selectedEmail = tenants.find((t) => t.owner === selected)?.email ?? null;
   const rounds = Number(maxRounds);
   const roundsValid = Number.isInteger(rounds) && rounds > 0;
 
@@ -3608,6 +3631,9 @@ function TestTenants() {
                         setSettleResult(null);
                         setSeedResult(null);
                         setResetResult(null);
+                        // Especially this one: a confirmation typed for one tenant must never be
+                        // sitting in the box when a different tenant is selected.
+                        setConfirmDelete('');
                         setNote(null);
                         setErr(null);
                       }}
@@ -3826,6 +3852,48 @@ function TestTenants() {
                   </Button>
                 </Toolbar>
                 {resetResult && <ResetDetail result={resetResult} />}
+              </Card>
+
+              <Card
+                title="Delete"
+                subtitle="Erases the tenant completely — the SAME cascade a real account purge runs, so nothing is left behind: no login that can still sign in, no billing customer, no connector grant holding standing permission. Reset is what you want between runs; this is for a fixture you are finished with."
+              >
+                <Toolbar>
+                  <Field
+                    ariaLabel="Type the tenant's email to confirm deletion"
+                    value={confirmDelete}
+                    onChange={setConfirmDelete}
+                    placeholder={selectedEmail ?? 'type the email to confirm'}
+                    mono
+                    width={260}
+                  />
+                  <Button
+                    variant="danger"
+                    disabled={busy !== null || confirmDelete.trim() !== (selectedEmail ?? '\u0000')}
+                    onClick={async () => {
+                      const out = await run('delete', () =>
+                        mutate('/api/tenants/test/delete', { owner: selected }),
+                      );
+                      if (out) {
+                        setSelected(null);
+                        setConfirmDelete('');
+                        list.reload();
+                      }
+                    }}
+                  >
+                    {busy === 'delete' ? 'Deleting…' : 'Delete this tenant'}
+                  </Button>
+                </Toolbar>
+                {/*
+                  The typed email is the same control the real purge uses, for the same reason: the
+                  realistic mistake is never "I didn't mean to delete a tenant", it is "I didn't mean
+                  to delete THAT one" — and a yes/no dialog does not catch that.
+                */}
+                <Note>
+                  Type <code>{selectedEmail ?? '—'}</code> to enable. The app refuses any target that is not a
+                  flagged test tenant, so this credential cannot reach a real account — but it can certainly
+                  reach the wrong fixture.
+                </Note>
               </Card>
             </div>
           )}

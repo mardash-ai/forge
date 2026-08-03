@@ -38,6 +38,7 @@ export type TenantFeature =
   | 'accounts.lock'
   | 'accounts.purge'
   | 'test.create'
+  | 'test.delete'
   | 'test.list'
   | 'test.seed'
   | 'test.reset'
@@ -191,6 +192,18 @@ export interface TenantProvider {
     ctx: ProviderContext,
     input: { email: string; displayName?: string; password?: string },
   ): Promise<{ owner: string; email: string; comped: boolean; warnings: string[] }>;
+  /**
+   * ERASE a test tenant — the app's full account cascade, gated so it can only reach a test tenant.
+   *
+   * Deliberately NOT `purge` with a flag. A reset preserves the account; this destroys it. Naming
+   * them apart is what stops an operator reaching for the wrong one, and it is why the app puts them
+   * behind different credentials.
+   */
+  deleteTestTenant(
+    ctx: ProviderContext,
+    owner: string,
+  ): Promise<{ owner: string; email: string; deleted: Record<string, unknown> }>;
+
   seed(ctx: ProviderContext, owner: string, fixture: unknown): Promise<Record<string, unknown>>;
   reset(ctx: ProviderContext, owner: string): Promise<Record<string, unknown>>;
   getClock(ctx: ProviderContext, owner: string): Promise<TestTenantClock>;
