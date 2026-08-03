@@ -3480,15 +3480,18 @@ function TestTenants() {
         <Card>
           <Skeleton rows={6} />
         </Card>
-      ) : tenants.length === 0 ? (
-        <Card>
-          <Empty
-            kind="no-results"
-            title="No test tenants"
-            detail="A tenant qualifies only with BOTH the test_tenant flag and an @dorinda.test address. Neither is settable through any API — that is deliberate, and it is why an account cannot be nominated as a fixture and then erased."
-          />
-        </Card>
       ) : (
+        /*
+         * ⛔ THE EMPTY STATE MUST NOT REPLACE THIS BRANCH.
+         *
+         * It used to: `tenants.length === 0` rendered an Empty card INSTEAD of everything below,
+         * and the "Create a test tenant" card lives below. So deleting your last tenant removed the
+         * only way to make another one — a one-way door out of the whole screen, reachable by using
+         * the screen exactly as intended. Reported from production after a delete.
+         *
+         * Emptiness is a property of the LIST, not of the page. It is rendered inside the list card
+         * now, and every control that does not depend on a selection stays put.
+         */
         <>
           {err && <Err msg={err} />}
           {note && (
@@ -3620,96 +3623,108 @@ function TestTenants() {
             </Card>
           )}
 
-          <Card pad={false}>
-            <Table head={['Email', 'Role', 'Owner id', 'Data', '']}>
-              {households.flatMap(({ head, members }) =>
-                [head, ...members].map((t, i) => (
-                  <tr
-                    key={t.owner}
-                    style={{
-                      background: t.owner === selected ? 'var(--bg-inset)' : undefined,
-                      // A hairline above each household head separates families visually without
-                      // needing a second table per household.
-                      borderTop: i === 0 ? '1px solid var(--line-strong)' : undefined,
-                    }}
-                  >
-                    <Td primary>
-                      {/* Members are INDENTED under their owner. The list arrives flat, and flat it
+          {tenants.length === 0 && (
+            <Card>
+              <Empty
+                kind="no-results"
+                title="No test tenants"
+                detail="Create one above. A tenant qualifies only with BOTH the test_tenant flag and an @dorinda.test address; neither is settable through any API — that is deliberate, and it is why an account cannot be nominated as a fixture and then erased."
+              />
+            </Card>
+          )}
+
+          {tenants.length > 0 && (
+            <Card pad={false}>
+              <Table head={['Email', 'Role', 'Owner id', 'Data', '']}>
+                {households.flatMap(({ head, members }) =>
+                  [head, ...members].map((t, i) => (
+                    <tr
+                      key={t.owner}
+                      style={{
+                        background: t.owner === selected ? 'var(--bg-inset)' : undefined,
+                        // A hairline above each household head separates families visually without
+                        // needing a second table per household.
+                        borderTop: i === 0 ? '1px solid var(--line-strong)' : undefined,
+                      }}
+                    >
+                      <Td primary>
+                        {/* Members are INDENTED under their owner. The list arrives flat, and flat it
                         hides the one relationship that matters — a fixture family is seeded, reset
                         and deleted as a unit. */}
-                      <span style={{ paddingLeft: i === 0 ? 0 : 22, opacity: i === 0 ? 1 : 0.9 }}>
-                        {i === 0 ? '' : '└ '}
-                        {t.email || '—'}
-                      </span>
-                    </Td>
-                    <Td>
-                      {t.isHouseholdOwner && members.length > 0 ? (
-                        <Pill tone="info">household owner</Pill>
-                      ) : t.householdRole && !t.isHouseholdOwner ? (
-                        <Pill tone="neutral">{t.householdRole}</Pill>
-                      ) : (
-                        <Note>solo</Note>
-                      )}
-                    </Td>
-                    <Td mono>{t.owner}</Td>
-                    <Td>
-                      {/* The seeded indicator. "Has this fixture been populated?" was previously only
+                        <span style={{ paddingLeft: i === 0 ? 0 : 22, opacity: i === 0 ? 1 : 0.9 }}>
+                          {i === 0 ? '' : '└ '}
+                          {t.email || '—'}
+                        </span>
+                      </Td>
+                      <Td>
+                        {t.isHouseholdOwner && members.length > 0 ? (
+                          <Pill tone="info">household owner</Pill>
+                        ) : t.householdRole && !t.isHouseholdOwner ? (
+                          <Pill tone="neutral">{t.householdRole}</Pill>
+                        ) : (
+                          <Note>solo</Note>
+                        )}
+                      </Td>
+                      <Td mono>{t.owner}</Td>
+                      <Td>
+                        {/* The seeded indicator. "Has this fixture been populated?" was previously only
                         answerable by seeding it again and reading the skipped tallies. */}
-                      {seededRows(t) === 0 ? (
-                        <Note>empty</Note>
-                      ) : (
-                        <Status
-                          tone="ok"
-                          label={`seeded · ${Object.entries(t.counts)
-                            .filter(([, n]) => n > 0)
-                            .map(([k, n]) => `${n} ${k}`)
-                            .join(', ')}`}
-                        />
-                      )}
-                    </Td>
-                    <Td right>
-                      <Button
-                        variant="ghost"
-                        onClick={() => {
-                          const next = t.owner === selected ? null : t.owner;
-                          setSelected(next);
-                          // Results belong to the tenant they came from. Carrying them across a
-                          // selection change would attribute one tenant's outcome to another — the
-                          // same class of mistake as a log line naming the wrong owner.
-                          setSettleResult(null);
-                          setSeedResult(null);
-                          setResetResult(null);
-                          // Especially this one: a confirmation typed for one tenant must never be
-                          // sitting in the box when a different tenant is selected.
-                          setConfirmDelete('');
-                          // A credential shown for one tenant must never linger while another is open.
-                          setPassword(null);
-                          /*
-                           * Restore the fixture that produced THIS tenant's state, when it has one.
-                           *
-                           * Opening a populated tenant and being shown an unrelated preset is how a
-                           * re-seed becomes an accident: the editor looks authoritative, so whatever
-                           * sits in it reads as "what this tenant contains".
-                           *
-                           * A member usually has none — it was created by its owner's fixture — and a
-                           * preset may not even apply to it (an owner fixture on a member always
-                           * 403s), so the fallback is one that always can.
-                           */
-                          const chosen = fixtureForSelection(next ? t : null, FIXTURES[0]![2]);
-                          setPreset(chosen.preset);
-                          setFixture(chosen.fixture);
-                          setNote(null);
-                          setErr(null);
-                        }}
-                      >
-                        {t.owner === selected ? 'Close' : 'Open'}
-                      </Button>
-                    </Td>
-                  </tr>
-                )),
-              )}
-            </Table>
-          </Card>
+                        {seededRows(t) === 0 ? (
+                          <Note>empty</Note>
+                        ) : (
+                          <Status
+                            tone="ok"
+                            label={`seeded · ${Object.entries(t.counts)
+                              .filter(([, n]) => n > 0)
+                              .map(([k, n]) => `${n} ${k}`)
+                              .join(', ')}`}
+                          />
+                        )}
+                      </Td>
+                      <Td right>
+                        <Button
+                          variant="ghost"
+                          onClick={() => {
+                            const next = t.owner === selected ? null : t.owner;
+                            setSelected(next);
+                            // Results belong to the tenant they came from. Carrying them across a
+                            // selection change would attribute one tenant's outcome to another — the
+                            // same class of mistake as a log line naming the wrong owner.
+                            setSettleResult(null);
+                            setSeedResult(null);
+                            setResetResult(null);
+                            // Especially this one: a confirmation typed for one tenant must never be
+                            // sitting in the box when a different tenant is selected.
+                            setConfirmDelete('');
+                            // A credential shown for one tenant must never linger while another is open.
+                            setPassword(null);
+                            /*
+                             * Restore the fixture that produced THIS tenant's state, when it has one.
+                             *
+                             * Opening a populated tenant and being shown an unrelated preset is how a
+                             * re-seed becomes an accident: the editor looks authoritative, so whatever
+                             * sits in it reads as "what this tenant contains".
+                             *
+                             * A member usually has none — it was created by its owner's fixture — and a
+                             * preset may not even apply to it (an owner fixture on a member always
+                             * 403s), so the fallback is one that always can.
+                             */
+                            const chosen = fixtureForSelection(next ? t : null, FIXTURES[0]![2]);
+                            setPreset(chosen.preset);
+                            setFixture(chosen.fixture);
+                            setNote(null);
+                            setErr(null);
+                          }}
+                        >
+                          {t.owner === selected ? 'Close' : 'Open'}
+                        </Button>
+                      </Td>
+                    </tr>
+                  )),
+                )}
+              </Table>
+            </Card>
+          )}
 
           {selected && canWrite && (
             <div style={{ display: 'grid', gap: 'var(--section-gap)', marginTop: 'var(--section-gap)' }}>

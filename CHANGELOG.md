@@ -9,6 +9,16 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.17.1] - 2026-08-03
+
+### Fixed
+- **Deleting your last test tenant removed the only way to create another.** `tenants.length === 0`
+  rendered an Empty card INSTEAD of the branch that holds the "Create a test tenant" card, so the
+  screen became a one-way door — reached by using it exactly as intended. Emptiness is a property of
+  the LIST, not of the page: the empty state now renders inside the list and every control that does
+  not depend on a selection stays put. Guarded by `tests/console-empty-states.test.ts`, proven to
+  fail against the old shape.
+
 ## [1.17.0] - 2026-08-03
 
 ### Console — the household fixture seeds a TRACKED loop
