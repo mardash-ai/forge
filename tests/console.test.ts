@@ -1583,7 +1583,18 @@ describe('logs — trace correlation is the point of this screen', () => {
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toHaveProperty('data');
     await app.close();
-  });
+    /*
+     * 30s, not the 5s default. This route really does reach a provider, and on a runner with NO GCP
+     * credentials the first credential attempt legitimately costs ~23 seconds: a 3s metadata
+     * timeout, an ADC read, then up to 20s on the gcloud CLI. It passed locally (where ADC exists)
+     * and timed out in CI — a flake that was reporting a real property of the product, namely that
+     * an unconfigured environment HANGS rather than failing.
+     *
+     * The product fix is the negative credential cache in `console-gcp/http.ts`, so only the FIRST
+     * call pays that cost instead of every call. This timeout covers that first call honestly
+     * rather than pretending the path is fast.
+     */
+  }, 30_000);
 
   it('a truncated answer is still reported as truncated', async () => {
     // Logs come back newest-first, so hitting the row limit means the response covers a SMALLER

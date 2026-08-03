@@ -29,9 +29,27 @@ let _cached: { token: string; expiresAt: number } | null = null;
  * `gmp-frontend` proxy exists in this estate — the console has no such limitation and therefore
  * talks to Managed Prometheus directly.
  */
+/**
+ * How long a "there are no credentials here" result is remembered.
+ *
+ * ⛔ WHY A NEGATIVE CACHE EXISTS AT ALL. Exhausting every path costs roughly 23 SECONDS — a 3s
+ * metadata timeout, an ADC file read, then up to 20s waiting on the gcloud CLI — and without this it
+ * was re-paid on EVERY call. A console screen fans out across several providers, so an environment
+ * with no (or expired) credentials did not fail: it hung, for minutes, with no indication why.
+ *
+ * Thirty seconds is short enough that credentials appearing — a `gcloud auth application-default
+ * login`, a fixed Workload Identity binding — are picked up almost immediately, and long enough that
+ * one unconfigured screen costs the 23s once rather than once per panel.
+ */
+const NEGATIVE_TTL_MS = 30_000;
+let _negative: { until: number; message: string } | null = null;
+
 export async function accessToken(): Promise<string> {
   const now = Date.now();
   if (_cached && _cached.expiresAt > now + 60_000) return _cached.token;
+
+  // Fail FAST on a known-credential-less environment rather than re-walking every path.
+  if (_negative && now < _negative.until) throw new Error(_negative.message);
 
   // 1) Metadata server (Cloud Run / GCE) — the production path.
   try {
@@ -99,10 +117,12 @@ export async function accessToken(): Promise<string> {
   const r = await capture('gcloud', ['auth', 'print-access-token'], { timeoutMs: 20_000 });
   const token = r.stdout.trim();
   if (!token) {
-    throw new Error(
+    const message =
       'no GCP credentials: not on GCP, no usable application default credentials, and ' +
-        '`gcloud auth print-access-token` was empty (try `gcloud auth application-default login`)',
-    );
+      '`gcloud auth print-access-token` was empty (try `gcloud auth application-default login`)';
+    // Remember the answer so the next caller fails in microseconds instead of another ~23 seconds.
+    _negative = { until: Date.now() + NEGATIVE_TTL_MS, message };
+    throw new Error(message);
   }
   _cached = { token, expiresAt: now + 45 * 60_000 };
   return token;

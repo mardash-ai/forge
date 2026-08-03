@@ -9,6 +9,19 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-08-03
+
+### Fixed
+- **An environment with no GCP credentials HUNG instead of failing.** Exhausting every credential
+  path costs ~23 seconds (3s metadata timeout → ADC read → up to 20s on the gcloud CLI), and it was
+  re-paid on EVERY call. A console screen fans out across several providers, so an unconfigured or
+  expired-credential environment waited minutes with no indication why. A negative result is now
+  remembered for 30s, so only the first call pays — short enough that credentials appearing are
+  picked up almost immediately.
+
+  Surfaced by a CI flake: a route test passed locally (ADC present) and timed out on the runner. The
+  flake was reporting a real property of the product, not a bad test.
+
 ## [1.10.0] - 2026-08-03
 
 ### Added
