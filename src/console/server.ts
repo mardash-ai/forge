@@ -176,6 +176,7 @@ export const WRITE_ROUTES = [
   '/api/tenants/accounts/purge',
   '/api/tenants/test/create',
   '/api/tenants/test/delete',
+  '/api/tenants/test/password',
   '/api/tenants/test/seed',
   '/api/tenants/test/reset',
   '/api/tenants/test/clock',
@@ -982,6 +983,27 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     try {
       return envelope(
         await audited(actorOf(req), 'test.delete', body.owner, () => t.deleteTestTenant(ctx(), body.owner!)),
+      );
+    } catch (e) {
+      return tenantFail(reply, e);
+    }
+  });
+
+  /*
+   * Generate a password for a test tenant. Audited — but the RESPONSE carries a live credential, so
+   * it is returned to the caller and never written to the audit row or a log line.
+   */
+  app.post('/api/tenants/test/password', async (req, reply) => {
+    const t = withTenants(req, reply);
+    if (!t) return;
+    const body = req.body as { owner?: string };
+    if (!body?.owner)
+      return reply.code(400).send({ error: { code: 'bad_request', message: 'owner is required' } });
+    try {
+      return envelope(
+        await audited(actorOf(req), 'test.password', body.owner, () =>
+          t.setTestTenantPassword(ctx(), body.owner!),
+        ),
       );
     } catch (e) {
       return tenantFail(reply, e);

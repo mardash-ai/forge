@@ -76,6 +76,7 @@ import {
 //   POST /auth/2fa/resend      { challenge }                       -> re-email a login-challenge code
 //   POST /auth/admin/seed-owner  { app?, email, password? }        -> owner migration hook (§8)
 //   POST /auth/admin/identity  { app?, email, password?, name? }   -> create an identity, verified, NOT an owner (SERVICE token; 409 if it exists)
+//   POST /auth/admin/identity/:userId/password  { password }      -> set/replace a password (SERVICE token)
 //   DELETE /auth/admin/identity/:userId                            -> delete identity + creds (SERVICE token; idempotent)
 //
 // The two account-security features (2026-07-15, additive): (A) password CHANGE for password accounts,
@@ -1583,6 +1584,47 @@ export function registerAuthRoutes(
       is_owner: false,
       has_password: Boolean(user.password_hash),
     });
+  });
+
+  // ---- administrative password set -----------------------------------------------------------------
+  //
+  // Set (or replace) an identity's password. SERVICE-token gated.
+  //
+  // ⚠️ This IS a credential-replacement primitive, and it is worth being explicit about why that is
+  // acceptable here: the same service token can already DELETE any identity and create a new one at
+  // the same address, so this grants no capability a holder did not already have — it just avoids
+  // destroying the account to do it. Consumers are expected to add their own narrowing gate on top
+  // (dorinda-api, for instance, only exposes it for flagged TEST tenants).
+  //
+  // The motivating case: accounts on a reserved, undeliverable domain cannot use /auth/forgot,
+  // because the reset link is emailed to an address that can never receive it. Without this, an
+  // account provisioned without a password can never obtain one and is permanently unusable for
+  // anything that requires signing in.
+  app.post('/auth/admin/identity/:userId/password', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.code(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_.id))) return reply.code(401).send(needServiceToken);
+    const { userId } = req.params as { userId: string };
+    const b = body(req);
+    const password = String(b.password ?? '');
+    if (password.length < MIN_PASSWORD) {
+      return reply.code(422).send({
+        error: {
+          code: 'invalid_input',
+          message: `\`password\` must be at least ${MIN_PASSWORD} characters`,
+          retry: 'change-input',
+        },
+      });
+    }
+    const user = await authStore.getUser(app_.id, userId);
+    if (!user) return reply.code(404).send({ error: { code: 'not_found', message: 'unknown identity' } });
+    await authStore.updateUser(app_.id, userId, {
+      password_hash: await hashPassword(password),
+      // A password implies a verified account here: the caller is a trusted service that has just
+      // decided this identity should be able to sign in.
+      email_verified: true,
+    });
+    return reply.code(200).send({ user_id: userId, has_password: true, email_verified: true });
   });
 
   // ---- administrative identity teardown (account closure / right-to-be-forgotten) ----------------

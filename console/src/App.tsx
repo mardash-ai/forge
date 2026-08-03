@@ -3218,6 +3218,29 @@ const FIXTURES: ReadonlyArray<readonly [string, string, unknown]> = [
     },
   ],
   [
+    'household',
+    'Household — a family with members (creates the member accounts)',
+    {
+      timezone: 'America/New_York',
+      householdName: 'The Cruz family',
+      // Members are named by EMAIL. Any that do not exist are CREATED as test tenants by the seed —
+      // which is the whole reason this preset is here: the shape used to need owner IDs you had to
+      // go and find, so building a household looked impossible from this screen.
+      members: [
+        { email: 'jamie@dorinda.test', displayName: 'Jamie', role: 'adult' },
+        { email: 'riley@dorinda.test', displayName: 'Riley', role: 'teen' },
+      ],
+      people: [{ displayName: 'Dr. Alvarez', relationship: 'pediatrician' }],
+      delegations: [
+        {
+          title: 'Book the annual check-up',
+          request: 'Call Dr. Alvarez and book the annual check-up',
+          dueAt: { days: 3, hour: 17 },
+        },
+      ],
+    },
+  ],
+  [
     'imminent',
     'Imminent — fires within an hour of an advance',
     {
@@ -3383,6 +3406,9 @@ function TestTenants() {
     comped: boolean;
     hasPassword: boolean;
   } | null>(null);
+
+  // Shown ONCE after generating. Never fetched, never stored — see the card below.
+  const [password, setPassword] = useState<{ email: string; password: string } | null>(null);
 
   // Delete controls. The typed email is the guard — see the card below.
   const [confirmDelete, setConfirmDelete] = useState('');
@@ -3634,6 +3660,8 @@ function TestTenants() {
                         // Especially this one: a confirmation typed for one tenant must never be
                         // sitting in the box when a different tenant is selected.
                         setConfirmDelete('');
+                        // A credential shown for one tenant must never linger while another is open.
+                        setPassword(null);
                         setNote(null);
                         setErr(null);
                       }}
@@ -3648,6 +3676,57 @@ function TestTenants() {
 
           {selected && canWrite && (
             <div style={{ display: 'grid', gap: 'var(--section-gap)', marginTop: 'var(--section-gap)' }}>
+              <Card
+                title="Sign in as this tenant"
+                subtitle="Generates a NEW password and shows it once. There is nothing to reveal later — no password is stored anywhere, and there is deliberately no way to read an existing one back."
+              >
+                <Toolbar>
+                  <Button
+                    disabled={busy !== null}
+                    onClick={async () => {
+                      const out = await run('password', () =>
+                        mutate('/api/tenants/test/password', { owner: selected }),
+                      );
+                      if (out) setPassword(out as { email: string; password: string });
+                    }}
+                  >
+                    {busy === 'password' ? 'Generating…' : 'Generate a password'}
+                  </Button>
+                  {password && (
+                    <Button variant="ghost" onClick={() => setPassword(null)}>
+                      Hide
+                    </Button>
+                  )}
+                </Toolbar>
+                {password ? (
+                  <Table head={['', '']}>
+                    <tr>
+                      <Td>Email</Td>
+                      <Td mono primary>
+                        {password.email}
+                      </Td>
+                    </tr>
+                    <tr>
+                      <Td>Password</Td>
+                      {/*
+                        Shown in the clear, once, deliberately. The alternative — storing it so it
+                        can be revealed on demand — puts a live credential in an operator tool's
+                        database permanently, to save regenerating one that costs nothing.
+                      */}
+                      <Td mono primary>
+                        {password.password}
+                      </Td>
+                    </tr>
+                  </Table>
+                ) : (
+                  <Note>
+                    Generating replaces any existing password. Safe on this screen only because the app
+                    refuses any target that is not a flagged test tenant on the reserved
+                    <code> @dorinda.test</code> domain — it cannot reach a real account.
+                  </Note>
+                )}
+              </Card>
+
               <Card
                 title="Virtual clock"
                 subtitle="Moving the clock also SETTLES by default: every firing path runs at the new time, repeatedly, until a full round produces no work. Scoped to this tenant's household — a real customer's work is never fired."

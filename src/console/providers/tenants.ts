@@ -39,6 +39,7 @@ export type TenantFeature =
   | 'accounts.purge'
   | 'test.create'
   | 'test.delete'
+  | 'test.password'
   | 'test.list'
   | 'test.seed'
   | 'test.reset'
@@ -203,6 +204,18 @@ export interface TenantProvider {
     ctx: ProviderContext,
     owner: string,
   ): Promise<{ owner: string; email: string; deleted: Record<string, unknown> }>;
+
+  /**
+   * Generate a NEW password for a test tenant and return it ONCE.
+   *
+   * Returned, never stored: keeping it would put a live credential in an operator tool's database
+   * for no gain, since regenerating is cheap. The app refuses any target that is not a flagged test
+   * tenant, which is what stops this being an account-takeover primitive.
+   */
+  setTestTenantPassword(
+    ctx: ProviderContext,
+    owner: string,
+  ): Promise<{ owner: string; email: string; password: string }>;
 
   seed(ctx: ProviderContext, owner: string, fixture: unknown): Promise<Record<string, unknown>>;
   reset(ctx: ProviderContext, owner: string): Promise<Record<string, unknown>>;

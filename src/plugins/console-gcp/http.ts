@@ -44,6 +44,22 @@ let _cached: { token: string; expiresAt: number } | null = null;
 const NEGATIVE_TTL_MS = 30_000;
 let _negative: { until: number; message: string } | null = null;
 
+/**
+ * Forget both the positive and negative credential caches.
+ *
+ * Needed because the negative cache is PROCESS-GLOBAL — correct for a long-running server, and a
+ * cross-contamination hazard in a test file where one case exhausts the credential paths and every
+ * case after it inherits the "no credentials" verdict for 30 seconds. That is exactly what happened:
+ * a test that stubs `fetch` began failing not on its own behaviour but on a neighbour's leftovers.
+ *
+ * Also the honest hook for an operator who has just fixed credentials and does not want to wait out
+ * the TTL.
+ */
+export function resetCredentialCache(): void {
+  _cached = null;
+  _negative = null;
+}
+
 export async function accessToken(): Promise<string> {
   const now = Date.now();
   if (_cached && _cached.expiresAt > now + 60_000) return _cached.token;

@@ -1666,6 +1666,13 @@ describe('log filters combine — owner is a clause, not an override', () => {
      *
      * Reading only `e.trace` was the extractor half of the same two-places bug the filter had.
      */
+    /*
+     * The credential cache is process-global, so a previous case that exhausted the credential paths
+     * would leave a cached "no credentials" verdict here and this test would fail on a neighbour's
+     * leftovers rather than its own behaviour. Cleared explicitly.
+     */
+    const { resetCredentialCache } = await import('../src/plugins/console-gcp/http');
+    resetCredentialCache();
     const { createCloudLoggingProvider } = await import('../src/plugins/console-gcp/logs');
     const provider = createCloudLoggingProvider({
       id: 'l',

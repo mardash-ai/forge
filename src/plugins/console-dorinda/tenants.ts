@@ -126,6 +126,7 @@ export function createDorindaTenantProvider(cfg: DorindaTenantConfig): TenantPro
     'connections.read': Boolean(cfg.adminToken),
     'test.create': Boolean(cfg.testToken),
     'test.delete': Boolean(cfg.testToken),
+    'test.password': Boolean(cfg.testToken),
     'test.seed': Boolean(cfg.testToken),
     'test.reset': Boolean(cfg.testToken),
     'test.clock': Boolean(cfg.testToken),
@@ -321,6 +322,19 @@ export function createDorindaTenantProvider(cfg: DorindaTenantConfig): TenantPro
         owner: String(r['owner'] ?? owner),
         email: String(r['email'] ?? ''),
         deleted: (r['deleted'] as Record<string, unknown>) ?? {},
+      };
+    },
+
+    async setTestTenantPassword(ctx, owner) {
+      const r = await call<Record<string, unknown>>(
+        ctx,
+        `/api/test/tenants/${encodeURIComponent(owner)}/password`,
+        { method: 'POST', credential: 'test' },
+      );
+      return {
+        owner: String(r['owner'] ?? owner),
+        email: String(r['email'] ?? ''),
+        password: String(r['password'] ?? ''),
       };
     },
 

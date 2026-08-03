@@ -9,6 +9,24 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-08-03
+
+### Added
+- **`POST /auth/admin/identity/:userId/password`** — set or replace an identity's password,
+  service-gated. It grants no capability the service token did not already have (that token can
+  delete any identity and recreate it at the same address); it just avoids destroying the account to
+  do it. The motivating case: accounts on a reserved, undeliverable domain cannot use `/auth/forgot`,
+  so one provisioned without a password could never obtain one and was permanently unusable for
+  anything requiring a sign-in.
+- **Console: generate a password for a test tenant**, shown ONCE. Nothing is stored, and there is
+  deliberately no way to read an existing password back — storing one would put a live credential in
+  an operator tool's database to save regenerating something that costs nothing.
+- **Console: a `household` fixture preset**, with members named by email. The shape previously
+  needed owner IDs an operator had to go and find, so building a household looked impossible from
+  the screen.
+- **`resetCredentialCache()`** on the GCP client — the negative cache is process-global, which is
+  right for a server and a cross-contamination hazard in a test file.
+
 ## [1.10.1] - 2026-08-03
 
 ### Fixed
