@@ -9,6 +9,25 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-08-03
+
+### Console — the household fixture seeds a TRACKED loop
+
+Every fixture delegation now carries an explicit `status`. `createDelegation` defaults an omitted
+one to `inbox`, and the web app's Tracking page excludes `inbox`/`needs-clarification` — they are
+un-triaged, so the Inbox page owns them. A fixture that left the status off therefore seeded a
+tenant whose Tracking page was EMPTY while the console reported "3 delegations", which reads as a
+broken seed rather than as the product's inbox-then-triage model working correctly.
+
+The `household` preset now seeds three delegations landing in three different places on purpose —
+`waiting-on-person` (Tracking), `waiting-on-user` (Tracking + needs-you), and one left in `inbox`
+so a single seeded tenant shows BOTH sides of the split.
+
+FIXTURES moved to `console/src/lib/fixtures.ts` so it can be tested. The new ratchet immediately
+caught a second instance (`imminent` / "Confirm the sitter") that had shipped the same way. It also
+guards stakeholder names resolving to a person in the same fixture, statuses being real enum
+values, and every date staying relative.
+
 ## [1.16.0] - 2026-08-03
 
 ### Console — logs are PRODUCTION-only by default
