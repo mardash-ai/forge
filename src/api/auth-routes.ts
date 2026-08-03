@@ -90,6 +90,37 @@ const OAUTH_STATE_COOKIE = 'forge_oauth_state';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD = 8;
 
+/**
+ * ⛔ A SUPPLIED-BUT-TOO-SHORT PASSWORD IS A REFUSAL, NOT A SILENT DROP.
+ *
+ * Both admin provisioning routes used to read `length >= MIN_PASSWORD ? password : undefined`, so a
+ * caller supplying a 6-character password got a 201 describing an account they could never sign in
+ * to. Reported from production: a test tenant was created WITH a password, the create returned 201,
+ * and the login said the email/password did not match — because there was no password. The only
+ * evidence was `has_password: false`, in a response nobody reads field by field.
+ *
+ * Dropping a credential silently is the worst available outcome: the caller's very next action is
+ * the one guaranteed to fail, and it fails naming the wrong cause.
+ *
+ * Omitting the password entirely stays legitimate — the caller intends to set one later through the
+ * admin password endpoint. Only a supplied-but-unusable one is refused, and the refusal happens
+ * BEFORE anything is created, so a retry is not blocked by create-only semantics.
+ *
+ * Returns a reply to send, or null to proceed.
+ */
+function rejectShortPassword(password: unknown, reply: FastifyReply) {
+  if (typeof password !== 'string' || password.length === 0 || password.length >= MIN_PASSWORD) {
+    return null;
+  }
+  return reply.code(422).send({
+    error: {
+      code: 'password_too_short',
+      message: `password must be at least ${MIN_PASSWORD} characters — it was ${password.length}. It was NOT set, and no account was created.`,
+      retry: 'change-input',
+    },
+  });
+}
+
 export function registerAuthRoutes(
   app: FastifyInstance,
   opts: { defaultApp?: () => string | undefined } = {},
@@ -1469,6 +1500,8 @@ export function registerAuthRoutes(
         error: { code: 'invalid_input', message: 'a valid `email` is required', retry: 'change-input' },
       });
     }
+    const tooShort = rejectShortPassword(b.password, reply);
+    if (tooShort) return tooShort;
     const password =
       typeof b.password === 'string' && b.password.length >= MIN_PASSWORD ? b.password : undefined;
     const password_hash = password ? await hashPassword(password) : undefined;
@@ -1564,6 +1597,8 @@ export function registerAuthRoutes(
       });
     }
 
+    const tooShort = rejectShortPassword(b.password, reply);
+    if (tooShort) return tooShort;
     const password =
       typeof b.password === 'string' && b.password.length >= MIN_PASSWORD ? b.password : undefined;
     const user = await authStore.createUser(app_.id, {

@@ -652,6 +652,53 @@ describe('administrative identity creation', () => {
     expect(login.statusCode).toBe(303);
   });
 
+  it('REFUSES a too-short password instead of silently creating a login nobody can use', async () => {
+    /*
+     * Reported from production. A test tenant was created WITH a password, the create returned 201,
+     * and signing in said the email/password did not match — because the password had been dropped:
+     * the old code read `length >= MIN_PASSWORD ? password : undefined`, so anything shorter became
+     * "no password at all". The only evidence was `has_password: false` in a response nobody reads
+     * field by field.
+     *
+     * Dropping a credential silently is the worst available outcome: the caller's very next action
+     * is the one guaranteed to fail, and it fails naming the wrong cause.
+     */
+    await withServiceToken();
+    const res = await server.inject({
+      method: 'POST',
+      url: '/auth/admin/identity',
+      headers: SVC,
+      payload: form({ email: 'shortpw@dorinda.test', password: 'short' }),
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error.code).toBe('password_too_short');
+
+    // And it created NOTHING — a refusal that left a passwordless identity behind would be the
+    // same bug wearing a different status code, and the address would be burned (create-only).
+    const retry = await server.inject({
+      method: 'POST',
+      url: '/auth/admin/identity',
+      headers: SVC,
+      payload: form({ email: 'shortpw@dorinda.test', password: 'long-enough-123' }),
+    });
+    expect(retry.statusCode).toBe(201);
+    expect(retry.json()).toMatchObject({ has_password: true });
+  });
+
+  it('still allows NO password at all — that is a different thing from a bad one', async () => {
+    // Omitting the password is legitimate: the caller intends to set one later via the admin
+    // password endpoint. Only a SUPPLIED-but-unusable password is a refusal.
+    await withServiceToken();
+    const res = await server.inject({
+      method: 'POST',
+      url: '/auth/admin/identity',
+      headers: SVC,
+      payload: form({ email: 'nopw@dorinda.test' }),
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toMatchObject({ has_password: false });
+  });
+
   it('refuses without a service token — it is not end-user reachable', async () => {
     await withServiceToken();
     const res = await server.inject({

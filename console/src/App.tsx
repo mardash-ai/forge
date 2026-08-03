@@ -3373,7 +3373,6 @@ function TestTenants() {
   // Create-tenant controls.
   const [newEmail, setNewEmail] = useState('');
   const [newName, setNewName] = useState('');
-  const [newPassword, setNewPassword] = useState('');
   const [created, setCreated] = useState<{
     owner: string;
     email: string;
@@ -3530,34 +3529,40 @@ function TestTenants() {
                   placeholder="Robin Cruz"
                   width={170}
                 />
-                <Field
-                  ariaLabel="Password"
-                  value={newPassword}
-                  onChange={setNewPassword}
-                  placeholder="password (to sign in)"
-                  width={190}
-                />
                 <Button
                   disabled={busy !== null || !newEmail.trim().endsWith('@dorinda.test')}
                   onClick={async () => {
                     const out = await run('create', () =>
+                      /*
+                       * NO PASSWORD HERE, deliberately. There is now exactly ONE way a test tenant
+                       * gets a password: the "Sign in as this tenant" card below, which generates
+                       * one and shows it once.
+                       *
+                       * Two reasons. The operator-typed one silently failed when it was under 8
+                       * characters — the platform dropped it, the create returned ok, and the
+                       * sign-in said the email/password did not match. And a generated password is
+                       * simpler: nothing to invent, nothing to remember, nothing to mistype.
+                       */
                       mutate('/api/tenants/test/create', {
                         email: newEmail.trim(),
                         displayName: newName.trim() || undefined,
-                        password: newPassword || undefined,
                       }),
                     );
                     if (out) {
-                      setCreated({
-                        ...(out as { owner: string; email: string; comped: boolean }),
-                        // Captured from the FORM, not the response: the platform never echoes a
-                        // credential back, and the operator needs to know now — not when they try
-                        // to sign in and cannot.
-                        hasPassword: Boolean(newPassword),
-                      });
+                      // `hasPassword` comes from the RESPONSE — what the platform actually
+                      // ended up with. It used to be read off the form, so a password the
+                      // platform had rejected still displayed as "password set" and the operator
+                      // discovered otherwise at the sign-in screen.
+                      setCreated(
+                        out as {
+                          owner: string;
+                          email: string;
+                          comped: boolean;
+                          hasPassword: boolean;
+                        },
+                      );
                       setNewEmail('');
                       setNewName('');
-                      setNewPassword('');
                       list.reload();
                     }
                   }}
@@ -3588,20 +3593,26 @@ function TestTenants() {
                     <tr>
                       <Td>Can sign in</Td>
                       {/*
-                        A tenant created WITHOUT a password exists, is seedable and is clock-drivable
-                        over the API — but cannot sign in to the web, and there is no way to add one
-                        later: setting a password on an existing identity is precisely the
-                        account-takeover path this surface refuses to have.
-                        Learned the hard way — the first tenant provisioned in production was made
-                        this way and had to be abandoned.
+                        A tenant is born WITHOUT a password: it exists, is seedable and is
+                        clock-drivable over the API, and gets a web login from "Sign in as this
+                        tenant" below, which generates one and shows it once.
+
+                        This row used to warn "NO — API only, cannot sign in to the web", beside a
+                        comment claiming there was no way to add a password later. Both are stale:
+                        the generate-password endpoint was built precisely for it. Left as a warning
+                        it would now fire on EVERY create and read as a provisioning failure.
+
+                        It also used to be computed from the create FORM rather than the response,
+                        so a password the platform had rejected still displayed as "password set" —
+                        the operator learned otherwise at the sign-in screen.
                       */}
                       <Td>
                         <Status
-                          tone={created.hasPassword ? 'ok' : 'warn'}
+                          tone={created.hasPassword ? 'ok' : 'info'}
                           label={
                             created.hasPassword
                               ? 'yes — password set'
-                              : 'NO — API only, cannot sign in to the web'
+                              : 'not yet — use "Generate password" below'
                           }
                         />
                       </Td>

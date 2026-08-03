@@ -9,6 +9,23 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.17.3] - 2026-08-03
+
+### Fixed
+- **A too-short password was silently discarded, creating a login nobody could use.** Both admin
+  provisioning routes (`/auth/admin/identity`, `/auth/admin/seed-owner`) read
+  `length >= MIN_PASSWORD ? password : undefined`, so a caller supplying a 6-character password got
+  a 201 describing an account whose sign-in then said the email/password did not match. The only
+  evidence was `has_password: false`. Both now refuse with a 422 `password_too_short`, BEFORE
+  anything is created, so a retry is not blocked by create-only semantics. Omitting the password
+  entirely is still legitimate.
+
+### Changed
+- **The console's create-tenant form no longer takes a password.** There is now exactly one way a
+  test tenant gets one — the "Generate password" card, which shows it once. The form also reported
+  "password set" from its own input rather than the platform's response, so a rejected password
+  still displayed as success.
+
 ## [1.17.2] - 2026-08-03
 
 ### Fixed
