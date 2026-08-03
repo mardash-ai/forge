@@ -9,6 +9,27 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-08-03
+
+### Added
+- **`POST /auth/admin/identity`** — the CREATE half of the resource whose `DELETE` already existed.
+  Service-token gated; creates an identity that is **verified from birth** and explicitly **not an
+  owner**.
+
+  Previously the only service-gated way to bring an identity into existence was
+  `/auth/admin/seed-owner`, which forces `is_owner: true` — correct for the owner-migration hook it
+  was built for, wrong for anything else. A consumer provisioning several accounts that way makes
+  each of them claim to be the app owner, and forge's own inspect capability then picks an arbitrary
+  one as "the owner".
+
+  The motivating consumer is automated test-tenant provisioning: an account on a reserved,
+  undeliverable domain cannot complete `/auth/signup`, which creates the user `email_verified:
+  false` and mails a link nothing can receive — leaving an account that exists and can never sign in.
+
+  ⚠️ **CREATE-ONLY.** An existing address is a **409**, never an update. An upsert here would quietly
+  become a way to take over an identity by knowing its address. Asserted by a test proven to fail
+  without the guard.
+
 ## [1.5.0] - 2026-08-03
 
 ### Added

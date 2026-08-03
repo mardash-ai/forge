@@ -75,6 +75,7 @@ import {
 //   POST /auth/2fa/verify      { challenge, code, next? }          -> complete a 2FA-gated login (challenge)
 //   POST /auth/2fa/resend      { challenge }                       -> re-email a login-challenge code
 //   POST /auth/admin/seed-owner  { app?, email, password? }        -> owner migration hook (§8)
+//   POST /auth/admin/identity  { app?, email, password?, name? }   -> create an identity, verified, NOT an owner (SERVICE token; 409 if it exists)
 //   DELETE /auth/admin/identity/:userId                            -> delete identity + creds (SERVICE token; idempotent)
 //
 // The two account-security features (2026-07-15, additive): (A) password CHANGE for password accounts,
@@ -1521,6 +1522,66 @@ export function registerAuthRoutes(
         provider: u.provider ?? (u.password_hash ? 'password' : null),
         created_at: u.created_at ?? null,
       })),
+    });
+  });
+
+  // ---- administrative identity CREATION -----------------------------------------------------------
+  //
+  // The create half of the resource whose DELETE follows. Without it, the only service-gated way to
+  // bring an identity into existence was `/auth/admin/seed-owner`, which forces `is_owner: true` —
+  // correct for the owner-migration hook it was built for, wrong for anything else. A consumer
+  // provisioning several accounts that way makes each of them claim to be the app's owner, and
+  // forge's own inspect capability then picks an arbitrary one as "the owner".
+  //
+  // The motivating consumer is automated TEST-TENANT provisioning: an account on a reserved,
+  // undeliverable domain cannot complete the normal `/auth/signup` flow, because that flow creates
+  // the user `email_verified: false` and mails a verify link nothing can ever receive — leaving an
+  // account that exists and can never sign in. This creates one that is verified from birth.
+  //
+  // ⚠️ CREATE-ONLY, deliberately. An existing address is a 409, never an update. The safety property
+  // a caller depends on is "this cannot modify an account that already exists"; an upsert here would
+  // quietly become a way to take over an identity by knowing its address.
+  app.post('/auth/admin/identity', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.code(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_.id))) return reply.code(401).send(needServiceToken);
+
+    const b = body(req);
+    const email = String(b.email ?? '').trim();
+    if (!EMAIL_RE.test(email)) {
+      return reply.code(422).send({
+        error: { code: 'invalid_input', message: 'a valid `email` is required', retry: 'change-input' },
+      });
+    }
+    if (await authStore.findByEmail(app_.id, email)) {
+      return reply.code(409).send({
+        error: {
+          code: 'already_exists',
+          message: 'an identity with that email already exists',
+          retry: 'change-input',
+        },
+      });
+    }
+
+    const password =
+      typeof b.password === 'string' && b.password.length >= MIN_PASSWORD ? b.password : undefined;
+    const user = await authStore.createUser(app_.id, {
+      email,
+      // Verified from birth. The caller is a trusted service that has already decided this identity
+      // should exist; making it prove control of an undeliverable address is a contradiction.
+      email_verified: true,
+      // NOT an owner — the whole reason this exists beside seed-owner.
+      is_owner: false,
+      ...(typeof b.name === 'string' && b.name.trim() ? { name: b.name.trim() } : {}),
+      ...(password ? { password_hash: await hashPassword(password) } : {}),
+    });
+    await emit(app_.id, 'UserSignedUp', user.id, user.email, { method: 'admin' });
+    return reply.code(201).send({
+      user_id: user.id,
+      email: redactEmail(user.email),
+      email_verified: true,
+      is_owner: false,
+      has_password: Boolean(user.password_hash),
     });
   });
 

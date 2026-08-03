@@ -576,6 +576,94 @@ describe('secret hygiene — the password is never returned, stored in plaintext
   });
 });
 
+describe('administrative identity creation', () => {
+  const SVC = { 'x-forge-service-token': 's3rvice-t0ken', ...FORM };
+
+  async function withServiceToken() {
+    await configureSessionAndEmail();
+    await setSecret(appId, 'AUTH_SERVICE_TOKEN', 's3rvice-t0ken');
+  }
+
+  it('creates a VERIFIED identity that is NOT an owner, and can sign in immediately', async () => {
+    /*
+     * The whole reason this exists beside seed-owner. Provisioning several accounts through
+     * seed-owner makes each of them claim to be the app's owner, and forge's inspect capability
+     * then picks an arbitrary one as "the owner".
+     *
+     * Verified from birth matters just as much: the motivating consumer provisions accounts on a
+     * reserved, undeliverable domain, and the normal signup flow would leave them unverified
+     * forever — an account that exists and can never sign in.
+     */
+    await withServiceToken();
+    const res = await server.inject({
+      method: 'POST',
+      url: '/auth/admin/identity',
+      headers: SVC,
+      payload: form({ email: 'robin@dorinda.test', password: 'tenant-pass-123', name: 'Robin' }),
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toMatchObject({ email_verified: true, is_owner: false, has_password: true });
+    // Redacted in the response, like every other identity surface.
+    expect(res.json().email).toBe('r***@dorinda.test');
+    expect(JSON.stringify(res.json())).not.toContain('tenant-pass-123');
+
+    // Verified from birth ⇒ signs in with no email step, which is the point.
+    const login = await server.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: FORM,
+      payload: form({ email: 'robin@dorinda.test', password: 'tenant-pass-123' }),
+    });
+    expect(login.statusCode).toBe(303);
+    expect(cookieValue(login, 'forge_session')).toBeTruthy();
+  });
+
+  it('is CREATE-ONLY — an existing address is a 409, never an update', async () => {
+    /*
+     * The safety property every caller depends on. An upsert here would quietly become a way to
+     * TAKE OVER an identity by knowing its address: set a password on someone else's account and
+     * sign in as them. A 409 is the only correct answer.
+     */
+    await withServiceToken();
+    const first = await server.inject({
+      method: 'POST',
+      url: '/auth/admin/identity',
+      headers: SVC,
+      payload: form({ email: 'taken@dorinda.test', password: 'first-pass-123' }),
+    });
+    expect(first.statusCode).toBe(201);
+
+    const second = await server.inject({
+      method: 'POST',
+      url: '/auth/admin/identity',
+      headers: SVC,
+      payload: form({ email: 'taken@dorinda.test', password: 'attacker-pass-123' }),
+    });
+    expect(second.statusCode).toBe(409);
+    expect(second.json().error.code).toBe('already_exists');
+
+    // The original password still works — the second call changed NOTHING.
+    const login = await server.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: FORM,
+      payload: form({ email: 'taken@dorinda.test', password: 'first-pass-123' }),
+    });
+    expect(login.statusCode).toBe(303);
+  });
+
+  it('refuses without a service token — it is not end-user reachable', async () => {
+    await withServiceToken();
+    const res = await server.inject({
+      method: 'POST',
+      url: '/auth/admin/identity',
+      headers: FORM,
+      payload: form({ email: 'nobody@dorinda.test' }),
+    });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
 describe('owner migration hook (§8)', () => {
   it('seeds an owner (verified) who can immediately sign in; response is redacted', async () => {
     await configureSessionAndEmail();
