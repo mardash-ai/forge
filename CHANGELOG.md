@@ -9,6 +9,20 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-08-03
+
+### Added
+- **Path-scoped IP allow-list on a backend service** (`restricted_paths`), for surfaces that should
+  only be reachable from known egress — the acceptance harness's test-control routes being the
+  motivating case (HAT-PLAN-003 §13 q14). Cloud Armor with a CEL rule, so it narrows a path prefix
+  rather than the whole backend: one backend service fronts the entire app, and a naive allow-list
+  there would gate every route the product has, browser included.
+  - **DEFAULT OFF, and off means absent** — no policy resource exists until an operator supplies
+    both a path prefix and the ranges. A capability that ships enforcing something locks somebody
+    out on the day it lands.
+  - Paths with no ranges **fails at plan time**: that combination denies every caller, including
+    whoever is applying it.
+
 ## [1.17.3] - 2026-08-03
 
 ### Fixed
