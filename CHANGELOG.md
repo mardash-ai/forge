@@ -9,6 +9,18 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-08-03
+
+### Changed
+- **The create-tenant form now says a passwordless tenant cannot sign in — before you submit, and
+  again in the result.** A tenant created without a password exists and is fully drivable over the
+  API, but cannot sign in to the web, and a password CANNOT be added afterwards: setting one on an
+  existing identity is exactly the account-takeover path this surface refuses to have.
+
+  Learned the hard way — the first tenant provisioned in production was created this way and had to
+  be abandoned for web testing. The result row now reads `NO — API only, cannot sign in to the web`
+  rather than leaving it to be discovered at the sign-in screen.
+
 ## [1.8.0] - 2026-08-03
 
 ### Added

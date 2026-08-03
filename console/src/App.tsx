@@ -3358,7 +3358,12 @@ function TestTenants() {
   const [newEmail, setNewEmail] = useState('');
   const [newName, setNewName] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [created, setCreated] = useState<{ owner: string; email: string; comped: boolean } | null>(null);
+  const [created, setCreated] = useState<{
+    owner: string;
+    email: string;
+    comped: boolean;
+    hasPassword: boolean;
+  } | null>(null);
 
   // Seed controls.
   const [preset, setPreset] = useState('starter');
@@ -3504,7 +3509,13 @@ function TestTenants() {
                       }),
                     );
                     if (out) {
-                      setCreated(out as { owner: string; email: string; comped: boolean });
+                      setCreated({
+                        ...(out as { owner: string; email: string; comped: boolean }),
+                        // Captured from the FORM, not the response: the platform never echoes a
+                        // credential back, and the operator needs to know now — not when they try
+                        // to sign in and cannot.
+                        hasPassword: Boolean(newPassword),
+                      });
                       setNewEmail('');
                       setNewName('');
                       setNewPassword('');
@@ -3534,6 +3545,27 @@ function TestTenants() {
                     <tr>
                       <Td>Email</Td>
                       <Td mono>{created.email}</Td>
+                    </tr>
+                    <tr>
+                      <Td>Can sign in</Td>
+                      {/*
+                        A tenant created WITHOUT a password exists, is seedable and is clock-drivable
+                        over the API — but cannot sign in to the web, and there is no way to add one
+                        later: setting a password on an existing identity is precisely the
+                        account-takeover path this surface refuses to have.
+                        Learned the hard way — the first tenant provisioned in production was made
+                        this way and had to be abandoned.
+                      */}
+                      <Td>
+                        <Status
+                          tone={created.hasPassword ? 'ok' : 'warn'}
+                          label={
+                            created.hasPassword
+                              ? 'yes — password set'
+                              : 'NO — API only, cannot sign in to the web'
+                          }
+                        />
+                      </Td>
                     </tr>
                     <tr>
                       <Td>Comped</Td>
