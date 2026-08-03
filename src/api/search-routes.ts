@@ -123,17 +123,47 @@ export function registerSearchRoutes(
     return reply.status(200).send({ document });
   });
 
-  // Remove one document by (owner, type, id) — idempotent.
+  /*
+   * Remove ONE document by (owner, type, id) — idempotent. With `all: true`, remove EVERY document
+   * an owner has.
+   *
+   * ⛔ WHY THE OWNER-WIDE FORM EXISTS. `deleteByOwner` was already implemented and already used, but
+   * only inside the full account cascade (`DELETE /tenant/:owner`). A consumer that needed to empty
+   * an owner's index WITHOUT destroying the account had no way to ask: the single-document form
+   * needs a type and an id, and a caller that has just deleted its own rows no longer knows what
+   * they were.
+   *
+   * The concrete failure that surfaced this: a test-tenant RESET wipes the tenant's rows and then
+   * has to make the derived index agree. Reconciling from rows cannot work — there are none left to
+   * drive it — so the index kept every stale document, and the very tool a harness uses to assert
+   * "this tenant is empty" would have answered NO. The operation reports success, every indicator is
+   * green, and the derived state is wrong.
+   *
+   * `all: true` must be EXPLICIT rather than inferred from a missing type/id: otherwise a typo in a
+   * field name silently escalates a one-document delete into wiping an owner's entire index.
+   */
   app.post('/index/delete', async (req, reply) => {
-    const b = (req.body ?? {}) as { app?: string; owner?: string; type?: string; id?: string };
+    const b = (req.body ?? {}) as {
+      app?: string;
+      owner?: string;
+      type?: string;
+      id?: string;
+      all?: boolean;
+    };
     if (!b.owner || typeof b.owner !== 'string')
       return reply.status(422).send(invalid('delete requires a string `owner`.'));
-    if (!b.type || typeof b.type !== 'string')
-      return reply.status(422).send(invalid('delete requires a string `type`.'));
-    if (!b.id || typeof b.id !== 'string')
-      return reply.status(422).send(invalid('delete requires a string `id`.'));
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+
+    if (b.all === true) {
+      const count = await searchStore.deleteByOwner(app_id, b.owner);
+      return reply.status(200).send({ deleted: true, count });
+    }
+
+    if (!b.type || typeof b.type !== 'string')
+      return reply.status(422).send(invalid('delete requires a string `type` (or `all: true`).'));
+    if (!b.id || typeof b.id !== 'string')
+      return reply.status(422).send(invalid('delete requires a string `id` (or `all: true`).'));
     const deleted = await searchStore.delete(app_id, { owner: b.owner, type: b.type, id: b.id });
     return reply.status(200).send({ deleted });
   });

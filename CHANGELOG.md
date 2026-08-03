@@ -9,6 +9,23 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-08-03
+
+### Added
+- **`POST /index/delete { owner, all: true }`** — clear EVERY document an owner has. `deleteByOwner`
+  was implemented in every backend already but reachable only inside the full account cascade
+  (`DELETE /tenant/:owner`), so a consumer that needed to empty an owner index WITHOUT destroying
+  the account had no way to ask.
+
+  Found by a live test-tenant RESET: the reset deletes the tenant's rows and then has to make the
+  derived index agree. Re-deriving from rows cannot work — there are none left to drive it — so every
+  stale document survived and the tenant looked POPULATED to the very tool a harness uses to assert
+  it is empty.
+
+  `all: true` must be EXPLICIT rather than inferred from a missing `type`/`id`, so a typo in a field
+  name cannot silently escalate a one-document delete into wiping an owner's index. Both properties
+  have tests, and the explicitness one is proven to fail without its guard.
+
 ## [1.7.0] - 2026-08-03
 
 ### Added

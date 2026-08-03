@@ -362,6 +362,43 @@ describe('C19 — search routes', () => {
     expect(typeof body.took_ms).toBe('number');
   });
 
+  it('deletes an owner’s WHOLE index with all:true, and leaves other owners alone', async () => {
+    /*
+     * The capability existed in every backend and was reachable only through the full account
+     * cascade, so a consumer that wanted to empty an owner's index WITHOUT destroying the account
+     * could not ask for it.
+     *
+     * The failure that surfaced it: a test-tenant RESET deletes the tenant's rows and then has to
+     * make the derived index agree. Re-deriving from rows cannot work — there are none left — so
+     * every stale document survived and the tenant looked POPULATED to the very tool a harness uses
+     * to assert it is empty.
+     */
+    await post('/index', { owner: 'A', type: 'note', id: 'a1', title: 'keep', body: 'alpha' });
+    await post('/index', { owner: 'A', type: 'note', id: 'a2', title: 'keep too', body: 'alpha' });
+    await post('/index', { owner: 'B', type: 'note', id: 'b1', title: 'other', body: 'alpha' });
+
+    const del = await post('/index/delete', { owner: 'A', all: true });
+    expect(del.statusCode).toBe(200);
+    expect(del.json()).toMatchObject({ deleted: true, count: 2 });
+
+    // A is empty…
+    expect((await post('/search', { owner: 'A', q: 'alpha' })).json().total).toBe(0);
+    // …and B is untouched. An owner-wide delete that reached another owner would be catastrophic
+    // and completely silent.
+    expect((await post('/search', { owner: 'B', q: 'alpha' })).json().total).toBe(1);
+  });
+
+  it('requires all:true EXPLICITLY — a missing type/id is a 422, never a whole-owner wipe', async () => {
+    // Inferring "delete everything" from absent fields would turn a typo in a field name into
+    // silent data loss. The escalation must be asked for.
+    await post('/index', { owner: 'A', type: 'note', id: 'a1', title: 'keep', body: 'alpha' });
+
+    const r = await post('/index/delete', { owner: 'A' });
+    expect(r.statusCode).toBe(422);
+    // …and nothing was removed.
+    expect((await post('/search', { owner: 'A', q: 'alpha' })).json().total).toBe(1);
+  });
+
   it('OWNER-SCOPING via the route: A’s /search never returns B’s document', async () => {
     await post('/index', {
       owner: 'A',

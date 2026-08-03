@@ -26,6 +26,17 @@ class SearchStoreFacade {
     return (await this.backend()).delete(appId, ref);
   }
 
+  /**
+   * Remove EVERY document an owner has; returns how many went.
+   *
+   * The backends have implemented this all along — it was simply not on the facade, so it was
+   * reachable only through the account cascade. A consumer wanting to empty an owner's index
+   * WITHOUT destroying the account had no way to ask for it.
+   */
+  async deleteByOwner(appId: string, owner: string): Promise<number> {
+    return (await this.backend()).deleteByOwner(appId, owner);
+  }
+
   async search(appId: string, query: SearchQuery): Promise<SearchResponse> {
     return (await this.backend()).search(appId, query);
   }
