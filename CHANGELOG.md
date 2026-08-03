@@ -9,6 +9,20 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-08-03
+
+### Added
+- **Opening a seeded tenant restores the fixture that produced it**, and the Seed card leads with
+  **Already seeded**, with when. Previously the editor showed an unrelated preset — which is how a
+  re-seed becomes an accident: the textarea looks authoritative, so whatever sits in it reads as
+  "what this tenant contains".
+- A household **member** shows no fixture of its own and says why: it was created by its owner's
+  fixture, so the document that produced it belongs to the owner. A tenant with data but no recorded
+  fixture (seeded before this was tracked, or populated through the app) says that too, rather than
+  showing a blank editor that implies the tenant is empty.
+
+Requires dorinda-api with migration `0029_test_tenant_seed`.
+
 ## [1.12.0] - 2026-08-03
 
 ### Added
