@@ -9,6 +9,14 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-08-03
+
+### Fixed
+- **Seeded delegations rendered nowhere.** Fixture presets left `status` unset, so every seeded
+  delegation landed in `inbox` — and the web Home screen buckets into needs-you / today / handled,
+  none of which includes `inbox`. Presets now set statuses that actually surface, so a seeded tenant
+  looks populated to the person testing it.
+
 ## [1.13.0] - 2026-08-03
 
 ### Added

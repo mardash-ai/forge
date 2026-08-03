@@ -3192,12 +3192,17 @@ const FIXTURES: ReadonlyArray<readonly [string, string, unknown, 'any' | 'owner'
         {
           title: 'Book the annual check-up',
           request: 'Call Dr. Alvarez and book the annual check-up',
+          // ⛔ STATUS MATTERS. Home buckets delegations into needs-you / today / handled, and
+          // `inbox` — the default — is in NONE of them, so a seeded delegation rendered nowhere.
+          // Every fixture here sets a status that actually surfaces somewhere a tester will look.
+          status: 'waiting-on-person',
           dueAt: { days: 3, hour: 17 },
           stakeholders: ['Dr. Alvarez'],
         },
         {
           title: 'Renew the car registration',
           request: 'Renew the car registration before it lapses',
+          status: 'in-progress',
           dueAt: { days: 10, hour: 12 },
         },
       ],
@@ -3217,6 +3222,8 @@ const FIXTURES: ReadonlyArray<readonly [string, string, unknown, 'any' | 'owner'
         {
           title: 'Send the enrolment form',
           request: 'Send the enrolment form to the school office',
+          // at-risk lands in Home's needs-you bucket, which is where an overdue item belongs.
+          status: 'at-risk',
           // NEGATIVE days: already overdue at seed time, which is what makes the overdue sweep and
           // the at-risk surface testable WITHOUT having to move the clock first.
           dueAt: { days: -2, hour: 9 },
@@ -3224,6 +3231,7 @@ const FIXTURES: ReadonlyArray<readonly [string, string, unknown, 'any' | 'owner'
         {
           title: 'Reschedule the dentist',
           request: 'Reschedule the dentist appointment',
+          status: 'waiting-on-user',
           dueAt: { days: -1, hour: 15 },
         },
       ],
@@ -3249,6 +3257,7 @@ const FIXTURES: ReadonlyArray<readonly [string, string, unknown, 'any' | 'owner'
         {
           title: 'Book the annual check-up',
           request: 'Call Dr. Alvarez and book the annual check-up',
+          status: 'waiting-on-person',
           dueAt: { days: 3, hour: 17 },
         },
       ],
@@ -3284,10 +3293,16 @@ const FIXTURES: ReadonlyArray<readonly [string, string, unknown, 'any' | 'owner'
       // hand something to the household owner without publishing to everyone. This fixture produces
       // exactly that mix, which is what the privacy workflows assert against.
       delegations: [
-        { title: 'Study for the chem test', request: 'Revise chapters 4-6', dueAt: { days: 2, hour: 19 } },
+        {
+          title: 'Study for the chem test',
+          request: 'Revise chapters 4-6',
+          status: 'in-progress',
+          dueAt: { days: 2, hour: 19 },
+        },
         {
           title: 'Sports physical form',
           request: 'Give the signed physical form to a parent',
+          status: 'waiting-on-user',
           dueAt: { days: 4, hour: 17 },
         },
       ],
@@ -3303,7 +3318,12 @@ const FIXTURES: ReadonlyArray<readonly [string, string, unknown, 'any' | 'owner'
       // An assistant holds create + private + read-shared + share-up, and deliberately NOT
       // `message.stage` or `policy.manage`. Everything here is operational capture.
       delegations: [
-        { title: 'Book the plumber', request: 'Get three quotes for the leak', dueAt: { days: 3, hour: 12 } },
+        {
+          title: 'Book the plumber',
+          request: 'Get three quotes for the leak',
+          status: 'in-progress',
+          dueAt: { days: 3, hour: 12 },
+        },
       ],
       notes: [{ text: 'Landlord prefers texts, not calls' }],
     },
