@@ -15,6 +15,7 @@ import {
   Status,
   Table,
   Td,
+  Textarea,
   Toggle,
   Toolbar,
   Unknown,
@@ -3134,12 +3135,233 @@ function Accounts() {
  * intensities, they run on different surfaces behind different credentials, and putting them on one
  * screen would be an invitation to reach for the wrong one.
  */
+/**
+ * Ready-made fixtures.
+ *
+ * They exist because the alternative is a blank JSON box, and a blank box makes the fastest path
+ * "seed nothing and click around an empty account" — which tests almost nothing. Each of these
+ * produces a tenant with something worth looking at.
+ *
+ * ⛔ EVERY DATE IS RELATIVE (`{ days, hour }`), never absolute. A fixture with hard-coded dates rots
+ * silently: "due tomorrow" becomes "overdue by nine months", and the suite then fails on at-risk
+ * assertions for reasons that have nothing to do with the product.
+ */
+const FIXTURES: ReadonlyArray<readonly [string, string, unknown]> = [
+  ['empty', 'Empty — no data', {}],
+  [
+    'starter',
+    'Starter — a few loops, people and events',
+    {
+      timezone: 'America/New_York',
+      people: [
+        { displayName: 'Robin Cruz', relationship: 'partner' },
+        { displayName: 'Dr. Alvarez', relationship: 'pediatrician' },
+      ],
+      delegations: [
+        {
+          title: 'Book the annual check-up',
+          request: 'Call Dr. Alvarez and book the annual check-up',
+          dueAt: { days: 3, hour: 17 },
+          stakeholders: ['Dr. Alvarez'],
+        },
+        {
+          title: 'Renew the car registration',
+          request: 'Renew the car registration before it lapses',
+          dueAt: { days: 10, hour: 12 },
+        },
+      ],
+      events: [{ title: 'Parent-teacher conference', startAt: { days: 2, hour: 18 } }],
+      reminders: [{ subject: 'Pack the forms', fireAt: { days: 1, hour: 8 } }],
+      notes: [{ text: 'Insurance card is in the blue folder' }],
+    },
+  ],
+  [
+    'overdue',
+    'Overdue — work already past due, for at-risk and escalation',
+    {
+      timezone: 'America/New_York',
+      people: [{ displayName: 'Robin Cruz', relationship: 'partner' }],
+      delegations: [
+        {
+          title: 'Send the enrolment form',
+          request: 'Send the enrolment form to the school office',
+          // NEGATIVE days: already overdue at seed time, which is what makes the overdue sweep and
+          // the at-risk surface testable WITHOUT having to move the clock first.
+          dueAt: { days: -2, hour: 9 },
+        },
+        {
+          title: 'Reschedule the dentist',
+          request: 'Reschedule the dentist appointment',
+          dueAt: { days: -1, hour: 15 },
+        },
+      ],
+      reminders: [{ subject: 'Chase the school office', fireAt: { days: -1, hour: 8 } }],
+    },
+  ],
+  [
+    'imminent',
+    'Imminent — fires within an hour of an advance',
+    {
+      timezone: 'America/New_York',
+      events: [{ title: 'Standup', startAt: { days: 0, hour: 23 } }],
+      reminders: [
+        { subject: 'Leave for the school run', fireAt: { days: 0, hour: 23 } },
+        { subject: 'Take the medication', fireAt: { days: 1, hour: 7 } },
+      ],
+      delegations: [
+        {
+          title: 'Confirm the sitter',
+          request: 'Confirm the sitter for Friday',
+          dueAt: { days: 1, hour: 9 },
+        },
+      ],
+    },
+  ],
+];
+
+/** What a settle actually did. `settled: false` is a FINDING, not an error — see SettleDetail. */
+interface TestSettle {
+  settled: boolean;
+  totalFired: number;
+  rounds: number;
+  warnings: string[];
+}
+
+interface ConnectionsData {
+  observedAt: string;
+  totals: { connections: number; activeRecently: number; revoked: number; toolRefreshChannels: number };
+  byClient: Array<{
+    client: string;
+    connections: number;
+    activeRecently: number;
+    revoked: number;
+    toolRefreshChannels: number;
+    lastSeenAt: string | null;
+  }>;
+  bySource: Array<{ source: string; toolRefreshChannels: number }>;
+  streamsError?: string;
+  note?: string;
+  recentWithinHours?: number;
+}
+
+/** Advance units. Days is first because "three days later" is the sentence people actually say. */
+const UNITS: ReadonlyArray<readonly [string, string]> = [
+  ['86400000', 'days'],
+  ['3600000', 'hours'],
+  ['60000', 'minutes'],
+];
+
+/** `{created, skipped}` tallies, rendered only for entity kinds the seed actually touched. */
+function SeedTallies({ result }: { result: Record<string, unknown> }) {
+  const kinds = ['delegations', 'people', 'events', 'notes', 'reminders', 'members'] as const;
+  const rows = kinds
+    .map((k) => [k, result[k] as { created?: number; skipped?: number } | undefined] as const)
+    .filter(([, v]) => v && (v.created || v.skipped));
+  if (rows.length === 0) return <Note>Nothing was created — the fixture was empty.</Note>;
+  return (
+    <Table head={['Entity', 'Created', 'Skipped']}>
+      {rows.map(([k, v]) => (
+        <tr key={k}>
+          <Td primary>{k}</Td>
+          <Td mono>{v?.created ?? 0}</Td>
+          {/* `skipped` is not a failure — seeds are idempotent by natural key, so a re-seed reports
+              skipped instead of duplicating. Labelling it as an error would train the operator to
+              ignore the column that proves idempotence is working. */}
+          <Td mono>{v?.skipped ?? 0}</Td>
+        </tr>
+      ))}
+    </Table>
+  );
+}
+
+/** Per-table row counts a reset removed, plus what it deliberately preserved. */
+function ResetDetail({ result }: { result: Record<string, unknown> }) {
+  const deleted = (result['deleted'] ?? {}) as Record<string, number>;
+  const preserved = (result['preserved'] ?? []) as string[];
+  const owners = (result['owners'] ?? []) as string[];
+  const cleared = Object.entries(deleted).filter(([, n]) => n > 0);
+  return (
+    <div style={{ display: 'grid', gap: 12 }}>
+      <Note>
+        Cleared {cleared.reduce((n, [, c]) => n + c, 0)} row(s) across {owners.length} owner(s) — the tenant
+        plus any household members that are themselves test tenants.
+      </Note>
+      {cleared.length > 0 && (
+        <Table head={['Table', 'Rows cleared']}>
+          {cleared.map(([t, n]) => (
+            <tr key={t}>
+              <Td mono>{t}</Td>
+              <Td mono>{n}</Td>
+            </tr>
+          ))}
+        </Table>
+      )}
+      {/* The preserved list is the reason a reset is not a purge, so it is shown rather than
+          implied: the login, the connected AI and the Google grant survive, which is what keeps a
+          nightly run from needing a human in a browser. */}
+      <Note>Preserved: {preserved.join(', ') || '—'}</Note>
+    </div>
+  );
+}
+
+/** The settle outcome — the part that says whether the world actually stopped changing. */
+function SettleDetail({ settle }: { settle: TestSettle }) {
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <Status tone={settle.settled ? 'ok' : 'warn'} label={settle.settled ? 'settled' : 'did NOT settle'} />
+        <Note>
+          {settle.rounds} round(s) · {settle.totalFired} fired
+        </Note>
+      </div>
+      {/* Not styled as an error: a world that will not stop changing is a FINDING about the product
+          — most likely a firing path re-arming itself at the same instant — and the operator should
+          read it as data rather than as a broken console. */}
+      {settle.warnings.length > 0 && (
+        <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--warn-text)', fontSize: 12.5 }}>
+          {settle.warnings.map((w, i) => (
+            <li key={i}>{w}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * TEST TENANTS — the whole test-control API, driven by hand.
+ *
+ * The point of this screen is to make every operation the acceptance harness will perform available
+ * to a human FIRST. A capability that has only ever been exercised by a script is a capability
+ * nobody has actually looked at: the fixture that seeds nothing, the clock that moves but fires
+ * nothing, the reset that reports success and leaves rows behind. Those are all invisible to a
+ * caller checking status codes and obvious to someone watching the product afterwards.
+ *
+ * So this covers the surface completely — seed with a real fixture, move the clock absolutely or
+ * relatively, settle or deliberately don't, reset, and read what each one actually did — rather
+ * than offering the two buttons that were easiest to wire.
+ */
 function TestTenants() {
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [advance, setAdvance] = useState('24');
+
+  // Clock controls.
+  const [amount, setAmount] = useState('3');
+  const [unitMs, setUnitMs] = useState(UNITS[0]![0]);
+  const [at, setAt] = useState('');
+  const [settle, setSettle] = useState(true);
+  const [maxRounds, setMaxRounds] = useState('10');
+
+  // Seed controls.
+  const [preset, setPreset] = useState('starter');
+  const [fixture, setFixture] = useState(() => JSON.stringify(FIXTURES[1]![2], null, 2));
+
+  // Results, kept separate so a seed result is not wiped by a later clock move.
+  const [settleResult, setSettleResult] = useState<TestSettle | null>(null);
+  const [seedResult, setSeedResult] = useState<Record<string, unknown> | null>(null);
+  const [resetResult, setResetResult] = useState<Record<string, unknown> | null>(null);
 
   const list = useApi<{ tenants: TenantAccountRow[]; canWrite: boolean }>('/api/tenants/test');
   const tenants = list.data?.tenants ?? [];
@@ -3148,37 +3370,53 @@ function TestTenants() {
     [selected],
   );
 
+  // Parsed here, not on submit: an invalid fixture should disable the button and mark the field,
+  // rather than being discovered by a round-trip that returns a 400 the operator has to interpret.
+  const fixtureError = (() => {
+    try {
+      const v = JSON.parse(fixture);
+      if (v === null || typeof v !== 'object' || Array.isArray(v)) return 'must be a JSON object';
+      return null;
+    } catch (e) {
+      return (e as Error).message;
+    }
+  })();
+
+  function applyPreset(id: string) {
+    setPreset(id);
+    const f = FIXTURES.find(([k]) => k === id);
+    if (f) setFixture(JSON.stringify(f[2], null, 2));
+  }
+
   async function run(label: string, fn: () => Promise<unknown>) {
     setBusy(label);
     setErr(null);
     setNote(null);
     try {
-      const out = (await fn()) as { settle?: { settled: boolean; totalFired: number; warnings: string[] } };
-      if (out?.settle && !out.settle.settled) {
-        // Not an error: a world that will not stop changing is a FINDING about the product — most
-        // likely a firing path re-arming itself — and the operator should read it as such.
-        setNote(`${label} — did NOT settle. ${out.settle.warnings.join(' · ')}`);
-      } else if (out?.settle) {
-        setNote(`${label} — settled, ${out.settle.totalFired} fired`);
-      } else {
-        setNote(`${label} — done`);
-      }
+      const out = (await fn()) as { settle?: TestSettle };
+      if (out?.settle) setSettleResult(out.settle);
+      setNote(`${label} — done`);
       clock.reload();
+      return out;
     } catch (e) {
       setErr((e as Error).message);
+      return null;
     } finally {
       setBusy(null);
     }
   }
 
   const unconfigured = (list.error ?? '').includes('not configured');
+  const canWrite = Boolean(list.data?.canWrite);
+  const rounds = Number(maxRounds);
+  const roundsValid = Number.isInteger(rounds) && rounds > 0;
 
   return (
     <>
       <Head
         screen="testtenants"
         title="Test tenants"
-        sub="Flagged fixtures the acceptance harness drives. Reset empties one without destroying it; the clock moves its time forward so scheduled work fires in seconds instead of days."
+        sub="Flagged fixtures the acceptance harness drives. Seed one with data, move its clock so scheduled work fires in seconds instead of days, and reset it without destroying the account."
       />
 
       {unconfigured ? (
@@ -3211,7 +3449,7 @@ function TestTenants() {
               <Note>{note}</Note>
             </Card>
           )}
-          {!list.data?.canWrite && (
+          {!canWrite && (
             <Card>
               <Empty
                 kind="unconfigured"
@@ -3236,7 +3474,18 @@ function TestTenants() {
                   <Td right>
                     <Button
                       variant="ghost"
-                      onClick={() => setSelected(t.owner === selected ? null : t.owner)}
+                      onClick={() => {
+                        const next = t.owner === selected ? null : t.owner;
+                        setSelected(next);
+                        // Results belong to the tenant they came from. Carrying them across a
+                        // selection change would attribute one tenant's outcome to another — the
+                        // same class of mistake as a log line naming the wrong owner.
+                        setSettleResult(null);
+                        setSeedResult(null);
+                        setResetResult(null);
+                        setNote(null);
+                        setErr(null);
+                      }}
                     >
                       {t.owner === selected ? 'Close' : 'Open'}
                     </Button>
@@ -3246,11 +3495,11 @@ function TestTenants() {
             </Table>
           </Card>
 
-          {selected && list.data?.canWrite && (
+          {selected && canWrite && (
             <div style={{ display: 'grid', gap: 'var(--section-gap)', marginTop: 'var(--section-gap)' }}>
               <Card
                 title="Virtual clock"
-                subtitle="Moving the clock also SETTLES: every firing path runs at the new time until nothing more happens. Scoped to this tenant's household — a real customer's work is never fired."
+                subtitle="Moving the clock also SETTLES by default: every firing path runs at the new time, repeatedly, until a full round produces no work. Scoped to this tenant's household — a real customer's work is never fired."
               >
                 {clock.loading ? (
                   <Skeleton rows={3} />
@@ -3276,60 +3525,182 @@ function TestTenants() {
                       </tr>
                       <tr>
                         <Td>Scope</Td>
+                        {/* The blast radius of the next advance, worth reading before pressing it. */}
                         <Td mono>{(clock.data?.scope ?? []).join(', ') || '—'}</Td>
                       </tr>
                     </Table>
-                    <Toolbar>
-                      <Field ariaLabel="Hours to advance" value={advance} onChange={setAdvance} width={90} />
-                      <Button
-                        disabled={busy !== null || !Number.isFinite(Number(advance))}
-                        onClick={() =>
-                          run(`advance ${advance}h`, () =>
-                            mutate('/api/tenants/test/clock', {
-                              owner: selected,
-                              advance_ms: Number(advance) * 3_600_000,
-                            }),
-                          )
-                        }
-                      >
-                        Advance hours + settle
-                      </Button>
-                      <Button
-                        disabled={busy !== null}
-                        onClick={() =>
-                          run('clear clock', () =>
-                            mutate('/api/tenants/test/clock', { owner: selected, clear: true }),
-                          )
-                        }
-                      >
-                        Back to real time
-                      </Button>
-                    </Toolbar>
+
+                    <div style={{ display: 'grid', gap: 10, marginTop: 14 }}>
+                      <Toolbar>
+                        <Field ariaLabel="Amount to advance" value={amount} onChange={setAmount} width={80} />
+                        <Select
+                          ariaLabel="Unit"
+                          value={unitMs}
+                          onChange={setUnitMs}
+                          options={UNITS}
+                          width={120}
+                        />
+                        <Button
+                          disabled={busy !== null || !Number.isFinite(Number(amount)) || !roundsValid}
+                          onClick={() =>
+                            run(`advance ${amount}`, () =>
+                              mutate('/api/tenants/test/clock', {
+                                owner: selected,
+                                advance_ms: Number(amount) * Number(unitMs),
+                                settle,
+                                max_rounds: rounds,
+                              }),
+                            )
+                          }
+                        >
+                          {busy?.startsWith('advance') ? 'Advancing…' : 'Advance'}
+                        </Button>
+                      </Toolbar>
+
+                      <Toolbar>
+                        <Field
+                          ariaLabel="Absolute instant (ISO)"
+                          value={at}
+                          onChange={setAt}
+                          placeholder="2026-08-05T14:00:00Z"
+                          mono
+                          width={260}
+                        />
+                        <Button
+                          disabled={busy !== null || !at.trim() || !roundsValid}
+                          onClick={() =>
+                            run(`set to ${at}`, () =>
+                              mutate('/api/tenants/test/clock', {
+                                owner: selected,
+                                at: at.trim(),
+                                settle,
+                                max_rounds: rounds,
+                              }),
+                            )
+                          }
+                          title="Sets the clock to an absolute instant. Setting it BACKWARDS is allowed and does not un-fire already-fired work — reset first if you need a clean re-run."
+                        >
+                          Set to instant
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          disabled={busy !== null}
+                          onClick={() =>
+                            run('clear clock', () =>
+                              mutate('/api/tenants/test/clock', { owner: selected, clear: true }),
+                            )
+                          }
+                        >
+                          Back to real time
+                        </Button>
+                      </Toolbar>
+
+                      <Toolbar>
+                        {/* Settle OFF is a real workflow, not an escape hatch: stage the clock, THEN
+                            seed, so a fixture's relative dates anchor where the suite intends. */}
+                        <Toggle on={settle} onClick={() => setSettle(!settle)}>
+                          {settle ? 'Settle after moving' : 'Move only — do not settle'}
+                        </Toggle>
+                        <Note>max rounds</Note>
+                        <Field
+                          ariaLabel="Max settle rounds"
+                          value={maxRounds}
+                          onChange={setMaxRounds}
+                          width={70}
+                        />
+                        {!roundsValid && <Note>must be a whole number above 0</Note>}
+                      </Toolbar>
+                    </div>
+
+                    {settleResult && (
+                      <div style={{ marginTop: 14 }}>
+                        <SettleDetail settle={settleResult} />
+                      </div>
+                    )}
                   </>
                 )}
               </Card>
 
               <Card
-                title="Data"
-                subtitle="Reset empties the tenant and its household but KEEPS the account, its login and its connected AI — otherwise every run would need a human to re-authorise a connector in a browser."
+                title="Seed"
+                subtitle="Populates the tenant through the SAME creation path a real user takes, so the harness can never exercise semantics no real path shares. Idempotent by natural key — re-seeding reports skipped rather than duplicating."
+              >
+                <Toolbar>
+                  <Select
+                    ariaLabel="Fixture preset"
+                    value={preset}
+                    onChange={applyPreset}
+                    options={FIXTURES.map(([k, label]) => [k, label] as const)}
+                    width={330}
+                  />
+                  <Button
+                    disabled={busy !== null || fixtureError !== null}
+                    onClick={async () => {
+                      const out = await run('seed', () =>
+                        mutate('/api/tenants/test/seed', {
+                          owner: selected,
+                          fixture: JSON.parse(fixture),
+                        }),
+                      );
+                      if (out) setSeedResult(out as Record<string, unknown>);
+                    }}
+                  >
+                    {busy === 'seed' ? 'Seeding…' : 'Seed this fixture'}
+                  </Button>
+                  {fixtureError && <Note>invalid JSON — {fixtureError}</Note>}
+                </Toolbar>
+
+                <Textarea
+                  ariaLabel="Seed fixture (JSON)"
+                  value={fixture}
+                  onChange={setFixture}
+                  invalid={fixtureError !== null}
+                  rows={16}
+                />
+                <div style={{ marginTop: 8 }}>
+                  <Note>
+                    Dates should be RELATIVE — <code>{'{ days, hour }'}</code> anchored to the seed moment.
+                    Absolute dates rot: “due tomorrow” becomes “overdue by months”, and the suite then fails
+                    on at-risk assertions for reasons unrelated to the product.
+                  </Note>
+                </div>
+
+                {seedResult && (
+                  <div style={{ marginTop: 14, display: 'grid', gap: 10 }}>
+                    <SeedTallies result={seedResult} />
+                    {/* Warnings MUST be surfaced: a single bad record never fails a seed, so an
+                        un-rebuilt search index shows up only here — and every assertion made
+                        through search would be wrong without it. */}
+                    {Array.isArray(seedResult['warnings']) &&
+                      (seedResult['warnings'] as string[]).length > 0 && (
+                        <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--warn-text)', fontSize: 12.5 }}>
+                          {(seedResult['warnings'] as string[]).map((w, i) => (
+                            <li key={i}>{w}</li>
+                          ))}
+                        </ul>
+                      )}
+                  </div>
+                )}
+              </Card>
+
+              <Card
+                title="Reset"
+                subtitle="Empties the tenant and its household but KEEPS the account, its login, its connected AI and its Google grant — otherwise every run would need a human to re-authorise a connector in a browser."
               >
                 <Toolbar>
                   <Button
                     disabled={busy !== null}
-                    onClick={() => run('reset', () => mutate('/api/tenants/test/reset', { owner: selected }))}
+                    onClick={async () => {
+                      const out = await run('reset', () =>
+                        mutate('/api/tenants/test/reset', { owner: selected }),
+                      );
+                      if (out) setResetResult(out as Record<string, unknown>);
+                    }}
                   >
                     {busy === 'reset' ? 'Resetting…' : 'Reset to empty'}
                   </Button>
-                  <Button
-                    disabled={busy !== null}
-                    onClick={() =>
-                      run('seed', () => mutate('/api/tenants/test/seed', { owner: selected, fixture: {} }))
-                    }
-                    title="Seeds an empty fixture — the harness supplies real ones over the API."
-                  >
-                    Seed (empty fixture)
-                  </Button>
                 </Toolbar>
+                {resetResult && <ResetDetail result={resetResult} />}
               </Card>
             </div>
           )}
@@ -3339,32 +3710,6 @@ function TestTenants() {
   );
 }
 
-interface ConnectionsData {
-  observedAt: string;
-  totals: { connections: number; activeRecently: number; revoked: number; toolRefreshChannels: number };
-  byClient: Array<{
-    client: string;
-    connections: number;
-    activeRecently: number;
-    revoked: number;
-    toolRefreshChannels: number;
-    lastSeenAt: string | null;
-  }>;
-  bySource: Array<{ source: string; toolRefreshChannels: number }>;
-  streamsError?: string;
-  note?: string;
-  recentWithinHours?: number;
-}
-
-/**
- * Connections — which AI clients are attached, and which are holding a live channel RIGHT NOW.
- *
- * The second half is why this screen exists and why it could not be replaced by a Grafana panel.
- * Tool-refresh channels live in an in-process registry, not a metrics store: they are observable
- * only while they are open, and nothing records them. This is the screen you open when someone says
- * the assistant cannot see a tool that shipped days ago — the question is whether that client is
- * actually holding a channel, and no historical metric can answer it.
- */
 function Connections() {
   const [hours, setHours] = useState('24');
   const data = useApi<ConnectionsData>(`/api/tenants/connections?hours=${encodeURIComponent(hours)}`, [

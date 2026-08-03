@@ -186,7 +186,20 @@ export interface TenantProvider {
   setClock(
     ctx: ProviderContext,
     owner: string,
-    input: { at?: string; advanceMs?: number; settle?: boolean },
+    /**
+     * `at` OR `advanceMs`, never both — an app is expected to REJECT the pair rather than pick a
+     * winner, since the two would disagree and the choice would be an invisible implementation
+     * detail.
+     *
+     * `settle: false` stages a clock position WITHOUT running the firing paths. The case that needs
+     * it: positioning the clock before seeding, so a fixture's relative dates anchor where the suite
+     * intends rather than at real now.
+     *
+     * `maxRounds` bounds the settle loop. Exposed because "the world would not stop changing" is a
+     * real finding about a product — most likely a firing path re-arming itself — and an operator
+     * investigating one needs to widen or narrow the bound rather than argue with a constant.
+     */
+    input: { at?: string; advanceMs?: number; settle?: boolean; maxRounds?: number },
   ): Promise<TestTenantClock & { settle: TestTenantSettle }>;
   clearClock(ctx: ProviderContext, owner: string): Promise<void>;
 }

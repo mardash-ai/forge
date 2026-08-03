@@ -993,6 +993,7 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
       at?: string;
       advance_ms?: number;
       settle?: boolean;
+      max_rounds?: number;
       clear?: boolean;
     };
     if (!body?.owner)
@@ -1004,7 +1005,12 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
       }
       return envelope(
         await audited(actorOf(req), 'test.clock.set', body.owner, () =>
-          t.setClock(ctx(), body.owner!, { at: body.at, advanceMs: body.advance_ms, settle: body.settle }),
+          t.setClock(ctx(), body.owner!, {
+            at: body.at,
+            advanceMs: body.advance_ms,
+            settle: body.settle,
+            maxRounds: body.max_rounds,
+          }),
         ),
       );
     } catch (e) {

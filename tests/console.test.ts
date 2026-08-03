@@ -1684,6 +1684,46 @@ describe('log filters combine — owner is a clause, not an override', () => {
     }
   });
 
+  it('the clock call passes settle and max_rounds through to the app, in its snake_case', async () => {
+    /*
+     * A passthrough parameter is the easiest thing in a console to get silently wrong: the button
+     * exists, the request succeeds, and the value is simply absent from the body. The operator then
+     * concludes the product ignored their setting.
+     *
+     * Both of these change BEHAVIOUR rather than presentation — `settle: false` means "move the
+     * clock but fire nothing", which is how you stage a clock before seeding, and `max_rounds`
+     * bounds a loop whose overrun is a real finding about the product. Dropping either produces a
+     * plausible-looking result that answers a different question.
+     */
+    const { createDorindaTenantProvider } = await import('../src/plugins/console-dorinda/tenants');
+    const p = createDorindaTenantProvider({ origin: 'https://api.test', testToken: 't' });
+
+    let sentBody: Record<string, unknown> | undefined;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      sentBody = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({ owner: 'o', virtual_now: 'v', real_now: 'r', generation: 2 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as never;
+    try {
+      await p.setClock({ signal: new AbortController().signal } as never, 'o', {
+        advanceMs: 3_600_000,
+        settle: false,
+        maxRounds: 25,
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    // snake_case on the wire — the app's contract, not the console's camelCase.
+    expect(sentBody).toMatchObject({ advance_ms: 3_600_000, settle: false, max_rounds: 25 });
+    // `settle: false` must survive as FALSE, not be dropped as falsy — the failure mode where a
+    // "move only" request quietly fires every due notification.
+    expect(sentBody!['settle']).toBe(false);
+  });
+
   it('a trace pivot matches BOTH the LogEntry trace field and a payload trace_id', async () => {
     /*
      * The same trace id lives in two places, and matching one returns a SUBSET.

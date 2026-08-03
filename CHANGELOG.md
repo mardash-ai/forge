@@ -9,6 +9,24 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-03
+
+### Added
+- **The Test tenants screen now drives the WHOLE test-control API.** It previously offered two
+  buttons — advance-by-hours and seed-an-empty-fixture — while the API supported considerably more.
+  A capability only ever exercised by a script is one nobody has looked at, so every operation the
+  acceptance harness will perform is now available to a human first:
+  - **Clock**: advance by days/hours/minutes, set to an absolute instant, a **settle on/off**
+    toggle (staging a clock position before seeding, so a fixture's relative dates anchor where
+    intended), a **max rounds** bound, and back-to-real-time.
+  - **Seed**: a real fixture editor with validation, plus ready-made fixtures (empty, starter,
+    overdue, imminent) whose dates are all RELATIVE so they cannot rot.
+  - **Results**: per-entity created/skipped tallies, seed warnings, per-table reset counts with the
+    preserved list, and the settle outcome — where `settled: false` renders as a finding about the
+    product, not as a console error.
+- **`Textarea`** in the UI kit, for content that is genuinely a document (a fixture, a query).
+- **`max_rounds`** plumbed through the tenant provider and console route.
+
 ## [1.4.3] - 2026-08-02
 
 ### Fixed

@@ -330,7 +330,12 @@ export function createDorindaTenantProvider(cfg: DorindaTenantConfig): TenantPro
         `/api/test/tenant/${encodeURIComponent(owner)}/clock`,
         {
           method: 'POST',
-          body: { at: input.at, advance_ms: input.advanceMs, settle: input.settle },
+          body: {
+            at: input.at,
+            advance_ms: input.advanceMs,
+            settle: input.settle,
+            max_rounds: input.maxRounds,
+          },
           credential: 'test',
         },
       );

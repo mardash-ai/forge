@@ -761,6 +761,56 @@ export function Field({
   );
 }
 
+/**
+ * A multi-line editor for content that is genuinely a DOCUMENT — a JSON fixture, a query, a patch.
+ *
+ * Deliberately monospace and deliberately resizable-vertical-only: horizontal resize inside a card
+ * layout drags the surrounding grid around, which reads as a broken page rather than a feature.
+ *
+ * `invalid` draws the error border. Passing it is the caller's job because only the caller knows
+ * what valid means here — the control never tries to parse its own contents, which would make one
+ * component the arbiter of every format it is ever used for.
+ */
+export function Textarea({
+  value,
+  onChange,
+  rows = 10,
+  placeholder,
+  ariaLabel,
+  invalid,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  rows?: number;
+  placeholder?: string;
+  ariaLabel: string;
+  invalid?: boolean;
+}) {
+  return (
+    <textarea
+      value={value}
+      rows={rows}
+      aria-label={ariaLabel}
+      aria-invalid={invalid || undefined}
+      spellCheck={false}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      style={{
+        width: '100%',
+        resize: 'vertical',
+        background: 'var(--bg-inset)',
+        border: `1px solid ${invalid ? 'var(--crit)' : 'var(--line-strong)'}`,
+        borderRadius: 'var(--r-md)',
+        color: 'var(--text-primary)',
+        padding: '10px 12px',
+        fontFamily: 'var(--mono)',
+        fontSize: 'var(--t-data)',
+        lineHeight: 1.55,
+      }}
+    />
+  );
+}
+
 /** The toolbar strip above a screen's content. Keeps every screen's controls on one baseline. */
 export function Toolbar({ children }: { children: ReactNode }) {
   return (
