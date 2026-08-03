@@ -124,6 +124,7 @@ export function createDorindaTenantProvider(cfg: DorindaTenantConfig): TenantPro
     'accounts.purge': Boolean(cfg.adminToken),
     'test.list': Boolean(cfg.adminToken), // the flag rides on the admin account list
     'connections.read': Boolean(cfg.adminToken),
+    'test.create': Boolean(cfg.testToken),
     'test.seed': Boolean(cfg.testToken),
     'test.reset': Boolean(cfg.testToken),
     'test.clock': Boolean(cfg.testToken),
@@ -290,6 +291,24 @@ export function createDorindaTenantProvider(cfg: DorindaTenantConfig): TenantPro
         deleted: { ...(r.deleted ?? {}), ...(r.platform_teardown?.deleted ?? {}) },
         retained: r.platform_teardown?.retained ?? [],
       } satisfies TenantPurgeResult;
+    },
+
+    async createTestTenant(ctx, input) {
+      const r = await call<Record<string, unknown>>(ctx, '/api/test/tenants', {
+        method: 'POST',
+        body: {
+          email: input.email,
+          ...(input.displayName ? { displayName: input.displayName } : {}),
+          ...(input.password ? { password: input.password } : {}),
+        },
+        credential: 'test',
+      });
+      return {
+        owner: String(r['owner'] ?? ''),
+        email: String(r['email'] ?? input.email),
+        comped: Boolean(r['comped']),
+        warnings: (r['warnings'] as string[]) ?? [],
+      };
     },
 
     async seed(ctx, owner, fixture) {

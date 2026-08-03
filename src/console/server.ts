@@ -174,6 +174,7 @@ export const WRITE_ROUTES = [
   '/api/tenants/accounts/comp',
   '/api/tenants/accounts/lock',
   '/api/tenants/accounts/purge',
+  '/api/tenants/test/create',
   '/api/tenants/test/seed',
   '/api/tenants/test/reset',
   '/api/tenants/test/clock',
@@ -936,6 +937,31 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     if (!t) return;
     try {
       return envelope({ tenants: await t.listTestTenants(ctx()), canWrite: t.supports('test.reset') });
+    } catch (e) {
+      return tenantFail(reply, e);
+    }
+  });
+
+  /*
+   * CREATE a test tenant. Audited like every other write, and keyed on the EMAIL rather than an
+   * owner id — there is no owner yet, and the email is the thing the operator actually chose.
+   */
+  app.post('/api/tenants/test/create', async (req, reply) => {
+    const t = withTenants(req, reply);
+    if (!t) return;
+    const body = req.body as { email?: string; displayName?: string; password?: string };
+    if (!body?.email)
+      return reply.code(400).send({ error: { code: 'bad_request', message: 'email is required' } });
+    try {
+      return envelope(
+        await audited(actorOf(req), 'test.create', body.email, () =>
+          t.createTestTenant(ctx(), {
+            email: body.email!,
+            displayName: body.displayName,
+            password: body.password,
+          }),
+        ),
+      );
     } catch (e) {
       return tenantFail(reply, e);
     }

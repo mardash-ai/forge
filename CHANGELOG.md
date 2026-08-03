@@ -9,6 +9,16 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-08-03
+
+### Added
+- **Create a test tenant from the console.** `POST /api/tenants/test/create` + a form on the Test
+  tenants screen, so provisioning no longer needs a human at a psql prompt. It creates a NEW account
+  carrying the markers from birth and can never flag one that already exists — the address must end
+  in `@dorinda.test` (RFC 2606 reserved, so undeliverable and unregisterable), and the UI says why
+  rather than just disabling the button.
+- `test.create` capability on the tenant provider contract, gated on the test credential.
+
 ## [1.6.0] - 2026-08-03
 
 ### Added

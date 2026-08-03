@@ -37,6 +37,7 @@ export type TenantFeature =
   | 'accounts.comp'
   | 'accounts.lock'
   | 'accounts.purge'
+  | 'test.create'
   | 'test.list'
   | 'test.seed'
   | 'test.reset'
@@ -180,6 +181,16 @@ export interface TenantProvider {
   connections(ctx: ProviderContext, hours?: number): Promise<ConnectionsView>;
 
   listTestTenants(ctx: ProviderContext): Promise<TenantAccount[]>;
+
+  /**
+   * CREATE a new test tenant. Never flags an existing account — that distinction is the safety
+   * argument, not a detail: an app is expected to refuse any address outside its reserved test
+   * domain, and to answer a duplicate with a conflict rather than adopting the account.
+   */
+  createTestTenant(
+    ctx: ProviderContext,
+    input: { email: string; displayName?: string; password?: string },
+  ): Promise<{ owner: string; email: string; comped: boolean; warnings: string[] }>;
   seed(ctx: ProviderContext, owner: string, fixture: unknown): Promise<Record<string, unknown>>;
   reset(ctx: ProviderContext, owner: string): Promise<Record<string, unknown>>;
   getClock(ctx: ProviderContext, owner: string): Promise<TestTenantClock>;

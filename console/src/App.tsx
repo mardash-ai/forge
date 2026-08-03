@@ -3354,6 +3354,12 @@ function TestTenants() {
   const [settle, setSettle] = useState(true);
   const [maxRounds, setMaxRounds] = useState('10');
 
+  // Create-tenant controls.
+  const [newEmail, setNewEmail] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [created, setCreated] = useState<{ owner: string; email: string; comped: boolean } | null>(null);
+
   // Seed controls.
   const [preset, setPreset] = useState('starter');
   const [fixture, setFixture] = useState(() => JSON.stringify(FIXTURES[1]![2], null, 2));
@@ -3456,6 +3462,93 @@ function TestTenants() {
                 title="Read-only"
                 detail="No CONSOLE_DORINDA_TEST_TOKEN configured, so tenants can be listed but not reset, seeded or time-shifted. A distinct credential from the admin token, deliberately."
               />
+            </Card>
+          )}
+
+          {canWrite && (
+            <Card
+              title="Create a test tenant"
+              subtitle="Creates a NEW account carrying the test markers from birth — a login (verified, since the address can never receive mail), this app's profile row, and a comp so no trial clock interferes. It can never flag an account that already exists."
+            >
+              <Toolbar>
+                <Field
+                  ariaLabel="New tenant email"
+                  value={newEmail}
+                  onChange={setNewEmail}
+                  placeholder="robin@dorinda.test"
+                  mono
+                  width={240}
+                />
+                <Field
+                  ariaLabel="Display name"
+                  value={newName}
+                  onChange={setNewName}
+                  placeholder="Robin Cruz"
+                  width={170}
+                />
+                <Field
+                  ariaLabel="Password"
+                  value={newPassword}
+                  onChange={setNewPassword}
+                  placeholder="password (to sign in)"
+                  width={190}
+                />
+                <Button
+                  disabled={busy !== null || !newEmail.trim().endsWith('@dorinda.test')}
+                  onClick={async () => {
+                    const out = await run('create', () =>
+                      mutate('/api/tenants/test/create', {
+                        email: newEmail.trim(),
+                        displayName: newName.trim() || undefined,
+                        password: newPassword || undefined,
+                      }),
+                    );
+                    if (out) {
+                      setCreated(out as { owner: string; email: string; comped: boolean });
+                      setNewEmail('');
+                      setNewName('');
+                      setNewPassword('');
+                      list.reload();
+                    }
+                  }}
+                >
+                  {busy === 'create' ? 'Creating…' : 'Create'}
+                </Button>
+              </Toolbar>
+              {/* Stated rather than enforced silently: the button is disabled off-domain, and this
+                  says WHY, because "the button does nothing" is the worst possible explanation. */}
+              <Note>
+                The address must end in <code>@dorinda.test</code> — reserved by RFC 2606, so it is
+                undeliverable and unregisterable. That is what guarantees a real account can never hold one,
+                and it is why creating a tenant is safe when flagging one never would be.
+              </Note>
+              {created && (
+                <div style={{ marginTop: 12 }}>
+                  <Table head={['', '']}>
+                    <tr>
+                      <Td>Owner</Td>
+                      <Td mono primary>
+                        {created.owner}
+                      </Td>
+                    </tr>
+                    <tr>
+                      <Td>Email</Td>
+                      <Td mono>{created.email}</Td>
+                    </tr>
+                    <tr>
+                      <Td>Comped</Td>
+                      {/* Not comped is not a failure — the tenant works, it is just on a trial
+                          clock that will become a paywall. Worth seeing, not worth alarming over. */}
+                      <Td>
+                        <Status
+                          tone={created.comped ? 'ok' : 'warn'}
+                          label={created.comped ? 'yes' : 'no — on a trial clock'}
+                        />
+                      </Td>
+                    </tr>
+                  </Table>
+                </div>
+              )}
             </Card>
           )}
 
