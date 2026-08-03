@@ -88,6 +88,27 @@ export interface TenantPurgeResult {
   retained: Array<{ subsystem: string; reason: string }>;
 }
 
+/**
+ * A test tenant with the state an operator needs in front of the screen.
+ *
+ * Richer than {@link TenantAccount} because two questions cannot be answered from an account row and
+ * both change what the operator does next: is this fixture EMPTY or seeded, and does it HEAD a
+ * household (only an owner may be given members). Answering them by eye — "I think I seeded that
+ * one" — is how a run starts against the wrong state.
+ */
+export interface TestTenantRow {
+  owner: string;
+  email: string;
+  displayName: string | null;
+  /** `owner` when it heads a household; the member role otherwise; null when in no group. */
+  householdRole: string | null;
+  isHouseholdOwner: boolean;
+  /** Other test tenants sharing its household. */
+  memberEmails: string[];
+  /** Per-entity row counts. All zero ⇒ empty; anything ⇒ seeded. */
+  counts: Record<string, number>;
+}
+
 export interface TestTenantClock {
   owner: string;
   virtualNow: string;
@@ -182,7 +203,7 @@ export interface TenantProvider {
   /** Live connector inventory. Read-only — nothing here mutates, so it needs no audited write. */
   connections(ctx: ProviderContext, hours?: number): Promise<ConnectionsView>;
 
-  listTestTenants(ctx: ProviderContext): Promise<TenantAccount[]>;
+  listTestTenants(ctx: ProviderContext): Promise<TestTenantRow[]>;
 
   /**
    * CREATE a new test tenant. Never flags an existing account — that distinction is the safety

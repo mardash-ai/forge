@@ -1068,23 +1068,58 @@ describe('tenant provider — two credentials, two surfaces', () => {
     }
   });
 
-  it('derives the test-tenant list from the ONE account list', async () => {
-    // Two endpoints could disagree about which owners are test tenants; one cannot.
+  it('reads test tenants from the TEST surface, not the admin account list', async () => {
+    /*
+     * This previously asserted the opposite — that the list was FILTERED from the one admin account
+     * read, so two endpoints could not disagree about which owners are test tenants. That reasoning
+     * was sound and the trade-off turned out to be wrong twice over:
+     *
+     *   · it made the Test tenants screen depend on the credential that can ERASE a real account,
+     *     which is the exact coupling the two-token split exists to prevent; and
+     *   · an account row cannot answer the two questions the screen needs — is this fixture seeded,
+     *     and does it head a household — so the operator was left guessing at both.
+     *
+     * The disagreement risk it was protecting against is handled at the source instead: both reads
+     * resolve "is a test tenant" from the same `test_tenant` column.
+     */
     const { createDorindaTenantProvider } = await import('../src/plugins/console-dorinda/tenants');
-    const p = createDorindaTenantProvider({ origin: 'https://api.test', adminToken: 'ADMIN' });
-    const f = stubFetch(() => ({
-      accounts: [
-        { owner: 'real', email: 'a@b.com', test_tenant: false },
-        { owner: 'test', email: 'r@dorinda.test', test_tenant: true },
-      ],
-    }));
+    const p = createDorindaTenantProvider({ origin: 'https://api.test', testToken: 'TEST' });
+    let sawUrl = '';
+    let sawTestHeader = false;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      sawUrl = String(url);
+      sawTestHeader = Boolean((init.headers as Record<string, string>)['x-dorinda-test-token']);
+      return new Response(
+        JSON.stringify({
+          tenants: [
+            {
+              owner: 'test',
+              email: 'r@dorinda.test',
+              isHouseholdOwner: true,
+              householdRole: 'owner',
+              memberEmails: ['kid@dorinda.test'],
+              counts: { delegations: 2 },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }) as never;
     try {
-      expect((await p.listTestTenants(ctx)).map((t) => t.owner)).toEqual(['test']);
-      const all = await p.listAccounts(ctx);
-      // …and the flag is on the ordinary list too, so an operator about to purge can see it.
-      expect(all.find((a) => a.owner === 'test')?.isTest).toBe(true);
+      const out = await p.listTestTenants(ctx);
+      expect(sawUrl).toContain('/api/test/tenants');
+      // The TEST credential, never the admin one — that separation is the point.
+      expect(sawTestHeader).toBe(true);
+      expect(out[0]).toMatchObject({
+        owner: 'test',
+        isHouseholdOwner: true,
+        memberEmails: ['kid@dorinda.test'],
+      });
+      // The seeded signal survives the mapping; without it the screen cannot tell empty from full.
+      expect(out[0]!.counts['delegations']).toBe(2);
     } finally {
-      f.restore();
+      globalThis.fetch = realFetch;
     }
   });
 });

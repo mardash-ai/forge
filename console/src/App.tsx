@@ -3165,8 +3165,20 @@ function Accounts() {
  * silently: "due tomorrow" becomes "overdue by nine months", and the suite then fails on at-risk
  * assertions for reasons that have nothing to do with the product.
  */
-const FIXTURES: ReadonlyArray<readonly [string, string, unknown]> = [
-  ['empty', 'Empty — no data', {}],
+/**
+ * Fixtures, tagged with WHO they make sense for.
+ *
+ * `owner` fixtures build a household, and the app refuses those on a member with a 403 —
+ * `members.invite` is an owner-only permission in the product's role matrix, so a seed that added
+ * members to a member would create a household shape no real user could produce. Offering them and
+ * letting the API reject is worse than not offering them: it teaches the operator that errors here
+ * are normal.
+ *
+ * `member` fixtures produce the private/shared mix a teen or assistant actually has, which is what
+ * the privacy workflows need to assert against.
+ */
+const FIXTURES: ReadonlyArray<readonly [string, string, unknown, 'any' | 'owner' | 'member']> = [
+  ['empty', 'Empty — no data', {}, 'any'],
   [
     'starter',
     'Starter — a few loops, people and events',
@@ -3193,6 +3205,7 @@ const FIXTURES: ReadonlyArray<readonly [string, string, unknown]> = [
       reminders: [{ subject: 'Pack the forms', fireAt: { days: 1, hour: 8 } }],
       notes: [{ text: 'Insurance card is in the blue folder' }],
     },
+    'any',
   ],
   [
     'overdue',
@@ -3216,6 +3229,7 @@ const FIXTURES: ReadonlyArray<readonly [string, string, unknown]> = [
       ],
       reminders: [{ subject: 'Chase the school office', fireAt: { days: -1, hour: 8 } }],
     },
+    'any',
   ],
   [
     'household',
@@ -3239,6 +3253,7 @@ const FIXTURES: ReadonlyArray<readonly [string, string, unknown]> = [
         },
       ],
     },
+    'owner',
   ],
   [
     'imminent',
@@ -3258,8 +3273,89 @@ const FIXTURES: ReadonlyArray<readonly [string, string, unknown]> = [
         },
       ],
     },
+    'any',
+  ],
+  [
+    'member-teen',
+    'Teen — private work plus one thing shared up to a parent',
+    {
+      timezone: 'America/New_York',
+      // A teen holds `resource.private` and `resource.share_up` but NOT `resource.share`: they can
+      // hand something to the household owner without publishing to everyone. This fixture produces
+      // exactly that mix, which is what the privacy workflows assert against.
+      delegations: [
+        { title: 'Study for the chem test', request: 'Revise chapters 4-6', dueAt: { days: 2, hour: 19 } },
+        {
+          title: 'Sports physical form',
+          request: 'Give the signed physical form to a parent',
+          dueAt: { days: 4, hour: 17 },
+        },
+      ],
+      reminders: [{ subject: 'Practice at 4', fireAt: { days: 1, hour: 15 } }],
+    },
+    'member',
+  ],
+  [
+    'member-assistant',
+    'Assistant — captured work only, nothing shared or staged',
+    {
+      timezone: 'America/New_York',
+      // An assistant holds create + private + read-shared + share-up, and deliberately NOT
+      // `message.stage` or `policy.manage`. Everything here is operational capture.
+      delegations: [
+        { title: 'Book the plumber', request: 'Get three quotes for the leak', dueAt: { days: 3, hour: 12 } },
+      ],
+      notes: [{ text: 'Landlord prefers texts, not calls' }],
+    },
+    'member',
   ],
 ];
+
+interface TestTenantRow {
+  owner: string;
+  email: string;
+  displayName: string | null;
+  householdRole: string | null;
+  isHouseholdOwner: boolean;
+  memberEmails: string[];
+  counts: Record<string, number>;
+}
+
+/**
+ * Group the flat tenant list into HOUSEHOLDS — an owner followed by its members.
+ *
+ * The list arrives flat, and rendered flat it hides the one relationship that matters: a fixture
+ * family is a unit. Seeded together, reset together, and — since the delete cascade — erased
+ * together. Showing `jamie` as a peer of `robin` invites deleting one and wondering where the other
+ * went.
+ *
+ * A tenant in no household is its own group of one, so every tenant appears exactly once.
+ */
+function groupHouseholds(tenants: TestTenantRow[]): Array<{ head: TestTenantRow; members: TestTenantRow[] }> {
+  const byEmail = new Map(tenants.map((t) => [t.email, t]));
+  const claimed = new Set<string>();
+  const out: Array<{ head: TestTenantRow; members: TestTenantRow[] }> = [];
+
+  // Owners first, so a member is never promoted to head while its real owner is still unplaced.
+  for (const t of tenants.filter((x) => x.isHouseholdOwner)) {
+    if (claimed.has(t.email)) continue;
+    claimed.add(t.email);
+    const members = t.memberEmails
+      .map((e) => byEmail.get(e))
+      .filter((m): m is TestTenantRow => Boolean(m) && !claimed.has(m!.email));
+    members.forEach((m) => claimed.add(m.email));
+    out.push({ head: t, members });
+  }
+  // Anything left is a member whose owner is not itself a test tenant — shown standalone rather
+  // than dropped, because a tenant missing from this screen is unmanageable.
+  for (const t of tenants) if (!claimed.has(t.email)) out.push({ head: t, members: [] });
+  return out;
+}
+
+/** Total rows across the entity tables — zero means the fixture is empty. */
+function seededRows(t: TestTenantRow): number {
+  return Object.values(t.counts ?? {}).reduce((a, b) => a + b, 0);
+}
 
 /** What a settle actually did. `settled: false` is a FINDING, not an error — see SettleDetail. */
 interface TestSettle {
@@ -3422,8 +3518,9 @@ function TestTenants() {
   const [seedResult, setSeedResult] = useState<Record<string, unknown> | null>(null);
   const [resetResult, setResetResult] = useState<Record<string, unknown> | null>(null);
 
-  const list = useApi<{ tenants: TenantAccountRow[]; canWrite: boolean }>('/api/tenants/test');
+  const list = useApi<{ tenants: TestTenantRow[]; canWrite: boolean }>('/api/tenants/test');
   const tenants = list.data?.tenants ?? [];
+  const households = groupHouseholds(tenants);
   const clock = useApi<{ virtualNow: string; realNow: string; generation: number; scope: string[] }>(
     selected ? `/api/tenants/test/clock?owner=${encodeURIComponent(selected)}` : null,
     [selected],
@@ -3467,7 +3564,19 @@ function TestTenants() {
 
   const unconfigured = (list.error ?? '').includes('not configured');
   const canWrite = Boolean(list.data?.canWrite);
-  const selectedEmail = tenants.find((t) => t.owner === selected)?.email ?? null;
+  const selectedTenant = tenants.find((t) => t.owner === selected) ?? null;
+  const selectedEmail = selectedTenant?.email ?? null;
+  /*
+   * Only the fixtures that can actually succeed on THIS tenant.
+   *
+   * A household fixture on a member is a guaranteed 403 — `members.invite` is owner-only — and
+   * offering an option that always fails teaches the operator that errors on this screen are normal.
+   * A member sees member-shaped fixtures instead: the private/shared mix a teen or assistant really
+   * has, which is what the privacy workflows need.
+   */
+  const applicableFixtures = FIXTURES.filter(([, , , kind]) =>
+    kind === 'any' ? true : selectedTenant?.isHouseholdOwner ? kind === 'owner' : kind === 'member',
+  );
   const rounds = Number(maxRounds);
   const roundsValid = Number.isInteger(rounds) && rounds > 0;
 
@@ -3634,43 +3743,83 @@ function TestTenants() {
           )}
 
           <Card pad={false}>
-            <Table head={['Email', 'Owner', 'Status', '']}>
-              {tenants.map((t) => (
-                <tr
-                  key={t.owner}
-                  style={{ background: t.owner === selected ? 'var(--bg-inset)' : undefined }}
-                >
-                  <Td primary>{t.email ?? '—'}</Td>
-                  <Td mono>{t.owner}</Td>
-                  <Td>
-                    <Status tone={statusTone(t)} label={t.subscriptionStatus ?? 'none'} />
-                  </Td>
-                  <Td right>
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        const next = t.owner === selected ? null : t.owner;
-                        setSelected(next);
-                        // Results belong to the tenant they came from. Carrying them across a
-                        // selection change would attribute one tenant's outcome to another — the
-                        // same class of mistake as a log line naming the wrong owner.
-                        setSettleResult(null);
-                        setSeedResult(null);
-                        setResetResult(null);
-                        // Especially this one: a confirmation typed for one tenant must never be
-                        // sitting in the box when a different tenant is selected.
-                        setConfirmDelete('');
-                        // A credential shown for one tenant must never linger while another is open.
-                        setPassword(null);
-                        setNote(null);
-                        setErr(null);
-                      }}
-                    >
-                      {t.owner === selected ? 'Close' : 'Open'}
-                    </Button>
-                  </Td>
-                </tr>
-              ))}
+            <Table head={['Email', 'Role', 'Owner id', 'Data', '']}>
+              {households.flatMap(({ head, members }) =>
+                [head, ...members].map((t, i) => (
+                  <tr
+                    key={t.owner}
+                    style={{
+                      background: t.owner === selected ? 'var(--bg-inset)' : undefined,
+                      // A hairline above each household head separates families visually without
+                      // needing a second table per household.
+                      borderTop: i === 0 ? '1px solid var(--line-strong)' : undefined,
+                    }}
+                  >
+                    <Td primary>
+                      {/* Members are INDENTED under their owner. The list arrives flat, and flat it
+                        hides the one relationship that matters — a fixture family is seeded, reset
+                        and deleted as a unit. */}
+                      <span style={{ paddingLeft: i === 0 ? 0 : 22, opacity: i === 0 ? 1 : 0.9 }}>
+                        {i === 0 ? '' : '└ '}
+                        {t.email || '—'}
+                      </span>
+                    </Td>
+                    <Td>
+                      {t.isHouseholdOwner && members.length > 0 ? (
+                        <Pill tone="info">household owner</Pill>
+                      ) : t.householdRole && !t.isHouseholdOwner ? (
+                        <Pill tone="neutral">{t.householdRole}</Pill>
+                      ) : (
+                        <Note>solo</Note>
+                      )}
+                    </Td>
+                    <Td mono>{t.owner}</Td>
+                    <Td>
+                      {/* The seeded indicator. "Has this fixture been populated?" was previously only
+                        answerable by seeding it again and reading the skipped tallies. */}
+                      {seededRows(t) === 0 ? (
+                        <Note>empty</Note>
+                      ) : (
+                        <Status
+                          tone="ok"
+                          label={`seeded · ${Object.entries(t.counts)
+                            .filter(([, n]) => n > 0)
+                            .map(([k, n]) => `${n} ${k}`)
+                            .join(', ')}`}
+                        />
+                      )}
+                    </Td>
+                    <Td right>
+                      <Button
+                        variant="ghost"
+                        onClick={() => {
+                          const next = t.owner === selected ? null : t.owner;
+                          setSelected(next);
+                          // Results belong to the tenant they came from. Carrying them across a
+                          // selection change would attribute one tenant's outcome to another — the
+                          // same class of mistake as a log line naming the wrong owner.
+                          setSettleResult(null);
+                          setSeedResult(null);
+                          setResetResult(null);
+                          // Especially this one: a confirmation typed for one tenant must never be
+                          // sitting in the box when a different tenant is selected.
+                          setConfirmDelete('');
+                          // A credential shown for one tenant must never linger while another is open.
+                          setPassword(null);
+                          // The preset may not apply to the newly selected tenant (an owner fixture on
+                          // a member always 403s), so fall back to one that does.
+                          setPreset('empty');
+                          setFixture(JSON.stringify(FIXTURES[0]![2], null, 2));
+                          setNote(null);
+                          setErr(null);
+                        }}
+                      >
+                        {t.owner === selected ? 'Close' : 'Open'}
+                      </Button>
+                    </Td>
+                  </tr>
+                )),
+              )}
             </Table>
           </Card>
 
@@ -3860,7 +4009,7 @@ function TestTenants() {
                     ariaLabel="Fixture preset"
                     value={preset}
                     onChange={applyPreset}
-                    options={FIXTURES.map(([k, label]) => [k, label] as const)}
+                    options={applicableFixtures.map(([k, label]) => [k, label] as const)}
                     width={330}
                   />
                   <Button

@@ -184,9 +184,27 @@ export function createDorindaTenantProvider(cfg: DorindaTenantConfig): TenantPro
     },
 
     async listTestTenants(ctx) {
-      // Filtered from the ONE account list rather than fetched from a second endpoint, so the test
-      // screen and the accounts screen can never disagree about which owners are test tenants.
-      return (await this.listAccounts(ctx)).filter((a) => a.isTest);
+      /*
+       * The app's own test-tenant read, on the TEST credential.
+       *
+       * This used to filter the full admin account list for flagged rows. That worked, but it meant
+       * the Test tenants screen could not function without the credential that can ERASE a real
+       * account — the exact coupling the two-token split exists to prevent. It also could not answer
+       * the two questions the screen actually needs: is this fixture seeded, and does it head a
+       * household.
+       */
+      const r = await call<{ tenants: Array<Record<string, unknown>> }>(ctx, '/api/test/tenants', {
+        credential: 'test',
+      });
+      return (r.tenants ?? []).map((t) => ({
+        owner: String(t['owner'] ?? ''),
+        email: String(t['email'] ?? ''),
+        displayName: (t['displayName'] as string | null) ?? null,
+        householdRole: (t['householdRole'] as string | null) ?? null,
+        isHouseholdOwner: Boolean(t['isHouseholdOwner']),
+        memberEmails: (t['memberEmails'] as string[]) ?? [],
+        counts: (t['counts'] as Record<string, number>) ?? {},
+      }));
     },
 
     async getAccount(ctx, owner) {

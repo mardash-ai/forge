@@ -9,6 +9,27 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-08-03
+
+### Added
+- **Households are NESTED on the Test tenants screen.** Members render indented under their owner
+  with a role pill. The list arrived flat, and rendered flat it hid the one relationship that
+  matters: a fixture family is seeded, reset and — since the delete cascade — erased as a unit.
+  Showing a member as a peer of its owner invites deleting one and wondering where the other went.
+- **A seeded indicator.** Each tenant shows `empty` or `seeded · 2 delegations, 1 person`.
+  Previously the only way to answer "has this fixture been populated?" was to seed it again and read
+  the skipped tallies.
+- **Role-aware fixtures.** A member is offered member-shaped presets (`Teen — private work plus one
+  thing shared up to a parent`, `Assistant — captured work only`) and not the household preset, which
+  the app refuses on a non-owner with a 403. Offering an option that always fails teaches an operator
+  that errors are normal.
+
+### Changed
+- **The test-tenant list reads from the TEST surface**, not by filtering the admin account list. That
+  filtering meant the screen could not work without the credential that can erase a real account —
+  the coupling the two-token split exists to prevent — and an account row could not report whether a
+  fixture was seeded or headed a household.
+
 ## [1.11.0] - 2026-08-03
 
 ### Added
