@@ -9,6 +9,16 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.17.2] - 2026-08-03
+
+### Fixed
+- **The household fixture's first delegation was never created.** It carried `priority: 'medium'`,
+  which is not in the enum (`low|normal|high|urgent`), so the insert was rejected, the seeder logged
+  a warning, and the tenant came up with two of its three delegations while the tally still said
+  three. Found by reading a seeded tenant back through the API rather than trusting the seed result.
+  `tests/console-fixtures.test.ts` now enum-checks priorities — it already did statuses, and the gap
+  between the two is exactly how this shipped.
+
 ## [1.17.1] - 2026-08-03
 
 ### Fixed

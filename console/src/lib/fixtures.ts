@@ -9,34 +9,26 @@
 export type FixtureAudience = 'any' | 'owner' | 'member';
 
 /**
- * Test tenants — the fixtures the acceptance harness drives.
- *
- * Separate from Accounts on purpose. Reset and purge are not the same operation at different
- * intensities, they run on different surfaces behind different credentials, and putting them on one
- * screen would be an invitation to reach for the wrong one.
- */
-/**
- * Ready-made fixtures.
+ * Ready-made fixtures, tagged with WHO each makes sense for.
  *
  * They exist because the alternative is a blank JSON box, and a blank box makes the fastest path
- * "seed nothing and click around an empty account" — which tests almost nothing. Each of these
- * produces a tenant with something worth looking at.
- *
- * ⛔ EVERY DATE IS RELATIVE (`{ days, hour }`), never absolute. A fixture with hard-coded dates rots
- * silently: "due tomorrow" becomes "overdue by nine months", and the suite then fails on at-risk
- * assertions for reasons that have nothing to do with the product.
- */
-/**
- * Fixtures, tagged with WHO they make sense for.
+ * "seed nothing and click around an empty account" — which tests almost nothing. Each produces a
+ * tenant with something worth looking at.
  *
  * `owner` fixtures build a household, and the app refuses those on a member with a 403 —
- * `members.invite` is an owner-only permission in the product's role matrix, so a seed that added
- * members to a member would create a household shape no real user could produce. Offering them and
- * letting the API reject is worse than not offering them: it teaches the operator that errors here
- * are normal.
+ * `members.invite` is owner-only in the role matrix, so seeding members onto a member would create
+ * a household shape no real user could produce. Offering them and letting the API reject is worse
+ * than not offering them: it teaches the operator that errors here are normal. `member` fixtures
+ * produce the private/shared mix a teen or assistant actually has.
  *
- * `member` fixtures produce the private/shared mix a teen or assistant actually has, which is what
- * the privacy workflows need to assert against.
+ * ⛔ EVERY DATE IS RELATIVE (`{ days, hour }`), never absolute — a hard-coded date rots silently:
+ * "due tomorrow" becomes "overdue by nine months", and the suite then fails at-risk assertions for
+ * reasons that have nothing to do with the product.
+ *
+ * ⛔ EVERY DELEGATION sets an explicit `status` and a valid `priority`. Both are enum-checked in
+ * tests/console-fixtures.test.ts, because both have already shipped wrong: an omitted status
+ * defaults to `inbox` (which Tracking excludes), and `priority: 'medium'` — not a real value — was
+ * REJECTED at insert, so the delegation silently never existed while the tally still counted it.
  */
 export const FIXTURES: ReadonlyArray<readonly [string, string, unknown, FixtureAudience]> = [
   ['empty', 'Empty — no data', {}, 'any'],
@@ -142,7 +134,7 @@ export const FIXTURES: ReadonlyArray<readonly [string, string, unknown, FixtureA
           interpretedOutcome: 'A written quote with materials and labor broken out.',
           completionCriteria: 'Quote received in writing with a total dollar figure.',
           status: 'waiting-on-person',
-          priority: 'medium',
+          priority: 'normal',
           stakeholders: ['Dana Whitfield'],
           dueAt: { days: 5, hour: 17 },
         },

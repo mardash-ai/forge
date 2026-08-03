@@ -80,6 +80,29 @@ describe('seed fixtures', () => {
     expect(bad).toEqual([]);
   });
 
+  it('uses only PRIORITIES the product accepts', () => {
+    /*
+     * Caught in production, the expensive way. The household fixture carried `priority: 'medium'`,
+     * which is not in the enum (`low|normal|high|urgent`) — so the INSERT was rejected, the seeder
+     * recorded a warning, and that delegation simply never appeared. The tenant looked seeded, the
+     * tally said three, and only two existed.
+     *
+     * The status test above already did exactly this check for statuses. Priorities were the gap:
+     * a value-set assertion that covers one enum and not its neighbour is how a fixture ships with
+     * a plausible-looking value the database has never heard of.
+     */
+    const VALID = new Set(['low', 'normal', 'high', 'urgent']);
+    const bad: string[] = [];
+    for (const [key, body] of entries) {
+      for (const d of body.delegations ?? []) {
+        if (typeof d.priority === 'string' && !VALID.has(d.priority)) {
+          bad.push(`${key}: "${d.title}" -> priority "${d.priority}"`);
+        }
+      }
+    }
+    expect(bad, 'these delegations would be REJECTED at insert and silently missing').toEqual([]);
+  });
+
   it('keeps every date RELATIVE, so a fixture cannot rot', () => {
     // A hard-coded date rots silently: "due tomorrow" becomes "overdue by nine months", and the
     // suite then fails at-risk assertions for reasons that have nothing to do with the product.
