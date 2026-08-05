@@ -9,6 +9,31 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-08-05
+
+### Added
+- **Cloud SQL backup-runs reporting in the console Inventory screen.** For each discovered
+  `db.instance`, the GCP inventory provider now calls
+  `sqladmin.googleapis.com/v1/projects/{p}/instances/{i}/backupRuns` (same API client and
+  `roles/cloudsql.viewer` SA — no new IAM) and stores the most-recent run's status, timing,
+  and type in resource attributes. The Inventory screen adds a **"Cloud SQL backup posture"**
+  card that shows PITR + backup-enabled config alongside the latest run, inline — not a
+  separate screen.
+- **Three new finding rules** for the runtime backup axis (complement the existing config-axis
+  rules `db-no-backups` / `db-no-pitr`):
+  - `db-backup-run-failed` (critical) — most recent backup run has `status = FAILED`
+  - `db-backup-stale` (warn) — most recent run ended >26 h ago, or no runs on record while
+    backups are enabled
+  - `db-backup-api-error` (warn) — the `backupRuns` endpoint was unreachable or returned an
+    error (posture unknown, not confirmed bad)
+- **Three explicit empty reasons** in the UI — empty is never rendered as a blank list:
+  (a) sqladmin/backupRuns unreachable or errored, (b) automated backups disabled on the
+  instance, (c) compose/data-plane Postgres with no cloud backup mechanism
+- **6 new vitest tests** covering all backup-run finding branches (failed, stale, RUNNING,
+  API error, disabled, recent-healthy no-fire)
+- **`docs/FORGE_CONSOLE.md`** and embedded **`src/console/docs/content/infra.html`** updated
+  with backup-run reporting description and finding-rule table (zero doc drift)
+
 ## [1.18.6] - 2026-08-05
 
 ### Fixed
