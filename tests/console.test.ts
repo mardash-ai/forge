@@ -505,6 +505,18 @@ describe('server — auth and the write surface', () => {
     });
   });
 
+  it('favicon.svg is strict XML — no double-hyphen inside comments (breaks <img> rendering)', async () => {
+    // Chrome parses SVG-in-<img> as strict XML. `--` inside an XML comment is illegal, and one
+    // slipped in via CSS custom-property names (`--ember-glow`) in the provenance comment: the
+    // login page's mark rendered as a broken image while the same file served 200 with the right
+    // MIME type. The tab icon masked it by falling back to the ICO.
+    const { readFile } = await import('node:fs/promises');
+    const svg = await readFile(new URL('../console/public/favicon.svg', import.meta.url), 'utf8');
+    for (const m of svg.matchAll(/<!--([\s\S]*?)-->/g)) {
+      expect(m[1], 'XML comments must not contain --').not.toContain('--');
+    }
+  });
+
   it('favicons are served without credentials — a 401 on the login redirect would break the icon', async () => {
     // Browsers auto-probe /favicon.ico and resolve <link rel="icon"> before authentication.
     // Gating them behind auth causes a broken-icon tab on the login redirect page.

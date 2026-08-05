@@ -9,6 +9,15 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.20.2] - 2026-08-05
+
+### Fixed
+- **The login page's mark rendered as a broken image.** `favicon.svg`'s provenance comment named
+  the CSS tokens with their real `--` prefixes — and `--` inside an XML comment is illegal, so
+  Chrome's strict SVG-in-`<img>` parser rejected the whole file while it served 200 with the right
+  MIME type (the tab icon masked it by falling back to the ICO). Comment rewritten without the
+  double hyphens; a test now asserts no XML comment in the SVG contains `--`.
+
 ## [1.20.1] - 2026-08-05
 
 ### Added

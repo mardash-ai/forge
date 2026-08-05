@@ -6,11 +6,11 @@
     properties do not resolve in a standalone favicon document (no cascade, no :root).
 
     Tokens used:
-      --ember-glow:   #ffc48a
-      --ember-core:   #ff8a3c
-      --ember-deep:   #c2410c
-      --bg-inset:     #0a0d0c
-      --line-strong:  #363e3b
+      ember-glow:   #ffc48a
+      ember-core:   #ff8a3c
+      ember-deep:   #c2410c
+      bg-inset:     #0a0d0c
+      line-strong:  #363e3b
 
     Shape: a billet, split. Upper-left triangle = observed/hot (ember gradient).
     Lower-right triangle = not known (hatch in ember colour). The line is the
