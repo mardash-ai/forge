@@ -253,8 +253,13 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
   // Health is public — a probe cannot hold a credential, and it reveals nothing.
   app.get('/healthz', async () => ({ status: 'ok', service: 'forge-console', env: ENV }));
 
+  // Paths that must be served without credentials. Favicons must be reachable even on the 401
+  // challenge page — browsers auto-probe /favicon.ico and resolve <link rel="icon"> before the
+  // user ever enters a password, so gating them behind auth produces a broken-icon tab.
+  const PUBLIC_PATHS = new Set(['/healthz', '/favicon.svg', '/favicon.ico']);
+
   app.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
-    if (req.url === '/healthz') return;
+    if (PUBLIC_PATHS.has(req.url)) return;
     const r = auth.check(req);
     if (!r.ok) {
       reply.header('WWW-Authenticate', r.challenge ?? 'Basic realm="forge console"');

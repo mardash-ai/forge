@@ -365,6 +365,25 @@ describe('server — auth and the write surface', () => {
     expect(res.statusCode).toBe(404);
     await app.close();
   });
+
+  it('favicons are served without credentials — a 401 on the challenge page would break the icon', async () => {
+    // Browsers auto-probe /favicon.ico and resolve <link rel="icon"> before a user enters a
+    // password. Gating them behind auth causes a broken-icon tab on the 401 challenge page,
+    // which is the only page an unauthenticated visitor ever sees.
+    process.env.CONSOLE_BASIC_USER = 'u';
+    process.env.CONSOLE_BASIC_PASS = 'p';
+    const app = buildServer();
+    // No Authorization header — the request is intentionally unauthenticated.
+    const svg = await app.inject({ method: 'GET', url: '/favicon.svg' });
+    const ico = await app.inject({ method: 'GET', url: '/favicon.ico' });
+    // The response is NOT a 401 — the auth gate must not have fired.
+    // (The UI bundle is not built in this test environment, so 404 is the expected
+    // success outcome — the gate let the request through, and the SPA handler
+    // correctly returned 404 because the dist/ file is absent.)
+    expect(svg.statusCode, '/favicon.svg must not return 401').not.toBe(401);
+    expect(ico.statusCode, '/favicon.ico must not return 401').not.toBe(401);
+    await app.close();
+  });
 });
 
 // ── The unified timeline ───────────────────────────────────────────────────────────────────────

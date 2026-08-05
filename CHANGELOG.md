@@ -9,6 +9,18 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.18.1] - 2026-08-05
+
+### Added
+- **Forge console favicon** (`console/public/favicon.svg` + `favicon.ico`). Reproduces the
+  LogoMark — rounded square split by a diagonal, upper-left filled with the ember gradient
+  (observed/hot), lower-right hatched in ember colour (not known) — with all ember hex values
+  hardcoded from `tokens.css` so the icon resolves outside the app's CSS cascade. A 1×1 ICO
+  fallback handles browser `/favicon.ico` auto-probes. `console/index.html` links both. The
+  server exempts `/favicon.svg` and `/favicon.ico` from the Basic-auth gate (mirroring
+  `/healthz`) so the icon renders on the 401 challenge page. Identity use only — never a status
+  signal, per the *ember is identity* rule in `FORGE_CONSOLE.md`.
+
 ## [1.18.0] - 2026-08-03
 
 ### Added

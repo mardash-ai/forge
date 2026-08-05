@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 28 28" fill="none">
+  <!--
+    forge console LogoMark — standalone favicon.
+
+    Ember hex values are hardcoded from console/src/design/tokens.css because CSS custom
+    properties do not resolve in a standalone favicon document (no cascade, no :root).
+
+    Tokens used:
+      --ember-glow:   #ffc48a
+      --ember-core:   #ff8a3c
+      --ember-deep:   #c2410c
+      --bg-inset:     #0a0d0c
+      --line-strong:  #363e3b
+
+    Shape: a billet, split. Upper-left triangle = observed/hot (ember gradient).
+    Lower-right triangle = not known (hatch in ember colour). The line is the
+    sharpest boundary in the product.
+
+    Identity use only — not a status signal.
+  -->
+  <defs>
+    <!-- Ember diagonal gradient: top-left (glow) to bottom-right (deep) -->
+    <linearGradient id="fg-ember-diag" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0"    stop-color="#ffc48a"/>
+      <stop offset="0.5"  stop-color="#ff8a3c"/>
+      <stop offset="1"    stop-color="#c2410c"/>
+    </linearGradient>
+    <!-- 45° hatch in ember-core, matching fg-hatch-ember from SvgDefs -->
+    <pattern id="fg-hatch-ember" width="3" height="3" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="3" stroke="#ff8a3c" stroke-width="0.9" opacity="0.6"/>
+    </pattern>
+    <!-- Clip to the same rounded-rect as the React LogoMark -->
+    <clipPath id="fg-logo-clip">
+      <rect x="2" y="2" width="24" height="24" rx="6.5"/>
+    </clipPath>
+  </defs>
+  <!-- Background -->
+  <rect x="2" y="2" width="24" height="24" rx="6.5" fill="#0a0d0c"/>
+  <g clip-path="url(#fg-logo-clip)">
+    <!-- Upper-left triangle: observed / hot -->
+    <path d="M2 26 L26 2 L2 2 Z" fill="url(#fg-ember-diag)"/>
+    <!-- Lower-right triangle: not known / hatched -->
+    <path d="M2 26 L26 2 L26 26 Z" fill="url(#fg-hatch-ember)"/>
+    <!-- The boundary — bg-inset stroke separates the two halves -->
+    <path d="M2 26 L26 2" stroke="#0a0d0c" stroke-width="1.6"/>
+  </g>
+  <!-- Border ring -->
+  <rect x="2" y="2" width="24" height="24" rx="6.5" stroke="#363e3b" stroke-width="1"/>
+</svg>
