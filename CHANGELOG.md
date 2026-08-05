@@ -9,6 +9,32 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.18.4] - 2026-08-05
+
+### Added
+- **Google OIDC authentication for the forge console.** `ConsoleAuth` gains a `google` mode that
+  activates when `CONSOLE_GOOGLE_CLIENT_ID` + `CONSOLE_GOOGLE_CLIENT_SECRET` are present (OIDC
+  takes priority over Basic). The OIDC flow: `GET /auth/login` redirects to Google with a
+  signed CSRF-state cookie; `GET /auth/callback` exchanges the code, verifies the RS256-signed
+  ID token (aud, iss, exp, email\_verified, **hd == mardash.ai** — the hard domain boundary), and
+  issues a signed HMAC session cookie (`console_session`, 8 h). Non-mardash.ai Google accounts are
+  refused outright — they are not offered Basic credentials or a fallback challenge.
+- **Audit log records the signed-in email as actor.** `actorOf(req)` resolves the session cookie
+  and surfaces the Google email in every audit row, replacing the shared Basic-auth username.
+- **Basic auth retained as a temporary fallback** (removed later in t4 after live OIDC
+  verification). Mode selection is configuration, not code: set the OIDC env vars and Basic is
+  bypassed automatically.
+- **`/auth/login` and `/auth/callback` added to the public-path allowlist.** `/healthz` and the
+  favicons remain public; every other path requires a valid session. The auth gate now strips the
+  query string before the allowlist check (`/auth/callback?code=…` correctly matches
+  `/auth/callback`).
+- **Browser navigation in OIDC mode redirects to `/auth/login`** instead of returning 401
+  (404-page-sized 401 JSON). API calls (`/api/*`) still return 401 so the SPA can handle them.
+- **New env vars**: `CONSOLE_GOOGLE_CLIENT_ID`, `CONSOLE_GOOGLE_CLIENT_SECRET`,
+  `CONSOLE_SESSION_SECRET`, `CONSOLE_PUBLIC_URL`, `CONSOLE_INSECURE_COOKIES` (dev only).
+- **`docs/FORGE_CONSOLE.md` updated** with full Auth section, OIDC flow description, hd-claim
+  enforcement note, and expanded Configuration table.
+
 ## [1.18.3] - 2026-08-05
 
 ### Fixed

@@ -9,7 +9,14 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { readFile } from 'node:fs/promises';
 import { join, normalize, extname } from 'node:path';
-import { timingSafeEqual, createHash } from 'node:crypto';
+import {
+  timingSafeEqual,
+  createHash,
+  createHmac,
+  randomBytes,
+  createVerify,
+  createPublicKey,
+} from 'node:crypto';
 
 import { envelope, type Finding, type MetricIntent, type QuotaGauge, type Revision } from './domain';
 import { aggregate, createRegistry, type ProviderContext, type ProviderRegistry } from './providers/types';
@@ -134,17 +141,207 @@ export interface ConsoleAuth {
   check(req: FastifyRequest): { ok: true; actor: string } | { ok: false; challenge?: string };
 }
 
+// ── Google OIDC — session cookie helpers ──────────────────────────────────────────────────────
+
+/** Cookie names are console-specific — never collide with forge's tenant auth cookies. */
+export const OIDC_SESSION_COOKIE = 'console_session';
+export const OIDC_STATE_COOKIE = 'console_oidc_state';
+const OIDC_SESSION_MAX_AGE_S = 8 * 3600; // 8 h
+const OIDC_STATE_MAX_AGE_S = 600; // 10 min for the OAuth round-trip
+const REQUIRED_HD = 'mardash.ai'; // enforced server-side; hd in the auth URL is a cosmetic hint
+const GOOGLE_OAUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
+const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
+
+/** Very simple cookie header parser — no library needed. */
+export function parseCookieHeader(header: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    const name = part.slice(0, eq).trim();
+    const val = part.slice(eq + 1).trim();
+    if (name) out[name] = val;
+  }
+  return out;
+}
+
 /**
- * Basic auth is the INTERIM. Google OAuth restricted to the workspace domain is built behind the
- * same interface and switches on when its secret is populated — no code change.
+ * Sign an OIDC session cookie.
  *
- * Fails CLOSED: with neither credential configured the console serves nothing rather than serving
- * a production control plane to the internet.
+ * Format: `<email_base64url>.<expiry_unix>.<hmac_sha256_hex>`
+ * The HMAC binds email and expiry together so neither can be altered independently.
+ */
+export function makeSessionCookie(email: string, secret: string): string {
+  const expiry = Math.floor(Date.now() / 1000) + OIDC_SESSION_MAX_AGE_S;
+  const emailB64 = Buffer.from(email, 'utf8').toString('base64url');
+  const hmac = createHmac('sha256', secret).update(`${email}|${expiry}`).digest('hex');
+  return `${emailB64}.${expiry}.${hmac}`;
+}
+
+/**
+ * Verify and parse a session cookie. Returns the email or null if invalid/expired.
+ * The HMAC comparison is constant-time to prevent timing side-channels.
+ */
+export function parseSessionCookie(value: string, secret: string): string | null {
+  const parts = value.split('.');
+  if (parts.length !== 3) return null;
+  let email: string;
+  try {
+    email = Buffer.from(parts[0]!, 'base64url').toString('utf8');
+  } catch {
+    return null;
+  }
+  if (!email) return null;
+  const expiry = Number(parts[1]);
+  if (!Number.isFinite(expiry) || Math.floor(Date.now() / 1000) > expiry) return null;
+  const expected = createHmac('sha256', secret).update(`${email}|${expiry}`).digest('hex');
+  const eBuf = Buffer.from(expected, 'hex');
+  const gBuf = Buffer.from(parts[2] ?? '', 'hex');
+  if (gBuf.length !== eBuf.length) return null;
+  try {
+    if (!timingSafeEqual(gBuf, eBuf)) return null;
+  } catch {
+    return null;
+  }
+  return email;
+}
+
+// ── Google OIDC — ID token verification ───────────────────────────────────────────────────────
+
+export interface GoogleIdClaims {
+  sub: string;
+  email: string;
+  email_verified: boolean;
+  hd?: string;
+  name?: string;
+  iat: number;
+  exp: number;
+  aud: string;
+  iss: string;
+}
+
+/** Module-level JWKS cache — Google keys rotate infrequently (hourly TTL is conservative). */
+let _jwksCache: { keys: unknown[]; at: number } | null = null;
+/** Reset the cache between tests. Never call from production code. */
+export function _resetJwksCache(): void {
+  _jwksCache = null;
+}
+
+async function fetchJwks(): Promise<unknown[]> {
+  if (_jwksCache && Date.now() - _jwksCache.at < 3_600_000) return _jwksCache.keys;
+  const res = await fetch(GOOGLE_JWKS_URL, { signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error(`JWKS fetch ${res.status}`);
+  const body = (await res.json()) as { keys: unknown[] };
+  _jwksCache = { keys: body.keys, at: Date.now() };
+  return body.keys;
+}
+
+/**
+ * Verify a Google ID token end-to-end:
+ *   1. Parse header + payload.
+ *   2. Check alg == RS256 and standard claims (iss, aud, exp).
+ *   3. Enforce hd == mardash.ai — the hard security boundary.
+ *   4. Verify the RSA-SHA256 signature against Google's published JWKS.
+ *
+ * Returns the verified claims or null for ANY failure. The caller must treat null
+ * as "access denied" and must NOT fall back to Basic auth or an unauthenticated state.
+ */
+export async function verifyGoogleIdToken(
+  token: string,
+  clientId: string,
+): Promise<GoogleIdClaims | null> {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+
+  let header: { kid?: string; alg?: string };
+  let payload: GoogleIdClaims;
+  try {
+    header = JSON.parse(Buffer.from(parts[0]!, 'base64url').toString('utf8')) as {
+      kid?: string;
+      alg?: string;
+    };
+    payload = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as GoogleIdClaims;
+  } catch {
+    return null;
+  }
+
+  // alg must be RS256 — reject HS256 algorithm confusion attacks
+  if (header.alg !== 'RS256') return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.exp < now) return null;
+  if (payload.aud !== clientId) return null;
+  if (payload.iss !== 'https://accounts.google.com' && payload.iss !== 'accounts.google.com') {
+    return null;
+  }
+
+  // hd claim is the ENFORCED boundary — a non-mardash.ai Google account is refused here,
+  // not challenged, not shown Basic credentials, not offered an alternative.
+  if (payload.hd !== REQUIRED_HD) return null;
+  if (!payload.email_verified) return null;
+
+  // Signature verification against the live JWKS
+  try {
+    const keys = await fetchJwks();
+    const jwk = keys.find(
+      (k): k is Record<string, unknown> =>
+        typeof k === 'object' &&
+        k !== null &&
+        (k as Record<string, unknown>)['kid'] === header.kid,
+    );
+    if (!jwk) return null;
+    // Type assertion: createPublicKey validates the JWK structure at runtime; TypeScript's
+    // JsonWebKey type is not globally available in all lib targets so we cast through unknown.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pubKey = createPublicKey({ key: jwk as unknown as any, format: 'jwk' });
+    const verifier = createVerify('RSA-SHA256');
+    verifier.update(`${parts[0]}.${parts[1]}`);
+    if (!verifier.verify(pubKey, Buffer.from(parts[2]!, 'base64url'))) return null;
+  } catch {
+    return null;
+  }
+
+  return payload;
+}
+
+// ── Auth factory ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Google OIDC is the primary auth mode; Basic is the INTERIM fallback.
+ * OIDC is selected whenever CONSOLE_GOOGLE_CLIENT_ID + CONSOLE_GOOGLE_CLIENT_SECRET are present.
+ * Basic is selected when those are absent but CONSOLE_BASIC_USER + CONSOLE_BASIC_PASS are set.
+ * Neither configured → fails CLOSED (every request denied, nothing served to the internet).
+ *
+ * The check() for OIDC verifies a signed HMAC session cookie — fast, stateless, no network call
+ * per request. The expensive OIDC code-exchange happens once in /auth/callback.
  */
 export function createAuth(): ConsoleAuth {
+  // OIDC mode: preferred when Google client credentials are present.
+  const googleClientId = process.env.CONSOLE_GOOGLE_CLIENT_ID ?? '';
+  const googleClientSecret = process.env.CONSOLE_GOOGLE_CLIENT_SECRET ?? '';
+  if (googleClientId && googleClientSecret) {
+    const sessionSecret = process.env.CONSOLE_SESSION_SECRET || googleClientSecret;
+    return {
+      mode: 'google',
+      check(req) {
+        const cookieHeader = (req.headers as Record<string, string>).cookie ?? '';
+        const cookies = parseCookieHeader(cookieHeader);
+        const val = cookies[OIDC_SESSION_COOKIE];
+        if (!val) return { ok: false };
+        const email = parseSessionCookie(val, sessionSecret);
+        if (!email) return { ok: false };
+        return { ok: true, actor: email };
+      },
+    };
+  }
+
+  // Basic auth: the INTERIM fallback for pre-OIDC deployments.
   const user = process.env.CONSOLE_BASIC_USER ?? '';
   const pass = process.env.CONSOLE_BASIC_PASS ?? '';
   if (!user || !pass) {
+    // Fails CLOSED: with neither credential configured the console serves nothing rather than
+    // serving a production control plane to the internet.
     return {
       mode: 'basic',
       check: () => ({ ok: false, challenge: 'Basic realm="forge console"' }),
@@ -253,19 +450,168 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
   // Health is public — a probe cannot hold a credential, and it reveals nothing.
   app.get('/healthz', async () => ({ status: 'ok', service: 'forge-console', env: ENV }));
 
-  // Paths that must be served without credentials. Favicons must be reachable even on the 401
-  // challenge page — browsers auto-probe /favicon.ico and resolve <link rel="icon"> before the
-  // user ever enters a password, so gating them behind auth produces a broken-icon tab.
-  const PUBLIC_PATHS = new Set(['/healthz', '/favicon.svg', '/favicon.ico']);
+  // ── OIDC config — read once and close over it for the routes below ──
+  const oidcClientId = process.env.CONSOLE_GOOGLE_CLIENT_ID ?? '';
+  const oidcClientSecret = process.env.CONSOLE_GOOGLE_CLIENT_SECRET ?? '';
+  const oidcSessionSecret = process.env.CONSOLE_SESSION_SECRET || oidcClientSecret;
+  const oidcPublicUrl = (process.env.CONSOLE_PUBLIC_URL ?? '').replace(/\/$/, '') || `http://localhost:${PORT}`;
+  const secureCookies = !process.env.CONSOLE_INSECURE_COOKIES;
+  const cookieFlags = (maxAge: number, path = '/') =>
+    `HttpOnly; ${secureCookies ? 'Secure; ' : ''}SameSite=Lax; Path=${path}; Max-Age=${maxAge}`;
+
+  // Paths that must be served without credentials.
+  //   · /healthz — a probe cannot hold a credential and it reveals nothing.
+  //   · Favicons — browsers auto-probe these before the user enters a password; gating them
+  //     produces a broken-icon tab on the challenge page.
+  //   · /auth/login + /auth/callback — the OIDC round-trip; these ARE the path to authentication.
+  //
+  // NOTE: We strip the query string before matching — /auth/callback?code=…&state=… must match
+  // /auth/callback.  This is a correctness fix for any public path that could carry query params.
+  const PUBLIC_PATHS = new Set([
+    '/healthz',
+    '/favicon.svg',
+    '/favicon.ico',
+    '/auth/login',
+    '/auth/callback',
+  ]);
 
   app.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
-    if (PUBLIC_PATHS.has(req.url)) return;
+    // Strip query string for the allowlist check.
+    const reqPath = req.url.split('?')[0] ?? req.url;
+    if (PUBLIC_PATHS.has(reqPath)) return;
     const r = auth.check(req);
     if (!r.ok) {
-      reply.header('WWW-Authenticate', r.challenge ?? 'Basic realm="forge console"');
+      // Google OIDC mode: redirect browser navigation to the login page; 401 for API calls so the
+      // SPA can handle them programmatically.
+      if (auth.mode === 'google' && !reqPath.startsWith('/api/')) {
+        void reply.code(302).header('Location', '/auth/login').send('');
+        return;
+      }
+      if (r.challenge) reply.header('WWW-Authenticate', r.challenge);
       reply.code(401).send({ error: { code: 'unauthorized', message: 'authentication required' } });
     }
   });
+
+  // ── Google OIDC routes ───────────────────────────────────────────────────────────────────────
+  //
+  // Registered only when the Google credentials are present.  The routes are in PUBLIC_PATHS
+  // regardless so that a mis-hit against an unconfigured server just falls through to the SPA
+  // 404 handler rather than hitting the auth gate and looping.
+
+  if (oidcClientId && oidcClientSecret) {
+    const redirectUri = `${oidcPublicUrl}/auth/callback`;
+
+    /**
+     * GET /auth/login — redirect the browser to Google's authorization endpoint.
+     *
+     * A random state nonce is generated and stored in a short-lived HttpOnly cookie.  The nonce
+     * is echoed back by Google in the callback query string; matching it against the cookie is the
+     * CSRF protection for the OAuth flow.
+     *
+     * The `hd` parameter is a COSMETIC HINT to Google's consent screen ("prefer a mardash.ai
+     * account").  It is NOT a security control.  The actual enforcement is the `hd` claim check
+     * inside verifyGoogleIdToken on the callback route.
+     */
+    app.get('/auth/login', async (_req, reply) => {
+      const state = randomBytes(16).toString('hex');
+      const url = new URL(GOOGLE_OAUTH_URL);
+      url.searchParams.set('client_id', oidcClientId);
+      url.searchParams.set('response_type', 'code');
+      url.searchParams.set('scope', 'openid email profile');
+      url.searchParams.set('redirect_uri', redirectUri);
+      url.searchParams.set('state', state);
+      url.searchParams.set('hd', REQUIRED_HD); // cosmetic hint only
+      reply.header(
+        'Set-Cookie',
+        `${OIDC_STATE_COOKIE}=${state}; ${cookieFlags(OIDC_STATE_MAX_AGE_S, '/auth')}`,
+      );
+      reply.code(302);
+      reply.header('Location', url.toString());
+      return reply.send('');
+    });
+
+    /**
+     * GET /auth/callback — receive the authorization code, exchange it, verify the ID token.
+     *
+     * Security steps in order:
+     *   1. Reject Google error responses (e.g. `error=access_denied`).
+     *   2. Verify the state param matches the cookie — CSRF protection.
+     *   3. Exchange the code for tokens via Google's token endpoint.
+     *   4. verifyGoogleIdToken() checks alg, iss, aud, exp, hd==mardash.ai, email_verified, sig.
+     *   5. Issue a signed HMAC session cookie carrying the authenticated email.
+     *
+     * A non-mardash.ai Google account fails step 4 and is REFUSED — not challenged, not offered
+     * Basic auth, not given another attempt.
+     */
+    app.get('/auth/callback', async (req, reply) => {
+      const q = req.query as { code?: string; state?: string; error?: string };
+
+      if (q.error) {
+        return reply.code(302).header('Location', `/?error=${encodeURIComponent(q.error)}`).send('');
+      }
+
+      // CSRF: state param must match the cookie we set in /auth/login.
+      const reqCookies = parseCookieHeader((req.headers as Record<string, string>).cookie ?? '');
+      const stateCookie = reqCookies[OIDC_STATE_COOKIE] ?? '';
+      if (!q.state || !stateCookie || q.state !== stateCookie) {
+        return reply.code(302).header('Location', '/?error=state_mismatch').send('');
+      }
+
+      if (!q.code) {
+        return reply.code(302).header('Location', '/?error=no_code').send('');
+      }
+
+      // Exchange authorization code for tokens.
+      let idToken: string | null = null;
+      try {
+        const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            code: q.code,
+            client_id: oidcClientId,
+            client_secret: oidcClientSecret,
+            redirect_uri: redirectUri,
+            grant_type: 'authorization_code',
+          }).toString(),
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!tokenRes.ok) {
+          return reply.code(302).header('Location', '/?error=token_exchange_failed').send('');
+        }
+        const tokens = (await tokenRes.json()) as { id_token?: string };
+        idToken = tokens.id_token ?? null;
+      } catch {
+        return reply.code(302).header('Location', '/?error=token_exchange_failed').send('');
+      }
+
+      if (!idToken) {
+        return reply.code(302).header('Location', '/?error=no_id_token').send('');
+      }
+
+      // Verify ID token — aud, hd (mardash.ai enforcement), signature.
+      let claims: GoogleIdClaims | null = null;
+      try {
+        claims = await verifyGoogleIdToken(idToken, oidcClientId);
+      } catch {
+        // verifyGoogleIdToken returns null on failure but could throw on unexpected input
+      }
+
+      if (!claims) {
+        // Wrong domain, expired token, invalid signature, etc. Refuse and do not fall back.
+        return reply.code(302).header('Location', '/?error=access_denied').send('');
+      }
+
+      // Issue a signed session cookie. The actor is the verified email, recorded in every
+      // subsequent audit log row — not a shared username.
+      const sessionVal = makeSessionCookie(claims.email, oidcSessionSecret);
+      reply.header('Set-Cookie', [
+        `${OIDC_SESSION_COOKIE}=${sessionVal}; ${cookieFlags(OIDC_SESSION_MAX_AGE_S)}`,
+        `${OIDC_STATE_COOKIE}=; ${cookieFlags(0, '/auth')}`, // clear the CSRF cookie
+      ]);
+      return reply.code(302).header('Location', '/').send('');
+    });
+  }
 
   const actorOf = (req: FastifyRequest): string => {
     const r = auth.check(req);

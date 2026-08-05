@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { buildServiceGraph } from '../src/console/correlate/graph';
 import { runFindings } from '../src/console/findings';
 import {
@@ -7,7 +7,18 @@ import {
   type InventoryProvider,
   type Provider,
 } from '../src/console/providers/types';
-import { buildServer, WRITE_ROUTES, createAuth } from '../src/console/server';
+import {
+  buildServer,
+  WRITE_ROUTES,
+  createAuth,
+  makeSessionCookie,
+  parseSessionCookie,
+  verifyGoogleIdToken,
+  _resetJwksCache,
+  OIDC_SESSION_COOKIE,
+  OIDC_STATE_COOKIE,
+  parseCookieHeader,
+} from '../src/console/server';
 import type { InfraResource } from '../src/console/domain';
 
 /**
@@ -383,6 +394,485 @@ describe('server — auth and the write surface', () => {
     expect(svg.statusCode, '/favicon.svg must not return 401').not.toBe(401);
     expect(ico.statusCode, '/favicon.ico must not return 401').not.toBe(401);
     await app.close();
+  });
+});
+
+// ── Google OIDC auth mode ─────────────────────────────────────────────────────────────────────
+
+/**
+ * OIDC tests are self-contained: RSA keys are generated in-process, JWKS + token endpoints are
+ * stubbed with globalThis.fetch, and no real Google credential is required.
+ */
+
+import { generateKeyPairSync, createSign } from 'node:crypto';
+
+/** Helper: set OIDC env vars for the duration of a synchronous callback, then restore. */
+function withOidcEnv<T>(
+  extra: Record<string, string>,
+  fn: () => T,
+): T {
+  const OIDC: Record<string, string> = {
+    CONSOLE_GOOGLE_CLIENT_ID: 'test-client-id',
+    CONSOLE_GOOGLE_CLIENT_SECRET: 'test-client-secret',
+    CONSOLE_SESSION_SECRET: 'test-session-secret-long-enough',
+    CONSOLE_INSECURE_COOKIES: '1',
+    ...extra,
+  };
+  const prev: Record<string, string | undefined> = {};
+  for (const k of Object.keys(OIDC)) { prev[k] = process.env[k]; process.env[k] = OIDC[k]!; }
+  // Also ensure Basic vars don't bleed in
+  const prevBU = process.env.CONSOLE_BASIC_USER;
+  const prevBP = process.env.CONSOLE_BASIC_PASS;
+  delete process.env.CONSOLE_BASIC_USER;
+  delete process.env.CONSOLE_BASIC_PASS;
+  try { return fn(); }
+  finally {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+    if (prevBU !== undefined) process.env.CONSOLE_BASIC_USER = prevBU;
+    if (prevBP !== undefined) process.env.CONSOLE_BASIC_PASS = prevBP;
+  }
+}
+
+/** Build a signed RS256 JWT for testing (2048-bit key; ~50 ms). */
+function makeTestJwt(
+  payload: Record<string, unknown>,
+  privateKey: ReturnType<typeof generateKeyPairSync>['privateKey'],
+  kid = 'test-key-1',
+): string {
+  const header = { alg: 'RS256', kid };
+  const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sigInput = `${headerB64}.${payloadB64}`;
+  const signer = createSign('RSA-SHA256');
+  signer.update(sigInput);
+  const sig = signer.sign(privateKey).toString('base64url');
+  return `${sigInput}.${sig}`;
+}
+
+/** Stub globalThis.fetch to serve a JWKS containing only the given public JWK. */
+function stubJwksFetch(jwk: object, kid: string) {
+  const real = globalThis.fetch;
+  const key = { ...jwk, kid };
+  globalThis.fetch = (async (url: string) => {
+    if (String(url).includes('oauth2/v3/certs')) {
+      return new Response(JSON.stringify({ keys: [key] }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    throw new Error(`unexpected fetch in test: ${url}`);
+  }) as never;
+  return () => { globalThis.fetch = real; _resetJwksCache(); };
+}
+
+describe('parseCookieHeader — basic correctness', () => {
+  it('parses a single cookie', () => {
+    expect(parseCookieHeader('foo=bar')).toEqual({ foo: 'bar' });
+  });
+  it('parses multiple cookies separated by semi-colons', () => {
+    const out = parseCookieHeader('a=1; b=2; c=3');
+    expect(out).toEqual({ a: '1', b: '2', c: '3' });
+  });
+  it('handles an empty header gracefully', () => {
+    expect(parseCookieHeader('')).toEqual({});
+  });
+});
+
+describe('OIDC session cookie — create + parse round-trip', () => {
+  it('round-trips an email correctly', () => {
+    const val = makeSessionCookie('mark@mardash.ai', 'secret');
+    expect(parseSessionCookie(val, 'secret')).toBe('mark@mardash.ai');
+  });
+
+  it('rejects a tampered email part', () => {
+    const val = makeSessionCookie('mark@mardash.ai', 'secret');
+    const parts = val.split('.');
+    // Replace the email base64 with a different one
+    parts[0] = Buffer.from('evil@mardash.ai', 'utf8').toString('base64url');
+    expect(parseSessionCookie(parts.join('.'), 'secret')).toBeNull();
+  });
+
+  it('rejects a tampered expiry', () => {
+    const val = makeSessionCookie('mark@mardash.ai', 'secret');
+    const parts = val.split('.');
+    parts[1] = String(Number(parts[1]) + 99999); // push expiry into the future
+    expect(parseSessionCookie(parts.join('.'), 'secret')).toBeNull();
+  });
+
+  it('rejects a cookie signed with a different secret', () => {
+    const val = makeSessionCookie('mark@mardash.ai', 'secret-A');
+    expect(parseSessionCookie(val, 'secret-B')).toBeNull();
+  });
+
+  it('rejects a malformed value', () => {
+    expect(parseSessionCookie('not-a-cookie', 'secret')).toBeNull();
+    expect(parseSessionCookie('', 'secret')).toBeNull();
+  });
+});
+
+describe('createAuth — OIDC mode selection', () => {
+  it('selects google mode when OIDC credentials are configured', () => {
+    withOidcEnv({}, () => {
+      const auth = createAuth();
+      expect(auth.mode).toBe('google');
+    });
+  });
+
+  it('OIDC takes priority over Basic when both are configured', () => {
+    withOidcEnv({ CONSOLE_BASIC_USER: 'u', CONSOLE_BASIC_PASS: 'p' }, () => {
+      // The withOidcEnv helper deletes Basic vars, but even if they were present OIDC wins.
+      const auth = createAuth();
+      expect(auth.mode).toBe('google');
+    });
+  });
+
+  it('OIDC check() returns ok=false when no session cookie is present', () => {
+    withOidcEnv({}, () => {
+      const auth = createAuth();
+      expect(auth.check({ headers: {} } as never).ok).toBe(false);
+    });
+  });
+
+  it('OIDC check() returns ok=true with a valid session cookie and reports the email as actor', () => {
+    withOidcEnv({}, () => {
+      const auth = createAuth();
+      const secret = 'test-session-secret-long-enough';
+      const cookie = makeSessionCookie('mark@mardash.ai', secret);
+      const r = auth.check({
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+      } as never);
+      expect(r.ok).toBe(true);
+      // The actor must be the email — not a shared username.
+      if (r.ok) expect(r.actor).toBe('mark@mardash.ai');
+    });
+  });
+
+  it('OIDC check() returns ok=false for a tampered cookie', () => {
+    withOidcEnv({}, () => {
+      const auth = createAuth();
+      const r = auth.check({
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=bogus.1234567890.deadbeef` },
+      } as never);
+      expect(r.ok).toBe(false);
+    });
+  });
+});
+
+describe('server — Google OIDC routes', () => {
+  it('/auth/login redirects to Google with the required parameters', async () => {
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      const res = await app.inject({ method: 'GET', url: '/auth/login' });
+      expect(res.statusCode).toBe(302);
+      const loc = new URL(String(res.headers.location));
+      expect(loc.hostname).toBe('accounts.google.com');
+      expect(loc.searchParams.get('client_id')).toBe('test-client-id');
+      expect(loc.searchParams.get('response_type')).toBe('code');
+      expect(loc.searchParams.get('scope')).toContain('openid');
+      // hd is a cosmetic hint; the security check is server-side on the callback
+      expect(loc.searchParams.get('hd')).toBe('mardash.ai');
+      expect(loc.searchParams.get('state')).toBeTruthy();
+      await app.close();
+    });
+  });
+
+  it('/auth/login sets a short-lived HttpOnly state cookie for CSRF protection', async () => {
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      const res = await app.inject({ method: 'GET', url: '/auth/login' });
+      const setCookie = String(res.headers['set-cookie'] ?? '');
+      expect(setCookie).toContain(`${OIDC_STATE_COOKIE}=`);
+      expect(setCookie).toContain('HttpOnly');
+      await app.close();
+    });
+  });
+
+  it('/auth/callback with state mismatch is refused and no session cookie is issued', async () => {
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/auth/callback?code=abc&state=WRONG',
+        headers: { cookie: `${OIDC_STATE_COOKIE}=CORRECT` },
+      });
+      expect(res.statusCode).toBe(302);
+      expect(String(res.headers.location)).toContain('error=state_mismatch');
+      // No session cookie must be present in the response
+      const cookies = ([] as string[]).concat(res.headers['set-cookie'] ?? []);
+      expect(cookies.some((c) => c.startsWith(`${OIDC_SESSION_COOKIE}=`))).toBe(false);
+      await app.close();
+    });
+  });
+
+  it('/auth/callback without a code param is refused', async () => {
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      const state = 'test-nonce';
+      const res = await app.inject({
+        method: 'GET',
+        url: `/auth/callback?state=${state}`,
+        headers: { cookie: `${OIDC_STATE_COOKIE}=${state}` },
+      });
+      expect(res.statusCode).toBe(302);
+      expect(String(res.headers.location)).toContain('error=no_code');
+      await app.close();
+    });
+  });
+
+  it('/auth/callback with a failed token exchange is refused gracefully', async () => {
+    const real = globalThis.fetch;
+    globalThis.fetch = (async () => new Response('{}', { status: 400 })) as never;
+    try {
+      await withOidcEnv({}, async () => {
+        const app = buildServer();
+        const state = 'test-nonce';
+        const res = await app.inject({
+          method: 'GET',
+          url: `/auth/callback?code=bad-code&state=${state}`,
+          headers: { cookie: `${OIDC_STATE_COOKIE}=${state}` },
+        });
+        expect(res.statusCode).toBe(302);
+        expect(String(res.headers.location)).toContain('error=token_exchange_failed');
+        await app.close();
+      });
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
+  it('/auth/callback with a valid mardash.ai token issues a session cookie with the email', async () => {
+    const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const jwk = publicKey.export({ format: 'jwk' });
+    const restore = stubJwksFetch(jwk, 'test-key-1');
+    const real = globalThis.fetch;
+
+    const now = Math.floor(Date.now() / 1000);
+    const idToken = makeTestJwt(
+      {
+        sub: 'google-sub-1',
+        email: 'mark@mardash.ai',
+        email_verified: true,
+        hd: 'mardash.ai',
+        iat: now,
+        exp: now + 3600,
+        aud: 'test-client-id',
+        iss: 'https://accounts.google.com',
+      },
+      privateKey,
+    );
+
+    // Intercept both the token endpoint and the JWKS endpoint.
+    globalThis.fetch = (async (url: string) => {
+      if (String(url).includes('oauth2.googleapis.com/token')) {
+        return new Response(JSON.stringify({ id_token: idToken, access_token: 'at', token_type: 'Bearer' }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      // JWKS endpoint handled by stubJwksFetch already installed above.
+      if (String(url).includes('oauth2/v3/certs')) {
+        return new Response(JSON.stringify({ keys: [{ ...jwk, kid: 'test-key-1' }] }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as never;
+
+    try {
+      await withOidcEnv({}, async () => {
+        const app = buildServer();
+        const state = 'test-nonce-valid';
+        const res = await app.inject({
+          method: 'GET',
+          url: `/auth/callback?code=real-code&state=${state}`,
+          headers: { cookie: `${OIDC_STATE_COOKIE}=${state}` },
+        });
+        expect(res.statusCode).toBe(302);
+        expect(String(res.headers.location)).toBe('/');
+        const cookies = ([] as string[]).concat(res.headers['set-cookie'] ?? []);
+        const sessionCookie = cookies.find((c) => c.startsWith(`${OIDC_SESSION_COOKIE}=`));
+        expect(sessionCookie).toBeTruthy();
+        expect(sessionCookie).toContain('HttpOnly');
+        // The email must be recoverable from the cookie value
+        const val = sessionCookie!.split(';')[0]!.split('=').slice(1).join('=');
+        const secret = 'test-session-secret-long-enough';
+        expect(parseSessionCookie(val, secret)).toBe('mark@mardash.ai');
+        await app.close();
+      });
+    } finally {
+      globalThis.fetch = real;
+      restore();
+    }
+  });
+
+  it('/auth/callback with a non-mardash.ai account is refused (hd enforcement)', async () => {
+    const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const jwk = publicKey.export({ format: 'jwk' });
+    const now = Math.floor(Date.now() / 1000);
+    // Token with hd=gmail.com — a valid Google token but wrong domain
+    const idToken = makeTestJwt(
+      {
+        sub: 'google-sub-2',
+        email: 'attacker@gmail.com',
+        email_verified: true,
+        hd: 'gmail.com',
+        iat: now,
+        exp: now + 3600,
+        aud: 'test-client-id',
+        iss: 'https://accounts.google.com',
+      },
+      privateKey,
+    );
+    const real = globalThis.fetch;
+    globalThis.fetch = (async (url: string) => {
+      if (String(url).includes('oauth2.googleapis.com/token')) {
+        return new Response(JSON.stringify({ id_token: idToken }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (String(url).includes('oauth2/v3/certs')) {
+        return new Response(JSON.stringify({ keys: [{ ...jwk, kid: 'test-key-1' }] }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as never;
+    try {
+      await withOidcEnv({}, async () => {
+        const app = buildServer();
+        const state = 'test-nonce-evil';
+        const res = await app.inject({
+          method: 'GET',
+          url: `/auth/callback?code=evil-code&state=${state}`,
+          headers: { cookie: `${OIDC_STATE_COOKIE}=${state}` },
+        });
+        expect(res.statusCode).toBe(302);
+        expect(String(res.headers.location)).toContain('error=access_denied');
+        // No session cookie — the non-mardash account is refused, not challenged
+        const cookies = ([] as string[]).concat(res.headers['set-cookie'] ?? []);
+        expect(cookies.some((c) => c.startsWith(`${OIDC_SESSION_COOKIE}=`))).toBe(false);
+        await app.close();
+      });
+    } finally {
+      globalThis.fetch = real;
+      _resetJwksCache();
+    }
+  });
+
+  it('/healthz is public in OIDC mode (a probe cannot hold a session cookie)', async () => {
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      const res = await app.inject({ method: 'GET', url: '/healthz' });
+      expect(res.statusCode).toBe(200);
+      await app.close();
+    });
+  });
+
+  it('unauthenticated browser navigation in OIDC mode redirects to /auth/login', async () => {
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      // A bare GET to / with no session cookie must redirect to /auth/login, NOT return 401.
+      const res = await app.inject({ method: 'GET', url: '/' });
+      expect(res.statusCode).toBe(302);
+      expect(String(res.headers.location)).toBe('/auth/login');
+      await app.close();
+    });
+  });
+
+  it('unauthenticated /api calls in OIDC mode return 401 (SPA handles the redirect)', async () => {
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      const res = await app.inject({ method: 'GET', url: '/api/bootstrap' });
+      expect(res.statusCode).toBe(401);
+      // No Basic challenge — OIDC uses cookies, not HTTP auth
+      expect(res.headers['www-authenticate']).toBeUndefined();
+      await app.close();
+    });
+  });
+});
+
+describe('verifyGoogleIdToken — the ID token security checks', () => {
+  const CLIENT_ID = 'unit-test-client';
+  let privateKey: ReturnType<typeof generateKeyPairSync>['privateKey'];
+  let publicJwk: Record<string, unknown>;
+  let restoreJwks: () => void;
+
+  // One key pair for the whole suite — generation is the expensive step
+  beforeAll(() => {
+    const kp = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    privateKey = kp.privateKey;
+    publicJwk = kp.publicKey.export({ format: 'jwk' }) as Record<string, unknown>;
+  });
+
+  beforeEach(() => {
+    restoreJwks = stubJwksFetch(publicJwk, 'test-key-1');
+  });
+  afterEach(() => {
+    restoreJwks();
+  });
+
+  function validPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    const now = Math.floor(Date.now() / 1000);
+    return {
+      sub: 'sub-1',
+      email: 'mark@mardash.ai',
+      email_verified: true,
+      hd: 'mardash.ai',
+      iat: now,
+      exp: now + 3600,
+      aud: CLIENT_ID,
+      iss: 'https://accounts.google.com',
+      ...overrides,
+    };
+  }
+
+  it('accepts a valid mardash.ai token', async () => {
+    const token = makeTestJwt(validPayload(), privateKey);
+    const claims = await verifyGoogleIdToken(token, CLIENT_ID);
+    expect(claims).not.toBeNull();
+    expect(claims?.email).toBe('mark@mardash.ai');
+    expect(claims?.hd).toBe('mardash.ai');
+  });
+
+  it('rejects a token with wrong hd — the primary security boundary', async () => {
+    const token = makeTestJwt(validPayload({ hd: 'gmail.com', email: 'x@gmail.com' }), privateKey);
+    expect(await verifyGoogleIdToken(token, CLIENT_ID)).toBeNull();
+  });
+
+  it('rejects a token with no hd claim (personal Google account)', async () => {
+    const { hd: _hd, ...noHd } = validPayload() as Record<string, unknown>;
+    const token = makeTestJwt(noHd, privateKey);
+    expect(await verifyGoogleIdToken(token, CLIENT_ID)).toBeNull();
+  });
+
+  it('rejects a token with wrong audience', async () => {
+    const token = makeTestJwt(validPayload({ aud: 'wrong-client-id' }), privateKey);
+    expect(await verifyGoogleIdToken(token, CLIENT_ID)).toBeNull();
+  });
+
+  it('rejects an expired token', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const token = makeTestJwt(validPayload({ iat: now - 7200, exp: now - 3600 }), privateKey);
+    expect(await verifyGoogleIdToken(token, CLIENT_ID)).toBeNull();
+  });
+
+  it('rejects an unverified email', async () => {
+    const token = makeTestJwt(validPayload({ email_verified: false }), privateKey);
+    expect(await verifyGoogleIdToken(token, CLIENT_ID)).toBeNull();
+  });
+
+  it('rejects a token with a tampered payload (signature mismatch)', async () => {
+    const token = makeTestJwt(validPayload(), privateKey);
+    const parts = token.split('.');
+    // Swap out the payload with different claims
+    parts[1] = Buffer.from(JSON.stringify({ ...validPayload(), hd: 'evil.com' })).toString('base64url');
+    expect(await verifyGoogleIdToken(parts.join('.'), CLIENT_ID)).toBeNull();
+  });
+
+  it('rejects a completely malformed token', async () => {
+    expect(await verifyGoogleIdToken('not-a-jwt', CLIENT_ID)).toBeNull();
+    expect(await verifyGoogleIdToken('a.b', CLIENT_ID)).toBeNull();
+    expect(await verifyGoogleIdToken('', CLIENT_ID)).toBeNull();
   });
 });
 
