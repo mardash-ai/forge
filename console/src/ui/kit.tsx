@@ -86,6 +86,34 @@ export function Unknown({ reason, label = 'unknown' }: { reason: string; label?:
 }
 
 /**
+ * An esoteric term with its meaning a mouse-over away.
+ *
+ * The console is an operator pane, and an operator should never have to leave it to look up what a
+ * column header means. Every term the UI shows that a competent operator might still not know is
+ * defined ONCE here; a term missing from the glossary renders as plain text, so an undefined entry
+ * is visible in review rather than a runtime surprise. Industry-basic terms (DNS, TLS, IAM) stay
+ * out — a glossary that defines everything defines nothing.
+ */
+const GLOSSARY: Record<string, string> = {
+  PITR: 'Point-in-time recovery — the transaction log is retained (7 days here) so the database can be restored to ANY moment in that window, not just to the most recent backup snapshot.',
+  'Conf.':
+    'Confidence — how sure the console is that this discovered binding is correct. Services are joined on conventions (image name, host map, secret prefix), each with a stated confidence and reason; nothing is declared by hand.',
+};
+
+export function Abbr({ term }: { term: string }) {
+  const gloss = GLOSSARY[term];
+  if (!gloss) return <>{term}</>;
+  return (
+    <abbr
+      title={gloss}
+      style={{ textDecoration: 'underline dotted', textUnderlineOffset: 3, cursor: 'help' }}
+    >
+      {term}
+    </abbr>
+  );
+}
+
+/**
  * Where a fact came from. A hand-typed expiry must never read as an observed one — that is the
  * difference between "this token expires on the 14th" and "somebody believed it did".
  */

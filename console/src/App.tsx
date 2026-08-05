@@ -12,6 +12,7 @@ import {
   Select,
   Skeleton,
   StatTile,
+  Abbr,
   Status,
   Table,
   Td,
@@ -1010,7 +1011,7 @@ function DbBackupPosture({ resources }: { resources: Resource[] }) {
       subtitle="Automated backup configuration and most-recent backup run for each database instance. Sits alongside the inventory row — not a separate screen."
       pad={false}
     >
-      <Table head={['Instance', 'Backups', 'PITR', 'Latest run', 'When', 'Type']}>
+      <Table head={['Instance', 'Backups', <Abbr term="PITR" />, 'Latest run', 'When', 'Type']}>
         {dbs.map((r) => {
           const isGcpSql = r.native_type === 'sqladmin.googleapis.com/Instance';
           const runStatus = r.attributes['backup_runs_status'];
@@ -1140,7 +1141,7 @@ function Services() {
               subtitle={`${s.bindings.length} binding${s.bindings.length === 1 ? '' : 's'}`}
               pad={false}
             >
-              <Table head={['Binding', 'Value', 'Conf.', 'Rule', 'Why']}>
+              <Table head={['Binding', 'Value', <Abbr term="Conf." />, 'Rule', 'Why']}>
                 {s.bindings.map((b, i) => (
                   <tr key={i}>
                     <Td>{b.kind}</Td>
