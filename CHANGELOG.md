@@ -9,6 +9,15 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.18.3] - 2026-08-05
+
+### Fixed
+- **`console/public/favicon.ico` is the real mark, not a 1×1 stub.** 1.18.1 shipped a single
+  ember-coloured pixel as the ICO fallback, so Safari (which ignores SVG favicons) and anything
+  auto-probing `/favicon.ico` got a blank-ish square instead of the LogoMark. The ICO now embeds
+  16×16 + 32×32 PNG renders of `favicon.svg` (rasterized from the SVG itself, so the two files
+  cannot drift). The SVG and the auth-gate exemptions are unchanged.
+
 ## [1.18.2] - 2026-08-05
 
 ### Added
