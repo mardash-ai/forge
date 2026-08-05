@@ -205,6 +205,136 @@ describe('findings — report-only, and driven by things that actually happened'
     expect(f.find((x) => x.rule === 'db-single-zone')?.severity).toBe('info');
   });
 
+  // ── backup run health (databaseBackupRunHealth rule) ────────────────────────────────────────
+
+  it('fires db-backup-run-failed (critical) when the most recent run FAILED', () => {
+    const f = runFindings({
+      ...base,
+      resources: [
+        r({
+          name: 'pg',
+          kind: 'db.instance',
+          attributes: {
+            backups: true,
+            pitr: true,
+            backup_runs_status: 'ok',
+            backup_last_status: 'FAILED',
+            backup_last_type: 'AUTOMATED',
+            backup_last_end_time: '2026-07-31T23:00:00Z',
+            backup_recent_failures: 1,
+          },
+        }),
+      ],
+    });
+    expect(f.find((x) => x.rule === 'db-backup-run-failed')?.severity).toBe('critical');
+  });
+
+  it('fires db-backup-stale (warn) when the last backup is older than 26 h', () => {
+    // base.now = 2026-08-01T00:00:00Z; last backup ended 2026-07-30T21:00:00Z → 27 h ago
+    const f = runFindings({
+      ...base,
+      resources: [
+        r({
+          name: 'pg',
+          kind: 'db.instance',
+          attributes: {
+            backups: true,
+            pitr: true,
+            backup_runs_status: 'ok',
+            backup_last_status: 'SUCCESSFUL',
+            backup_last_type: 'AUTOMATED',
+            backup_last_end_time: '2026-07-30T21:00:00Z',
+            backup_recent_failures: 0,
+          },
+        }),
+      ],
+    });
+    expect(f.find((x) => x.rule === 'db-backup-stale')?.severity).toBe('warn');
+  });
+
+  it('does NOT fire db-backup-stale for a recent successful backup (within 26 h)', () => {
+    // last backup ended 2026-08-01T00:00:00Z — exactly at now, 0 h ago
+    const f = runFindings({
+      ...base,
+      resources: [
+        r({
+          name: 'pg',
+          kind: 'db.instance',
+          attributes: {
+            backups: true,
+            pitr: true,
+            backup_runs_status: 'ok',
+            backup_last_status: 'SUCCESSFUL',
+            backup_last_type: 'AUTOMATED',
+            backup_last_end_time: '2026-08-01T00:00:00Z',
+            backup_recent_failures: 0,
+          },
+        }),
+      ],
+    });
+    expect(f.some((x) => x.rule === 'db-backup-run-failed')).toBe(false);
+    expect(f.some((x) => x.rule === 'db-backup-stale')).toBe(false);
+  });
+
+  it('does NOT fire backup rules when a run is currently RUNNING', () => {
+    // An in-progress run must not trigger the stale alarm even if the END time is absent.
+    const f = runFindings({
+      ...base,
+      resources: [
+        r({
+          name: 'pg',
+          kind: 'db.instance',
+          attributes: {
+            backups: true,
+            backup_runs_status: 'ok',
+            backup_last_status: 'RUNNING',
+            backup_last_end_time: null,
+            backup_recent_failures: 0,
+          },
+        }),
+      ],
+    });
+    expect(f.some((x) => x.rule === 'db-backup-run-failed')).toBe(false);
+    expect(f.some((x) => x.rule === 'db-backup-stale')).toBe(false);
+  });
+
+  it('fires db-backup-api-error (warn) when the backupRuns API was unreachable', () => {
+    const f = runFindings({
+      ...base,
+      resources: [
+        r({
+          name: 'pg',
+          kind: 'db.instance',
+          attributes: {
+            backups: true,
+            backup_runs_status: 'api_error',
+            backup_runs_error: 'GCP 403 https://sqladmin.googleapis.com/...',
+          },
+        }),
+      ],
+    });
+    expect(f.find((x) => x.rule === 'db-backup-api-error')?.severity).toBe('warn');
+  });
+
+  it('does NOT fire backup-run rules when backups are disabled (db-no-backups handles that)', () => {
+    const f = runFindings({
+      ...base,
+      resources: [
+        r({
+          name: 'pg',
+          kind: 'db.instance',
+          scope: 'zonal',
+          attributes: { backups: false, backup_runs_status: 'disabled' },
+        }),
+      ],
+    });
+    expect(f.some((x) => x.rule === 'db-backup-run-failed')).toBe(false);
+    expect(f.some((x) => x.rule === 'db-backup-stale')).toBe(false);
+    expect(f.some((x) => x.rule === 'db-backup-api-error')).toBe(false);
+    // db-no-backups still fires — the backup-run rule defers to it
+    expect(f.some((x) => x.rule === 'db-no-backups')).toBe(true);
+  });
+
   it('escalates an expiring credential as the date approaches', () => {
     const soon = new Date('2026-08-04T00:00:00Z').toISOString(); // 3 days out
     const later = new Date('2026-08-20T00:00:00Z').toISOString(); // 19 days out

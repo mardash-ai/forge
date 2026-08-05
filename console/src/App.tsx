@@ -981,9 +981,116 @@ function Inventory() {
               </Card>
             );
           })}
+          <DbBackupPosture resources={q.data ?? []} />
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Cloud SQL backup posture — shown inside the Inventory screen alongside the scope groups.
+ *
+ * Four outcomes, all explicitly worded so "empty" is never rendered as a blank list:
+ *   (a) sqladmin/backupRuns unreachable or errored — the API said so, posture unknown
+ *   (b) automated backups disabled on the instance — no runs exist by design
+ *   (c) native_type is NOT sqladmin.googleapis.com/Instance — compose/data-plane db, no cloud backup
+ *   (d) runs fetched but list is empty — no runs on record yet
+ *
+ * A healthy recent backup renders status + time + type so the posture reads at a glance.
+ */
+function DbBackupPosture({ resources }: { resources: Resource[] }) {
+  const dbs = resources.filter((r) => r.kind === 'db.instance');
+  if (dbs.length === 0) return null;
+
+  return (
+    <Card
+      eyebrow={`${dbs.length} db.instance${dbs.length === 1 ? '' : 's'}`}
+      title="Cloud SQL backup posture"
+      subtitle="Automated backup configuration and most-recent backup run for each database instance. Sits alongside the inventory row — not a separate screen."
+      pad={false}
+    >
+      <Table head={['Instance', 'Backups', 'PITR', 'Latest run', 'When', 'Type']}>
+        {dbs.map((r) => {
+          const isGcpSql = r.native_type === 'sqladmin.googleapis.com/Instance';
+          const runStatus = r.attributes['backup_runs_status'];
+          const lastStatus = r.attributes['backup_last_status'];
+          const lastEndTime = r.attributes['backup_last_end_time'];
+          const lastType = r.attributes['backup_last_type'];
+
+          // Three distinct explicit reasons for an absent run list:
+          let runCell: ReactNode;
+          let whenCell: ReactNode = '—';
+          let typeCell: ReactNode = '—';
+
+          if (!isGcpSql) {
+            // (c) Not a GCP Cloud SQL instance — compose/data-plane Postgres, no cloud backup.
+            runCell = (
+              <Note>No cloud backup mechanism — compose-managed database</Note>
+            );
+          } else if (runStatus === 'api_error') {
+            // (a) sqladmin/backupRuns unreachable or returned an error.
+            runCell = (
+              <Note>Backup history unavailable — backupRuns API error</Note>
+            );
+          } else if (runStatus === 'disabled' || !r.attributes['backups']) {
+            // (b) Automated backups disabled on this instance.
+            runCell = (
+              <Note>Automated backups disabled — no runs</Note>
+            );
+          } else if (runStatus === 'none' || !lastStatus) {
+            // No runs on record even though backups are enabled.
+            runCell = (
+              <Note>No runs on record</Note>
+            );
+          } else {
+            // We have run data — show status, timing, type.
+            const tone: StatusTone =
+              lastStatus === 'SUCCESSFUL'
+                ? 'ok'
+                : lastStatus === 'FAILED'
+                  ? 'crit'
+                  : lastStatus === 'RUNNING'
+                    ? 'info'
+                    : 'neutral';
+            runCell = <Status tone={tone}>{String(lastStatus).toLowerCase()}</Status>;
+            whenCell = lastEndTime ? (
+              <span title={String(lastEndTime)}>{relative(String(lastEndTime))}</span>
+            ) : (
+              '—'
+            );
+            typeCell = lastType
+              ? String(lastType).toLowerCase().replace('_', ' ')
+              : '—';
+          }
+
+          return (
+            <tr key={r.name}>
+              <Td mono primary>
+                {r.link ? <Ext href={r.link}>{r.name}</Ext> : r.name}
+              </Td>
+              <Td>
+                {r.attributes['backups'] ? (
+                  <Status tone="ok">enabled</Status>
+                ) : (
+                  <Status tone="crit">disabled</Status>
+                )}
+              </Td>
+              <Td>
+                {r.attributes['pitr'] ? (
+                  <Status tone="ok">enabled</Status>
+                ) : (
+                  <Status tone="warn">disabled</Status>
+                )}
+              </Td>
+              <Td>{runCell}</Td>
+              <Td mono>{whenCell}</Td>
+              <Td>{typeCell}</Td>
+            </tr>
+          );
+        })}
+      </Table>
+    </Card>
   );
 }
 

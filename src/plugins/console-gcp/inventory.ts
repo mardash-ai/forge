@@ -163,29 +163,92 @@ export function createGcpInventoryProvider(opts: {
               url: `https://sqladmin.googleapis.com/v1/projects/${project}/instances`,
               signal: s,
             });
-            return (p.items ?? []).map((x) =>
-              R({
-                kind: 'db.instance',
-                native_type: 'sqladmin.googleapis.com/Instance',
-                external_id: `projects/${project}/instances/${x['name']}`,
-                name: String(x['name']),
-                // The ONE zonal resource, and therefore the whole single-zone story.
-                scope: x['settings']?.availabilityType === 'REGIONAL' ? 'regional' : 'zonal',
-                location: x['gceZone'] ?? x['region'],
-                state: x['state'],
-                created_at: x['createTime'],
-                attributes: {
-                  version: x['databaseVersion'] ?? null,
-                  tier: x['settings']?.tier ?? null,
-                  edition: x['settings']?.edition ?? null,
-                  disk_gb: x['settings']?.dataDiskSizeGb ?? null,
-                  availability: x['settings']?.availabilityType ?? null,
-                  backups: x['settings']?.backupConfiguration?.enabled ?? false,
-                  pitr: x['settings']?.backupConfiguration?.pointInTimeRecoveryEnabled ?? false,
-                  private_ip:
-                    (x['ipAddresses'] ?? []).find((i: any) => i.type === 'PRIVATE')?.ipAddress ?? null,
-                },
-                link: `${CONSOLE}/sql/instances/${x['name']}/overview?project=${project}`,
+            const instances = p.items ?? [];
+
+            // For each instance, fetch recent backup runs in parallel.
+            // Three distinct outcomes — empty is NEVER silently treated as "no runs":
+            //   (a) sqladmin/backupRuns unreachable or errored → backup_runs_status = 'api_error'
+            //   (b) automated backups disabled on the instance → backup_runs_status = 'disabled'
+            //   (c) runs fetched but the list is empty → backup_runs_status = 'none'
+            // A backup run fetch failure is isolated per instance: it costs only that instance's
+            // run history, never the inventory row or any sibling instance.
+            return Promise.all(
+              instances.map(async (x) => {
+                const instName = String(x['name']);
+                const backupsEnabled: boolean =
+                  x['settings']?.backupConfiguration?.enabled ?? false;
+
+                const bkAttrs: Record<string, string | number | boolean | null> = {};
+
+                if (!backupsEnabled) {
+                  // (b) Automated backups disabled — no runs to fetch or report.
+                  bkAttrs['backup_runs_status'] = 'disabled';
+                } else {
+                  try {
+                    const br = await gcpJson<{ items?: Record<string, any>[] }>({
+                      url:
+                        `https://sqladmin.googleapis.com/v1/projects/${project}/instances/` +
+                        `${encodeURIComponent(instName)}/backupRuns?maxResults=5`,
+                      signal: s,
+                    });
+                    const runs = br.items ?? [];
+                    if (runs.length > 0) {
+                      const latest = runs[0]!;
+                      bkAttrs['backup_runs_status'] = 'ok';
+                      bkAttrs['backup_last_status'] = latest['status'] ?? null;
+                      bkAttrs['backup_last_type'] = latest['type'] ?? null;
+                      bkAttrs['backup_last_end_time'] = latest['endTime'] ?? null;
+                      bkAttrs['backup_last_start_time'] = latest['startTime'] ?? null;
+                      bkAttrs['backup_recent_failures'] = runs.filter(
+                        (r) => r['status'] === 'FAILED',
+                      ).length;
+                      // Compact JSON for the UI detail view (status, timing, type per run).
+                      bkAttrs['backup_runs_json'] = JSON.stringify(
+                        runs.map((r) => ({
+                          id: String(r['id'] ?? ''),
+                          status: String(r['status'] ?? ''),
+                          type: String(r['type'] ?? ''),
+                          startTime: r['startTime'] ?? null,
+                          endTime: r['endTime'] ?? null,
+                        })),
+                      );
+                    } else {
+                      // (c) No runs on record even though backups are enabled.
+                      bkAttrs['backup_runs_status'] = 'none';
+                    }
+                  } catch (e) {
+                    // (a) sqladmin/backupRuns was unreachable or returned an error.
+                    bkAttrs['backup_runs_status'] = 'api_error';
+                    bkAttrs['backup_runs_error'] = (e as Error).message.slice(0, 200);
+                  }
+                }
+
+                return R({
+                  kind: 'db.instance',
+                  native_type: 'sqladmin.googleapis.com/Instance',
+                  external_id: `projects/${project}/instances/${instName}`,
+                  name: instName,
+                  // The ONE zonal resource, and therefore the whole single-zone story.
+                  scope: x['settings']?.availabilityType === 'REGIONAL' ? 'regional' : 'zonal',
+                  location: x['gceZone'] ?? x['region'],
+                  state: x['state'],
+                  created_at: x['createTime'],
+                  attributes: {
+                    version: x['databaseVersion'] ?? null,
+                    tier: x['settings']?.tier ?? null,
+                    edition: x['settings']?.edition ?? null,
+                    disk_gb: x['settings']?.dataDiskSizeGb ?? null,
+                    availability: x['settings']?.availabilityType ?? null,
+                    backups: backupsEnabled,
+                    pitr:
+                      x['settings']?.backupConfiguration?.pointInTimeRecoveryEnabled ?? false,
+                    private_ip:
+                      (x['ipAddresses'] ?? []).find((i: any) => i.type === 'PRIVATE')
+                        ?.ipAddress ?? null,
+                    ...bkAttrs,
+                  },
+                  link: `${CONSOLE}/sql/instances/${instName}/overview?project=${project}`,
+                });
               }),
             );
           },

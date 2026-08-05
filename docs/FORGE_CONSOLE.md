@@ -43,6 +43,18 @@ component; deployed by the thin consumer stack `dorinda-forge-console` at `forge
    Monitoring has no open-incident API, so Alerts says *that*, which is not the same statement as
    "nothing is firing".
 
+   The "confident-but-wrong on empty" failure has bitten this console three times in production.
+   The Cloud SQL backup-run section applies the same discipline: when no run list can be shown, the
+   UI renders **one of three explicit reasons** — never a blank list — so the operator always
+   knows why:
+   - **(a) API error** — the sqladmin backupRuns endpoint was unreachable or returned an error; the
+     backup posture is genuinely unknown.
+   - **(b) Backups disabled** — automated backups are off on this instance; the finding
+     `db-no-backups` already fires for this, so the backup-run section adds only the explicit
+     caption.
+   - **(c) Compose/data-plane database** — the resource's `native_type` is not
+     `sqladmin.googleapis.com/Instance`, so it is a local Postgres with no cloud backup mechanism.
+
 ## Why it cannot mutate the cloud
 
 Two independent guarantees, not one convention:
@@ -113,7 +125,7 @@ Every other path requires a valid session.
 | Deploys | what is serving, by digest | rollback is a CI dispatch, never a traffic flip from this page |
 | Pipelines | recent CI across every repo | |
 | Drift | the **third** axis: is the declaration itself stale | the foundation once ran six releases behind with every check green |
-| Inventory | what exists, scoped as the cloud scopes it | global / regional / zonal, billable marked |
+| Inventory | what exists, scoped as the cloud scopes it | global / regional / zonal, billable marked; each `db.instance` row also shows its backup posture (PITR, latest run status/time/type, with three explicit empty reasons) |
 | Services | how it all correlates | every binding shows the rule that produced it |
 | Credentials | what expires next | declared vs discovered is badged |
 | Cost | budgets, thresholds, what bills | no billing export ⇒ says so, never an empty chart |
@@ -121,6 +133,32 @@ Every other path requires a valid session.
 | Explore | metrics and logs over one scope | states WHICH store answered |
 | Audit | every write the console attempted | written before the attempt |
 | Docs | the developer portal | fetched live, never copied |
+
+## Cloud SQL backup-runs reporting
+
+The Inventory screen includes a **"Cloud SQL backup posture"** card for each `db.instance` resource. It is rendered inline alongside the instance's PITR / automated-backup configuration — not a separate screen.
+
+| Column | Source |
+|---|---|
+| Backups | `settings.backupConfiguration.enabled` from the instances list |
+| PITR | `settings.backupConfiguration.pointInTimeRecoveryEnabled` |
+| Latest run | Status of the most recent entry from `sqladmin.googleapis.com/v1/projects/{p}/instances/{i}/backupRuns` |
+| When | `endTime` of the most recent run, shown relative |
+| Type | `AUTOMATED` or `ON_DEMAND` |
+
+The call uses the **same service account and the same `sqladmin.googleapis.com` API client** already used by the inventory scan. No new IAM permissions are required; `roles/cloudsql.viewer` already grants `cloudsql.backupRuns.list`.
+
+### Finding rules for backup runs
+
+| Rule | Severity | Fires when |
+|---|---|---|
+| `db-backup-run-failed` | critical | Most recent backup run has `status = FAILED` |
+| `db-backup-stale` | warn | Most recent backup run ended more than 26 h ago, **or** no runs on record while backups are enabled |
+| `db-backup-api-error` | warn | The `backupRuns` endpoint was unreachable or returned an error (posture unknown) |
+
+These sit alongside the existing `db-no-backups` (critical) and `db-no-pitr` (warn) rules, which cover the **configuration** axis. The new rules cover the **runtime** axis: did the backup actually run and succeed?
+
+The `db-backup-api-error` rule is `warn` rather than `critical` because an API error may be transient, and the backup itself may have completed correctly — the posture is unknown, not confirmed bad.
 
 ⌘K (or `/`) opens the palette; `1`–`9` jump to the first nine screens; `.` toggles density.
 

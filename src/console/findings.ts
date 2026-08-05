@@ -207,6 +207,128 @@ const databaseProtection: Rule = (s) =>
       return out;
     });
 
+/**
+ * A failed or stale most-recent backup run signals that the restore point you are counting on may
+ * not exist. Combined with db-no-backups (which fires when the SETTING is off), this covers both
+ * the configuration axis and the runtime axis.
+ *
+ * Four cases, each with a distinct message:
+ *   api_error  — the sqladmin backupRuns call failed; posture unknown
+ *   disabled   — backups off; db-no-backups handles it; this rule is silent
+ *   FAILED     — most recent run has status FAILED; no current restore point
+ *   stale      — most recent successful run is older than 26 h
+ *
+ * A rule that fires on FAILED but skips RUNNING avoids a false alarm during an in-progress run.
+ */
+const databaseBackupRunHealth: Rule = (s) =>
+  s.resources
+    .filter((r) => r.kind === 'db.instance')
+    .flatMap((r) => {
+      const runStatus = r.attributes['backup_runs_status'];
+
+      // (a) sqladmin/backupRuns was unreachable or returned an error.
+      if (runStatus === 'api_error') {
+        return [
+          f(
+            {
+              rule: 'db-backup-api-error',
+              severity: 'warn',
+              title: `Backup run history unavailable for ${r.name}`,
+              detail:
+                'The sqladmin backupRuns API returned an error, so the most-recent-backup posture ' +
+                'cannot be confirmed. ' +
+                (r.attributes['backup_runs_error']
+                  ? String(r.attributes['backup_runs_error']).slice(0, 150)
+                  : ''),
+              subject: r.external_id,
+              env: r.env,
+              suggested_action:
+                'Verify the console SA holds roles/cloudsql.viewer and the sqladmin API is enabled.',
+            },
+            s.now,
+          ),
+        ];
+      }
+
+      // (b) Backups disabled — db-no-backups already fires; this rule stays silent.
+      if (!r.attributes['backups'] || runStatus === 'disabled') return [];
+
+      const lastStatus = r.attributes['backup_last_status'];
+      const lastEndTime = r.attributes['backup_last_end_time'];
+
+      // Most recent run FAILED — no current restore point.
+      if (lastStatus === 'FAILED') {
+        return [
+          f(
+            {
+              rule: 'db-backup-run-failed',
+              severity: 'critical',
+              title: `${r.name}: most recent backup run FAILED`,
+              detail:
+                'The latest backup completed with status FAILED. Until a successful backup finishes, ' +
+                'this database has no recent restore point.',
+              subject: r.external_id,
+              env: r.env,
+              suggested_action:
+                'Check Cloud SQL logs for the backup failure reason; trigger a manual on-demand backup.',
+            },
+            s.now,
+          ),
+        ];
+      }
+
+      // No runs on record (newly created instance or unexpected pruning).
+      // Skip if a run is currently in progress — it has not produced an endTime yet.
+      if ((runStatus === 'none' || !lastEndTime) && lastStatus !== 'RUNNING') {
+        return [
+          f(
+            {
+              rule: 'db-backup-stale',
+              severity: 'warn',
+              title: `${r.name}: no backup run on record`,
+              detail:
+                'Automated backups are enabled but the backupRuns history shows no completed runs. ' +
+                'The instance may be newly created, or runs are being pruned before the console reads them.',
+              subject: r.external_id,
+              env: r.env,
+              suggested_action:
+                'Verify the backup window is configured and at least one run has completed.',
+            },
+            s.now,
+          ),
+        ];
+      }
+
+      // Most recent successful backup is STALE (> 26 h). Skip if a run is currently in progress.
+      if (lastStatus !== 'RUNNING') {
+        const endDate = new Date(String(lastEndTime));
+        const ageMs = s.now.getTime() - endDate.getTime();
+        const STALE_MS = 26 * 60 * 60 * 1_000;
+        if (!isNaN(endDate.getTime()) && ageMs > STALE_MS) {
+          const hours = Math.floor(ageMs / 3_600_000);
+          return [
+            f(
+              {
+                rule: 'db-backup-stale',
+                severity: 'warn',
+                title: `${r.name}: last backup is ${hours}h old`,
+                detail:
+                  `The most recent backup completed ${hours} hours ago (threshold: 26 h). ` +
+                  'This gap leaves the database with an extended potential data-loss window.',
+                subject: r.external_id,
+                env: r.env,
+                suggested_action:
+                  'Check that the backup window is configured correctly and is not overlapping with maintenance.',
+              },
+              s.now,
+            ),
+          ];
+        }
+      }
+
+      return [];
+    });
+
 /** Over-provisioned disk you pay for and never use. Found by hand once; found automatically now. */
 const overProvisionedDisk: Rule = (s) =>
   s.resources
@@ -313,6 +435,7 @@ const RULES: Rule[] = [
   metricsPipelineDead,
   collectorScalesToZero,
   databaseProtection,
+  databaseBackupRunHealth,
   expiringCredentials,
   failingPipelines,
   defaultNetwork,
