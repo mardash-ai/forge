@@ -9,6 +9,208 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.19.7] - 2026-08-05
+
+### Fixed
+- **docker compose exec -T api ./node_modules/.bin/vitest run
+
+ RUN  v2.1.9 /forge
+
+ ✓ tests/productionize.test.ts (81 tests) 13ms
+ ✓ tests/search.test.ts (43 tests) 249ms
+ ✓ tests/console.test.ts (150 tests) 403ms
+ ✓ tests/incidents.test.ts (26 tests) 193ms
+ ✓ tests/mcp-oauth.test.ts (18 tests) 324ms
+ ✓ tests/monitoring-stack.test.ts (32 tests) 21ms
+{"event":"mcp.auth_reject","trace_id":"56526f10fd061045366da9a85592322c","app":"demo","reason":"invalid_token","method":"initialize"}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":1,"attached":1}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":1,"attached":1}
+{"event":"mcp.tool_unregister","app":"demo","tool":"get_note","tools_count":0}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":1,"attached":1}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":1}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tools_list_changed","app":"app_nobody_listening","notified":0,"attached":0}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+ ✓ tests/blobs.test.ts (22 tests) 194ms
+{"event":"mcp.tool_call","trace_id":"9446feacb23fce3f9a9d867ed20b92b0","app":"demo","tool":"get_note","client":"client1","user":"userA","duration_ms":16,"outcome":"ok"}
+ ✓ tests/observability.test.ts (40 tests) 186ms
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tool_call","trace_id":"0286a32933b39079be8b25362d02aba7","app":"demo","tool":"get_note","client":"Claude","user":"userA","duration_ms":4,"outcome":"ok"}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tool_call","trace_id":"4a6615f80148bbbcff27613368c0b38b","app":"demo","tool":"get_note","client":"client1","user":"userA","duration_ms":9,"outcome":"ok"}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"send_note","tools_count":1}
+{"event":"mcp.tool_call","trace_id":"8df42e5e5acb1724c26f8fea6068415d","app":"demo","tool":"send_note","client":"client1","user":"userA","duration_ms":1,"outcome":"error","error_class":"insufficient_scope"}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"boom","tools_count":1}
+{"event":"mcp.tool_call","trace_id":"bac348ed07a3d4292da485bdddff63e2","app":"demo","tool":"boom","client":"client1","user":"userA","duration_ms":2,"outcome":"error","error_class":"handler_status_500"}
+{"event":"mcp.tool_call","trace_id":"65367d3e1926065fa168eaeab8367481","app":"demo","tool":"nope","client":"client1","user":"userA","duration_ms":0,"outcome":"error","error_class":"unknown_tool"}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"archive_note","tools_count":1}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.auth_reject","trace_id":"7b587620ef7d16effe3d038efd02122a","app":"demo","reason":"invalid_token","method":"initialize"}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tool_call","trace_id":"1337321f85d1bc58561ee65e6a22e45d","app":"demo","tool":"get_note","client":"clientZ","user":"userA","duration_ms":3,"outcome":"ok"}
+{"event":"mcp.auth_reject","trace_id":"ca7b896d70ccab67b300a9e52672c960","app":"demo","reason":"invalid_token","method":"tools/call"}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tool_call","trace_id":"dff232fc92ca5935c754cb39456bd8bb","app":"demo","tool":"get_note","client":"clientOne","user":"userA","duration_ms":3,"outcome":"ok"}
+{"event":"mcp.tool_call","trace_id":"9da9e67a79d128bbc1ccb40ec54cd421","app":"demo","tool":"get_note","client":"clientTwo","user":"userA","duration_ms":4,"outcome":"ok"}
+{"event":"mcp.tool_call","trace_id":"5d8e873be623602e292fe28ad8aab72b","app":"demo","tool":"get_note","client":"clientOne","user":"userB","duration_ms":6,"outcome":"ok"}
+{"event":"mcp.auth_reject","trace_id":"e40764d0f6b3e2ecb681235d5c37b33e","app":"demo","reason":"invalid_token","method":"tools/call"}
+{"event":"mcp.auth_reject","trace_id":"1dceb52133c936d9bcbed39598124c09","app":"demo","reason":"invalid_token","method":"tools/call"}
+{"event":"mcp.tool_call","trace_id":"b4674008715eb1f5e51cba2daf09c494","app":"demo","tool":"get_note","client":"clientOne","user":"userB","duration_ms":7,"outcome":"ok"}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tool_call","trace_id":"5705ca6d55f03b716cf0b16ae808e2c1","app":"demo","tool":"get_note","client":"clientGhost","user":"userC","duration_ms":5,"outcome":"ok"}
+{"event":"mcp.auth_reject","trace_id":"8f528a39b3bc16c98b0dfa182d7fbfa4","app":"demo","reason":"invalid_token","method":"tools/call"}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.auth_reject","trace_id":"a6ff155ddfd6b92302b2aa170145237e","app":"demo","reason":"invalid_token","method":"initialize"}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"ping_pub","tools_count":2}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tool_call","trace_id":"f20da927ced7ffd23ea681b04aaaa230","app":"demo","tool":"get_note","client":"client1","user":"userA","duration_ms":5,"outcome":"ok"}
+ ✓ tests/connectors.test.ts (32 tests) 536ms
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tool_call","trace_id":"d033da4ed42dbe276cbcc1731414999b","app":"demo","tool":"get_note","client":"client1","user":"userA","duration_ms":2,"outcome":"ok"}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tool_call","trace_id":"ab81c231d3afce779adc528b362ecf53","app":"demo","tool":"get_note","client":"client1","user":"userA","duration_ms":2,"outcome":"ok"}
+ ✓ tests/principal-teardown.test.ts (14 tests) 498ms
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tool_call","trace_id":"7e66787ed029cf48d9f583ae94e1d996","app":"demo","tool":"get_note","client":"client1","user":"userA","duration_ms":4,"outcome":"ok"}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"boom","tools_count":1}
+{"event":"mcp.tool_call","trace_id":"39f03813cd307dad1da2c38a975d9946","app":"demo","tool":"boom","client":"client1","user":"userA","duration_ms":6,"outcome":"error","error_class":"handler_status_500"}
+{"event":"mcp.tool_call","trace_id":"6d398e640412f213d94c74b699c72446","app":"demo","tool":"not_a_tool","client":"client1","user":"userA","duration_ms":0,"outcome":"error","error_class":"unknown_tool"}
+{"event":"mcp.auth_reject","trace_id":"94f6fe4c2439a905ab3c9a512ed6b5ce","app":"demo","reason":"invalid_token","method":"tools/call"}
+{"event":"mcp.auth_reject","trace_id":"1c3d726edd899f552943f798e785ff28","app":"demo","reason":"resource_mismatch","method":"tools/call"}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tool_call","trace_id":"abababababababababababababababab","app":"demo","tool":"get_note","client":"client1","user":"userA","duration_ms":5,"outcome":"ok"}
+ ✓ tests/send-email.test.ts (18 tests) 87ms
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+ ✓ tests/auth.test.ts (28 tests) 543ms
+{"event":"mcp.tool_call","trace_id":"9e95e16957dbd754902cf29eeddfc245","app":"demo","tool":"get_note","client":"client1","user":"userA","duration_ms":4,"outcome":"ok"}
+{"event":"mcp.auth_reject","trace_id":"48243e88eae0b81c05c1eb5963b01f2e","app":"demo","reason":"resource_mismatch","method":"tools/call"}
+{"event":"mcp.tool_call","trace_id":"71b2a78f78a5628ac4a5c735f9890a02","app":"demo","tool":"get_note","client":"client1","user":"userA","duration_ms":7,"outcome":"ok"}
+{"event":"mcp.tools_list_changed","app":"app_demo","notified":0,"attached":0}
+{"event":"mcp.tool_register","app":"demo","tool":"get_note","tools_count":1}
+{"event":"mcp.tool_call","trace_id":"f1a63d4652f0cd319bf5b795703ec9aa","app":"demo","tool":"get_note","client":"client1","user":"userA","duration_ms":2,"outcome":"ok"}
+{"event":"mcp.auth_reject","trace_id":"969f6444f5f7c54fc974dbd55adf2634","app":"demo","reason":"resource_mismatch","method":"tools/call"}
+ ✓ tests/membership.test.ts (18 tests) 228ms
+ ✓ tests/notify-delivery.test.ts (14 tests) 104ms
+ ✓ tests/billing.test.ts (60 tests) 1160ms
+ ✓ tests/agent-run.test.ts (13 tests) 98ms
+ ✓ tests/mcp-host.test.ts (67 tests) 1185ms
+ ✓ tests/billing-notify.test.ts (12 tests) 101ms
+ ✓ tests/release-plan.test.ts (21 tests) 6ms
+ ✓ tests/theme.test.ts (20 tests) 7ms
+ ✓ tests/send-message.test.ts (15 tests) 97ms
+ ✓ tests/status-page.test.ts (14 tests) 149ms
+ ✓ tests/membership-authz.test.ts (14 tests) 121ms
+ ✓ tests/eval.test.ts (14 tests) 10ms
+ ✓ tests/authz-routes.test.ts (11 tests) 145ms
+ ↓ tests/pg-search.test.ts (6 tests | 6 skipped)
+ ✓ tests/verify.test.ts (14 tests) 191ms
+ ✓ tests/authz.test.ts (15 tests) 5ms
+ ✓ tests/release-orchestrate.test.ts (12 tests) 7ms
+ ✓ tests/webpush-vapid.test.ts (7 tests) 9ms
+ ✓ tests/uptime.test.ts (12 tests) 4ms
+ ↓ tests/pg-blobs.test.ts (4 tests | 4 skipped)
+ ✓ tests/readiness-wait.test.ts (10 tests) 84ms
+ ✓ tests/notifications.test.ts (12 tests) 39ms
+ ✓ tests/health-sampler.test.ts (6 tests) 49ms
+ ✓ tests/app-events.test.ts (10 tests) 40ms
+ ✓ tests/deploy-rollout.test.ts (22 tests) 7ms
+ ✓ tests/next-config-rewrites.test.ts (8 tests) 49ms
+ ✓ tests/theme-routes.test.ts (6 tests) 58ms
+ ↓ tests/pg-identity.test.ts (5 tests | 5 skipped)
+ ✓ tests/push-subscriptions.test.ts (11 tests) 41ms
+ ✓ tests/console-fixtures.test.ts (6 tests) 2ms
+ ✓ tests/inspect-health.test.ts (5 tests) 56ms
+ ↓ tests/pg-resources.test.ts (5 tests | 5 skipped)
+ ↓ tests/pg-mcp.test.ts (5 tests | 5 skipped)
+ ✓ tests/productionize-observability.test.ts (6 tests) 3ms
+ ↓ tests/pg-policies.test.ts (5 tests | 5 skipped)
+ ↓ tests/pg-push.test.ts (5 tests | 5 skipped)
+ ✓ tests/owner-scoping.test.ts (4 tests) 73ms
+ ✓ tests/unset-secret.test.ts (7 tests) 52ms
+ ✓ tests/productionize-theme.test.ts (6 tests) 54ms
+ ↓ tests/pg-notifications.test.ts (4 tests | 4 skipped)
+ ✓ tests/release-app-resolution.test.ts (4 tests) 29ms
+ ↓ tests/pg-events.test.ts (5 tests | 5 skipped)
+ ✓ tests/auth-2fa.test.ts (12 tests) 3029ms
+   ✓ change password (authenticated) > changes the password, signs out other devices, keeps THIS device, and enforces the policy 647ms
+   ✓ email 2FA — enroll, challenge, verify, resend, disable > disable via current password turns 2FA off — login returns to an immediate session 494ms
+ ✓ tests/productionize-platform-db.test.ts (5 tests) 3ms
+ ✓ tests/tenant-teardown.test.ts (11 tests) 3ms
+ ↓ tests/pg-billing.test.ts (3 tests | 3 skipped)
+ ↓ tests/pg-membership.test.ts (3 tests | 3 skipped)
+ ✓ tests/health-contract.test.ts (12 tests) 8ms
+ ↓ tests/pg-connections.test.ts (5 tests | 5 skipped)
+ ✓ tests/provision-converge.test.ts (13 tests) 5ms
+ ✓ tests/auth-service-token.test.ts (2 tests) 23ms
+ ✓ tests/scheduler.test.ts (12 tests) 4ms
+ ✓ tests/eval-pricing.test.ts (7 tests) 7ms
+ ✓ tests/secrets.test.ts (6 tests) 19ms
+ ↓ tests/pg-secrets.test.ts (4 tests | 4 skipped)
+ ✓ tests/deploy-path-resolution.test.ts (6 tests) 287ms
+ ✓ tests/notifications-concurrency.test.ts (3 tests) 82ms
+ ✓ tests/next-artifacts.test.ts (5 tests) 13ms
+ ✓ tests/backend-restricted-paths.test.ts (5 tests) 2ms
+ ✓ tests/console-empty-states.test.ts (1 test) 2ms
+ ✓ tests/paths.test.ts (3 tests) 2ms
+ ✓ tests/log-analyzer.test.ts (3 tests) 5ms
+ ✓ tests/cli-api-base.test.ts (4 tests) 32ms
+ ✓ tests/inspect-routes.test.ts (1 test) 2ms
+ ✓ tests/auth-routes.test.ts (29 tests) 3952ms
+   ✓ password reset (self-service, single-use, revokes sessions) > request → reset link → new password works, old fails, old sessions killed 436ms
+   ✓ P8 — short-lived access + revocable, rotating refresh > password reset revokes ALL refresh tokens (sign out everywhere) 328ms
+   ✓ P9 — the multi-app control plane scopes /auth without a sidecar > resolves the app from the X-Forge-App header (and ?app=) when there is no default 435ms
+ ✓ tests/runtime-deps.test.ts (2 tests) 595ms
+   ✓ P21 — runtime dependency hygiene (src/** imports resolve from prod `dependencies`) > every external package imported by src/** is declared in `dependencies` (survives --omit=dev) 592ms
+ ✓ tests/infra.test.ts (24 tests) 3840ms
+   ✓ bootstrap scoping — --component / --repo (0.82.0) > refuses to register a repo that is not DECLARED — scoping narrows work, never trust 545ms
+   ✓ bootstrap scoping — --component / --repo (0.82.0) > rejects an unknown --component instead of silently doing everything 545ms
+   ✓ §3.6 guard — apply is CI-only (subprocess, the real thing) > refuses `apply` locally without BOTH --local and --allow-local-apply, and never half of it 1151ms
+   ✓ §3.6 guard — apply is CI-only (subprocess, the real thing) > refuses `release-image` BEFORE rolling when the stack declares no behaviour check 550ms
+   ✓ §3.6 guard — apply is CI-only (subprocess, the real thing) > refuses `destroy` on a prod-named env without the explicit override 554ms
+   ✓ §3.6 guard — apply is CI-only (subprocess, the real thing) > refuses `destroy` in CI entirely (§3.6: never) 410ms
+ ✓ tests/cli-release-longrunning.test.ts (4 tests) 4172ms
+   ✓ release long-running dispatcher (P22) > a short client headers timeout ABORTS a slow release response — the exact `fetch failed` bug 1516ms
+   ✓ release long-running dispatcher (P22) > longRunningDispatcher lets the SAME slow release response through — the fix 2528ms
+
+ Test Files  67 passed | 13 skipped (80)
+      Tests  1150 passed | 59 skipped (1209)
+   Start at  19:29:48
+   Duration  8.61s (transform 3.99s, setup 0ms, collect 17.33s, tests 23.59s, environment 7ms, prepare 2.83s) now green locally**: the three test files that import from `console/src/lib/`
+  (`console-fixtures.test.ts`, seed-editor tests in `console.test.ts`) and the release-hygiene
+  test in `infra.test.ts` all failed locally because `compose.yaml` did not bind-mount
+  `./console`, `./CHANGELOG.md`, or `./terraform` into the container. CI runs `npm test`
+  directly against the checkout so these never appeared there; `make test` (which runs inside
+  Docker) failed silently. All three directories are now mounted.
+
 ## [1.19.6] - 2026-08-05
 
 ### Fixed

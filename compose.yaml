@@ -31,6 +31,13 @@ services:
       - ./src:/forge/src
       - ./tests:/forge/tests
       - ./tsconfig.json:/forge/tsconfig.json
+      # Console SPA source — needed by tests that import from console/src/lib/
+      # (console-fixtures.test.ts, seed-editor tests in console.test.ts).
+      - ./console:/forge/console
+      # CHANGELOG needed by the release-hygiene test in tests/infra.test.ts.
+      - ./CHANGELOG.md:/forge/CHANGELOG.md
+      # Terraform modules — needed by tests/backend-restricted-paths.test.ts.
+      - ./terraform:/forge/terraform
     working_dir: /forge
     restart: unless-stopped
 
