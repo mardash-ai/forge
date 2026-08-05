@@ -9,6 +9,17 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.19.6] - 2026-08-05
+
+### Fixed
+- **Node.js v26 compatibility: `longRunningFetch` via undici's own fetch** — the global `fetch`
+  in Node.js v22+ is backed by an internal undici build that ignores the `dispatcher` option from
+  the standalone `undici` package, causing `InvalidArgumentError: invalid onError method` on Node
+  v26. The fix exports `longRunningFetch` from `api-base.ts` (wraps undici's own `fetch` with the
+  no-timeout `Agent`), switches `src/cli/index.ts` to call it for long-running requests, and
+  updates `tests/cli-release-longrunning.test.ts` to use it — restoring the two previously failing
+  P22 tests without altering the dispatcher timeout semantics.
+
 ## [1.19.5] - 2026-08-05
 
 ### Added

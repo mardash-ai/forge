@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { readFileSync } from 'node:fs';
 import { compact, summarize } from './render';
-import { resolveApiBaseUrl, longRunningDispatcher } from './api-base';
+import { resolveApiBaseUrl, longRunningFetch } from './api-base';
 
 // The Forge CLI is a THIN API client. It implements no Capability itself — it
 // builds a request, calls the API, and renders a compact, token-conscious view.
@@ -49,11 +49,15 @@ async function api(
     };
     // A long-running capability (today: `forge release`) blocks the response while the server
     // publishes/repins/deploys/verifies — work that can run well past undici's default 300s
-    // `headersTimeout` and abort the fetch (surfacing here as "Cannot reach Forge API"). Dial
-    // the SAME URL with the SAME fetch, only through a no-timeout dispatcher so the CLI waits
-    // for the server exactly as the fast `--dry-run` path already does. See api-base.ts (P22).
-    if (opts?.longRunning) init.dispatcher = longRunningDispatcher;
-    res = await fetch(`${API}${path}`, init);
+    // `headersTimeout` and abort the fetch (surfacing here as "Cannot reach Forge API"). Use
+    // undici's own fetch with a no-timeout Agent for these requests — the global fetch in Node
+    // v22+ is backed by an internal undici and ignores the `dispatcher` from the standalone
+    // package, causing `InvalidArgumentError` on Node v26+. See api-base.ts (P22).
+    if (opts?.longRunning) {
+      res = await longRunningFetch(`${API}${path}`, init);
+    } else {
+      res = await fetch(`${API}${path}`, init);
+    }
   } catch (err) {
     return fail(`Cannot reach Forge API at ${API}. Is the platform running? (make up)`, String(err));
   }

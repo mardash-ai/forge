@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, afterAll } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { Agent } from 'undici';
-import { resolveApiBaseUrl, longRunningDispatcher, makeLongRunningDispatcher } from '../src/cli/api-base';
+import { resolveApiBaseUrl, longRunningDispatcher, makeLongRunningDispatcher, longRunningFetch } from '../src/cli/api-base';
 
 // P22 — `forge release` is a LONG-RUNNING capability: the API request blocks while the server
 // publishes (polls GHCR for the commit's image up to `--timeout`, default 600s), repins,
@@ -29,7 +29,8 @@ describe('release long-running dispatcher (P22)', () => {
 
   afterAll(async () => {
     // The CLI's shared singleton keeps a keep-alive pool; close it so the worker exits clean.
-    await (longRunningDispatcher as unknown as Agent).close();
+    // longRunningDispatcher is now typed as Agent directly (no cast needed).
+    await longRunningDispatcher.close();
   });
 
   // A server that consumes the request then delays ALL response headers by `delayMs` — mimics
@@ -80,10 +81,11 @@ describe('release long-running dispatcher (P22)', () => {
 
   it('longRunningDispatcher lets the SAME slow release response through — the fix', async () => {
     const port = await startSlowServer(2500);
-    const res = await fetch(`http://127.0.0.1:${port}/capabilities/release`, {
+    // longRunningFetch uses undici's own fetch (not the global) so the standalone Agent is
+    // properly honoured on Node v26+ where the global fetch ignores a standalone dispatcher.
+    const res = await longRunningFetch(`http://127.0.0.1:${port}/capabilities/release`, {
       method: 'POST',
       body: JSON.stringify({ dry_run: false }),
-      dispatcher: longRunningDispatcher,
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
@@ -94,10 +96,9 @@ describe('release long-running dispatcher (P22)', () => {
     const url = `http://127.0.0.1:${port}/capabilities/release`;
     // Only the body differs between the two modes — same URL, same client, same dispatcher.
     for (const dry of [true, false]) {
-      const res = await fetch(url, {
+      const res = await longRunningFetch(url, {
         method: 'POST',
         body: JSON.stringify({ dry_run: dry }),
-        dispatcher: longRunningDispatcher,
       });
       expect(res.status).toBe(200);
     }
