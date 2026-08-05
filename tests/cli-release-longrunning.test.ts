@@ -2,7 +2,12 @@ import { describe, it, expect, afterEach, afterAll } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { Agent } from 'undici';
-import { resolveApiBaseUrl, longRunningDispatcher, makeLongRunningDispatcher, longRunningFetch } from '../src/cli/api-base';
+import {
+  resolveApiBaseUrl,
+  longRunningDispatcher,
+  makeLongRunningDispatcher,
+  longRunningFetch,
+} from '../src/cli/api-base';
 
 // P22 — `forge release` is a LONG-RUNNING capability: the API request blocks while the server
 // publishes (polls GHCR for the commit's image up to `--timeout`, default 600s), repins,

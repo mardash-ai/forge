@@ -54,6 +54,9 @@ export const longRunningDispatcher: Agent = makeLongRunningDispatcher();
 // A fetch that bypasses the global fetch's 300 s ceiling by using undici's own fetch directly
 // with the no-timeout dispatcher. The CLI uses this for `forge release` (and any future
 // long-running capability); tests can use it to verify the dispatcher behaviour.
-export async function longRunningFetch(url: string, init?: Omit<RequestInit, 'dispatcher'>): Promise<Response> {
+export async function longRunningFetch(
+  url: string,
+  init?: Omit<RequestInit, 'dispatcher'>,
+): Promise<Response> {
   return undiciFetch(url, { ...init, dispatcher: longRunningDispatcher }) as unknown as Promise<Response>;
 }
