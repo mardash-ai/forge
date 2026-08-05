@@ -960,6 +960,8 @@ describe('sign-out — session invalidation, cookie clearing, and identity indic
   });
 
   it('after sign-out the revoked session cookie is rejected server-side (same token → 401)', async () => {
+    // Uses /api/me rather than /api/bootstrap — me returns immediately with no provider fanout,
+    // so the test stays well inside vitest's 5s default timeout even in CI without GCP creds.
     await withOidcEnv({}, async () => {
       const secret = 'test-session-secret-long-enough';
       const cookie = makeSessionCookie('mark@mardash.ai', secret);
@@ -968,10 +970,11 @@ describe('sign-out — session invalidation, cookie clearing, and identity indic
       // Confirm the cookie is valid before sign-out.
       const before = await app.inject({
         method: 'GET',
-        url: '/api/bootstrap',
+        url: '/api/me',
         headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
       });
       expect(before.statusCode).toBe(200);
+      expect((before.json() as { email: string }).email).toBe('mark@mardash.ai');
 
       // Sign out — server adds the cookie value to the revocation set.
       await app.inject({
@@ -983,7 +986,7 @@ describe('sign-out — session invalidation, cookie clearing, and identity indic
       // The SAME cookie value is now rejected even though the HMAC has not expired.
       const after = await app.inject({
         method: 'GET',
-        url: '/api/bootstrap',
+        url: '/api/me',
         headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
       });
       expect(after.statusCode).toBe(401);
