@@ -460,7 +460,14 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
   //
   // NOTE: We strip the query string before matching — /auth/callback?code=…&state=… must match
   // /auth/callback.  This is a correctness fix for any public path that could carry query params.
-  const PUBLIC_PATHS = new Set(['/healthz', '/favicon.svg', '/favicon.ico', '/auth/login', '/auth/callback', '/auth/signout']);
+  const PUBLIC_PATHS = new Set([
+    '/healthz',
+    '/favicon.svg',
+    '/favicon.ico',
+    '/auth/login',
+    '/auth/callback',
+    '/auth/signout',
+  ]);
 
   app.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
     // Strip query string for the allowlist check.
@@ -648,7 +655,14 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
         ...(await p.health(c)),
       })),
     );
-    return envelope({ env: ENV, project: PROJECT, region: REGION, auth: auth.mode, actor: actorOf(req), providers: health });
+    return envelope({
+      env: ENV,
+      project: PROJECT,
+      region: REGION,
+      auth: auth.mode,
+      actor: actorOf(req),
+      providers: health,
+    });
   });
 
   // ── Identity ─────────────────────────────────────────────────────────────────────────────────
