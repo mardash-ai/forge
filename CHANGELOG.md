@@ -9,6 +9,16 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.19.2] - 2026-08-05
+
+### Fixed
+- **The backup-posture panel now compiles.** v1.19.1's `DbBackupPosture` passed children to the
+  `Status` pill, whose props are `{ tone, label, since? }` — five TS2322 errors that only surfaced
+  in `Dockerfile.console`'s SPA build, failing the consumer's release while the tag published
+  cleanly. Fixed the call sites, and **closed the gap at the source: `ci.yml` and
+  `publish-image.yml` now build the console SPA**, so a tag whose SPA doesn't compile can no
+  longer publish.
+
 ## [1.19.1] - 2026-08-05
 
 ### Fixed

@@ -36,6 +36,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # The console SPA has its own package.json and otherwise compiles only inside
+      # Dockerfile.console — a TS error there (v1.19.1) surfaces at every consumer's docker
+      # build instead of here.
+      - name: Console SPA build
+        run: cd console && npm ci && npm run build
+
   # P26 — the SAME suite against the Postgres + object-store backends, so "green on both backends" is
   # enforced, not just claimed. A Postgres service + a MinIO container are stood up; the vitest.pg.config
   # selects Postgres for identity/search/events/notifications and s3 (MinIO) for blob bytes (metadata in

@@ -1045,7 +1045,7 @@ function DbBackupPosture({ resources }: { resources: Resource[] }) {
                   : lastStatus === 'RUNNING'
                     ? 'info'
                     : 'neutral';
-            runCell = <Status tone={tone}>{String(lastStatus).toLowerCase()}</Status>;
+            runCell = <Status tone={tone} label={String(lastStatus).toLowerCase()} />;
             whenCell = lastEndTime ? (
               <span title={String(lastEndTime)}>{relative(String(lastEndTime))}</span>
             ) : (
@@ -1061,16 +1061,16 @@ function DbBackupPosture({ resources }: { resources: Resource[] }) {
               </Td>
               <Td>
                 {r.attributes['backups'] ? (
-                  <Status tone="ok">enabled</Status>
+                  <Status tone="ok" label="enabled" />
                 ) : (
-                  <Status tone="crit">disabled</Status>
+                  <Status tone="crit" label="disabled" />
                 )}
               </Td>
               <Td>
                 {r.attributes['pitr'] ? (
-                  <Status tone="ok">enabled</Status>
+                  <Status tone="ok" label="enabled" />
                 ) : (
-                  <Status tone="warn">disabled</Status>
+                  <Status tone="warn" label="disabled" />
                 )}
               </Td>
               <Td>{runCell}</Td>

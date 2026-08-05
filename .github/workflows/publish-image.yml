@@ -43,6 +43,10 @@ jobs:
       - run: npx prettier --check .
       - run: npm test
       - run: npm run typecheck
+      # The console SPA compiles ONLY inside Dockerfile.console — at consumer adopt time. Without
+      # this, a tag whose SPA doesn't build (v1.19.1: TS errors in App.tsx) publishes fine and
+      # every consumer's release then fails at docker build. Compile it here so the tag can't.
+      - run: cd console && npm ci && npm run build
 
   publish:
     needs: [test]
