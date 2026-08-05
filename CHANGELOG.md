@@ -9,6 +9,16 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.19.1] - 2026-08-05
+
+### Fixed
+- **Prettier formatting on the v1.19.0 backup-runs files** (`console/src/App.tsx`,
+  `src/console/findings.ts`, `src/plugins/console-gcp/inventory.ts`) — the third unformatted tag
+  in one day, so the class is now closed at the source: **`npx prettier --check .` gates both
+  publish workflows** (`publish-image.yml`, `publish-data-plane.yml`). An unformatted commit can
+  no longer publish a tag at all, instead of failing later in every consumer's adopt gate.
+  No behavior change vs v1.19.0.
+
 ## [1.19.0] - 2026-08-05
 
 ### Added

@@ -36,6 +36,11 @@ jobs:
         with:
           node-version: 22
       - run: npm install
+      # Formatting gates the PUBLISH, not just ci.yml: consumers (dorinda-forge-console) run
+      # `prettier --check` against the pinned forge ref, so an unformatted tag is unadoptable.
+      # v1.18.4, v1.18.5 and v1.19.0 all shipped unformatted on 2026-08-05 because only ci.yml
+      # checked — and a tag push doesn't wait for ci.yml.
+      - run: npx prettier --check .
       - run: npm test
       - run: npm run typecheck
 

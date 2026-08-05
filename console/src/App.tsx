@@ -1025,24 +1025,16 @@ function DbBackupPosture({ resources }: { resources: Resource[] }) {
 
           if (!isGcpSql) {
             // (c) Not a GCP Cloud SQL instance — compose/data-plane Postgres, no cloud backup.
-            runCell = (
-              <Note>No cloud backup mechanism — compose-managed database</Note>
-            );
+            runCell = <Note>No cloud backup mechanism — compose-managed database</Note>;
           } else if (runStatus === 'api_error') {
             // (a) sqladmin/backupRuns unreachable or returned an error.
-            runCell = (
-              <Note>Backup history unavailable — backupRuns API error</Note>
-            );
+            runCell = <Note>Backup history unavailable — backupRuns API error</Note>;
           } else if (runStatus === 'disabled' || !r.attributes['backups']) {
             // (b) Automated backups disabled on this instance.
-            runCell = (
-              <Note>Automated backups disabled — no runs</Note>
-            );
+            runCell = <Note>Automated backups disabled — no runs</Note>;
           } else if (runStatus === 'none' || !lastStatus) {
             // No runs on record even though backups are enabled.
-            runCell = (
-              <Note>No runs on record</Note>
-            );
+            runCell = <Note>No runs on record</Note>;
           } else {
             // We have run data — show status, timing, type.
             const tone: StatusTone =
@@ -1059,9 +1051,7 @@ function DbBackupPosture({ resources }: { resources: Resource[] }) {
             ) : (
               '—'
             );
-            typeCell = lastType
-              ? String(lastType).toLowerCase().replace('_', ' ')
-              : '—';
+            typeCell = lastType ? String(lastType).toLowerCase().replace('_', ' ') : '—';
           }
 
           return (

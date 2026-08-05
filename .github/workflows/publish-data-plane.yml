@@ -33,6 +33,9 @@ jobs:
         with:
           node-version: 22
       - run: npm install
+      # Same publish-gating format check as publish-image.yml — an unformatted tag is unadoptable
+      # by consumers that prettier-check the pinned forge ref.
+      - run: npx prettier --check .
       - run: npm test
       - run: npm run typecheck
 

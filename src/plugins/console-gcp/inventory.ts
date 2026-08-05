@@ -175,8 +175,7 @@ export function createGcpInventoryProvider(opts: {
             return Promise.all(
               instances.map(async (x) => {
                 const instName = String(x['name']);
-                const backupsEnabled: boolean =
-                  x['settings']?.backupConfiguration?.enabled ?? false;
+                const backupsEnabled: boolean = x['settings']?.backupConfiguration?.enabled ?? false;
 
                 const bkAttrs: Record<string, string | number | boolean | null> = {};
 
@@ -199,9 +198,7 @@ export function createGcpInventoryProvider(opts: {
                       bkAttrs['backup_last_type'] = latest['type'] ?? null;
                       bkAttrs['backup_last_end_time'] = latest['endTime'] ?? null;
                       bkAttrs['backup_last_start_time'] = latest['startTime'] ?? null;
-                      bkAttrs['backup_recent_failures'] = runs.filter(
-                        (r) => r['status'] === 'FAILED',
-                      ).length;
+                      bkAttrs['backup_recent_failures'] = runs.filter((r) => r['status'] === 'FAILED').length;
                       // Compact JSON for the UI detail view (status, timing, type per run).
                       bkAttrs['backup_runs_json'] = JSON.stringify(
                         runs.map((r) => ({
@@ -240,11 +237,9 @@ export function createGcpInventoryProvider(opts: {
                     disk_gb: x['settings']?.dataDiskSizeGb ?? null,
                     availability: x['settings']?.availabilityType ?? null,
                     backups: backupsEnabled,
-                    pitr:
-                      x['settings']?.backupConfiguration?.pointInTimeRecoveryEnabled ?? false,
+                    pitr: x['settings']?.backupConfiguration?.pointInTimeRecoveryEnabled ?? false,
                     private_ip:
-                      (x['ipAddresses'] ?? []).find((i: any) => i.type === 'PRIVATE')
-                        ?.ipAddress ?? null,
+                      (x['ipAddresses'] ?? []).find((i: any) => i.type === 'PRIVATE')?.ipAddress ?? null,
                     ...bkAttrs,
                   },
                   link: `${CONSOLE}/sql/instances/${instName}/overview?project=${project}`,

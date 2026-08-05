@@ -291,8 +291,7 @@ const databaseBackupRunHealth: Rule = (s) =>
                 'The instance may be newly created, or runs are being pruned before the console reads them.',
               subject: r.external_id,
               env: r.env,
-              suggested_action:
-                'Verify the backup window is configured and at least one run has completed.',
+              suggested_action: 'Verify the backup window is configured and at least one run has completed.',
             },
             s.now,
           ),
