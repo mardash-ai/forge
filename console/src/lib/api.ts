@@ -20,6 +20,12 @@ export async function api<T>(path: string, init?: RequestInit): Promise<Envelope
     ...init,
     headers: { ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...(init?.headers ?? {}) },
   });
+  if (res.status === 401) {
+    // The session expired, was revoked, or never existed. The SPA cannot render ANY screen
+    // without data, so the only honest move is the login page — not a wall of fetch errors.
+    window.location.href = '/login';
+    throw new Error('session expired — redirecting to sign-in');
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}) as Record<string, unknown>);
     const err = (body as { error?: { message?: string } }).error;

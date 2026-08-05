@@ -898,13 +898,99 @@ describe('server — Google OIDC routes', () => {
     });
   });
 
-  it('unauthenticated browser navigation in OIDC mode redirects to /auth/login', async () => {
+  it('unauthenticated browser navigation in OIDC mode redirects to /login', async () => {
     await withOidcEnv({}, async () => {
       const app = buildServer();
-      // A bare GET to / with no session cookie must redirect to /auth/login, NOT return 401.
+      // A bare GET to / with no session cookie must land on the login PAGE, NOT return 401 and
+      // NOT go straight to Google — the page is where the access policy is stated.
       const res = await app.inject({ method: 'GET', url: '/' });
       expect(res.statusCode).toBe(302);
-      expect(String(res.headers.location)).toBe('/auth/login');
+      expect(String(res.headers.location)).toBe('/login');
+      await app.close();
+    });
+  });
+
+  it('/login is the only unauthenticated PAGE: public, states the policy, offers Google', async () => {
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      const res = await app.inject({ method: 'GET', url: '/login' });
+      expect(res.statusCode).toBe(200);
+      expect(String(res.headers['content-type'])).toContain('text/html');
+      // The access policy is stated on the page itself.
+      expect(res.body).toContain('mardash.ai');
+      expect(res.body).toContain('Google only');
+      expect(res.body).toContain('/auth/login');
+      await app.close();
+    });
+  });
+
+  it('/login shows the refusal reason for a denied account', async () => {
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      const res = await app.inject({ method: 'GET', url: '/login?error=access_denied' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('not a member of the mardash.ai organization');
+      await app.close();
+    });
+  });
+
+  it('/login redirects an ALREADY-authenticated visitor to the console', async () => {
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      const session = makeSessionCookie('mark@mardash.ai', 'test-session-secret-long-enough');
+      const res = await app.inject({
+        method: 'GET',
+        url: '/login',
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=${session}` },
+      });
+      expect(res.statusCode).toBe(302);
+      expect(String(res.headers.location)).toBe('/');
+      await app.close();
+    });
+  });
+
+  it('/login without an identity provider configured renders and says sign-in is unavailable', async () => {
+    // Fail-closed deployment: no Google env. The page must render (not 401) and be honest.
+    const app = buildServer();
+    const res = await app.inject({ method: 'GET', url: '/login' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('no identity provider is configured');
+    await app.close();
+  });
+
+  it('every non-public path requires auth — SPA assets included', async () => {
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      for (const url of ['/', '/index.html', '/assets/index-abc.js', '/api/inventory']) {
+        const res = await app.inject({ method: 'GET', url });
+        expect([302, 401], `${url} must not be served unauthenticated`).toContain(res.statusCode);
+        if (res.statusCode === 302) expect(String(res.headers.location)).toBe('/login');
+      }
+      await app.close();
+    });
+  });
+
+  it('sign-out is audited under the signed-in identity', async () => {
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      const secret = 'test-session-secret-long-enough';
+      const cookie = makeSessionCookie('mark@mardash.ai', secret);
+      await app.inject({
+        method: 'GET',
+        url: '/auth/signout',
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+      });
+      // The signed-out session is revoked, so read the audit log with a DIFFERENT identity —
+      // makeSessionCookie is deterministic within a second, so the same email could mint the
+      // exact revoked token again.
+      const fresh = makeSessionCookie('auditor@mardash.ai', secret);
+      const audit = await app.inject({
+        method: 'GET',
+        url: '/api/audit',
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=${fresh}` },
+      });
+      expect(audit.body).toContain('auth.signout');
+      expect(audit.body).toContain('mark@mardash.ai');
       await app.close();
     });
   });
@@ -927,7 +1013,7 @@ describe('sign-out — session invalidation, cookie clearing, and identity indic
     _resetRevokedSessions();
   });
 
-  it('GET /auth/signout clears the session cookie and redirects to /auth/login', async () => {
+  it('GET /auth/signout clears the session cookie and redirects to /login', async () => {
     await withOidcEnv({}, async () => {
       const secret = 'test-session-secret-long-enough';
       const cookie = makeSessionCookie('mark@mardash.ai', secret);
@@ -938,9 +1024,9 @@ describe('sign-out — session invalidation, cookie clearing, and identity indic
         headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
       });
       expect(res.statusCode).toBe(302);
-      // Must land on the login screen.
+      // Must land on the login PAGE (the one unauthenticated page), flagged as a sign-out.
       const loc = String(res.headers.location);
-      expect(loc).toContain('/auth/login');
+      expect(loc).toBe('/login?signed_out=1');
       // Cookie must be cleared (Max-Age=0 or empty value).
       const setCookieHeader = String(res.headers['set-cookie'] ?? '');
       expect(setCookieHeader).toContain(`${OIDC_SESSION_COOKIE}=`);
@@ -949,12 +1035,13 @@ describe('sign-out — session invalidation, cookie clearing, and identity indic
     });
   });
 
-  it('GET /auth/signout includes prompt=select_account in the redirect so Google presents the account chooser', async () => {
+  it('after sign-out the login page offers the account chooser (prompt=select_account)', async () => {
     await withOidcEnv({}, async () => {
       const app = buildServer();
-      const res = await app.inject({ method: 'GET', url: '/auth/signout' });
-      expect(res.statusCode).toBe(302);
-      expect(String(res.headers.location)).toContain('prompt=select_account');
+      const res = await app.inject({ method: 'GET', url: '/login?signed_out=1' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('You have signed out.');
+      expect(res.body).toContain('/auth/login?prompt=select_account');
       await app.close();
     });
   });
@@ -997,13 +1084,13 @@ describe('sign-out — session invalidation, cookie clearing, and identity indic
 
   it('GET /auth/signout is accessible without a valid session (no redirect loop)', async () => {
     // An operator with an already-expired or absent cookie must be able to reach /auth/signout
-    // without being intercepted by the auth gate and redirected back to /auth/login first.
+    // without being intercepted by the auth gate and redirected back to /login first.
     await withOidcEnv({}, async () => {
       const app = buildServer();
       // No session cookie at all.
       const res = await app.inject({ method: 'GET', url: '/auth/signout' });
       expect(res.statusCode).toBe(302);
-      expect(String(res.headers.location)).toContain('/auth/login');
+      expect(String(res.headers.location)).toContain('/login');
       await app.close();
     });
   });

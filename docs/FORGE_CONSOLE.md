@@ -91,11 +91,31 @@ The `hd` parameter in the Google authorization URL is a **cosmetic hint** (pre-f
 selector on Google's consent screen).  It is not a security control.  The `hd` claim check in
 step 3 is the enforced boundary.
 
+### The login page and signing out
+
+`GET /login` is the **only page an unauthenticated user can see**: server-rendered, standalone
+HTML (the SPA and its assets stay entirely behind the session). It states the access policy —
+Google sign-in only, mardash.ai members only — and offers the one way in. Unauthenticated browser
+navigation to any other path 302s here in every auth mode; refused sign-ins land here with the
+reason (`?error=access_denied` → "not a member of the mardash.ai organization"). On a deployment
+with no identity provider configured the page renders and says sign-in is unavailable (fail
+closed, but with words instead of raw JSON).
+
+`GET /auth/signout` (the **Log out** button at the bottom of the rail, beside the signed-in
+email) adds the session token to an in-process revocation set (immediate server-side invalidation
+before HMAC expiry; cleared on restart, acceptable for an operator console), clears the cookie,
+writes an `auth.signout` audit row under the signed-in identity, and lands on
+`/login?signed_out=1` — where the sign-in button carries `prompt=select_account` so Google offers
+the account chooser instead of silently re-using the identity that just signed out. The SPA also
+returns to `/login` whenever an API call answers 401 (expiry or revocation mid-use).
+
 ### Public allowlist
 
-`/healthz` and the favicons (`/favicon.svg`, `/favicon.ico`) are served without credentials.
-`/auth/login` and `/auth/callback` are also public (they are the path to getting a session).
-Every other path requires a valid session.
+`/login` (the one unauthenticated page), `/auth/login` + `/auth/callback` + `/auth/signout` (the
+session round-trip; signout stays public so an expired cookie can still sign out without a
+redirect loop), `/healthz` (the probe contract), and the favicons (`/favicon.svg`, `/favicon.ico`
+— what lets the login page carry the mark). **Every other path — the SPA, its assets, every API —
+requires a valid session.**
 
 ## Configuration
 

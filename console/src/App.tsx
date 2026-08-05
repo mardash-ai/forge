@@ -374,6 +374,61 @@ export default function App() {
           </div>
           <div style={{ fontFamily: 'var(--mono)', fontSize: 10.5 }}>⌘K jump · . density</div>
         </div>
+
+        {/* WHO IS HOLDING THE PANE, AND THE WAY TO PUT IT DOWN. The console grants real reach over
+            the estate, so the session is a first-class object: the signed-in identity (the same
+            email every audit row records) sits permanently at the bottom of the rail, next to the
+            way out — the dorinda web app's placement, so one habit covers both surfaces. Signing
+            out revokes the session server-side and lands on /login, the only unauthenticated
+            page. */}
+        {boot.data?.actor && boot.data.actor !== 'anonymous' && (
+          <div
+            style={{
+              flex: '0 0 auto',
+              padding: '10px 16px 12px',
+              borderTop: '1px solid var(--line-faint)',
+              background: 'var(--bg-surface)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 8,
+            }}
+          >
+            <span
+              title={`Signed in as ${boot.data.actor}`}
+              style={{
+                fontFamily: 'var(--mono)',
+                fontSize: 11,
+                color: 'var(--text-muted)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                minWidth: 0,
+              }}
+            >
+              {boot.data.actor}
+            </span>
+            <button
+              onClick={() => {
+                window.location.href = '/auth/signout';
+              }}
+              title="End this console session and return to the sign-in page"
+              style={{
+                flex: '0 0 auto',
+                background: 'none',
+                border: '1px solid var(--line)',
+                borderRadius: 4,
+                color: 'var(--text-secondary)',
+                fontSize: 11,
+                fontWeight: 500,
+                padding: '4px 9px',
+                cursor: 'pointer',
+              }}
+            >
+              Log out
+            </button>
+          </div>
+        )}
       </nav>
 
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
@@ -509,39 +564,13 @@ function TopBar({
             sources
           </span>
         )}
-        {/* Identity indicator — shows the signed-in email and a sign-out control when OIDC is
-            active. Falls back to the auth mode label in open/dev mode where no email is known. */}
-        {boot?.actor && boot.actor !== 'anonymous' ? (
-          <span
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
-            aria-label={`Signed in as ${boot.actor}`}
-          >
-            <span
-              style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--text-secondary)' }}
-              title={`Signed in as ${boot.actor}`}
-            >
-              {boot.actor}
-            </span>
-            <a
-              href="/auth/signout"
-              style={{
-                fontSize: 11.5,
-                color: 'var(--text-muted)',
-                textDecoration: 'underline',
-                textDecorationColor: 'var(--line-strong)',
-                textUnderlineOffset: '2px',
-              }}
-              title="End this console session and return to the sign-in screen"
-            >
-              sign out
-            </a>
+        {/* Identity lives in the rail footer (bottom-left, beside Log out) — the same placement
+            as the dorinda web app, so one habit covers both surfaces. The header keeps only the
+            auth-mode label for open/dev deployments where no email is known. */}
+        {boot && (!boot.actor || boot.actor === 'anonymous') && (
+          <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>
+            auth <span style={{ fontFamily: 'var(--mono)' }}>{boot.auth}</span>
           </span>
-        ) : (
-          boot && (
-            <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>
-              auth <span style={{ fontFamily: 'var(--mono)' }}>{boot.auth}</span>
-            </span>
-          )
         )}
         <Toggle on={dense} onClick={onDensity}>
           compact

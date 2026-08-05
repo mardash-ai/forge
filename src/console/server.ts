@@ -452,11 +452,11 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
   const cookieFlags = (maxAge: number, path = '/') =>
     `HttpOnly; ${secureCookies ? 'Secure; ' : ''}SameSite=Lax; Path=${path}; Max-Age=${maxAge}`;
 
-  // Paths that must be served without credentials.
-  //   · /healthz — a probe cannot hold a credential and it reveals nothing.
-  //   · Favicons — browsers auto-probe these before authentication; gating them behind auth
-  //     produces a broken-icon tab on the login redirect page.
-  //   · /auth/login + /auth/callback — the OIDC round-trip; these ARE the path to authentication.
+  // `/login` is the ONLY page an unauthenticated user can see. `/auth/*` is the OAuth round-trip
+  // that page initiates (signout stays public so an expired cookie can still sign out without a
+  // redirect loop); `/healthz` is the probe contract (a probe cannot hold a credential and the
+  // payload reveals nothing); the favicons are what lets the login page itself carry the mark.
+  // Every other path — the SPA, its assets, every API — requires a session.
   //
   // NOTE: We strip the query string before matching — /auth/callback?code=…&state=… must match
   // /auth/callback.  This is a correctness fix for any public path that could carry query params.
@@ -464,6 +464,7 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     '/healthz',
     '/favicon.svg',
     '/favicon.ico',
+    '/login',
     '/auth/login',
     '/auth/callback',
     '/auth/signout',
@@ -475,14 +476,97 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     if (PUBLIC_PATHS.has(reqPath)) return;
     const r = auth.check(req);
     if (!r.ok) {
-      // Google OIDC mode: redirect browser navigation to the login page; 401 for API calls so the
-      // SPA can handle them programmatically.
-      if (auth.mode === 'google' && !reqPath.startsWith('/api/')) {
-        void reply.code(302).header('Location', '/auth/login').send('');
+      // Browser navigation lands on the login page — in EVERY auth mode, including unconfigured
+      // fail-closed (the page then says sign-in is unavailable instead of serving raw JSON).
+      // API calls get 401 so the SPA can handle them programmatically.
+      if (!reqPath.startsWith('/api/')) {
+        void reply.code(302).header('Location', '/login').send('');
         return;
       }
       reply.code(401).send({ error: { code: 'unauthorized', message: 'authentication required' } });
     }
+  });
+
+  // ── The login page — the one unauthenticated page ────────────────────────────────────────────
+  //
+  // Server-rendered, standalone HTML: the SPA and its assets stay entirely behind the session, so
+  // an unauthenticated visitor sees exactly this page and nothing else. States the access policy
+  // outright — Google sign-in only, mardash.ai members only — because an operator refused at the
+  // door should be told the rule, not left guessing. Hex values are hardcoded from tokens.css for
+  // the same reason as the favicon: no CSS cascade exists outside the SPA.
+  const LOGIN_ERRORS: Record<string, string> = {
+    access_denied: 'That Google account is not a member of the mardash.ai organization — access refused.',
+    state_mismatch: 'The sign-in attempt could not be validated (state mismatch). Try again.',
+    token_exchange_failed: 'Google did not complete the sign-in (token exchange failed). Try again.',
+    no_code: 'Google returned no authorization code. Try again.',
+    no_id_token: 'Google returned no identity token. Try again.',
+  };
+
+  app.get('/login', async (req, reply) => {
+    // An authenticated visitor has no business on the login page — straight to the console.
+    if (auth.check(req).ok) {
+      return reply.code(302).header('Location', '/').send('');
+    }
+    const q = req.query as { error?: string; signed_out?: string };
+    const errKey = q.error ?? '';
+    const errMsg = errKey ? (LOGIN_ERRORS[errKey] ?? `Sign-in failed (${errKey}). Try again.`) : '';
+    const signedOut = q.signed_out === '1';
+    // After a sign-out, the button carries prompt=select_account so Google presents the account
+    // chooser instead of silently re-using the identity that just signed out.
+    const loginHref = signedOut ? '/auth/login?prompt=select_account' : '/auth/login';
+    const configured = auth.mode === 'google';
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>forge console — sign in</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { min-height: 100vh; display: grid; place-items: center; background: #0A0D0C; color: #E8ECEA;
+         font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif; }
+  .card { width: min(400px, calc(100vw - 32px)); background: #101514; border: 1px solid #363E3B;
+          border-radius: 10px; padding: 28px; }
+  .mark { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+  .mark h1 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+  .mark h1 span { color: #8B9490; font-weight: 400; }
+  p.policy { color: #8B9490; font-size: 12.5px; margin-bottom: 20px; }
+  p.policy strong { color: #B8C0BC; font-weight: 500; }
+  .err { border: 1px solid #C2410C; background: rgba(194, 65, 12, 0.12); color: #FFC48A;
+         border-radius: 6px; padding: 10px 12px; font-size: 12.5px; margin-bottom: 16px; }
+  .info { border: 1px solid #363E3B; background: rgba(54, 62, 59, 0.25); color: #B8C0BC;
+          border-radius: 6px; padding: 10px 12px; font-size: 12.5px; margin-bottom: 16px; }
+  a.btn { display: block; text-align: center; background: #FF8A3C; color: #0A0D0C; font-weight: 600;
+          text-decoration: none; border-radius: 6px; padding: 10px 14px; font-size: 13.5px; }
+  a.btn:hover { background: #FFC48A; }
+  .unavail { border: 1px dashed #363E3B; color: #8B9490; border-radius: 6px; padding: 10px 12px;
+             font-size: 12.5px; text-align: center; }
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="mark">
+      <img src="/favicon.svg" width="28" height="28" alt="">
+      <h1>forge <span>console</span></h1>
+    </div>
+    ${errMsg ? `<div class="err" role="alert">${esc(errMsg)}</div>` : ''}
+    ${signedOut && !errMsg ? `<div class="info" role="status">You have signed out.</div>` : ''}
+    <p class="policy">This is the operator pane for the production estate. Sign-in is via
+    <strong>Google only</strong>, and access is restricted to members of the
+    <strong>mardash.ai</strong> organization. There is no other way in.</p>
+    ${
+      configured
+        ? `<a class="btn" href="${loginHref}">Sign in with Google</a>`
+        : `<div class="unavail">Sign-in is unavailable — no identity provider is configured on this deployment.</div>`
+    }
+  </main>
+</body>
+</html>`;
+    return reply.header('Content-Type', 'text/html; charset=utf-8').send(html);
   });
 
   // ── Google OIDC routes ───────────────────────────────────────────────────────────────────────
@@ -549,7 +633,7 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
       if (q.error) {
         return reply
           .code(302)
-          .header('Location', `/?error=${encodeURIComponent(q.error)}`)
+          .header('Location', `/login?error=${encodeURIComponent(q.error)}`)
           .send('');
       }
 
@@ -557,11 +641,11 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
       const reqCookies = parseCookieHeader((req.headers as Record<string, string>).cookie ?? '');
       const stateCookie = reqCookies[OIDC_STATE_COOKIE] ?? '';
       if (!q.state || !stateCookie || q.state !== stateCookie) {
-        return reply.code(302).header('Location', '/?error=state_mismatch').send('');
+        return reply.code(302).header('Location', '/login?error=state_mismatch').send('');
       }
 
       if (!q.code) {
-        return reply.code(302).header('Location', '/?error=no_code').send('');
+        return reply.code(302).header('Location', '/login?error=no_code').send('');
       }
 
       // Exchange authorization code for tokens.
@@ -580,16 +664,16 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
           signal: AbortSignal.timeout(15_000),
         });
         if (!tokenRes.ok) {
-          return reply.code(302).header('Location', '/?error=token_exchange_failed').send('');
+          return reply.code(302).header('Location', '/login?error=token_exchange_failed').send('');
         }
         const tokens = (await tokenRes.json()) as { id_token?: string };
         idToken = tokens.id_token ?? null;
       } catch {
-        return reply.code(302).header('Location', '/?error=token_exchange_failed').send('');
+        return reply.code(302).header('Location', '/login?error=token_exchange_failed').send('');
       }
 
       if (!idToken) {
-        return reply.code(302).header('Location', '/?error=no_id_token').send('');
+        return reply.code(302).header('Location', '/login?error=no_id_token').send('');
       }
 
       // Verify ID token — aud, hd (mardash.ai enforcement), signature.
@@ -602,7 +686,7 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
 
       if (!claims) {
         // Wrong domain, expired token, invalid signature, etc. Refuse and do not fall back.
-        return reply.code(302).header('Location', '/?error=access_denied').send('');
+        return reply.code(302).header('Location', '/login?error=access_denied').send('');
       }
 
       // Issue a signed session cookie. The actor is the verified email, recorded in every
@@ -634,13 +718,20 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
   // authorization presents the account chooser rather than silently re-using the last identity.
 
   app.get('/auth/signout', async (req, reply) => {
+    // Resolve the actor BEFORE revoking — afterwards the cookie no longer authenticates anyone.
+    const actor = actorOf(req);
     const cookies = parseCookieHeader((req.headers as Record<string, string>).cookie ?? '');
     const sessionVal = cookies[OIDC_SESSION_COOKIE];
     // Server-side invalidation: the raw cookie value is added to the revocation set so any
     // concurrent or future request carrying the same token is rejected even before its HMAC expiry.
     if (sessionVal) revokedSessions.add(sessionVal);
+    // The session's end is recorded next to everything the session did. An anonymous signout
+    // (expired/absent cookie) is not an event worth a row.
+    if (actor !== 'anonymous') await audited(actor, 'auth.signout', actor, async () => undefined);
     reply.header('Set-Cookie', `${OIDC_SESSION_COOKIE}=; ${cookieFlags(0)}`);
-    return reply.code(302).header('Location', '/auth/login?prompt=select_account').send('');
+    // Land on the login page — the one unauthenticated page — which offers the account chooser
+    // (prompt=select_account) for the next sign-in.
+    return reply.code(302).header('Location', '/login?signed_out=1').send('');
   });
 
   // ── Reads ──
