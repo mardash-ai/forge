@@ -15,6 +15,7 @@ import {
   parseSessionCookie,
   verifyGoogleIdToken,
   _resetJwksCache,
+  _resetRevokedSessions,
   OIDC_SESSION_COOKIE,
   OIDC_STATE_COOKIE,
   parseCookieHeader,
@@ -915,6 +916,156 @@ describe('server — Google OIDC routes', () => {
       expect(res.statusCode).toBe(401);
       // No Basic challenge — OIDC uses cookies, not HTTP auth
       expect(res.headers['www-authenticate']).toBeUndefined();
+      await app.close();
+    });
+  });
+});
+
+describe('sign-out — session invalidation, cookie clearing, and identity indicator', () => {
+  // Each test cleans the revocation set so tokens from one test never bleed into another.
+  afterEach(() => {
+    _resetRevokedSessions();
+  });
+
+  it('GET /auth/signout clears the session cookie and redirects to /auth/login', async () => {
+    await withOidcEnv({}, async () => {
+      const secret = 'test-session-secret-long-enough';
+      const cookie = makeSessionCookie('mark@mardash.ai', secret);
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/auth/signout',
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+      });
+      expect(res.statusCode).toBe(302);
+      // Must land on the login screen.
+      const loc = String(res.headers.location);
+      expect(loc).toContain('/auth/login');
+      // Cookie must be cleared (Max-Age=0 or empty value).
+      const setCookieHeader = String(res.headers['set-cookie'] ?? '');
+      expect(setCookieHeader).toContain(`${OIDC_SESSION_COOKIE}=`);
+      expect(setCookieHeader).toContain('Max-Age=0');
+      await app.close();
+    });
+  });
+
+  it('GET /auth/signout includes prompt=select_account in the redirect so Google presents the account chooser', async () => {
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      const res = await app.inject({ method: 'GET', url: '/auth/signout' });
+      expect(res.statusCode).toBe(302);
+      expect(String(res.headers.location)).toContain('prompt=select_account');
+      await app.close();
+    });
+  });
+
+  it('after sign-out the revoked session cookie is rejected server-side (same token → 401)', async () => {
+    await withOidcEnv({}, async () => {
+      const secret = 'test-session-secret-long-enough';
+      const cookie = makeSessionCookie('mark@mardash.ai', secret);
+      const app = buildServer();
+
+      // Confirm the cookie is valid before sign-out.
+      const before = await app.inject({
+        method: 'GET',
+        url: '/api/bootstrap',
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+      });
+      expect(before.statusCode).toBe(200);
+
+      // Sign out — server adds the cookie value to the revocation set.
+      await app.inject({
+        method: 'GET',
+        url: '/auth/signout',
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+      });
+
+      // The SAME cookie value is now rejected even though the HMAC has not expired.
+      const after = await app.inject({
+        method: 'GET',
+        url: '/api/bootstrap',
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+      });
+      expect(after.statusCode).toBe(401);
+
+      await app.close();
+    });
+  });
+
+  it('GET /auth/signout is accessible without a valid session (no redirect loop)', async () => {
+    // An operator with an already-expired or absent cookie must be able to reach /auth/signout
+    // without being intercepted by the auth gate and redirected back to /auth/login first.
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      // No session cookie at all.
+      const res = await app.inject({ method: 'GET', url: '/auth/signout' });
+      expect(res.statusCode).toBe(302);
+      expect(String(res.headers.location)).toContain('/auth/login');
+      await app.close();
+    });
+  });
+
+  it('GET /api/bootstrap includes the operator email as `actor`', async () => {
+    await withOidcEnv({}, async () => {
+      const secret = 'test-session-secret-long-enough';
+      const cookie = makeSessionCookie('operator@mardash.ai', secret);
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/bootstrap',
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json() as { data?: { actor?: string } };
+      expect(body.data?.actor).toBe('operator@mardash.ai');
+      await app.close();
+    });
+  });
+
+  it('GET /api/me returns the current operator email', async () => {
+    await withOidcEnv({}, async () => {
+      const secret = 'test-session-secret-long-enough';
+      const cookie = makeSessionCookie('operator@mardash.ai', secret);
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/me',
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json() as { email?: string };
+      expect(body.email).toBe('operator@mardash.ai');
+      await app.close();
+    });
+  });
+
+  it('GET /api/me returns 401 for an unauthenticated request', async () => {
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      const res = await app.inject({ method: 'GET', url: '/api/me' });
+      expect(res.statusCode).toBe(401);
+      await app.close();
+    });
+  });
+
+  it('/auth/login forwards prompt=select_account to the Google authorization URL', async () => {
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      const res = await app.inject({ method: 'GET', url: '/auth/login?prompt=select_account' });
+      expect(res.statusCode).toBe(302);
+      const loc = new URL(String(res.headers.location));
+      expect(loc.searchParams.get('prompt')).toBe('select_account');
+      await app.close();
+    });
+  });
+
+  it('/auth/login without prompt does NOT include prompt in the Google URL', async () => {
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      const res = await app.inject({ method: 'GET', url: '/auth/login' });
+      expect(res.statusCode).toBe(302);
+      const loc = new URL(String(res.headers.location));
+      expect(loc.searchParams.get('prompt')).toBeNull();
       await app.close();
     });
   });

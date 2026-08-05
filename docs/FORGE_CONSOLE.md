@@ -160,6 +160,33 @@ These sit alongside the existing `db-no-backups` (critical) and `db-no-pitr` (wa
 
 The `db-backup-api-error` rule is `warn` rather than `critical` because an API error may be transient, and the backup itself may have completed correctly — the posture is unknown, not confirmed bad.
 
+## Identity indicator and sign-out
+
+The **instrument header** (top bar) shows the signed-in operator's email address in monospace
+whenever Google OIDC is active. A **"sign out"** link sits immediately to the right of the email.
+
+| Element | Where | Behaviour |
+|---|---|---|
+| Operator email | Top bar, right side | Monospace text — a machine-observed value, consistent with the type-carries-provenance rule |
+| Sign out | Top bar, right side (inline with email) | Navigates to `GET /auth/signout`; clears the session server-side and client-side, then redirects to `/auth/login?prompt=select_account` |
+
+### What sign-out does
+
+1. **Server-side invalidation** — the raw session-cookie value is added to an in-process revocation
+   set. Any concurrent or subsequent request that presents the same token is rejected immediately,
+   even before the HMAC's 8-hour natural expiry.
+2. **Cookie cleared** — `console_session` is overwritten with `Max-Age=0`.
+3. **Redirect** — the browser lands on `/auth/login?prompt=select_account`, which includes
+   `prompt=select_account` in the Google authorization URL. Google therefore presents the account
+   chooser rather than silently re-using the last identity — the next sign-in is a fresh choice.
+
+Sign-out does **not** revoke or modify the Google account in any way. It ends only the console's
+own session. The Google session in the browser remains intact; only the console's `console_session`
+cookie is cleared.
+
+In open/dev mode (no `CONSOLE_GOOGLE_CLIENT_ID` configured) the email indicator is absent and the
+top bar shows `auth open` instead.
+
 ⌘K (or `/`) opens the palette; `1`–`9` jump to the first nine screens; `.` toggles density.
 
 ## The design system

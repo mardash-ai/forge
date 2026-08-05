@@ -83,6 +83,8 @@ interface Bootstrap {
   project: string;
   region: string;
   auth: string;
+  /** The authenticated operator's email address, or 'anonymous' in open mode. */
+  actor?: string;
   providers: Array<{ provider_id: string; label: string; kind: string; ok: boolean; detail: string }>;
 }
 
@@ -507,10 +509,39 @@ function TopBar({
             sources
           </span>
         )}
-        {boot && (
-          <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>
-            auth <span style={{ fontFamily: 'var(--mono)' }}>{boot.auth}</span>
+        {/* Identity indicator — shows the signed-in email and a sign-out control when OIDC is
+            active. Falls back to the auth mode label in open/dev mode where no email is known. */}
+        {boot?.actor && boot.actor !== 'anonymous' ? (
+          <span
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+            aria-label={`Signed in as ${boot.actor}`}
+          >
+            <span
+              style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--text-secondary)' }}
+              title={`Signed in as ${boot.actor}`}
+            >
+              {boot.actor}
+            </span>
+            <a
+              href="/auth/signout"
+              style={{
+                fontSize: 11.5,
+                color: 'var(--text-muted)',
+                textDecoration: 'underline',
+                textDecorationColor: 'var(--line-strong)',
+                textUnderlineOffset: '2px',
+              }}
+              title="End this console session and return to the sign-in screen"
+            >
+              sign out
+            </a>
           </span>
+        ) : (
+          boot && (
+            <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>
+              auth <span style={{ fontFamily: 'var(--mono)' }}>{boot.auth}</span>
+            </span>
+          )
         )}
         <Toggle on={dense} onClick={onDensity}>
           compact

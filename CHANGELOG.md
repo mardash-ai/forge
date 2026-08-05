@@ -9,6 +9,20 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.19.5] - 2026-08-05
+
+### Added
+- **Console sign-out + email identity indicator**: the instrument header now shows the signed-in
+  operator's email in monospace wherever identity is displayed, with an inline "sign out" link. Sign-
+  out hits `GET /auth/signout`, which adds the raw session cookie to a server-side revocation set
+  (immediate invalidation before HMAC expiry), clears the cookie (`Max-Age=0`), and redirects to
+  `/auth/login?prompt=select_account` — so Google's next authorization presents the account chooser
+  rather than silently re-using the last identity. Falls back to `auth <mode>` label in open/dev
+  mode. `GET /api/me` exposes the current operator email; `/api/bootstrap` now includes `actor`.
+  Eight new tests cover server-side revocation, cookie clearing, redirect, bootstrap actor field,
+  `/api/me`, `prompt=select_account` forwarding, and no-session signout path. Docs updated in
+  `FORGE_CONSOLE.md`.
+
 ## [1.19.4] - 2026-08-05
 
 ### Added

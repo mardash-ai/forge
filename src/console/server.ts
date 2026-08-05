@@ -294,6 +294,24 @@ export async function verifyGoogleIdToken(token: string, clientId: string): Prom
   return payload;
 }
 
+// ── Session revocation ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * In-process revocation set for signed-out sessions.
+ *
+ * The console uses stateless HMAC cookies (no server-side session store). Sign-out adds the raw
+ * cookie value to this set so the same token is refused on subsequent requests even before its
+ * 8-hour HMAC expiry. The set is cleared on process restart — acceptable for an operator console
+ * where a restart is an uncommon, intentional event. Tests call _resetRevokedSessions() between
+ * runs so the set never bleeds across test cases.
+ */
+const revokedSessions = new Set<string>();
+
+/** Reset the revocation set — for test isolation only. Never call in production code. */
+export function _resetRevokedSessions(): void {
+  revokedSessions.clear();
+}
+
 // ── Auth factory ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -318,6 +336,8 @@ export function createAuth(): ConsoleAuth {
         const cookies = parseCookieHeader(cookieHeader);
         const val = cookies[OIDC_SESSION_COOKIE];
         if (!val) return { ok: false };
+        // Reject explicitly revoked sessions (server-side invalidation for sign-out).
+        if (revokedSessions.has(val)) return { ok: false };
         const email = parseSessionCookie(val, sessionSecret);
         if (!email) return { ok: false };
         return { ok: true, actor: email };
@@ -440,7 +460,7 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
   //
   // NOTE: We strip the query string before matching — /auth/callback?code=…&state=… must match
   // /auth/callback.  This is a correctness fix for any public path that could carry query params.
-  const PUBLIC_PATHS = new Set(['/healthz', '/favicon.svg', '/favicon.ico', '/auth/login', '/auth/callback']);
+  const PUBLIC_PATHS = new Set(['/healthz', '/favicon.svg', '/favicon.ico', '/auth/login', '/auth/callback', '/auth/signout']);
 
   app.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
     // Strip query string for the allowlist check.
@@ -478,7 +498,8 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
      * account").  It is NOT a security control.  The actual enforcement is the `hd` claim check
      * inside verifyGoogleIdToken on the callback route.
      */
-    app.get('/auth/login', async (_req, reply) => {
+    app.get('/auth/login', async (req, reply) => {
+      const q = req.query as { prompt?: string };
       const state = randomBytes(16).toString('hex');
       const url = new URL(GOOGLE_OAUTH_URL);
       url.searchParams.set('client_id', oidcClientId);
@@ -487,6 +508,12 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
       url.searchParams.set('redirect_uri', redirectUri);
       url.searchParams.set('state', state);
       url.searchParams.set('hd', REQUIRED_HD); // cosmetic hint only
+      // prompt=select_account is requested after sign-out so Google presents the account chooser
+      // rather than silently re-using the last identity. This is a deliberate UX choice, not a
+      // security control — the hd enforcement in verifyGoogleIdToken is the enforced boundary.
+      if (q.prompt === 'select_account') {
+        url.searchParams.set('prompt', 'select_account');
+      }
       reply.header(
         'Set-Cookie',
         `${OIDC_STATE_COOKIE}=${state}; ${cookieFlags(OIDC_STATE_MAX_AGE_S, '/auth')}`,
@@ -587,9 +614,31 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     return r.ok ? r.actor : 'anonymous';
   };
 
+  // ── Sign-out ─────────────────────────────────────────────────────────────────────────────────
+  //
+  // Registered unconditionally (OIDC and open modes). In open mode there is no session to revoke,
+  // but the route still clears whatever cookie might be present and redirects to /auth/login so a
+  // browser that lands here always ends up in the right place.
+  //
+  // The route is in PUBLIC_PATHS so the auth gate does not intercept it — signing out with an
+  // already-expired cookie must not loop back to /auth/login before we can clear it.
+  //
+  // After clearing the cookie, the redirect includes prompt=select_account so Google's next
+  // authorization presents the account chooser rather than silently re-using the last identity.
+
+  app.get('/auth/signout', async (req, reply) => {
+    const cookies = parseCookieHeader((req.headers as Record<string, string>).cookie ?? '');
+    const sessionVal = cookies[OIDC_SESSION_COOKIE];
+    // Server-side invalidation: the raw cookie value is added to the revocation set so any
+    // concurrent or future request carrying the same token is rejected even before its HMAC expiry.
+    if (sessionVal) revokedSessions.add(sessionVal);
+    reply.header('Set-Cookie', `${OIDC_SESSION_COOKIE}=; ${cookieFlags(0)}`);
+    return reply.code(302).header('Location', '/auth/login?prompt=select_account').send('');
+  });
+
   // ── Reads ──
 
-  app.get('/api/bootstrap', async () => {
+  app.get('/api/bootstrap', async (req) => {
     const c = ctx();
     const health = await Promise.all(
       registry.all().map(async (p) => ({
@@ -599,7 +648,18 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
         ...(await p.health(c)),
       })),
     );
-    return envelope({ env: ENV, project: PROJECT, region: REGION, auth: auth.mode, providers: health });
+    return envelope({ env: ENV, project: PROJECT, region: REGION, auth: auth.mode, actor: actorOf(req), providers: health });
+  });
+
+  // ── Identity ─────────────────────────────────────────────────────────────────────────────────
+  //
+  // A lightweight endpoint for the SPA to read the current operator's identity without waiting for
+  // the full bootstrap (which fans out to all providers). Returns only the authenticated email so
+  // the UI can display it immediately. The identity is also included in /api/bootstrap for screens
+  // that render after the full load.
+
+  app.get('/api/me', async (req) => {
+    return { email: actorOf(req) };
   });
 
   app.get('/api/inventory', async () => {
