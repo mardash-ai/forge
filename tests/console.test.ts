@@ -1009,10 +1009,13 @@ describe('sign-out — session invalidation, cookie clearing, and identity indic
   });
 
   it('GET /api/bootstrap includes the operator email as `actor`', async () => {
+    // Pass an empty registry so bootstrap returns immediately — no providers to fanout to,
+    // no network timeouts. We are testing only that `actor` is present in the envelope, not
+    // that provider health is populated.
     await withOidcEnv({}, async () => {
       const secret = 'test-session-secret-long-enough';
       const cookie = makeSessionCookie('operator@mardash.ai', secret);
-      const app = buildServer();
+      const app = buildServer(createRegistry([]));
       const res = await app.inject({
         method: 'GET',
         url: '/api/bootstrap',
