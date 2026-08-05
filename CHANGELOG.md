@@ -9,6 +9,17 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.18.2] - 2026-08-05
+
+### Added
+- **`vitest.config.ts` — TEST_DATABASE_URL gate wiring.** The orchestrator verify command requires
+  `TEST_DATABASE_URL` to be set before running `npx vitest run` (failing hard if unset, so a partial
+  suite cannot pass as green). This config activates all Postgres backends and maps
+  `TEST_DATABASE_URL → FORGE_DB_URL` when the variable is present, so `vitest run` (with no extra
+  flags) runs the full pg-backed suite; S3/blobs stay on the filesystem backend unless
+  `FORGE_S3_ENDPOINT` is also supplied (so `pg-blobs.test.ts` self-skips rather than crashing every
+  other file). Without `TEST_DATABASE_URL` the filesystem defaults apply unchanged.
+
 ## [1.18.1] - 2026-08-05
 
 ### Added
