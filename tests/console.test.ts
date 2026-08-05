@@ -303,26 +303,17 @@ describe('provider aggregation — one dead source must not blank the page', () 
 });
 
 describe('server — auth and the write surface', () => {
-  it('fails CLOSED when no credential is configured', () => {
-    const prevU = process.env.CONSOLE_BASIC_USER;
-    const prevP = process.env.CONSOLE_BASIC_PASS;
-    delete process.env.CONSOLE_BASIC_USER;
-    delete process.env.CONSOLE_BASIC_PASS;
+  it('fails CLOSED when no OIDC credential is configured', () => {
+    const prevCI = process.env.CONSOLE_GOOGLE_CLIENT_ID;
+    const prevCS = process.env.CONSOLE_GOOGLE_CLIENT_SECRET;
+    delete process.env.CONSOLE_GOOGLE_CLIENT_ID;
+    delete process.env.CONSOLE_GOOGLE_CLIENT_SECRET;
     const auth = createAuth();
     // A control plane with no credential must serve NOTHING, not everything.
     expect(auth.check({ headers: {} } as never).ok).toBe(false);
-    if (prevU) process.env.CONSOLE_BASIC_USER = prevU;
-    if (prevP) process.env.CONSOLE_BASIC_PASS = prevP;
-  });
-
-  it('rejects a wrong credential and accepts the right one', () => {
-    process.env.CONSOLE_BASIC_USER = 'u';
-    process.env.CONSOLE_BASIC_PASS = 'p';
-    const auth = createAuth();
-    const ok = 'Basic ' + Buffer.from('u:p').toString('base64');
-    const bad = 'Basic ' + Buffer.from('u:wrong').toString('base64');
-    expect(auth.check({ headers: { authorization: ok } } as never).ok).toBe(true);
-    expect(auth.check({ headers: { authorization: bad } } as never).ok).toBe(false);
+    expect(auth.mode).toBe('open');
+    if (prevCI) process.env.CONSOLE_GOOGLE_CLIENT_ID = prevCI;
+    if (prevCS) process.env.CONSOLE_GOOGLE_CLIENT_SECRET = prevCS;
   });
 
   it('EVERY mutating route is declared in the audited write table', async () => {
@@ -353,47 +344,52 @@ describe('server — auth and the write surface', () => {
   });
 
   it('a dispatch without a reason is refused — the audit row must mean something', async () => {
-    process.env.CONSOLE_BASIC_USER = 'u';
-    process.env.CONSOLE_BASIC_PASS = 'p';
-    const app = buildServer();
-    const auth = 'Basic ' + Buffer.from('u:p').toString('base64');
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/actions/dispatch',
-      headers: { authorization: auth },
-      payload: { pipeline_id: 'dorinda-api:1' },
+    await withOidcEnv({}, async () => {
+      const secret = 'test-session-secret-long-enough';
+      const cookie = makeSessionCookie('mark@mardash.ai', secret);
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/actions/dispatch',
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+        payload: { pipeline_id: 'dorinda-api:1' },
+      });
+      expect(res.statusCode).toBe(422);
+      await app.close();
     });
-    expect(res.statusCode).toBe(422);
-    await app.close();
   });
 
   it('an /api 404 stays a 404 and is never swallowed by the SPA shell', async () => {
-    process.env.CONSOLE_BASIC_USER = 'u';
-    process.env.CONSOLE_BASIC_PASS = 'p';
-    const app = buildServer();
-    const auth = 'Basic ' + Buffer.from('u:p').toString('base64');
-    const res = await app.inject({ method: 'GET', url: '/api/nope', headers: { authorization: auth } });
-    expect(res.statusCode).toBe(404);
-    await app.close();
+    await withOidcEnv({}, async () => {
+      const secret = 'test-session-secret-long-enough';
+      const cookie = makeSessionCookie('mark@mardash.ai', secret);
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/nope',
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+      });
+      expect(res.statusCode).toBe(404);
+      await app.close();
+    });
   });
 
-  it('favicons are served without credentials — a 401 on the challenge page would break the icon', async () => {
-    // Browsers auto-probe /favicon.ico and resolve <link rel="icon"> before a user enters a
-    // password. Gating them behind auth causes a broken-icon tab on the 401 challenge page,
-    // which is the only page an unauthenticated visitor ever sees.
-    process.env.CONSOLE_BASIC_USER = 'u';
-    process.env.CONSOLE_BASIC_PASS = 'p';
-    const app = buildServer();
-    // No Authorization header — the request is intentionally unauthenticated.
-    const svg = await app.inject({ method: 'GET', url: '/favicon.svg' });
-    const ico = await app.inject({ method: 'GET', url: '/favicon.ico' });
-    // The response is NOT a 401 — the auth gate must not have fired.
-    // (The UI bundle is not built in this test environment, so 404 is the expected
-    // success outcome — the gate let the request through, and the SPA handler
-    // correctly returned 404 because the dist/ file is absent.)
-    expect(svg.statusCode, '/favicon.svg must not return 401').not.toBe(401);
-    expect(ico.statusCode, '/favicon.ico must not return 401').not.toBe(401);
-    await app.close();
+  it('favicons are served without credentials — a 401 on the login redirect would break the icon', async () => {
+    // Browsers auto-probe /favicon.ico and resolve <link rel="icon"> before authentication.
+    // Gating them behind auth causes a broken-icon tab on the login redirect page.
+    await withOidcEnv({}, async () => {
+      const app = buildServer();
+      // No session cookie — the request is intentionally unauthenticated.
+      const svg = await app.inject({ method: 'GET', url: '/favicon.svg' });
+      const ico = await app.inject({ method: 'GET', url: '/favicon.ico' });
+      // The response is NOT a 401 — the auth gate must not have fired.
+      // (The UI bundle is not built in this test environment, so 404 is the expected
+      // success outcome — the gate let the request through, and the SPA handler
+      // correctly returned 404 because the dist/ file is absent.)
+      expect(svg.statusCode, '/favicon.svg must not return 401').not.toBe(401);
+      expect(ico.statusCode, '/favicon.ico must not return 401').not.toBe(401);
+      await app.close();
+    });
   });
 });
 
@@ -406,7 +402,7 @@ describe('server — auth and the write surface', () => {
 
 import { generateKeyPairSync, createSign } from 'node:crypto';
 
-/** Helper: set OIDC env vars for the duration of a synchronous callback, then restore. */
+/** Helper: set OIDC env vars for the duration of a synchronous or async callback, then restore. */
 function withOidcEnv<T>(
   extra: Record<string, string>,
   fn: () => T,
@@ -420,18 +416,11 @@ function withOidcEnv<T>(
   };
   const prev: Record<string, string | undefined> = {};
   for (const k of Object.keys(OIDC)) { prev[k] = process.env[k]; process.env[k] = OIDC[k]!; }
-  // Also ensure Basic vars don't bleed in
-  const prevBU = process.env.CONSOLE_BASIC_USER;
-  const prevBP = process.env.CONSOLE_BASIC_PASS;
-  delete process.env.CONSOLE_BASIC_USER;
-  delete process.env.CONSOLE_BASIC_PASS;
   try { return fn(); }
   finally {
     for (const [k, v] of Object.entries(prev)) {
       if (v === undefined) delete process.env[k]; else process.env[k] = v;
     }
-    if (prevBU !== undefined) process.env.CONSOLE_BASIC_USER = prevBU;
-    if (prevBP !== undefined) process.env.CONSOLE_BASIC_PASS = prevBP;
   }
 }
 
@@ -519,12 +508,17 @@ describe('createAuth — OIDC mode selection', () => {
     });
   });
 
-  it('OIDC takes priority over Basic when both are configured', () => {
-    withOidcEnv({ CONSOLE_BASIC_USER: 'u', CONSOLE_BASIC_PASS: 'p' }, () => {
-      // The withOidcEnv helper deletes Basic vars, but even if they were present OIDC wins.
-      const auth = createAuth();
-      expect(auth.mode).toBe('google');
-    });
+  it('mode is open (fail-closed) when no OIDC credentials are configured', () => {
+    // Ensure no OIDC vars bleed in from the environment.
+    const prevCI = process.env.CONSOLE_GOOGLE_CLIENT_ID;
+    const prevCS = process.env.CONSOLE_GOOGLE_CLIENT_SECRET;
+    delete process.env.CONSOLE_GOOGLE_CLIENT_ID;
+    delete process.env.CONSOLE_GOOGLE_CLIENT_SECRET;
+    const auth = createAuth();
+    expect(auth.mode).toBe('open');
+    expect(auth.check({ headers: {} } as never).ok).toBe(false);
+    if (prevCI) process.env.CONSOLE_GOOGLE_CLIENT_ID = prevCI;
+    if (prevCS) process.env.CONSOLE_GOOGLE_CLIENT_SECRET = prevCS;
   });
 
   it('OIDC check() returns ok=false when no session cookie is present', () => {
@@ -2148,15 +2142,16 @@ describe('logs — trace correlation is the point of this screen', () => {
      * every service" — could not be asked. Without it an operator greps a message string and finds
      * the line they already had, not the ones around it.
      */
-    const { buildServer } = await import('../src/console/server');
-    process.env.CONSOLE_BASIC_USER = 'u';
-    process.env.CONSOLE_BASIC_PASS = 'p';
+    const { buildServer, makeSessionCookie: mkCookie } = await import('../src/console/server');
+    await withOidcEnv({}, async () => {
+    const secret = 'test-session-secret-long-enough';
+    const sessionCookie = mkCookie('mark@mardash.ai', secret);
     const app = buildServer();
     await app.ready();
     const res = await app.inject({
       method: 'GET',
       url: '/api/logs?trace=abc123&minutes=60',
-      headers: { authorization: 'Basic ' + Buffer.from('u:p').toString('base64') },
+      headers: { cookie: `${OIDC_SESSION_COOKIE}=${sessionCookie}` },
     });
     // No logs provider is configured in tests; what matters is that the route ACCEPTS the parameter
     // rather than rejecting it, and answers in the envelope shape.
@@ -2174,6 +2169,7 @@ describe('logs — trace correlation is the point of this screen', () => {
      * call pays that cost instead of every call. This timeout covers that first call honestly
      * rather than pretending the path is fast.
      */
+    }); // end withOidcEnv
   }, 30_000);
 
   it('a truncated answer is still reported as truncated', async () => {

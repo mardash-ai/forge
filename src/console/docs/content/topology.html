@@ -50,5 +50,5 @@ a{color:var(--blue)}
 <div class="callout">The box is the <b>rollback</b> (one GoDaddy API call per host puts traffic back) and still hosts Grafana/monitoring via the DNS wildcard. It is otherwise off-path. Decommission after Phase 2b + a quiet week.</div>
 <h2>Availability posture (deliberate)</h2>
 <p>Cloud SQL is <b>zonal</b> with backups + PITR — the §9.9 decision: availability upgrades (regional HA, cross-region replica) are <b>runtime settings</b> purchasable later, not architecture. Cloud Run is multi-zone automatically.</p>
-<p class="sub" style="margin-top:48px;border-top:1px solid var(--line);padding-top:14px">Dorinda internal developer portal · generated 2026-07-30 (cutover night) · behind basic auth — do not share.</p>
+<p class="sub" style="margin-top:48px;border-top:1px solid var(--line);padding-top:14px">Dorinda internal developer portal · generated 2026-07-30 (cutover night) · behind Google OIDC — do not share.</p>
 </main></body></html>

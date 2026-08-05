@@ -9,6 +9,20 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.18.5] - 2026-08-05
+
+### Removed
+- **Basic auth removed from `ConsoleAuth`.** Google OIDC is now the sole authenticated entry; the
+  shared-password fallback (`CONSOLE_BASIC_USER` / `CONSOLE_BASIC_PASS`) no longer exists and
+  cannot be configured back in. Fail-closed behavior is preserved — the console returns 401 on
+  every request when OIDC credentials are absent. The public allowlist (`/healthz`,
+  `/favicon.svg`, `/favicon.ico`, `/auth/login`, `/auth/callback`) is unchanged.
+- **`ConsoleAuth.mode` no longer includes `'basic'`**; valid values are `'google'` | `'open'`
+  (open = fail-closed, no credentials configured).
+- **`CONSOLE_BASIC_USER` / `CONSOLE_BASIC_PASS`** removed from `docs/FORGE_CONSOLE.md` and the
+  embedded developer-portal docs. The Basic auth local-dev example is replaced with a note that
+  local development requires a real Google OAuth client.
+
 ## [1.18.4] - 2026-08-05
 
 ### Added

@@ -10,7 +10,7 @@ text{fill:#e6edf7}.h{font-size:17px;font-weight:800}.sub{font-size:12.5px;fill:#
 </style>
 <rect width="1060" height="400" fill="#0b1220"/>
 <text x="24" y="30" class="h">dorinda-devs — this portal (devs.dorinda.ai)</text>
-<text x="24" y="50" class="sub">Static internal docs behind basic auth. Content edits ship through the same machinery as production code.</text>
+<text x="24" y="50" class="sub">Static internal docs behind Google OIDC. Content edits ship through the same machinery as production code.</text>
 <rect x="24" y="74" width="1012" height="84" rx="9" fill="#111a2e" stroke="#4c8dff" stroke-width="1.5"/>
 <rect x="24" y="74" width="5" height="84" rx="2" fill="#4c8dff"/>
 <text x="42" y="96" class="lane" fill="#4c8dff">infra.yml</text>
@@ -57,6 +57,6 @@ text{fill:#e6edf7}.h{font-size:17px;font-weight:800}.sub{font-size:12.5px;fill:#
 <text x="42" y="334" class="stk">Self-hosted runner ONLINE</text><text x="330" y="334" class="st">ci-runner MIG healthy; else jobs queue forever (silent)</text>
 <text x="42" y="354" class="stk">Platform contract published</text><text x="330" y="354" class="st">gs://dorinda-tf-state/contract/prod-a.json — else plan refuses</text>
 <text x="42" y="374" class="stk">Module pins all equal</text><text x="330" y="374" class="st">lint fails on mixed refs (0.79.20) — the Cloud-NAT class of bug</text>
-<text x="42" y="394" class="stk">basic-auth user + pass secrets</text><text x="330" y="394" class="st">values present, else the revision never goes Ready</text>
+<text x="42" y="394" class="stk">Google OIDC client credentials</text><text x="330" y="394" class="st">client ID + secret in Secret Manager, else the revision never goes Ready</text>
 <text x="42" y="414" class="stk">release paths filter</text><text x="330" y="414" class="st">site/** · server.mjs · Dockerfile — a docs-only edit ships itself</text>
 </svg>

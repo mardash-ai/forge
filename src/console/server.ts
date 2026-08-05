@@ -1,8 +1,9 @@
 /**
  * forge-console — the server. Fastify, serving the API and the built SPA from one process.
  *
- * Auth is one interface with two implementations so the interim swap is configuration, not code:
- * basic auth today, Google OAuth (domain-restricted) the moment its client secret is populated.
+ * Auth is Google OIDC (domain-restricted to mardash.ai). Google OIDC is the sole authenticated
+ * entry; no shared-password fallback exists. The console fails closed when OIDC credentials are
+ * absent — nothing is served to the internet without a valid session.
  * Every mutating route is registered in a table with a required role, and a test asserts that no
  * mutating route exists outside it.
  */
@@ -11,7 +12,6 @@ import { readFile } from 'node:fs/promises';
 import { join, normalize, extname } from 'node:path';
 import {
   timingSafeEqual,
-  createHash,
   createHmac,
   randomBytes,
   createVerify,
@@ -137,8 +137,8 @@ function ctx(): ProviderContext {
 // ── Auth ───────────────────────────────────────────────────────────────────────────────────────
 
 export interface ConsoleAuth {
-  readonly mode: 'basic' | 'google' | 'open';
-  check(req: FastifyRequest): { ok: true; actor: string } | { ok: false; challenge?: string };
+  readonly mode: 'google' | 'open';
+  check(req: FastifyRequest): { ok: true; actor: string } | { ok: false };
 }
 
 // ── Google OIDC — session cookie helpers ──────────────────────────────────────────────────────
@@ -277,7 +277,7 @@ export async function verifyGoogleIdToken(
   }
 
   // hd claim is the ENFORCED boundary — a non-mardash.ai Google account is refused here,
-  // not challenged, not shown Basic credentials, not offered an alternative.
+  // not challenged, not offered an alternative path.
   if (payload.hd !== REQUIRED_HD) return null;
   if (!payload.email_verified) return null;
 
@@ -308,16 +308,16 @@ export async function verifyGoogleIdToken(
 // ── Auth factory ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Google OIDC is the primary auth mode; Basic is the INTERIM fallback.
- * OIDC is selected whenever CONSOLE_GOOGLE_CLIENT_ID + CONSOLE_GOOGLE_CLIENT_SECRET are present.
- * Basic is selected when those are absent but CONSOLE_BASIC_USER + CONSOLE_BASIC_PASS are set.
- * Neither configured → fails CLOSED (every request denied, nothing served to the internet).
+ * Google OIDC is the sole authenticated path.
+ * OIDC is active whenever CONSOLE_GOOGLE_CLIENT_ID + CONSOLE_GOOGLE_CLIENT_SECRET are present.
+ * If those are absent the console fails CLOSED — every request is denied, nothing is served to
+ * the internet. There is no shared-password fallback.
  *
  * The check() for OIDC verifies a signed HMAC session cookie — fast, stateless, no network call
  * per request. The expensive OIDC code-exchange happens once in /auth/callback.
  */
 export function createAuth(): ConsoleAuth {
-  // OIDC mode: preferred when Google client credentials are present.
+  // OIDC mode: the sole authenticated path.
   const googleClientId = process.env.CONSOLE_GOOGLE_CLIENT_ID ?? '';
   const googleClientSecret = process.env.CONSOLE_GOOGLE_CLIENT_SECRET ?? '';
   if (googleClientId && googleClientSecret) {
@@ -336,28 +336,11 @@ export function createAuth(): ConsoleAuth {
     };
   }
 
-  // Basic auth: the INTERIM fallback for pre-OIDC deployments.
-  const user = process.env.CONSOLE_BASIC_USER ?? '';
-  const pass = process.env.CONSOLE_BASIC_PASS ?? '';
-  if (!user || !pass) {
-    // Fails CLOSED: with neither credential configured the console serves nothing rather than
-    // serving a production control plane to the internet.
-    return {
-      mode: 'basic',
-      check: () => ({ ok: false, challenge: 'Basic realm="forge console"' }),
-    };
-  }
-  const expected = 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
-  const expectedHash = createHash('sha256').update(expected).digest();
+  // Fails CLOSED: with no OIDC credential configured the console serves nothing rather than
+  // serving a production control plane to the internet. There is no credential back door.
   return {
-    mode: 'basic',
-    check(req) {
-      const got = req.headers.authorization ?? '';
-      const gotHash = createHash('sha256').update(got).digest();
-      // Constant-time compare over fixed-length hashes: a length-varying compare leaks the prefix.
-      if (got && timingSafeEqual(gotHash, expectedHash)) return { ok: true, actor: user };
-      return { ok: false, challenge: 'Basic realm="forge console"' };
-    },
+    mode: 'open',
+    check: () => ({ ok: false }),
   };
 }
 
@@ -461,8 +444,8 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
 
   // Paths that must be served without credentials.
   //   · /healthz — a probe cannot hold a credential and it reveals nothing.
-  //   · Favicons — browsers auto-probe these before the user enters a password; gating them
-  //     produces a broken-icon tab on the challenge page.
+  //   · Favicons — browsers auto-probe these before authentication; gating them behind auth
+  //     produces a broken-icon tab on the login redirect page.
   //   · /auth/login + /auth/callback — the OIDC round-trip; these ARE the path to authentication.
   //
   // NOTE: We strip the query string before matching — /auth/callback?code=…&state=… must match
@@ -487,7 +470,6 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
         void reply.code(302).header('Location', '/auth/login').send('');
         return;
       }
-      if (r.challenge) reply.header('WWW-Authenticate', r.challenge);
       reply.code(401).send({ error: { code: 'unauthorized', message: 'authentication required' } });
     }
   });
@@ -540,8 +522,8 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
      *   4. verifyGoogleIdToken() checks alg, iss, aud, exp, hd==mardash.ai, email_verified, sig.
      *   5. Issue a signed HMAC session cookie carrying the authenticated email.
      *
-     * A non-mardash.ai Google account fails step 4 and is REFUSED — not challenged, not offered
-     * Basic auth, not given another attempt.
+     * A non-mardash.ai Google account fails step 4 and is REFUSED — not challenged, not given
+     * another attempt.
      */
     app.get('/auth/callback', async (req, reply) => {
       const q = req.query as { code?: string; state?: string; error?: string };

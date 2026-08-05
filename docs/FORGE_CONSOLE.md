@@ -58,11 +58,10 @@ interesting cases. A dispatch with no stated reason is refused.
 
 ## Auth
 
-Two modes share the `ConsoleAuth` interface; the active mode is chosen by which environment
-variables are present. **OIDC is preferred** — when `CONSOLE_GOOGLE_CLIENT_ID` and
-`CONSOLE_GOOGLE_CLIENT_SECRET` are set, Basic auth is bypassed entirely.
+Google OIDC is the sole authenticated path. The console fails closed when OIDC credentials are
+absent — nothing is served to the internet. There is no shared-password fallback.
 
-### Google OIDC (primary)
+### Google OIDC
 
 `GET /auth/login` redirects the browser to Google's authorization endpoint. After consent,
 Google calls `GET /auth/callback` with an authorization code.  The console:
@@ -71,7 +70,7 @@ Google calls `GET /auth/callback` with an authorization code.  The console:
 2. Exchanges the code for an ID token via Google's token endpoint.
 3. **Verifies the ID token end-to-end**: RSA-SHA256 signature against Google's JWKS, `aud ==
    CONSOLE_GOOGLE_CLIENT_ID`, `hd == mardash.ai`.
-4. Refuses non-mardash.ai accounts at step 3 — they are denied, not offered Basic credentials.
+4. Refuses non-mardash.ai accounts at step 3 — they are denied, not offered an alternative.
 5. Issues a signed HMAC session cookie (`console_session`, 8 h, `HttpOnly; Secure; SameSite=Lax`).
 
 The signed-in email is recorded as the **actor** in every audit log row — not a shared username.
@@ -79,12 +78,6 @@ The signed-in email is recorded as the **actor** in every audit log row — not 
 The `hd` parameter in the Google authorization URL is a **cosmetic hint** (pre-fills the domain
 selector on Google's consent screen).  It is not a security control.  The `hd` claim check in
 step 3 is the enforced boundary.
-
-### Basic auth (interim fallback)
-
-Used only when OIDC is not configured.  Set `CONSOLE_BASIC_USER` and `CONSOLE_BASIC_PASS`.
-Absent ⇒ the console serves nothing (fails closed).  This mode is removed after live OIDC
-verification — see the t4 task.
 
 ### Public allowlist
 
@@ -101,7 +94,6 @@ Every other path requires a valid session.
 | `CONSOLE_SESSION_SECRET` | HMAC key for signing session cookies. Falls back to the client secret if absent (dev only). Set a dedicated long random secret in production. |
 | `CONSOLE_PUBLIC_URL` | Base URL used to construct the OAuth redirect URI (e.g. `https://forge.dorinda.ai`). Defaults to `http://localhost:3000` for local dev. |
 | `CONSOLE_INSECURE_COOKIES` | Set to any value to omit the `Secure` flag from cookies. For local http:// development only — never in production. |
-| `CONSOLE_BASIC_USER` / `CONSOLE_BASIC_PASS` | Interim Basic auth. Ignored when OIDC credentials are present. **Absent with no OIDC ⇒ the console serves nothing** (fails closed). |
 | `CONSOLE_GITHUB_TOKEN` | Enables the CI plane. Absent ⇒ pipelines read-unavailable and dispatch disabled, stated plainly in the UI |
 | `CONSOLE_GCP_PROJECT` / `CONSOLE_GCP_REGION` / `CONSOLE_ENV` | Scope |
 | `CONSOLE_GITHUB_OWNER` / `CONSOLE_GITHUB_REPOS` | Which repositories to read |
@@ -264,9 +256,6 @@ readable in greyscale, in forced-colors mode, and to a colour-blind reader.
 ## Local development
 
 ```bash
-# Basic auth (no Google credentials needed):
-CONSOLE_BASIC_USER=dev CONSOLE_BASIC_PASS=dev npx tsx src/console/server.ts   # :3000
-
 # Google OIDC (needs a real OAuth client with localhost:3000 in the allowed redirect URIs):
 CONSOLE_GOOGLE_CLIENT_ID=... CONSOLE_GOOGLE_CLIENT_SECRET=... \
   CONSOLE_INSECURE_COOKIES=1 CONSOLE_PUBLIC_URL=http://localhost:3000 \
@@ -274,6 +263,9 @@ CONSOLE_GOOGLE_CLIENT_ID=... CONSOLE_GOOGLE_CLIENT_SECRET=... \
 
 cd console && npm run dev                                                     # :5173, proxies /api
 ```
+
+Without OIDC credentials the server starts but refuses all requests (fails closed). Configure a
+real Google OAuth client (`localhost:3000` in the allowed redirect URIs) to develop locally.
 
 GCP reads use the metadata server in production and Application Default Credentials locally
 (`gcloud auth application-default login`). **A service-account key file is refused outright** — this
