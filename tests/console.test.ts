@@ -403,10 +403,7 @@ describe('server — auth and the write surface', () => {
 import { generateKeyPairSync, createSign } from 'node:crypto';
 
 /** Helper: set OIDC env vars for the duration of a synchronous or async callback, then restore. */
-function withOidcEnv<T>(
-  extra: Record<string, string>,
-  fn: () => T,
-): T {
+function withOidcEnv<T>(extra: Record<string, string>, fn: () => T): T {
   const OIDC: Record<string, string> = {
     CONSOLE_GOOGLE_CLIENT_ID: 'test-client-id',
     CONSOLE_GOOGLE_CLIENT_SECRET: 'test-client-secret',
@@ -415,11 +412,16 @@ function withOidcEnv<T>(
     ...extra,
   };
   const prev: Record<string, string | undefined> = {};
-  for (const k of Object.keys(OIDC)) { prev[k] = process.env[k]; process.env[k] = OIDC[k]!; }
-  try { return fn(); }
-  finally {
+  for (const k of Object.keys(OIDC)) {
+    prev[k] = process.env[k];
+    process.env[k] = OIDC[k]!;
+  }
+  try {
+    return fn();
+  } finally {
     for (const [k, v] of Object.entries(prev)) {
-      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
     }
   }
 }
@@ -452,7 +454,10 @@ function stubJwksFetch(jwk: object, kid: string) {
     }
     throw new Error(`unexpected fetch in test: ${url}`);
   }) as never;
-  return () => { globalThis.fetch = real; _resetJwksCache(); };
+  return () => {
+    globalThis.fetch = real;
+    _resetJwksCache();
+  };
 }
 
 describe('parseCookieHeader — basic correctness', () => {
@@ -2144,31 +2149,31 @@ describe('logs — trace correlation is the point of this screen', () => {
      */
     const { buildServer, makeSessionCookie: mkCookie } = await import('../src/console/server');
     await withOidcEnv({}, async () => {
-    const secret = 'test-session-secret-long-enough';
-    const sessionCookie = mkCookie('mark@mardash.ai', secret);
-    const app = buildServer();
-    await app.ready();
-    const res = await app.inject({
-      method: 'GET',
-      url: '/api/logs?trace=abc123&minutes=60',
-      headers: { cookie: `${OIDC_SESSION_COOKIE}=${sessionCookie}` },
-    });
-    // No logs provider is configured in tests; what matters is that the route ACCEPTS the parameter
-    // rather than rejecting it, and answers in the envelope shape.
-    expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).toHaveProperty('data');
-    await app.close();
-    /*
-     * 30s, not the 5s default. This route really does reach a provider, and on a runner with NO GCP
-     * credentials the first credential attempt legitimately costs ~23 seconds: a 3s metadata
-     * timeout, an ADC read, then up to 20s on the gcloud CLI. It passed locally (where ADC exists)
-     * and timed out in CI — a flake that was reporting a real property of the product, namely that
-     * an unconfigured environment HANGS rather than failing.
-     *
-     * The product fix is the negative credential cache in `console-gcp/http.ts`, so only the FIRST
-     * call pays that cost instead of every call. This timeout covers that first call honestly
-     * rather than pretending the path is fast.
-     */
+      const secret = 'test-session-secret-long-enough';
+      const sessionCookie = mkCookie('mark@mardash.ai', secret);
+      const app = buildServer();
+      await app.ready();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/logs?trace=abc123&minutes=60',
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=${sessionCookie}` },
+      });
+      // No logs provider is configured in tests; what matters is that the route ACCEPTS the parameter
+      // rather than rejecting it, and answers in the envelope shape.
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toHaveProperty('data');
+      await app.close();
+      /*
+       * 30s, not the 5s default. This route really does reach a provider, and on a runner with NO GCP
+       * credentials the first credential attempt legitimately costs ~23 seconds: a 3s metadata
+       * timeout, an ADC read, then up to 20s on the gcloud CLI. It passed locally (where ADC exists)
+       * and timed out in CI — a flake that was reporting a real property of the product, namely that
+       * an unconfigured environment HANGS rather than failing.
+       *
+       * The product fix is the negative credential cache in `console-gcp/http.ts`, so only the FIRST
+       * call pays that cost instead of every call. This timeout covers that first call honestly
+       * rather than pretending the path is fast.
+       */
     }); // end withOidcEnv
   }, 30_000);
 

@@ -10,13 +10,7 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { readFile } from 'node:fs/promises';
 import { join, normalize, extname } from 'node:path';
-import {
-  timingSafeEqual,
-  createHmac,
-  randomBytes,
-  createVerify,
-  createPublicKey,
-} from 'node:crypto';
+import { timingSafeEqual, createHmac, randomBytes, createVerify, createPublicKey } from 'node:crypto';
 
 import { envelope, type Finding, type MetricIntent, type QuotaGauge, type Revision } from './domain';
 import { aggregate, createRegistry, type ProviderContext, type ProviderRegistry } from './providers/types';
@@ -247,10 +241,7 @@ async function fetchJwks(): Promise<unknown[]> {
  * Returns the verified claims or null for ANY failure. The caller must treat null
  * as "access denied" and must NOT fall back to Basic auth or an unauthenticated state.
  */
-export async function verifyGoogleIdToken(
-  token: string,
-  clientId: string,
-): Promise<GoogleIdClaims | null> {
+export async function verifyGoogleIdToken(token: string, clientId: string): Promise<GoogleIdClaims | null> {
   const parts = token.split('.');
   if (parts.length !== 3) return null;
 
@@ -286,9 +277,7 @@ export async function verifyGoogleIdToken(
     const keys = await fetchJwks();
     const jwk = keys.find(
       (k): k is Record<string, unknown> =>
-        typeof k === 'object' &&
-        k !== null &&
-        (k as Record<string, unknown>)['kid'] === header.kid,
+        typeof k === 'object' && k !== null && (k as Record<string, unknown>)['kid'] === header.kid,
     );
     if (!jwk) return null;
     // Type assertion: createPublicKey validates the JWK structure at runtime; TypeScript's
@@ -437,7 +426,8 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
   const oidcClientId = process.env.CONSOLE_GOOGLE_CLIENT_ID ?? '';
   const oidcClientSecret = process.env.CONSOLE_GOOGLE_CLIENT_SECRET ?? '';
   const oidcSessionSecret = process.env.CONSOLE_SESSION_SECRET || oidcClientSecret;
-  const oidcPublicUrl = (process.env.CONSOLE_PUBLIC_URL ?? '').replace(/\/$/, '') || `http://localhost:${PORT}`;
+  const oidcPublicUrl =
+    (process.env.CONSOLE_PUBLIC_URL ?? '').replace(/\/$/, '') || `http://localhost:${PORT}`;
   const secureCookies = !process.env.CONSOLE_INSECURE_COOKIES;
   const cookieFlags = (maxAge: number, path = '/') =>
     `HttpOnly; ${secureCookies ? 'Secure; ' : ''}SameSite=Lax; Path=${path}; Max-Age=${maxAge}`;
@@ -450,13 +440,7 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
   //
   // NOTE: We strip the query string before matching — /auth/callback?code=…&state=… must match
   // /auth/callback.  This is a correctness fix for any public path that could carry query params.
-  const PUBLIC_PATHS = new Set([
-    '/healthz',
-    '/favicon.svg',
-    '/favicon.ico',
-    '/auth/login',
-    '/auth/callback',
-  ]);
+  const PUBLIC_PATHS = new Set(['/healthz', '/favicon.svg', '/favicon.ico', '/auth/login', '/auth/callback']);
 
   app.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
     // Strip query string for the allowlist check.
@@ -529,7 +513,10 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
       const q = req.query as { code?: string; state?: string; error?: string };
 
       if (q.error) {
-        return reply.code(302).header('Location', `/?error=${encodeURIComponent(q.error)}`).send('');
+        return reply
+          .code(302)
+          .header('Location', `/?error=${encodeURIComponent(q.error)}`)
+          .send('');
       }
 
       // CSRF: state param must match the cookie we set in /auth/login.

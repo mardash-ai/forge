@@ -9,6 +9,15 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.18.6] - 2026-08-05
+
+### Fixed
+- **Prettier formatting on `src/console/server.ts` + `tests/console.test.ts`.** v1.18.4/v1.18.5
+  shipped unformatted code; the dorinda-forge-console release workflow runs
+  `npx prettier --check .` against the pinned forge ref, so neither tag was adoptable — the
+  consumer's verify job (correctly) refused to ship them. Formatting only; no behavior change
+  vs v1.18.5.
+
 ## [1.18.5] - 2026-08-05
 
 ### Removed
