@@ -9,6 +9,18 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.19.4] - 2026-08-05
+
+### Added
+- **Glossary tooltips in the console** (`Abbr` in the kit, single `GLOSSARY` map): esoteric terms
+  get a dotted underline and a mouse-over definition — `PITR` on the backup-posture card, `Conf.`
+  on Services. Industry-basic terms stay out of the glossary deliberately.
+
+### Note
+v1.19.3 carried this same change but no changelog entry; the release-hygiene test ("CHANGELOG has
+an entry for the version in package.json") failed in the consumer's verify job and the tag was
+never adoptable. This entry supersedes it — do not pin v1.19.3.
+
 ## [1.19.2] - 2026-08-05
 
 ### Fixed
