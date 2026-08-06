@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { store } from '../storage/store';
 import { getBackends } from '../storage/backends';
+import type { AppEvent } from '../events/app-events';
 import { executeCapability } from '../core/runtime';
 import { SYSTEM_ACTOR } from '../shared/domain';
 import { nowIso } from '../shared/time';
@@ -178,6 +179,75 @@ export function broadcastToolListChanged(appId: string): number {
 /** Test-only: how many streams are currently attached for an app. */
 export function toolListSubscriberCount(appId: string): number {
   return toolListSubscribers.get(appId)?.size ?? 0;
+}
+
+// ── C23 timeline projection ──────────────────────────────────────────────────────────────────────
+//
+// `recordCall` writes every tool call as a C3 `mcp.tool_call` AppEvent; `data.host` is the OAuth
+// client id the token was issued to (the calling MCP host: Claude, ChatGPT, etc.).
+// `toTimelineEvent` is the CANONICAL projection from that raw fact to a structured timeline shape
+// that a consumer (UI, agent, analytics) can use directly. The caller MUST always be present and
+// distinguishable — legacy/migrated events whose host was not captured carry the explicit sentinel
+// `'unattributed'` rather than an omitted field or an empty string, so a reader can tell "I know
+// who called" from "I do not know who called" without extra null checks.
+
+/** The structured timeline shape emitted by toTimelineEvent for every `mcp.tool_call` AppEvent. */
+export interface McpToolCallTimelineEvent {
+  /** ISO-8601 timestamp of when the call was recorded. */
+  at: string;
+  kind: 'mcp.tool_call';
+  /** The tool name that was invoked. */
+  tool: string;
+  /**
+   * The OAuth client id of the calling MCP host (Claude, ChatGPT, etc.), taken from `data.host`
+   * as written by `recordCall`. When the host cannot be determined — legacy events, records
+   * migrated before C23, or a call path that bypassed attribution — the value is the explicit
+   * sentinel `'unattributed'` so a reader can always distinguish a known caller from an absent one
+   * without inspecting for `undefined` or an empty string.
+   */
+  caller: string;
+  /** The owner (user id) the token was issued to, if known. */
+  user: string | undefined;
+  /** Whether the tool call completed successfully. */
+  ok: boolean;
+  /** Set when the call was rejected or failed for a specific reason (e.g. `insufficient_scope`). */
+  reason?: string;
+}
+
+/**
+ * Projects a `mcp.tool_call` C3 AppEvent onto a structured McpToolCallTimelineEvent.
+ *
+ * The caller field is always populated: `data.host` when present and non-empty, otherwise the
+ * explicit sentinel `'unattributed'`. A consumer MUST treat `'unattributed'` as a distinct,
+ * known state — not as a missing value — so dashboards and audit logs read "unattributed" rather
+ * than silently omitting the caller column.
+ *
+ * @example
+ * // Attributed — data.host was captured by recordCall:
+ * toTimelineEvent(event) // → { caller: 'mcpc_abc123', … }
+ *
+ * // Unattributed — legacy event or bypassed attribution:
+ * toTimelineEvent(event) // → { caller: 'unattributed', … }
+ */
+export function toTimelineEvent(event: AppEvent): McpToolCallTimelineEvent {
+  const data = event.data as {
+    tool?: unknown;
+    host?: unknown;
+    ok?: unknown;
+    reason?: unknown;
+  };
+  const rawHost = data.host;
+  const caller =
+    typeof rawHost === 'string' && rawHost.length > 0 ? rawHost : 'unattributed';
+  return {
+    at: event.at,
+    kind: 'mcp.tool_call',
+    tool: typeof data.tool === 'string' ? data.tool : (event.subject ?? ''),
+    caller,
+    user: event.owner,
+    ok: data.ok === true,
+    ...(typeof data.reason === 'string' ? { reason: data.reason } : {}),
+  };
 }
 
 export function registerMcpRoutes(

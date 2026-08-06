@@ -11,6 +11,8 @@ import {
   subscribeToolListChanged,
   broadcastToolListChanged,
   toolListSubscriberCount,
+  toTimelineEvent,
+  type McpToolCallTimelineEvent,
 } from '../src/api/mcp-routes';
 import { newToken } from '../src/plugins/auth-identity/index';
 import { expiresAtIso } from '../src/mcp/oauth';
@@ -1341,5 +1343,165 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
       } as object,
     });
     expect(res.json().result._meta?.traceparent).toMatch(new RegExp(`^00-${edgeTrace}-`));
+  });
+});
+
+// ── toTimelineEvent — C23 caller projection ────────────────────────────────────────────────────
+//
+// Every `mcp.tool_call` AppEvent written by `recordCall` carries `data.host` (the OAuth client id
+// of the calling MCP host). `toTimelineEvent` projects that raw C3 fact into a structured shape
+// where the caller is ALWAYS present — either the literal client id or the explicit sentinel
+// `'unattributed'` for legacy/migrated events. The two key invariants:
+//   1. A known caller is preserved verbatim and never confused with the sentinel.
+//   2. A missing/empty/non-string host NEVER silently omits the field — it becomes `'unattributed'`.
+describe('toTimelineEvent — C23 caller projection', () => {
+  const BASE_AT = '2026-08-06T12:00:00.000Z';
+
+  const mkEvent = (data: Record<string, unknown>, overrides: Partial<{
+    id: string; app_id: string; type: string; subject: string; owner: string; at: string;
+  }> = {}) => ({
+    id: 'aevt_test_001',
+    app_id: 'app_demo',
+    type: 'mcp.tool_call',
+    subject: 'get_note',
+    owner: 'user_abc',
+    data,
+    at: BASE_AT,
+    ...overrides,
+  });
+
+  // ── Attributed path ────────────────────────────────────────────────────────────────────────
+
+  it('ATTRIBUTED: projects data.host as caller, preserving tool/ok/user/at and kind', () => {
+    const event = mkEvent({ tool: 'get_note', host: 'mcpc_abc123', ok: true });
+    const te: McpToolCallTimelineEvent = toTimelineEvent(event);
+
+    expect(te.caller).toBe('mcpc_abc123'); // data.host preserved verbatim
+    expect(te.kind).toBe('mcp.tool_call');
+    expect(te.tool).toBe('get_note');
+    expect(te.ok).toBe(true);
+    expect(te.user).toBe('user_abc');
+    expect(te.at).toBe(BASE_AT);
+    expect(te.reason).toBeUndefined(); // no reason on a successful call
+  });
+
+  it('ATTRIBUTED: reason is included when data.reason is set (e.g. insufficient_scope)', () => {
+    const event = mkEvent({
+      tool: 'write_note',
+      host: 'mcpc_xyz456',
+      ok: false,
+      reason: 'insufficient_scope',
+    });
+    const te = toTimelineEvent(event);
+
+    expect(te.caller).toBe('mcpc_xyz456');
+    expect(te.ok).toBe(false);
+    expect(te.reason).toBe('insufficient_scope');
+  });
+
+  it('ATTRIBUTED: caller is the exact string even when it contains special characters', () => {
+    const event = mkEvent({ tool: 'ping', host: 'client:with/slashes?and=equals', ok: true });
+    expect(toTimelineEvent(event).caller).toBe('client:with/slashes?and=equals');
+  });
+
+  it('ATTRIBUTED: falls back to event.subject when data.tool is absent', () => {
+    // Defensive: the raw event might lack data.tool but always has subject (it IS the tool name).
+    const event = mkEvent({ host: 'mcpc_abc', ok: true }); // no data.tool
+    const te = toTimelineEvent(event);
+    expect(te.tool).toBe('get_note'); // from event.subject
+    expect(te.caller).toBe('mcpc_abc');
+  });
+
+  it('ATTRIBUTED: ok=false is preserved faithfully — never coerced to true', () => {
+    const event = mkEvent({ tool: 'boom', host: 'mcpc_abc', ok: false });
+    expect(toTimelineEvent(event).ok).toBe(false);
+  });
+
+  // ── Integration: a real recordCall event carries the caller ───────────────────────────────
+
+  it('INTEGRATION: a real mcp.tool_call event recorded via the dispatch path carries caller through toTimelineEvent', async () => {
+    await registerTool();
+    const bearer = await mintAccess(['notes:read']);
+    await rpc('tools/call', { name: 'get_note', arguments: { id: 'n1' } }, bearer);
+
+    const events = await store.listAppEvents({ app_id: APP_ID, owner: 'userA', subject: 'get_note' });
+    const callEvent = events.find(
+      (e) => e.type === 'mcp.tool_call' && (e.data as { ok?: boolean }).ok === true,
+    );
+    expect(callEvent).toBeTruthy();
+
+    const te = toTimelineEvent(callEvent!);
+    // `caller` is the client id the grant was minted for — never undefined, never empty.
+    expect(te.caller).toBe('client1'); // same as the clientId used in mintAccess
+    expect(te.caller).not.toBe('unattributed');
+    expect(te.kind).toBe('mcp.tool_call');
+    expect(te.ok).toBe(true);
+    expect(te.user).toBe('userA');
+  });
+
+  // ── Unattributed path — the explicit sentinel ─────────────────────────────────────────────
+
+  it('UNATTRIBUTED: emits caller="unattributed" when data.host is absent', () => {
+    // Legacy event: recorded before C23 host attribution existed.
+    const event = mkEvent({ tool: 'ping', ok: true }); // no host key
+    const te = toTimelineEvent(event);
+
+    expect(te.caller).toBe('unattributed');
+    // The sentinel must be distinguishable from any real client id (never empty, never undefined).
+    expect(te.caller).not.toBe('');
+    expect(te.caller).not.toBeUndefined();
+  });
+
+  it('UNATTRIBUTED: emits caller="unattributed" when data.host is an empty string', () => {
+    const event = mkEvent({ tool: 'ping', host: '', ok: true });
+    expect(toTimelineEvent(event).caller).toBe('unattributed');
+  });
+
+  it('UNATTRIBUTED: emits caller="unattributed" when data.host is null', () => {
+    const event = mkEvent({ tool: 'ping', host: null, ok: true });
+    expect(toTimelineEvent(event).caller).toBe('unattributed');
+  });
+
+  it('UNATTRIBUTED: emits caller="unattributed" when data.host is a non-string (number)', () => {
+    const event = mkEvent({ tool: 'ping', host: 42, ok: true });
+    expect(toTimelineEvent(event).caller).toBe('unattributed');
+  });
+
+  it('UNATTRIBUTED: user is undefined when event.owner is absent', () => {
+    const event = mkEvent({ tool: 'ping', ok: true }, { owner: undefined as unknown as string });
+    const te = toTimelineEvent(event);
+    expect(te.user).toBeUndefined();
+    expect(te.caller).toBe('unattributed');
+  });
+
+  // ── Shape completeness ────────────────────────────────────────────────────────────────────
+
+  it('SHAPE: the output always includes at/kind/tool/caller/ok and never emits reason when absent', () => {
+    const event = mkEvent({ tool: 'x', host: 'c', ok: true });
+    const te = toTimelineEvent(event);
+    const keys = Object.keys(te);
+
+    expect(keys).toContain('at');
+    expect(keys).toContain('kind');
+    expect(keys).toContain('tool');
+    expect(keys).toContain('caller');
+    expect(keys).toContain('ok');
+    expect(keys).toContain('user');
+    expect(keys).not.toContain('reason'); // not present on a successful, reason-free call
+  });
+
+  it('SHAPE: caller field is never silently absent — present on every emitted event', () => {
+    // The invariant: no matter the input, toTimelineEvent ALWAYS emits caller.
+    const inputs = [
+      mkEvent({ tool: 't', host: 'real-client', ok: true }),
+      mkEvent({ tool: 't', ok: true }), // no host
+      mkEvent({ tool: 't', host: '', ok: false }), // empty host
+    ];
+    for (const event of inputs) {
+      const te = toTimelineEvent(event);
+      expect('caller' in te).toBe(true);
+      expect(typeof te.caller).toBe('string');
+      expect(te.caller.length).toBeGreaterThan(0);
+    }
   });
 });

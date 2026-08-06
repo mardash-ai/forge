@@ -110,6 +110,63 @@ separate hostnames (see 09-deployable-consumer.md § C23 env).
 
 ---
 
+## `toTimelineEvent` — C3 caller projection
+
+Every successful or failed tool call is recorded as a `mcp.tool_call` C3 AppEvent by `recordCall`
+in `src/api/mcp-routes.ts`. The event's `data.host` field holds the OAuth client id that the
+access token was issued to (the calling MCP host: Claude, ChatGPT, a custom connector, etc.).
+
+`toTimelineEvent` (exported from `src/api/mcp-routes.ts`) is the **canonical projection** from
+that raw C3 fact to a structured `McpToolCallTimelineEvent`. Consume it whenever you need to render
+a tool-call feed, build an audit log, or drive an analytics query — never roll your own projection
+from `data.host`.
+
+### Output shape
+
+```typescript
+interface McpToolCallTimelineEvent {
+  at: string;          // ISO-8601 — when the call was recorded
+  kind: 'mcp.tool_call';
+  tool: string;        // the tool that was invoked
+  caller: string;      // see below
+  user: string | undefined;  // token owner (session user id)
+  ok: boolean;         // whether the call completed successfully
+  reason?: string;     // set on rejections/errors (e.g. 'insufficient_scope')
+}
+```
+
+### The `caller` field — always present, always distinguishable
+
+| `data.host` value                    | `caller` output              |
+|--------------------------------------|------------------------------|
+| A non-empty string (e.g. `mcpc_abc`) | That string, verbatim        |
+| Absent / `null` / empty string       | `'unattributed'` (sentinel)  |
+| Any non-string type                  | `'unattributed'` (sentinel)  |
+
+The sentinel `'unattributed'` is explicit and non-empty — a reader can distinguish "I know who
+called" from "I do not know who called" without extra null / undefined checks. Silently omitting
+the field was the previous behavior; it is now forbidden.
+
+**Legacy / migrated events** whose `data.host` was never captured will carry
+`caller: 'unattributed'`. This is the correct answer, not a bug.
+
+### Agent usage example
+
+```typescript
+import { toTimelineEvent } from 'forge/src/api/mcp-routes';
+
+// Fetch the last 50 tool calls for a user:
+const events = await fetch('/app-events?subject=get_note&owner=user_abc&limit=50').then(r => r.json()).then(r => r.events);
+const timeline = events.map(toTimelineEvent);
+
+// Every entry has caller — no defensive coding needed:
+for (const entry of timeline) {
+  console.log(`${entry.at} ${entry.tool} by ${entry.caller} (${entry.ok ? 'ok' : 'error'})`);
+}
+```
+
+---
+
 ## Consuming the startup-diff result from agent code
 
 After a `forge deploy` or a sidecar restart, an agent managing a consumer app can query whether the
