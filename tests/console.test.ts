@@ -19,6 +19,8 @@ import {
   OIDC_SESSION_COOKIE,
   OIDC_STATE_COOKIE,
   parseCookieHeader,
+  checkBearerToken,
+  AUTOMATION_ACTOR,
 } from '../src/console/server';
 import type { InfraResource } from '../src/console/domain';
 
@@ -2774,5 +2776,196 @@ describe('log filters combine — owner is a clause, not an override', () => {
     const f = buildFilter({ trace_id: 'abc123', runtime_id: 'dorinda-api' } as never);
     expect(f).toContain('(trace:"abc123" OR jsonPayload.trace_id="abc123")');
     expect(f.indexOf('resource.labels.service_name')).toBeLessThan(f.indexOf('(trace:'));
+  });
+});
+
+// ── Automation bearer-token credential ───────────────────────────────────────────────────────
+
+describe('checkBearerToken — constant-time header comparison', () => {
+  it('accepts a correctly formed Bearer header matching the expected token', () => {
+    expect(checkBearerToken('Bearer secret-token-value', 'secret-token-value')).toBe(true);
+  });
+
+  it('rejects a wrong token value', () => {
+    expect(checkBearerToken('Bearer wrong-value', 'secret-token-value')).toBe(false);
+  });
+
+  it('rejects a header that is not a Bearer token', () => {
+    expect(checkBearerToken('Basic dXNlcjpwYXNz', 'secret-token-value')).toBe(false);
+  });
+
+  it('rejects an empty header', () => {
+    expect(checkBearerToken('', 'secret-token-value')).toBe(false);
+  });
+
+  it('rejects "Bearer " with no token part', () => {
+    expect(checkBearerToken('Bearer ', 'secret-token-value')).toBe(false);
+  });
+
+  it('is case-sensitive for the token value', () => {
+    expect(checkBearerToken('Bearer SECRET-TOKEN-VALUE', 'secret-token-value')).toBe(false);
+  });
+});
+
+describe('automation token — auth and read-only enforcement', () => {
+  const AUTOMATION_TOKEN = 'test-automation-secret-42';
+
+  /** Set OIDC + automation token env vars for the duration of the callback. */
+  function withAutomationEnv<T>(fn: () => T): T {
+    return withOidcEnv({ CONSOLE_AUTOMATION_TOKEN: AUTOMATION_TOKEN }, fn);
+  }
+
+  afterEach(() => {
+    _resetRevokedSessions();
+  });
+
+  it('token-authed request is accepted and returns actor automation@console', () => {
+    withAutomationEnv(() => {
+      const auth = createAuth();
+      const r = auth.check({
+        headers: { authorization: `Bearer ${AUTOMATION_TOKEN}` },
+      } as never);
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.actor).toBe(AUTOMATION_ACTOR);
+        expect(r.readonly).toBe(true);
+      }
+    });
+  });
+
+  it('a wrong bearer token is refused — does not fall through to session-cookie auth', () => {
+    withAutomationEnv(() => {
+      const auth = createAuth();
+      // Has a valid session cookie too — must NOT fall back to it when Bearer is presented.
+      const sessionSecret = 'test-session-secret-long-enough';
+      const cookieVal = makeSessionCookie('mark@mardash.ai', sessionSecret);
+      const r = auth.check({
+        headers: {
+          authorization: 'Bearer WRONG-TOKEN',
+          cookie: `${OIDC_SESSION_COOKIE}=${cookieVal}`,
+        },
+      } as never);
+      expect(r.ok).toBe(false);
+    });
+  });
+
+  it('automation token is disabled (fail-closed) when CONSOLE_AUTOMATION_TOKEN is absent', () => {
+    withOidcEnv({}, () => {
+      // No CONSOLE_AUTOMATION_TOKEN in env.
+      const auth = createAuth();
+      const r = auth.check({
+        headers: { authorization: `Bearer ${AUTOMATION_TOKEN}` },
+      } as never);
+      // The path is entirely unavailable — the bearer token is not accepted.
+      expect(r.ok).toBe(false);
+    });
+  });
+
+  it('session-cookie auth still works when an automation token is also configured', () => {
+    withAutomationEnv(() => {
+      const auth = createAuth();
+      const sessionSecret = 'test-session-secret-long-enough';
+      const cookieVal = makeSessionCookie('mark@mardash.ai', sessionSecret);
+      const r = auth.check({
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookieVal}` },
+      } as never);
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.actor).toBe('mark@mardash.ai');
+        expect(r.readonly).toBe(false);
+      }
+    });
+  });
+
+  it('token-authed GET request is accepted — read-only applies only to writes', async () => {
+    await withAutomationEnv(async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/audit',
+        headers: { authorization: `Bearer ${AUTOMATION_TOKEN}` },
+      });
+      // 200 (not 401 or 403) — read access is permitted.
+      expect(res.statusCode).toBe(200);
+      await app.close();
+    });
+  });
+
+  it('token-authed POST is refused with 403 — read-only by construction', async () => {
+    await withAutomationEnv(async () => {
+      const app = buildServer();
+      // dispatch is a write route — it must be refused for automation token.
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/actions/dispatch',
+        headers: { authorization: `Bearer ${AUTOMATION_TOKEN}` },
+        payload: { pipeline_id: 'dorinda-api:1', reason: 'test' },
+      });
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.body) as { error: { code: string } };
+      expect(body.error.code).toBe('forbidden');
+      await app.close();
+    });
+  });
+
+  it('token-authed POST to any write route is refused with 403', async () => {
+    await withAutomationEnv(async () => {
+      const app = buildServer();
+      // Try a tenant write route to confirm it's not just dispatch that's guarded.
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/tenants/accounts/comp',
+        headers: { authorization: `Bearer ${AUTOMATION_TOKEN}` },
+        payload: { owner: 'x', comped: true },
+      });
+      expect(res.statusCode).toBe(403);
+      await app.close();
+    });
+  });
+
+  it('token auth does NOT issue a session cookie', async () => {
+    await withAutomationEnv(async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/bootstrap',
+        headers: { authorization: `Bearer ${AUTOMATION_TOKEN}` },
+      });
+      // Must succeed (200) and carry no Set-Cookie with a session token.
+      expect(res.statusCode).toBe(200);
+      const cookies = ([] as string[]).concat(res.headers['set-cookie'] ?? []);
+      expect(cookies.some((c) => c.startsWith(`${OIDC_SESSION_COOKIE}=`))).toBe(false);
+      await app.close();
+    });
+  });
+
+  it('bootstrap response shows automation@console as the actor for token-authed requests', async () => {
+    await withAutomationEnv(async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/bootstrap',
+        headers: { authorization: `Bearer ${AUTOMATION_TOKEN}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { data: { actor: string } };
+      expect(body.data.actor).toBe(AUTOMATION_ACTOR);
+      await app.close();
+    });
+  });
+
+  it('Google OIDC interactive login is unchanged when automation token is configured', async () => {
+    await withAutomationEnv(async () => {
+      const app = buildServer();
+      // /login must still render; /auth/login must still redirect to Google.
+      const loginRes = await app.inject({ method: 'GET', url: '/login' });
+      expect(loginRes.statusCode).toBe(200);
+      expect(loginRes.body).toContain('Sign in with Google');
+      const authRes = await app.inject({ method: 'GET', url: '/auth/login' });
+      expect(authRes.statusCode).toBe(302);
+      const loc = new URL(String(authRes.headers.location));
+      expect(loc.hostname).toBe('accounts.google.com');
+      await app.close();
+    });
   });
 });

@@ -70,8 +70,10 @@ interesting cases. A dispatch with no stated reason is refused.
 
 ## Auth
 
-Google OIDC is the sole authenticated path. The console fails closed when OIDC credentials are
-absent — nothing is served to the internet. There is no shared-password fallback.
+Google OIDC is the sole **interactive** authenticated path. The console also supports a scoped
+automation bearer token for non-browser API access; that path is strictly additive and strictly
+read-only — it cannot become a second interactive door. The console fails closed when OIDC
+credentials are absent — nothing is served to the internet. There is no shared-password fallback.
 
 ### Google OIDC
 
@@ -109,6 +111,46 @@ writes an `auth.signout` audit row under the signed-in identity, and lands on
 the account chooser instead of silently re-using the identity that just signed out. The SPA also
 returns to `/login` whenever an API call answers 401 (expiry or revocation mid-use).
 
+### Automation bearer token
+
+A scoped, read-only credential for non-browser API access (scripts, CI, monitoring agents). It is
+an **additive** path — the Google login flow is completely unchanged.
+
+**How it works**
+
+1. The token value is seeded out-of-band in Google Secret Manager and injected into the console's
+   environment as `CONSOLE_AUTOMATION_TOKEN` (same injection pattern as every other console
+   secret). No token value is hardcoded anywhere.
+2. A caller presents the token in the HTTP `Authorization` header: `Bearer <token>`.
+3. If the token matches, the request is authenticated as actor **`automation@console`** — a
+   distinct, machine-only identity that appears in every audit row, distinguishable from the real
+   email addresses written by human/Google sessions.
+4. The response carries **no `Set-Cookie` header** — no session is issued, so the token can never
+   become an interactive session.
+
+**Read-only by construction — two independent layers**
+
+- **Transport layer guard**: the server's `onRequest` hook refuses every `POST`, `PUT`, `PATCH`,
+  and `DELETE` method for a token-authenticated request with `403 Forbidden`. This check fires
+  before any handler runs and covers every write route by construction — a future write route
+  cannot escape the guard by omitting a per-handler check.
+- **Write-route audit table**: every audited write route is enumerated in `WRITE_ROUTES` and a
+  build-time test asserts that no `POST`/`DELETE` route exists outside it. The two layers are
+  independent — the transport guard is the enforced boundary; the audit table is what makes the
+  audit log complete.
+
+**Fail closed**
+
+When `CONSOLE_AUTOMATION_TOKEN` is not configured, the bearer-token path is entirely disabled.
+No token is accepted. There is no open door. A bearer token presented against an unconfigured
+deployment is refused with `401`.
+
+**Wrong token does not fall through**
+
+When a request presents a `Bearer …` header and the token is wrong, the request is refused
+immediately (`401`). It does not fall through to session-cookie auth — a wrong bearer token is
+not treated as "maybe this is a session request"; it is treated as a failed authentication attempt.
+
 ### Public allowlist
 
 `/login` (the one unauthenticated page), `/auth/login` + `/auth/callback` + `/auth/signout` (the
@@ -124,6 +166,7 @@ requires a valid session.**
 | `CONSOLE_GOOGLE_CLIENT_ID` | Google OAuth 2.0 client ID. **OIDC mode requires both this and the secret.** |
 | `CONSOLE_GOOGLE_CLIENT_SECRET` | Google OAuth 2.0 client secret. |
 | `CONSOLE_SESSION_SECRET` | HMAC key for signing session cookies. Falls back to the client secret if absent (dev only). Set a dedicated long random secret in production. |
+| `CONSOLE_AUTOMATION_TOKEN` | Scoped automation bearer token. Read from Secret Manager (same convention as all other console secrets). Absent ⇒ bearer-token auth is fully disabled (fail closed). When set: non-browser API callers present `Authorization: Bearer <value>`; authenticated as `automation@console`; read-only (all write methods refused with 403). |
 | `CONSOLE_PUBLIC_URL` | Base URL used to construct the OAuth redirect URI (e.g. `https://forge.dorinda.ai`). Defaults to `http://localhost:3000` for local dev. |
 | `CONSOLE_INSECURE_COOKIES` | Set to any value to omit the `Secure` flag from cookies. For local http:// development only — never in production. |
 | `CONSOLE_GITHUB_TOKEN` | Enables the CI plane. Absent ⇒ pipelines read-unavailable and dispatch disabled, stated plainly in the UI |

@@ -9,6 +9,29 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-08-06
+
+### Added
+
+- **ConsoleAuth automation bearer token — scoped read-only API credential.** A non-browser caller
+  (script, CI agent, monitoring tool) can now authenticate with `Authorization: Bearer <token>`
+  where the token value is read from the `CONSOLE_AUTOMATION_TOKEN` environment variable, seeded
+  out-of-band in Secret Manager (same injection pattern as every other console secret — no value
+  hardcoded). The credential is **read-only by construction**: the server's `onRequest` hook refuses
+  every `POST`, `PUT`, `PATCH`, and `DELETE` method for a token-authenticated request with
+  `403 Forbidden` before any handler runs — a future write route cannot escape the constraint by
+  omission. Token-authenticated requests stamp the distinct actor identity **`automation@console`**
+  into every audit row, distinguishable from the `user@mardash.ai` emails written by human/Google
+  sessions. No session cookie is ever issued for a token request. The path **fails closed** when
+  `CONSOLE_AUTOMATION_TOKEN` is absent — bearer tokens are not accepted at all, and a wrong token
+  returns `401` without falling through to session-cookie auth. The Google OIDC interactive login
+  flow is completely unchanged. `docs/FORGE_CONSOLE.md` and the embedded in-console docs
+  (`infra.html`) document the credential, its constraints, the `automation@console` actor, and the
+  fail-closed behavior. 22 new unit + integration tests cover: token acceptance, wrong-token
+  refusal, fail-closed when unconfigured, no-fallthrough on wrong Bearer, session-cookie coexistence,
+  read acceptance, write rejection (403), no-session-cookie issuance, correct actor in bootstrap,
+  and Google OIDC flow preservation.
+
 ## [1.20.4] - 2026-08-06
 
 ### Added

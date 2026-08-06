@@ -4,6 +4,13 @@
  * Auth is Google OIDC (domain-restricted to mardash.ai). Google OIDC is the sole authenticated
  * entry; no shared-password fallback exists. The console fails closed when OIDC credentials are
  * absent — nothing is served to the internet without a valid session.
+ *
+ * A scoped automation credential is also supported: a bearer token seeded out-of-band in Secret
+ * Manager (CONSOLE_AUTOMATION_TOKEN). It is API-only (no cookie issued), read-only by
+ * construction (all audited write methods refuse it with 403), and stamps every audit row with the
+ * distinct actor identity `automation@console`. When the secret is unconfigured the path fails
+ * closed — no token is accepted. Google OIDC remains the ONLY interactive login path.
+ *
  * Every mutating route is registered in a table with a required role, and a test asserts that no
  * mutating route exists outside it.
  */
@@ -130,10 +137,20 @@ function ctx(): ProviderContext {
 
 // ── Auth ───────────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The result of an auth check.
+ *
+ * `readonly` is `true` for token-authenticated (automation) requests. The server's `onRequest`
+ * hook refuses mutating methods (POST/PUT/PATCH/DELETE) when `readonly` is set, so the
+ * read-only constraint is enforced at the transport layer rather than in each write handler.
+ */
 export interface ConsoleAuth {
   readonly mode: 'google' | 'open';
-  check(req: FastifyRequest): { ok: true; actor: string } | { ok: false };
+  check(req: FastifyRequest): { ok: true; actor: string; readonly: boolean } | { ok: false };
 }
+
+/** The actor identity stamped into every audit row for automation-token requests. */
+export const AUTOMATION_ACTOR = 'automation@console';
 
 // ── Google OIDC — session cookie helpers ──────────────────────────────────────────────────────
 
@@ -315,16 +332,51 @@ export function _resetRevokedSessions(): void {
 // ── Auth factory ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Google OIDC is the sole authenticated path.
+ * Verify a bearer token from the `Authorization` header using a constant-time comparison.
+ *
+ * Returns `true` when the header has the form `Bearer <token>` and the token matches `expected`.
+ * Returns `false` for any other value, including malformed headers. Using timingSafeEqual
+ * prevents timing attacks — an attacker cannot infer partial token matches from response latency.
+ *
+ * `expected` must be non-empty (callers must not call this when the token is unconfigured).
+ */
+export function checkBearerToken(authHeader: string, expected: string): boolean {
+  if (!authHeader.startsWith('Bearer ')) return false;
+  const presented = authHeader.slice(7); // everything after "Bearer "
+  if (!presented) return false;
+  const eBuf = Buffer.from(expected, 'utf8');
+  const gBuf = Buffer.from(presented, 'utf8');
+  // timingSafeEqual requires equal-length buffers; mismatched lengths means they can't be equal.
+  if (gBuf.length !== eBuf.length) return false;
+  try {
+    return timingSafeEqual(gBuf, eBuf);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Google OIDC is the sole interactive authenticated path.
  * OIDC is active whenever CONSOLE_GOOGLE_CLIENT_ID + CONSOLE_GOOGLE_CLIENT_SECRET are present.
  * If those are absent the console fails CLOSED — every request is denied, nothing is served to
  * the internet. There is no shared-password fallback.
  *
  * The check() for OIDC verifies a signed HMAC session cookie — fast, stateless, no network call
  * per request. The expensive OIDC code-exchange happens once in /auth/callback.
+ *
+ * Additionally, a scoped automation bearer token is supported when CONSOLE_AUTOMATION_TOKEN is
+ * set. It is checked BEFORE the session cookie. A token-authenticated request:
+ *   - Is marked `readonly: true` so the server refuses all mutating methods with 403.
+ *   - Returns actor `automation@console` so machine reads are distinguishable in audit logs.
+ *   - Issues NO session cookie — it can never become an interactive session.
+ *   - Fails closed when CONSOLE_AUTOMATION_TOKEN is absent: bearer tokens are simply not accepted.
  */
 export function createAuth(): ConsoleAuth {
-  // OIDC mode: the sole authenticated path.
+  // Automation token — loaded from the environment (Secret Manager injects it at startup).
+  // Empty string means unconfigured; the path is disabled entirely (fail closed).
+  const automationToken = process.env.CONSOLE_AUTOMATION_TOKEN ?? '';
+
+  // OIDC mode: the sole interactive authenticated path.
   const googleClientId = process.env.CONSOLE_GOOGLE_CLIENT_ID ?? '';
   const googleClientSecret = process.env.CONSOLE_GOOGLE_CLIENT_SECRET ?? '';
   if (googleClientId && googleClientSecret) {
@@ -332,6 +384,23 @@ export function createAuth(): ConsoleAuth {
     return {
       mode: 'google',
       check(req) {
+        // 1. Automation bearer token — checked first, API-only, read-only.
+        //    Only available when the secret is configured.
+        if (automationToken) {
+          const authHeader = (req.headers as Record<string, string>).authorization ?? '';
+          if (authHeader.startsWith('Bearer ')) {
+            // A bearer token is presented. Either it matches (and we authenticate as
+            // automation@console) or it is wrong (and we refuse immediately — never fall
+            // through to session-cookie auth, which would let a bad token silently degrade
+            // to a cookie check).
+            if (checkBearerToken(authHeader, automationToken)) {
+              return { ok: true, actor: AUTOMATION_ACTOR, readonly: true };
+            }
+            return { ok: false };
+          }
+        }
+
+        // 2. Session cookie — the OIDC-issued interactive credential.
         const cookieHeader = (req.headers as Record<string, string>).cookie ?? '';
         const cookies = parseCookieHeader(cookieHeader);
         const val = cookies[OIDC_SESSION_COOKIE];
@@ -340,13 +409,14 @@ export function createAuth(): ConsoleAuth {
         if (revokedSessions.has(val)) return { ok: false };
         const email = parseSessionCookie(val, sessionSecret);
         if (!email) return { ok: false };
-        return { ok: true, actor: email };
+        return { ok: true, actor: email, readonly: false };
       },
     };
   }
 
   // Fails CLOSED: with no OIDC credential configured the console serves nothing rather than
   // serving a production control plane to the internet. There is no credential back door.
+  // The automation token is also refused — it is only available in authenticated deployments.
   return {
     mode: 'open',
     check: () => ({ ok: false }),
@@ -484,6 +554,19 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
         return;
       }
       reply.code(401).send({ error: { code: 'unauthorized', message: 'authentication required' } });
+      return;
+    }
+
+    // Automation token is read-only by construction: every audited write route refuses it.
+    // This check is at the transport layer — not duplicated per handler — so there is no way
+    // for a future write route to escape the constraint by omitting a per-handler check.
+    if (r.readonly && /^(POST|PUT|PATCH|DELETE)$/i.test(req.method)) {
+      reply.code(403).send({
+        error: {
+          code: 'forbidden',
+          message: 'automation token is read-only — use a human Google session to perform writes',
+        },
+      });
     }
   });
 

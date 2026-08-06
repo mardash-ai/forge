@@ -58,5 +58,19 @@ mtls_trust_config · artifact_registry_host · secret_project</pre>
 <tr><td>0.79.8</td><td>API back-fills service-level scaling{} — second read-back save</td></tr>
 <tr><td>0.79.9–11</td><td>stateless services must be replaceable; taints from partial applies; the untaint verb</td></tr>
 <tr><td>0.79.12–16</td><td>NAT · secret files · backend module · release-image with revision-Ready read-back · ENTERPRISE edition · external secrets</td></tr></table>
+<h2>forge console auth</h2>
+<p>Google OIDC (mardash.ai domain) is the sole <strong>interactive</strong> path — the login page says so outright, and the server enforces it server-side. The console fails closed when OIDC credentials are absent.</p>
+<h3>Automation bearer token (read-only API access)</h3>
+<p>Non-browser callers (scripts, CI, monitoring agents) can authenticate with a scoped bearer token. It is <strong>strictly additive and strictly read-only</strong> — it cannot become a second interactive door.</p>
+<table><tr><th>Property</th><th>Behaviour</th></tr>
+<tr><td>Header</td><td><code>Authorization: Bearer &lt;token&gt;</code></td></tr>
+<tr><td>Secret</td><td><code>CONSOLE_AUTOMATION_TOKEN</code> — injected from Secret Manager at startup; never hardcoded</td></tr>
+<tr><td>Actor</td><td><code>automation@console</code> — stamped into every audit row; distinguishable from human email actors</td></tr>
+<tr><td>Session cookie</td><td>Never issued — the token cannot become an interactive session</td></tr>
+<tr><td>Writes</td><td>Refused with <code>403 Forbidden</code> at the transport layer (all POST/PUT/PATCH/DELETE), before any handler runs</td></tr>
+<tr><td>Unconfigured</td><td>Fail closed — bearer tokens are not accepted at all; a presented token returns <code>401</code></td></tr>
+<tr><td>Wrong token</td><td><code>401</code>, never falls through to session-cookie auth</td></tr>
+</table>
+<div class="callout">The read-only constraint is enforced at the server's <code>onRequest</code> hook — not per handler. A future write route cannot escape it by omission; the build-time audit-table test is a second independent check.</div>
 <p class="sub" style="margin-top:48px;border-top:1px solid var(--line);padding-top:14px">Dorinda internal developer portal · generated 2026-07-30 (cutover night) · behind Google OIDC — do not share.</p>
 </main></body></html>
