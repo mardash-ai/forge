@@ -326,7 +326,10 @@ async function main() {
     // Non-fatal: a fingerprint check failure must never prevent the sidecar from booting. The
     // next register/delete broadcast will still work; this only affects the startup-diff path.
     // eslint-disable-next-line no-console
-    console.error('forge data-plane: C23 fingerprint check failed (non-fatal):', String((e as Error)?.message ?? e));
+    console.error(
+      'forge data-plane: C23 fingerprint check failed (non-fatal):',
+      String((e as Error)?.message ?? e),
+    );
   }
   startScheduler(store, {
     tickMs: process.env.FORGE_SCHEDULER_TICK_MS ? Number(process.env.FORGE_SCHEDULER_TICK_MS) : undefined,
