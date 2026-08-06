@@ -9,6 +9,25 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.20.4] - 2026-08-06
+
+### Added
+
+- **C23 `toTimelineEvent` — canonical caller projection for MCP tool-call events.** Every
+  `mcp.tool_call` AppEvent written by `recordCall` carries `data.host` (the OAuth client id of the
+  calling MCP host — Claude, ChatGPT, a custom connector). `toTimelineEvent` (exported from
+  `src/api/mcp-routes.ts`) is now the canonical projection from that raw C3 fact to a structured
+  `McpToolCallTimelineEvent` shape with an explicit `caller` field. The caller is `data.host`
+  verbatim when present and non-empty; otherwise the explicit sentinel `'unattributed'` — so a
+  consumer can always distinguish a known caller from an unknown one without null/undefined checks.
+  Silently omitting the field (the previous behavior) is gone. `McpToolCallTimelineEvent` documents
+  the full output shape: `at`, `kind`, `tool`, `caller`, `user`, `ok`, and optional `reason`.
+  13 new unit tests cover attributed paths (verbatim client id, reason forwarding, ok=false
+  preservation), the unattributed paths (absent/empty/null/non-string host → sentinel), and an
+  integration path through real dispatch that confirms end-to-end attribution. C23 capability
+  catalog and operator runbook updated with zero drift — including a table, agent usage example,
+  and the `'unattributed'` sentinel contract.
+
 ## [1.20.3] - 2026-08-05
 
 ### Added
