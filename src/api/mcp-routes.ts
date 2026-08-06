@@ -51,7 +51,9 @@ const TOOL_CALL_TIMEOUT_MS = 30_000;
 const TOOL_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const FAMILIES: ToolFamily[] = ['read', 'write', 'action'];
 
-const invalid = (message: string) => ({ error: { code: 'invalid_input', message, retry: 'change-input' } });
+const invalid = (message: string) => ({
+  error: { code: 'invalid_input', message, retry: 'change-input' },
+});
 const unknownApp = {
   error: {
     code: 'not_found',
@@ -169,9 +171,18 @@ export function broadcastToolListChanged(appId: string): number {
   // OBSERVABILITY (the point): `notified=0` is the loud diagnostic — the tool surface changed but NO
   // client was holding the stream, so every connected AI is still serving a stale `tools/list` and will
   // keep doing so until it reconnects. Anything >0 proves a real client is consuming the push channel.
-  mcpLog({ event: 'mcp.tools_list_changed', app: appId, notified: sent, attached });
+  mcpLog({
+    event: 'mcp.tools_list_changed',
+    app: appId,
+    notified: sent,
+    attached,
+  });
   startSpan('mcp.tools_list_changed', {
-    attributes: { 'mcp.app': appId, 'mcp.streams_notified': sent, 'mcp.streams_attached': attached },
+    attributes: {
+      'mcp.app': appId,
+      'mcp.streams_notified': sent,
+      'mcp.streams_attached': attached,
+    },
   }).end('ok');
   return sent;
 }
@@ -237,8 +248,7 @@ export function toTimelineEvent(event: AppEvent): McpToolCallTimelineEvent {
     reason?: unknown;
   };
   const rawHost = data.host;
-  const caller =
-    typeof rawHost === 'string' && rawHost.length > 0 ? rawHost : 'unattributed';
+  const caller = typeof rawHost === 'string' && rawHost.length > 0 ? rawHost : 'unattributed';
   return {
     at: event.at,
     kind: 'mcp.tool_call',
@@ -378,9 +388,10 @@ export function registerMcpRoutes(
   // (verified live 2026-07-23 via the edge access log). The WWW-Authenticate pointer (POST /mcp 401 below)
   // advertises this same path-suffixed URL so discovery loops back to the canonical location.
   const protectedResourceHandler = async (req: FastifyRequest, reply: FastifyReply) =>
-    reply
-      .status(200)
-      .send({ resource: `${resourceBase(req)}/mcp`, authorization_servers: [issuerBase(req)] });
+    reply.status(200).send({
+      resource: `${resourceBase(req)}/mcp`,
+      authorization_servers: [issuerBase(req)],
+    });
   app.get('/.well-known/oauth-protected-resource', protectedResourceHandler);
   app.get('/.well-known/oauth-protected-resource/mcp', protectedResourceHandler);
 
@@ -409,7 +420,10 @@ export function registerMcpRoutes(
       const rejectReason = reason ?? 'invalid_token';
       const rejectSpan = startSpan('mcp.auth_reject', {
         parent: parentFromTraceparent(req.headers.traceparent),
-        attributes: { 'mcp.app': app_.name, ...(typeof method === 'string' ? { 'mcp.method': method } : {}) },
+        attributes: {
+          'mcp.app': app_.name,
+          ...(typeof method === 'string' ? { 'mcp.method': method } : {}),
+        },
       });
       rejectSpan.end('error', rejectReason);
       mcpLog({
@@ -425,11 +439,19 @@ export function registerMcpRoutes(
           'WWW-Authenticate',
           `Bearer resource_metadata="${resourceBase(req)}/.well-known/oauth-protected-resource/mcp"`,
         )
-        .send({ error: 'invalid_token', error_description: 'a valid OAuth access token is required.' });
+        .send({
+          error: 'invalid_token',
+          error_description: 'a valid OAuth access token is required.',
+        });
     }
 
     const body = req.body as
-      | { jsonrpc?: string; id?: string | number; method?: string; params?: Record<string, unknown> }
+      | {
+          jsonrpc?: string;
+          id?: string | number;
+          method?: string;
+          params?: Record<string, unknown>;
+        }
       | undefined;
     if (!body || body.jsonrpc !== '2.0' || typeof body.method !== 'string') {
       return reply.status(200).send(rpcError(body?.id ?? null, -32600, 'Invalid Request'));
@@ -452,7 +474,10 @@ export function registerMcpRoutes(
             // `GET /mcp` SSE stream whenever the tool surface changes, so clients re-fetch `tools/list`
             // automatically instead of serving a cached surface until the user reconnects.
             capabilities: { tools: { listChanged: true } },
-            serverInfo: { name: `forge-mcp:${app_.name}`, version: MCP_SERVER_VERSION },
+            serverInfo: {
+              name: `forge-mcp:${app_.name}`,
+              version: MCP_SERVER_VERSION,
+            },
             ...(latest ? { instructions: latest.text } : {}),
           }),
         );
@@ -597,9 +622,11 @@ export function registerMcpRoutes(
         duration_ms: dur,
         error_class: 'insufficient_scope',
       });
-      return reply
-        .status(200)
-        .send(rpcError(id, -32001, 'insufficient_scope', { required_scope: tool.scope }));
+      return reply.status(200).send(
+        rpcError(id, -32001, 'insufficient_scope', {
+          required_scope: tool.scope,
+        }),
+      );
     }
 
     // Dispatch to the app's handler (the C2 sidecar→app callback), authenticated as a service.
@@ -725,7 +752,12 @@ export function registerMcpRoutes(
       type: 'mcp.tool_call',
       subject: tool,
       owner: verified.userId,
-      data: { tool, host: verified.clientId, ok, ...(reason ? { reason } : {}) },
+      data: {
+        tool,
+        host: verified.clientId,
+        ok,
+        ...(reason ? { reason } : {}),
+      },
     });
   }
 
@@ -750,7 +782,10 @@ export function registerMcpRoutes(
           'WWW-Authenticate',
           `Bearer resource_metadata="${resourceBase(req)}/.well-known/oauth-protected-resource/mcp"`,
         )
-        .send({ error: 'invalid_token', error_description: 'a valid OAuth access token is required.' });
+        .send({
+          error: 'invalid_token',
+          error_description: 'a valid OAuth access token is required.',
+        });
     }
 
     // Take over the socket — this is a long-lived stream, not a buffered Fastify reply.
@@ -838,7 +873,9 @@ export function registerMcpRoutes(
     const tool: ToolRegistration = {
       name: b.name,
       description: typeof b.description === 'string' ? b.description : '',
-      input_schema: (b.input_schema as Record<string, unknown>) ?? { type: 'object' },
+      input_schema: (b.input_schema as Record<string, unknown>) ?? {
+        type: 'object',
+      },
       ...(b.output_schema ? { output_schema: b.output_schema as Record<string, unknown> } : {}),
       scope: typeof b.scope === 'string' ? b.scope : '',
       family,
@@ -861,7 +898,10 @@ export function registerMcpRoutes(
     broadcastToolListChanged(app_.id);
     // Registration-health metric: the current registered-tool count after this change.
     const toolsAfterPut = await (await mcp()).listTools(app_.id);
-    recordMcpRegistrationMetric({ app: app_.name, tools_count: toolsAfterPut.length });
+    recordMcpRegistrationMetric({
+      app: app_.name,
+      tools_count: toolsAfterPut.length,
+    });
     mcpLog({
       event: 'mcp.tool_register',
       app: app_.name,
@@ -900,14 +940,26 @@ export function registerMcpRoutes(
     if (deleted) {
       broadcastToolListChanged(app_.id);
       const toolsAfterDel = await (await mcp()).listTools(app_.id);
-      recordMcpRegistrationMetric({ app: app_.name, tools_count: toolsAfterDel.length });
-      mcpLog({ event: 'mcp.tool_unregister', app: app_.name, tool: name, tools_count: toolsAfterDel.length });
+      recordMcpRegistrationMetric({
+        app: app_.name,
+        tools_count: toolsAfterDel.length,
+      });
+      mcpLog({
+        event: 'mcp.tool_unregister',
+        app: app_.name,
+        tool: name,
+        tools_count: toolsAfterDel.length,
+      });
     }
     return { deleted };
   });
 
   app.post('/mcp/instructions', async (req, reply) => {
-    const b = (req.body ?? {}) as { app?: string; text?: string; label?: string };
+    const b = (req.body ?? {}) as {
+      app?: string;
+      text?: string;
+      label?: string;
+    };
     const app_ = await resolveAppId(req, b.app);
     if (!app_) return reply.status(404).send(unknownApp);
     if (!(await requireServiceToken(req, reply, app_.id))) return;
@@ -933,7 +985,11 @@ export function registerMcpRoutes(
       : await (await mcp()).latestInstructions(app_.id);
     if (!block)
       return reply.status(404).send({
-        error: { code: 'not_found', message: 'no instruction block declared.', retry: 'change-input' },
+        error: {
+          code: 'not_found',
+          message: 'no instruction block declared.',
+          retry: 'change-input',
+        },
       });
     return { instructions: block };
   });
@@ -974,9 +1030,15 @@ export function registerMcpRoutes(
         SYSTEM_ACTOR,
       );
       // executeCapability wraps as { capability, resource } — surface the ScheduledJob itself.
-      return reply.status(200).send({ proactive: (result as { resource?: unknown }).resource ?? result });
+      return reply.status(200).send({
+        proactive: (result as { resource?: unknown }).resource ?? result,
+      });
     } catch (e) {
-      const err = e as { status?: number; toJSON?: () => unknown; message?: string };
+      const err = e as {
+        status?: number;
+        toJSON?: () => unknown;
+        message?: string;
+      };
       return reply
         .status(err.status ?? 400)
         .send(
@@ -1034,7 +1096,9 @@ export function registerMcpRoutes(
     const { client_id } = req.params as { client_id: string };
     const q = req.query as { owner?: string };
     if (!q.owner) return reply.status(400).send(invalid('an `owner` is required.'));
-    return { revoked: await (await mcp()).revokeConsent(app_.id, client_id, q.owner) };
+    return {
+      revoked: await (await mcp()).revokeConsent(app_.id, client_id, q.owner),
+    };
   });
 }
 
@@ -1043,5 +1107,9 @@ function rpcResult(id: string | number | null, result: unknown) {
   return { jsonrpc: '2.0' as const, id, result };
 }
 function rpcError(id: string | number | null, code: number, message: string, data?: unknown) {
-  return { jsonrpc: '2.0' as const, id, error: { code, message, ...(data !== undefined ? { data } : {}) } };
+  return {
+    jsonrpc: '2.0' as const,
+    id,
+    error: { code, message, ...(data !== undefined ? { data } : {}) },
+  };
 }

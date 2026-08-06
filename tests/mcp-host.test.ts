@@ -97,7 +97,10 @@ beforeEach(async () => {
   stub.post('/api/mcp/tools/get_note', async (req) => {
     calls.push('get_note');
     lastDispatchBody = req.body as Record<string, unknown>;
-    return { note: 'hello', echoed: (req.body as { arguments?: unknown }).arguments };
+    return {
+      note: 'hello',
+      echoed: (req.body as { arguments?: unknown }).arguments,
+    };
   });
   stub.post('/api/mcp/tools/boom', async (_req, reply) => {
     calls.push('boom');
@@ -143,7 +146,11 @@ const post = (url: string, payload: unknown, headers: Record<string, string> = {
     payload: payload as object,
   });
 const get = (url: string, headers: Record<string, string> = {}) =>
-  server.inject({ method: 'GET', url, headers: { 'x-forge-service-token': SVC_TOKEN, ...headers } });
+  server.inject({
+    method: 'GET',
+    url,
+    headers: { 'x-forge-service-token': SVC_TOKEN, ...headers },
+  });
 
 const registerTool = (over: Record<string, unknown> = {}) =>
   post('/mcp/tools', {
@@ -166,7 +173,10 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
   it('initialize returns serverInfo + the latest instruction block; tools/list returns the surface', async () => {
     await registerTool();
     await post('/mcp/instructions', { text: 'v1 preamble' });
-    await post('/mcp/instructions', { text: 'v2 — call whats_next each morning', label: 'B' });
+    await post('/mcp/instructions', {
+      text: 'v2 — call whats_next each morning',
+      label: 'B',
+    });
     const bearer = await mintAccess(['notes:read']);
 
     const init = await rpc('initialize', { protocolVersion: '2025-06-18' }, bearer);
@@ -178,7 +188,10 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
     const list = await rpc('tools/list', {}, bearer);
     const tools = list.json().result.tools;
     expect(tools).toHaveLength(1);
-    expect(tools[0]).toMatchObject({ name: 'get_note', inputSchema: { type: 'object' } });
+    expect(tools[0]).toMatchObject({
+      name: 'get_note',
+      inputSchema: { type: 'object' },
+    });
   });
 
   // ── tools/list_changed — clients must learn about a changed tool surface WITHOUT a user reconnect ──
@@ -187,7 +200,9 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
       const bearer = await mintAccess(['notes:read']);
       const init = await rpc('initialize', { protocolVersion: '2025-06-18' }, bearer);
       // false here = "my tools never change" → clients cache forever and only a manual reconnect helps.
-      expect(init.json().result.capabilities).toMatchObject({ tools: { listChanged: true } });
+      expect(init.json().result.capabilities).toMatchObject({
+        tools: { listChanged: true },
+      });
     });
 
     it('REGISTERING a tool pushes list_changed to every connected stream', async () => {
@@ -202,7 +217,10 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
         expect(frames).toHaveLength(1);
         expect(frames[0]).toContain('event: message');
         const data = JSON.parse(frames[0]!.split('data: ')[1]!);
-        expect(data).toEqual({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+        expect(data).toEqual({
+          jsonrpc: '2.0',
+          method: 'notifications/tools/list_changed',
+        });
       } finally {
         unsub();
       }
@@ -233,8 +251,12 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
     it('only notifies the app whose surface changed, and unsubscribe stops delivery (no leak)', async () => {
       const mine: string[] = [];
       const other: string[] = [];
-      const unsubMine = subscribeToolListChanged(APP_ID, { write: (f) => mine.push(f) });
-      const unsubOther = subscribeToolListChanged('app_someone_else', { write: (f) => other.push(f) });
+      const unsubMine = subscribeToolListChanged(APP_ID, {
+        write: (f) => mine.push(f),
+      });
+      const unsubOther = subscribeToolListChanged('app_someone_else', {
+        write: (f) => other.push(f),
+      });
       try {
         await registerTool();
         expect(mine).toHaveLength(1);
@@ -290,7 +312,10 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
         const res = await get('/mcp/streams');
         const body = res.json();
         expect(body.count).toBe(1);
-        expect(body.streams[0]).toMatchObject({ client_name: 'Claude', user_agent: 'Claude-User/1.0' });
+        expect(body.streams[0]).toMatchObject({
+          client_name: 'Claude',
+          user_agent: 'Claude-User/1.0',
+        });
         expect(typeof body.streams[0].held_seconds).toBe('number');
       } finally {
         unsub();
@@ -312,11 +337,18 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
     expect(res.statusCode).toBe(200);
     const result = res.json().result;
     expect(result.isError).toBeUndefined();
-    expect(result.structuredContent).toMatchObject({ note: 'hello', echoed: { id: 'n1' } });
+    expect(result.structuredContent).toMatchObject({
+      note: 'hello',
+      echoed: { id: 'n1' },
+    });
     expect(calls).toContain('get_note');
 
     // Attribution (C3): who, which host, which tool.
-    const events = await store.listAppEvents({ app_id: APP_ID, owner: 'userA', subject: 'get_note' });
+    const events = await store.listAppEvents({
+      app_id: APP_ID,
+      owner: 'userA',
+      subject: 'get_note',
+    });
     expect(
       events.some(
         (e) =>
@@ -343,7 +375,10 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
     lastDispatchBody = undefined;
     const res = await rpc('tools/call', { name: 'get_note', arguments: { id: 'n1' } }, bearer);
     expect(res.statusCode).toBe(200);
-    expect(lastDispatchBody).toMatchObject({ client_id: 'client1', client_name: 'Claude' });
+    expect(lastDispatchBody).toMatchObject({
+      client_id: 'client1',
+      client_name: 'Claude',
+    });
   });
 
   it('omits client_name when the client has no registered name (back-compat)', async () => {
@@ -373,12 +408,20 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
     expect(calls).not.toContain('get_note'); // never dispatched
 
     // The denial is still audited (ok:false, reason insufficient_scope).
-    const events = await store.listAppEvents({ app_id: APP_ID, owner: 'userA', subject: 'send_note' });
+    const events = await store.listAppEvents({
+      app_id: APP_ID,
+      owner: 'userA',
+      subject: 'send_note',
+    });
     expect(events.some((e) => (e.data as { reason?: string }).reason === 'insufficient_scope')).toBe(true);
   });
 
   it('a non-2xx app handler surfaces as an MCP tool error (isError)', async () => {
-    await registerTool({ name: 'boom', scope: '', handler_path: '/api/mcp/tools/boom' });
+    await registerTool({
+      name: 'boom',
+      scope: '',
+      handler_path: '/api/mcp/tools/boom',
+    });
     const bearer = await mintAccess([]);
     const res = await rpc('tools/call', { name: 'boom', arguments: {} }, bearer);
     expect(res.json().result.isError).toBe(true);
@@ -412,7 +455,10 @@ describe('C23 — instruction versioning + proactive scheduling (C2)', () => {
       schedule: 'every:6h',
     });
 
-    const jobs = await store.listResources({ type: 'ScheduledJob', app_id: APP_ID });
+    const jobs = await store.listResources({
+      type: 'ScheduledJob',
+      app_id: APP_ID,
+    });
     expect(jobs.some((j) => (j as { name?: string }).name === 'mcp-proactive-whats-next')).toBe(true);
   });
 });
@@ -613,9 +659,14 @@ describe('C23 — connector (consent) management', () => {
   });
 
   it('requires a service token and an owner (never a blind, unauthenticated teardown)', async () => {
-    expect((await server.inject({ method: 'DELETE', url: '/mcp/consents?owner=userA' })).statusCode).toBe(
-      401,
-    );
+    expect(
+      (
+        await server.inject({
+          method: 'DELETE',
+          url: '/mcp/consents?owner=userA',
+        })
+      ).statusCode,
+    ).toBe(401);
     expect(
       (
         await server.inject({
@@ -642,7 +693,11 @@ describe('C23 — connector (consent) management', () => {
 describe('Change D — management routes require the x-forge-service-token', () => {
   // A management call WITHOUT any service token (the raw inject helper — no header).
   const noToken = (method: 'GET' | 'POST' | 'DELETE', url: string, payload?: unknown) =>
-    server.inject({ method, url, ...(payload !== undefined ? { payload: payload as object } : {}) });
+    server.inject({
+      method,
+      url,
+      ...(payload !== undefined ? { payload: payload as object } : {}),
+    });
 
   it('rejects EVERY management route with 401 when no service token is presented', async () => {
     expect(
@@ -740,7 +795,10 @@ describe('Change B — per-tool securitySchemes on tools/list', () => {
 // Change C — a restrictive CSP on the machine-facing MCP surface.
 describe('Change C — Content-Security-Policy on the MCP host', () => {
   it('sets a restrictive CSP on the discovery doc, POST /mcp, and the management surface', async () => {
-    const wk = await server.inject({ method: 'GET', url: '/.well-known/oauth-protected-resource' });
+    const wk = await server.inject({
+      method: 'GET',
+      url: '/.well-known/oauth-protected-resource',
+    });
     expect(wk.headers['content-security-policy']).toContain("default-src 'none'");
     const bearer = await mintAccess([]);
     const ping = await rpc('ping', {}, bearer);
@@ -768,9 +826,11 @@ describe('C36 — payload tracing + failure-path spans', () => {
     }>;
   }
   const spans = (): WireSpan[] =>
-    (exported as Array<{ resourceSpans: Array<{ scopeSpans: Array<{ spans: WireSpan[] }> }> }>).flatMap((b) =>
-      b.resourceSpans.flatMap((rs) => rs.scopeSpans.flatMap((ss) => ss.spans)),
-    );
+    (
+      exported as Array<{
+        resourceSpans: Array<{ scopeSpans: Array<{ spans: WireSpan[] }> }>;
+      }>
+    ).flatMap((b) => b.resourceSpans.flatMap((rs) => rs.scopeSpans.flatMap((ss) => ss.spans)));
   const spanNamed = (name: string): WireSpan | undefined =>
     spans()
       .filter((s) => s.name === name)
@@ -796,7 +856,10 @@ describe('C36 — payload tracing + failure-path spans', () => {
       }
       return realFetch(url as Parameters<typeof fetch>[0], init);
     }) as typeof fetch);
-    initOtel({ endpoint: OTLP, tracesEndpoint: 'https://collector.example/v1/traces' });
+    initOtel({
+      endpoint: OTLP,
+      tracesEndpoint: 'https://collector.example/v1/traces',
+    });
   });
   afterEach(() => {
     initOtel({ tracesEndpoint: 'https://collector.example/v1/traces' }); // disable again so other tests are unaffected
@@ -862,7 +925,11 @@ describe('C36 — payload tracing + failure-path spans', () => {
   });
 
   it('a failing handler records the error payload as the OUTPUT on an error span (failure outcomes stay visible)', async () => {
-    await registerTool({ name: 'boom', scope: '', handler_path: '/api/mcp/tools/boom' });
+    await registerTool({
+      name: 'boom',
+      scope: '',
+      handler_path: '/api/mcp/tools/boom',
+    });
     const bearer = await mintAccess([]);
     expect((await rpc('tools/call', { name: 'boom', arguments: {} }, bearer)).json().result.isError).toBe(
       true,
@@ -920,7 +987,10 @@ describe('C36 — payload tracing + failure-path spans', () => {
     const res = await server.inject({
       method: 'POST',
       url: '/mcp',
-      headers: { authorization: `Bearer ${bearer}`, traceparent: `00-${edgeTrace}-${edgeSpan}-01` },
+      headers: {
+        authorization: `Bearer ${bearer}`,
+        traceparent: `00-${edgeTrace}-${edgeSpan}-01`,
+      },
       payload: {
         jsonrpc: '2.0',
         id: 1,
@@ -1075,7 +1145,9 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
 
   type MetricMsg = {
     resourceMetrics: Array<{
-      scopeMetrics: Array<{ metrics: Array<{ name: string; [k: string]: unknown }> }>;
+      scopeMetrics: Array<{
+        metrics: Array<{ name: string; [k: string]: unknown }>;
+      }>;
     }>;
   };
   const allMetrics = () =>
@@ -1097,7 +1169,10 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
       }
       return realFetch(url as Parameters<typeof fetch>[0], init);
     }) as typeof fetch);
-    initOtel({ endpoint: OTLP, tracesEndpoint: 'https://collector.example/v1/traces' });
+    initOtel({
+      endpoint: OTLP,
+      tracesEndpoint: 'https://collector.example/v1/traces',
+    });
     _setMcpLogOverride((fields) => mcpLogs.push(fields));
   });
   afterEach(() => {
@@ -1155,7 +1230,11 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
   });
 
   it('emits a structured log line with error_class for a handler error', async () => {
-    await registerTool({ name: 'boom', scope: '', handler_path: '/api/mcp/tools/boom' });
+    await registerTool({
+      name: 'boom',
+      scope: '',
+      handler_path: '/api/mcp/tools/boom',
+    });
     const bearer = await mintAccess([]);
     const res = await rpc('tools/call', { name: 'boom', arguments: {} }, bearer);
     expect(res.json().result.isError).toBe(true);
@@ -1224,7 +1303,11 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
   });
 
   it('exports mcp.tool.errors metric on a tool call error', async () => {
-    await registerTool({ name: 'boom', scope: '', handler_path: '/api/mcp/tools/boom' });
+    await registerTool({
+      name: 'boom',
+      scope: '',
+      handler_path: '/api/mcp/tools/boom',
+    });
     const bearer = await mintAccess([]);
     await rpc('tools/call', { name: 'boom', arguments: {} }, bearer);
 
@@ -1284,7 +1367,9 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
     const bearer = await mintAccess(['notes:read']);
     await rpc('tools/call', { name: 'get_note', arguments: {} }, bearer);
 
-    type DataPoint = { attributes: Array<{ key: string; value: { stringValue: string } }> };
+    type DataPoint = {
+      attributes: Array<{ key: string; value: { stringValue: string } }>;
+    };
     const callMetric = metricNamed('mcp.tool.calls') as { sum?: { dataPoints: DataPoint[] } } | undefined;
     expect(callMetric).toBeTruthy();
     const dp = callMetric!.sum!.dataPoints[0]!;
@@ -1316,7 +1401,11 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
   });
 
   it('stamps _meta.traceparent on an ERROR tool call result (isError)', async () => {
-    await registerTool({ name: 'boom', scope: '', handler_path: '/api/mcp/tools/boom' });
+    await registerTool({
+      name: 'boom',
+      scope: '',
+      handler_path: '/api/mcp/tools/boom',
+    });
     const bearer = await mintAccess([]);
     const res = await rpc('tools/call', { name: 'boom', arguments: {} }, bearer);
     const result = res.json().result;
@@ -1334,7 +1423,10 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
     const res = await server.inject({
       method: 'POST',
       url: '/mcp',
-      headers: { authorization: `Bearer ${bearer}`, traceparent: `00-${edgeTrace}-${edgeSpan}-01` },
+      headers: {
+        authorization: `Bearer ${bearer}`,
+        traceparent: `00-${edgeTrace}-${edgeSpan}-01`,
+      },
       payload: {
         jsonrpc: '2.0',
         id: 1,
@@ -1357,9 +1449,17 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
 describe('toTimelineEvent — C23 caller projection', () => {
   const BASE_AT = '2026-08-06T12:00:00.000Z';
 
-  const mkEvent = (data: Record<string, unknown>, overrides: Partial<{
-    id: string; app_id: string; type: string; subject: string; owner: string; at: string;
-  }> = {}) => ({
+  const mkEvent = (
+    data: Record<string, unknown>,
+    overrides: Partial<{
+      id: string;
+      app_id: string;
+      type: string;
+      subject: string;
+      owner: string;
+      at: string;
+    }> = {},
+  ) => ({
     id: 'aevt_test_001',
     app_id: 'app_demo',
     type: 'mcp.tool_call',
@@ -1400,7 +1500,11 @@ describe('toTimelineEvent — C23 caller projection', () => {
   });
 
   it('ATTRIBUTED: caller is the exact string even when it contains special characters', () => {
-    const event = mkEvent({ tool: 'ping', host: 'client:with/slashes?and=equals', ok: true });
+    const event = mkEvent({
+      tool: 'ping',
+      host: 'client:with/slashes?and=equals',
+      ok: true,
+    });
     expect(toTimelineEvent(event).caller).toBe('client:with/slashes?and=equals');
   });
 
@@ -1424,7 +1528,11 @@ describe('toTimelineEvent — C23 caller projection', () => {
     const bearer = await mintAccess(['notes:read']);
     await rpc('tools/call', { name: 'get_note', arguments: { id: 'n1' } }, bearer);
 
-    const events = await store.listAppEvents({ app_id: APP_ID, owner: 'userA', subject: 'get_note' });
+    const events = await store.listAppEvents({
+      app_id: APP_ID,
+      owner: 'userA',
+      subject: 'get_note',
+    });
     const callEvent = events.find(
       (e) => e.type === 'mcp.tool_call' && (e.data as { ok?: boolean }).ok === true,
     );
