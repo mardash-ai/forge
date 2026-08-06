@@ -205,6 +205,15 @@ export function connectionsFile(appId: string): string {
   return path.join(connectionsDir(), `${appId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
 }
 
+// Per-app MCP manifest fingerprint (C23 startup-diff) — one tiny text file per app holding the last
+// SHA-256 fingerprint computed at sidecar boot. On the next boot the sidecar compares the fresh
+// fingerprint against this record and pushes `notifications/tools/list_changed` to connected sessions
+// when they differ, so clients re-fetch `tools/list` automatically after a deploy-time tool update.
+// Kept under mcpDir() alongside the main MCP store file — same durable volume, same lifecycle.
+export function mcpFingerprintFile(appId: string): string {
+  return path.join(mcpDir(), `${appId.replace(/[^A-Za-z0-9_-]/g, '_')}.fingerprint`);
+}
+
 // Per-app notification-delivery store (C21) — one JSON doc per app holding the browser push
 // subscriptions (a per-owner set of Web Push endpoints + their p256dh/auth keys) AND a short-lived
 // cross-channel delivery-idempotency ledger (so a retried notify() with the same idempotency key does not

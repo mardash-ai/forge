@@ -23,7 +23,8 @@ import { registerStatusRoutes } from '../api/status-routes';
 import { registerIncidentRoutes } from '../api/incident-routes';
 import { registerAuthzRoutes } from '../api/authz-routes';
 import { registerOAuthRoutes } from '../api/oauth-routes';
-import { registerMcpRoutes } from '../api/mcp-routes';
+import { registerMcpRoutes, broadcastToolListChanged } from '../api/mcp-routes';
+import { checkAndMaybeBroadcastManifestChange } from '../mcp/fingerprint';
 import { initOtel } from '../plugins/otel/index';
 import { registerConnectRoutes } from '../api/connect-routes';
 import { registerMembershipRoutes } from '../api/membership-routes';
@@ -299,9 +300,34 @@ async function main() {
   // or the database is unreachable. Filesystem (the default) is a cheap no-op.
   const backends = await getBackends();
   const appName = process.env.FORGE_APP_NAME ?? 'app';
-  await ensureApp(appName);
+  const seedApp = await ensureApp(appName);
   const loaded = await loadJobsFile(appName);
   await app.listen({ port, host: '0.0.0.0' });
+
+  // C23 startup manifest-fingerprint check — compare the current tool surface to the fingerprint
+  // recorded on the previous boot. On a difference (new/updated/removed tools registered while
+  // the sidecar was down) emit `notifications/tools/list_changed` to any sessions that are already
+  // open. At a clean boot this always goes to 0 clients; its value is for rapid-reconnect clients
+  // that open the SSE stream within milliseconds of the sidecar becoming ready.
+  // Runs after `listen()` so the server accepts requests (and SSE connections) before we check.
+  try {
+    const mcpBackend = await getBackends().then((b) => b.mcp);
+    const tools = await mcpBackend.listTools(seedApp.id);
+    const diffResult = await checkAndMaybeBroadcastManifestChange(
+      seedApp.id,
+      tools,
+      broadcastToolListChanged,
+    );
+    // eslint-disable-next-line no-console
+    console.log(
+      `forge data-plane: C23 manifest fingerprint — changed=${diffResult.changed}, notified=${diffResult.notified}`,
+    );
+  } catch (e) {
+    // Non-fatal: a fingerprint check failure must never prevent the sidecar from booting. The
+    // next register/delete broadcast will still work; this only affects the startup-diff path.
+    // eslint-disable-next-line no-console
+    console.error('forge data-plane: C23 fingerprint check failed (non-fatal):', String((e as Error)?.message ?? e));
+  }
   startScheduler(store, {
     tickMs: process.env.FORGE_SCHEDULER_TICK_MS ? Number(process.env.FORGE_SCHEDULER_TICK_MS) : undefined,
   });

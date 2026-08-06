@@ -9,6 +9,26 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.20.3] - 2026-08-05
+
+### Added
+- **C23 startup manifest-fingerprint diff + `tools.listChanged` advertisement.** The C23 MCP host
+  sidecar now computes a SHA-256 fingerprint at every boot covering tool names, description text,
+  `input_schema`, `output_schema`, and all MCP annotation hints (`title`, `read_only_hint`,
+  `destructive_hint`, `idempotent_hint`, `open_world_hint`). It compares the fingerprint against the
+  one persisted from the previous boot (`FORGE_STATE_DIR/mcp/<appId>.fingerprint`); on a difference
+  it pushes `notifications/tools/list_changed` to all connected SSE sessions so spec-compliant MCP
+  clients re-fetch `tools/list` automatically after a deploy-time tool update — no user reconnect
+  required. The `initialize` handshake already advertised `capabilities.tools.listChanged: true`;
+  the fingerprint-diff check fills in the gap for tool-surface changes that occur while the sidecar
+  is down. **Boundary (honest):** the broadcaster is in-process — a scaled-out deployment needs
+  Postgres LISTEN/NOTIFY for cross-replica fanout (not yet built). At cold boot the broadcast goes
+  to zero clients; its value is for rapid-reconnect sessions. Only spec-compliant clients that honour
+  the notification benefit; production fallback remains the directory-managed reconnect path.
+  New module: `src/mcp/fingerprint.ts`. 25 new unit tests. C23 catalog entry added to
+  `docs/architecture/04-capability-catalog.md`; operator runbook in
+  `docs/architecture/c23-mcp-host-runbook.md`.
+
 ## [1.20.2] - 2026-08-05
 
 ### Fixed
