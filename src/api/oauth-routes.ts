@@ -6,6 +6,7 @@ import { nowIso } from '../shared/time';
 import { newToken, hashToken, resolveAuthConfig } from '../plugins/auth-identity/index';
 import * as authStore from '../plugins/auth-identity/store';
 import { SESSION_COOKIE, APP_HEADER, verifySessionToken, parseCookies } from '../shared/session';
+import { hasValidServiceToken } from '../shared/service-auth';
 import { resolveThemeForApp } from './theme-context';
 import {
   DEFAULT_THEME,
@@ -532,6 +533,121 @@ export function registerOAuthRoutes(
       await store_.revokeGrant(app_.id, 'refresh', h);
     }
     return reply.status(200).send({});
+  });
+
+  // === admin/service token mint ================================================================
+  // POST /oauth/admin/token — mint a member-scoped OAuth access token without a browser-based
+  // authorize flow. Gated by the same C10 service token (AUTH_SERVICE_TOKEN / x-forge-service-token)
+  // that guards /auth/admin/*. The minted token is a proper OAuthGrant (kind='access') accepted by
+  // verifyAccessTokenDetailed — identical in shape to one issued via the PKCE authorize flow.
+  //
+  // NO refresh token is issued: the caller re-mints as needed. This is intentional — a service-minted
+  // token is for a specific, short-lived drive; forcing re-mints keeps a single credential leak bounded.
+  //
+  //   POST /oauth/admin/token
+  //   Header: x-forge-service-token: <AUTH_SERVICE_TOKEN>
+  //   Body (JSON or form):
+  //     app?        — app name (falls back to FORGE_APP_NAME / X-Forge-App header)
+  //     user_id     — REQUIRED: the member's userId from the C10 identity store
+  //     client_id   — REQUIRED: a registered OAuth client_id (from /oauth/register)
+  //     scope?      — space-delimited; defaults to all registered tool scopes
+  //     group_id?   — member group identity (threads into VerifiedToken.groupId on /mcp calls)
+  //     resource?   — RFC 8707 audience binding (should match the resource /mcp advertises)
+  //     expires_in? — TTL override in seconds (capped at accessTtlSeconds())
+  //
+  //   Response 200: { access_token, token_type, expires_in, scope, user_id }
+  //   The token is an opaque Bearer presented to POST /mcp as `Authorization: Bearer <access_token>`.
+  app.post('/oauth/admin/token', async (req, reply) => {
+    const b = (req.body ?? {}) as Record<string, string>;
+    const app_ = await resolveAppId(req, b.app);
+    if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_.id))) {
+      return reply.status(401).send({
+        error: 'invalid_client',
+        error_description: 'a valid service token is required (x-forge-service-token).',
+      });
+    }
+
+    const userId = typeof b.user_id === 'string' ? b.user_id.trim() : '';
+    if (!userId)
+      return reply.status(400).send({ error: 'invalid_request', error_description: '`user_id` is required.' });
+
+    const clientId = typeof b.client_id === 'string' ? b.client_id.trim() : '';
+    if (!clientId)
+      return reply.status(400).send({ error: 'invalid_request', error_description: '`client_id` is required.' });
+
+    const store_ = await mcp();
+
+    // Validate: the client must be registered for this app (ensures MCP attribution is correct).
+    const client = await store_.getClient(app_.id, clientId);
+    if (!client)
+      return reply.status(400).send({
+        error: 'invalid_client',
+        error_description: 'unknown client_id — register it first via POST /oauth/register.',
+      });
+
+    // Validate: the user must exist in the C10 identity store (prevents orphan grants with bogus ids).
+    const user = await authStore.getUser(app_.id, userId);
+    if (!user)
+      return reply.status(400).send({
+        error: 'invalid_request',
+        error_description: '`user_id` not found in this app\'s identity store.',
+      });
+
+    // Scopes: use the caller-supplied set (validated as a subset of the client's scope), or default to
+    // all registered tool scopes for the app (same default as the session-bearer fallback).
+    const requestedScopes = parseScopes(b.scope);
+    let scopes: string[];
+    if (requestedScopes.length > 0) {
+      if (client.scope) {
+        const clientScopes = parseScopes(client.scope);
+        if (!scopesSubset(requestedScopes, clientScopes)) {
+          return reply.status(400).send({
+            error: 'invalid_scope',
+            error_description: 'requested scope exceeds the client\'s registered scope.',
+          });
+        }
+      }
+      scopes = requestedScopes;
+    } else {
+      const tools = await store_.listTools(app_.id);
+      scopes = [...new Set(tools.map((t) => t.scope).filter(Boolean))];
+    }
+
+    // TTL: env default, optionally overridden by the caller (capped at the system max).
+    const maxTtl = accessTtlSeconds();
+    let ttl = maxTtl;
+    if (b.expires_in) {
+      const n = Number(b.expires_in);
+      if (Number.isFinite(n) && n > 0) ttl = Math.min(maxTtl, Math.floor(n));
+    }
+
+    // Mint the access token. Only the HASH is persisted (same pattern as the standard flow).
+    // NO refresh token — caller re-mints via this endpoint as needed.
+    const now = nowIso();
+    const access = newToken();
+    const groupId = typeof b.group_id === 'string' ? b.group_id.trim() : '';
+    const resource = typeof b.resource === 'string' ? b.resource.trim() : '';
+    await store_.putGrant(app_.id, {
+      kind: 'access',
+      token_hash: access.hash,
+      client_id: clientId,
+      owner: userId,
+      scopes,
+      expires_at: expiresAtIso(ttl),
+      ...(resource ? { resource } : {}),
+      ...(groupId ? { group_id: groupId } : {}),
+      visibility: 'private',
+      created_at: now,
+    });
+
+    return reply.status(200).send({
+      access_token: access.token,
+      token_type: 'Bearer',
+      expires_in: ttl,
+      scope: scopeString(scopes),
+      user_id: userId,
+    });
   });
 
   // Issue a scoped access + rotating refresh token pair, persisting only their HASHES. `resource` (RFC 8707)

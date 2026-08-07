@@ -1,5 +1,67 @@
 # Changelog
 
+## [1.23.0] - 2026-08-07
+
+### Added
+- **C23 admin/service token mint — `POST /oauth/admin/token`** (fork b: new route).
+
+  **Fork decision:** Forge's auth service has NO existing route for minting a member-scoped OAuth
+  access token server-side. The route `POST /oauth/admin/token` — which dorinda-api was calling —
+  returned `404 Route not found` from the deployed sidecar. The only non-browser path to `/mcp` was
+  the session-bearer fallback (`MCP_ACCEPT_SESSION_BEARER`), but that is explicitly test-only (flag-
+  gated per app), requires a live forge-session JWT, and does not produce a proper OAuth access token.
+  Fork (b) was taken: the route is added as a first-class C23 extension.
+
+  **The route:** `POST /oauth/admin/token`
+  - Auth: `x-forge-service-token: <AUTH_SERVICE_TOKEN>` (same C10 service token as `/auth/admin/*`)
+  - Body (JSON): `{ user_id, client_id, scope?, group_id?, resource?, expires_in? }`
+  - Response: `{ access_token, token_type, expires_in, scope, user_id }`
+
+  **What the minted token is:** a proper `OAuthGrant` (kind=`access`) stored as its SHA-256 hash in
+  the MCP backend — accepted by `verifyAccessTokenDetailed` on every `POST /mcp` call, identical in
+  shape to a token issued via the PKCE authorize flow. `group_id` (if supplied) threads into
+  `VerifiedToken.groupId`, making the token member-scoped for per-actor privacy grading in tool
+  handlers. No refresh token is issued; the caller re-mints as needed.
+
+  **Pre-conditions (caller must satisfy):**
+  - `client_id` must be pre-registered via `POST /oauth/register`.
+  - `user_id` must exist in the app's C10 identity store.
+  - The presenting token must be the app's configured `AUTH_SERVICE_TOKEN`.
+
+  **No new secrets / productionize wiring required:** the gate reads `AUTH_SERVICE_TOKEN`, already
+  injected by productionize (P34). No new C5 secrets were added.
+
+  **9 new tests** in `tests/mcp-member-token.test.ts`:
+  - Happy path (mint → verify token shape)
+  - Integration: minted token accepted by `POST /mcp initialize`
+  - `group_id` threads through to `VerifiedToken.groupId`
+  - No group_id → `groupId` is undefined
+  - Missing service token → 401
+  - Missing `user_id` → 400
+  - Missing `client_id` → 400
+  - Unknown `client_id` → 400
+  - Unknown `user_id` → 400
+  - `expires_in` override capped at system max
+
+  **dorinda-api contract to adopt:**
+  ```
+  POST /oauth/admin/token
+  Host: <forge-api-host>  (the MCP public URL host)
+  x-forge-service-token: <AUTH_SERVICE_TOKEN>
+  Content-Type: application/json
+
+  {
+    "app": "<app_name>",
+    "user_id": "<member_user_id>",
+    "client_id": "<registered_oauth_client_id>",
+    "group_id": "<member_group_id>",   // optional
+    "resource": "https://<mcp-host>/mcp"  // optional; RFC 8707 aud-binding
+  }
+
+  → 200 { access_token, token_type: "Bearer", expires_in, scope, user_id }
+  → Authorization: Bearer <access_token>  (present to POST /mcp)
+  ```
+
 ## [1.22.0] - 2026-08-07
 
 ### Added

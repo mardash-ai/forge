@@ -355,3 +355,180 @@ describe('C23 member-scoped — session bearer (test-flagged tenants)', () => {
     expect(res.json().error).toBe('invalid_token');
   });
 });
+
+// ── POST /oauth/admin/token — service-gated member-scoped token mint ─────────
+
+const SERVICE_TOKEN = 'test-service-token-admin-mint';
+
+// Register an OAuth client and return its client_id (needed for admin mint).
+const registerClientForAdminMint = async (): Promise<string> => {
+  const res = await oauthServer.inject({
+    method: 'POST',
+    url: '/oauth/register',
+    payload: { client_name: 'Dorinda', redirect_uris: ['https://dorinda.ai/cb'] },
+  });
+  expect(res.statusCode).toBe(201);
+  return res.json().client_id as string;
+};
+
+// Seed a member in the C10 identity store and return the userId.
+const seedMember = async (email: string): Promise<string> => {
+  const { userId } = await mintSession(email);
+  return userId;
+};
+
+// The admin mint request helper.
+const adminMint = (
+  body: Record<string, unknown>,
+  headers: Record<string, string> = {},
+) =>
+  oauthServer.inject({
+    method: 'POST',
+    url: '/oauth/admin/token',
+    payload: body,
+    headers: {
+      'content-type': 'application/json',
+      ...headers,
+    },
+  });
+
+describe('C23 POST /oauth/admin/token — service-gated member-scoped mint', () => {
+  beforeEach(() => {
+    // Inject the service token via env (resolveServiceToken reads AUTH_SERVICE_TOKEN → env fallback).
+    process.env.AUTH_SERVICE_TOKEN = SERVICE_TOKEN;
+  });
+
+  afterEach(() => {
+    delete process.env.AUTH_SERVICE_TOKEN;
+  });
+
+  it('mints an access token for a known member (happy path)', async () => {
+    const clientId = await registerClientForAdminMint();
+    const userId = await seedMember('admin-mint-happy@test.example');
+
+    const res = await adminMint(
+      { user_id: userId, client_id: clientId },
+      { 'x-forge-service-token': SERVICE_TOKEN },
+    );
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.access_token).toBeTruthy();
+    expect(body.token_type).toBe('Bearer');
+    expect(typeof body.expires_in).toBe('number');
+    expect(body.user_id).toBe(userId);
+  });
+
+  it('minted token is accepted by POST /mcp (integration)', async () => {
+    const clientId = await registerClientForAdminMint();
+    const userId = await seedMember('admin-mint-mcp@test.example');
+
+    const mintRes = await adminMint(
+      { user_id: userId, client_id: clientId },
+      { 'x-forge-service-token': SERVICE_TOKEN },
+    );
+    expect(mintRes.statusCode).toBe(200);
+    const { access_token } = mintRes.json() as { access_token: string };
+
+    // The minted token must be accepted by /mcp as a standard OAuth bearer.
+    const mcpRes = await mcpPost(access_token, 'initialize', { protocolVersion: '2025-06-18' });
+    expect(mcpRes.statusCode).toBe(200);
+    expect(mcpRes.json().result?.serverInfo?.name).toContain('forge-mcp');
+  });
+
+  it('minted token carries group_id and userId via verifyAccessToken', async () => {
+    const clientId = await registerClientForAdminMint();
+    const userId = await seedMember('admin-mint-group@test.example');
+    const GROUP = 'grp_admin_mint_test';
+
+    const mintRes = await adminMint(
+      { user_id: userId, client_id: clientId, group_id: GROUP },
+      { 'x-forge-service-token': SERVICE_TOKEN },
+    );
+    expect(mintRes.statusCode).toBe(200);
+    const { access_token } = mintRes.json() as { access_token: string };
+
+    const verified = await verifyAccessToken(APP_ID, access_token);
+    expect(verified).not.toBeNull();
+    expect(verified!.userId).toBe(userId);
+    expect(verified!.groupId).toBe(GROUP);
+    expect(verified!.clientId).toBe(clientId);
+  });
+
+  it('no group_id → VerifiedToken.groupId is undefined', async () => {
+    const clientId = await registerClientForAdminMint();
+    const userId = await seedMember('admin-mint-nogroup@test.example');
+
+    const mintRes = await adminMint(
+      { user_id: userId, client_id: clientId },
+      { 'x-forge-service-token': SERVICE_TOKEN },
+    );
+    expect(mintRes.statusCode).toBe(200);
+    const verified = await verifyAccessToken(APP_ID, mintRes.json().access_token as string);
+    expect(verified!.groupId).toBeUndefined();
+  });
+
+  it('requires a service token — 401 without one', async () => {
+    const clientId = await registerClientForAdminMint();
+    const userId = await seedMember('admin-mint-notoken@test.example');
+
+    const res = await adminMint({ user_id: userId, client_id: clientId }); // no service token
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error).toBe('invalid_client');
+  });
+
+  it('requires user_id — 400 if missing', async () => {
+    const clientId = await registerClientForAdminMint();
+    const res = await adminMint(
+      { client_id: clientId }, // no user_id
+      { 'x-forge-service-token': SERVICE_TOKEN },
+    );
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('invalid_request');
+    expect(res.json().error_description).toContain('user_id');
+  });
+
+  it('requires client_id — 400 if missing', async () => {
+    const userId = await seedMember('admin-mint-noclient@test.example');
+    const res = await adminMint(
+      { user_id: userId }, // no client_id
+      { 'x-forge-service-token': SERVICE_TOKEN },
+    );
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('invalid_request');
+    expect(res.json().error_description).toContain('client_id');
+  });
+
+  it('rejects an unknown client_id — 400', async () => {
+    const userId = await seedMember('admin-mint-badclient@test.example');
+    const res = await adminMint(
+      { user_id: userId, client_id: 'mcpc_nonexistent_xyz' },
+      { 'x-forge-service-token': SERVICE_TOKEN },
+    );
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('invalid_client');
+  });
+
+  it('rejects an unknown user_id — 400', async () => {
+    const clientId = await registerClientForAdminMint();
+    const res = await adminMint(
+      { user_id: 'usr_nonexistent_xyz', client_id: clientId },
+      { 'x-forge-service-token': SERVICE_TOKEN },
+    );
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('invalid_request');
+    expect(res.json().error_description).toContain('user_id');
+  });
+
+  it('respects expires_in override (capped at system max)', async () => {
+    const clientId = await registerClientForAdminMint();
+    const userId = await seedMember('admin-mint-ttl@test.example');
+
+    // Request a short TTL (60s).
+    const res = await adminMint(
+      { user_id: userId, client_id: clientId, expires_in: '60' },
+      { 'x-forge-service-token': SERVICE_TOKEN },
+    );
+    expect(res.statusCode).toBe(200);
+    expect(res.json().expires_in).toBe(60);
+  });
+});
