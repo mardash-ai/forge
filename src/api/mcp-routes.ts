@@ -298,10 +298,7 @@ export function registerMcpRoutes(
   // enforcement passes unchanged. `clientId` is the sentinel 'session-bearer' for observability.
   // Security: the flag must be explicitly set in the app's C5 vault or env — it is off by default,
   // and it never affects the standard OAuth access-token path or non-test-flagged tenants.
-  async function verifySessionBearer(
-    appId: string,
-    rawToken: string | null,
-  ): Promise<VerifiedToken | null> {
+  async function verifySessionBearer(appId: string, rawToken: string | null): Promise<VerifiedToken | null> {
     if (!rawToken) return null;
     try {
       if (!(await resolveSessionBearerEnabled(appId))) return null;
@@ -310,8 +307,7 @@ export function registerMcpRoutes(
       const claims = verifySessionToken(rawToken, cfg.sessionSecret);
       if (!claims) return null;
       const session = await authStore.getSession(appId, claims.sessionId);
-      if (!session || session.revoked || new Date(session.expires_at).getTime() <= Date.now())
-        return null;
+      if (!session || session.revoked || new Date(session.expires_at).getTime() <= Date.now()) return null;
       // Grant all registered tool scopes so per-tool enforcement passes for the member.
       const tools = await (await mcp()).listTools(appId);
       const scopes = [...new Set(tools.map((t) => t.scope).filter(Boolean))];

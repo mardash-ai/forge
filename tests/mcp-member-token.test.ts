@@ -65,9 +65,7 @@ const mintSession = async (email?: string): Promise<{ userId: string; sessionTok
 };
 
 // Register an OAuth client and run the full authorize/consent/token flow with an optional group_id.
-const fullOAuthFlow = async (
-  groupId?: string,
-): Promise<{ accessToken: string; userId: string }> => {
+const fullOAuthFlow = async (groupId?: string): Promise<{ accessToken: string; userId: string }> => {
   const { userId, sessionToken: cookie_ } = await mintSession();
   const cookieHdr = `forge_session=${cookie_}`;
 
@@ -232,7 +230,13 @@ describe('C23 member-scoped — group_id threads through OAuth grant chain', () 
     const tokRes = await oauthServer.inject({
       method: 'POST',
       url: '/oauth/token',
-      payload: { grant_type: 'authorization_code', code, client_id: clientId, redirect_uri: REDIRECT, code_verifier: verifier },
+      payload: {
+        grant_type: 'authorization_code',
+        code,
+        client_id: clientId,
+        redirect_uri: REDIRECT,
+        code_verifier: verifier,
+      },
     });
     const { refresh_token } = tokRes.json() as { access_token: string; refresh_token: string };
 
