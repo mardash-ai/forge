@@ -12,6 +12,7 @@ export interface VerifiedToken {
   scopes: string[];
   clientId: string;
   resource?: string; // RFC 8707 — the resource/audience the token is bound to (undefined = unbound)
+  groupId?: string; // member group identity — present when the grant was minted with a group_id (C23 member-scoped)
 }
 
 // Extract a Bearer token from an Authorization header value. Returns null when absent/malformed.
@@ -64,6 +65,7 @@ export async function verifyAccessTokenDetailed(
       scopes: grant.scopes,
       clientId: grant.client_id,
       ...(grant.resource ? { resource: grant.resource } : {}),
+      ...(grant.group_id ? { groupId: grant.group_id } : {}),
     },
   };
 }

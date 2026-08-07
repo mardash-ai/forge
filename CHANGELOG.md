@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.21.1] 2026-08-07
+
+### Added
+- **C23 member-scoped MCP tokens**: `group_id` now threads through the OAuth grant chain
+  (authorize → code → access/refresh). `VerifiedToken` exposes `groupId` and MCP tool
+  handlers receive `user.group_id` so per-actor privacy grading is correct.
+- **Session-bearer fallback** for test-flagged tenants: when `MCP_ACCEPT_SESSION_BEARER=true`
+  is set in the app's vault/env, a forge-session JWT is accepted as an OAuth bearer at the MCP
+  endpoint — letting seeded members authenticate AS themselves without the browser-based authorize
+  flow. Off by default; non-test tenants and real connector tokens are unaffected.
+- 11 new tests in `tests/mcp-member-token.test.ts` covering group_id propagation,
+  session-bearer accept/refusal paths, refresh rotation, and revoked-session rejection.
+- Fixes W-305 (`invalid_token` 401 on member-scoped MCP TURNs).
+
 All notable changes to the **Forge control plane** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),

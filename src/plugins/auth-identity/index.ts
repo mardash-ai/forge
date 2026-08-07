@@ -197,6 +197,17 @@ export async function resolveServiceToken(appId: string): Promise<string | null>
   return resolveSecret(appId, SERVICE_TOKEN);
 }
 
+const MCP_SESSION_BEARER_FLAG = 'MCP_ACCEPT_SESSION_BEARER';
+
+// Returns true when the app has MCP_ACCEPT_SESSION_BEARER=true/1 in its vault or env.
+// When enabled, the MCP resource server additionally accepts a signed forge-session JWT as an OAuth
+// bearer — designed for TEST-FLAGGED TENANTS whose seeded members need MCP access without going
+// through the browser-based OAuth authorize flow. NEVER enable on real/production tenants.
+export async function resolveSessionBearerEnabled(appId: string): Promise<boolean> {
+  const val = await resolveSecret(appId, MCP_SESSION_BEARER_FLAG);
+  return val === 'true' || val === '1';
+}
+
 // --- OAuth provider (swappable) -------------------------------------------------
 
 export interface OAuthUserInfo {

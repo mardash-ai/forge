@@ -301,6 +301,9 @@ export function registerOAuthRoutes(
           code_challenge_method: q.code_challenge_method ?? 'S256',
           // RFC 8707 resource indicator — carried through consent so it binds onto the minted code grant.
           ...(trimmed(q.resource) ? { resource: trimmed(q.resource)! } : {}),
+          // group_id — member-scoped consent: the member's group is threaded through code → access/refresh
+          // so the resource server can distinguish a member-scoped MCP TURN from an owner-scoped one.
+          ...(trimmed(q.group_id) ? { group_id: trimmed(q.group_id)! } : {}),
         },
       }),
     );
@@ -385,6 +388,9 @@ export function registerOAuthRoutes(
       expires_at: expiresAtIso(codeTtlSeconds()),
       // RFC 8707 — bind the requested resource (if any) onto the code so token exchange can propagate it.
       ...(trimmed(b.resource) ? { resource: trimmed(b.resource)! } : {}),
+      // group_id — member-scoped consent: threaded code → access/refresh so the resource server sees
+      // the member's group identity on every MCP TURN. Absent for owner-scoped (non-member) consents.
+      ...(trimmed(b.group_id) ? { group_id: trimmed(b.group_id)! } : {}),
       code_challenge: b.code_challenge,
       code_challenge_method: (b.code_challenge_method as 'S256' | 'plain') ?? 'S256',
       redirect_uri: redirectUri,
@@ -474,6 +480,7 @@ export function registerOAuthRoutes(
         codeGrant.scopes,
         undefined,
         codeGrant.resource,
+        codeGrant.group_id,
       );
       return issued(tokens);
     }
@@ -504,6 +511,7 @@ export function registerOAuthRoutes(
         scopes,
         refreshGrant.token_hash,
         refreshGrant.resource,
+        refreshGrant.group_id,
       );
       return issued(tokens);
     }
@@ -528,7 +536,8 @@ export function registerOAuthRoutes(
 
   // Issue a scoped access + rotating refresh token pair, persisting only their HASHES. `resource` (RFC 8707)
   // is the audience the pair is bound to — threaded from the authorization code (or carried across a refresh
-  // rotation) so the resource server can reject a token presented to a different resource.
+  // rotation) so the resource server can reject a token presented to a different resource. `groupId` is the
+  // member's group identity — threaded from the code grant so member-scoped MCP TURNs carry the right actor.
   async function issueTokens(
     appId: string,
     clientId: string,
@@ -536,6 +545,7 @@ export function registerOAuthRoutes(
     scopes: string[],
     parentHash?: string,
     resource?: string,
+    groupId?: string,
   ) {
     const store_ = await mcp();
     const now = nowIso();
@@ -550,6 +560,7 @@ export function registerOAuthRoutes(
       scopes,
       expires_at: expiresAtIso(accessTtl),
       ...(resource ? { resource } : {}),
+      ...(groupId ? { group_id: groupId } : {}),
       visibility: 'private',
       created_at: now,
     });
@@ -562,6 +573,7 @@ export function registerOAuthRoutes(
       expires_at: expiresAtIso(refreshTtlSeconds()),
       ...(resource ? { resource } : {}),
       ...(parentHash ? { parent_hash: parentHash } : {}),
+      ...(groupId ? { group_id: groupId } : {}),
       visibility: 'private',
       created_at: now,
     });

@@ -5,9 +5,14 @@ import type { AppEvent } from '../events/app-events';
 import { executeCapability } from '../core/runtime';
 import { SYSTEM_ACTOR } from '../shared/domain';
 import { nowIso } from '../shared/time';
-import { APP_HEADER } from '../shared/session';
+import { APP_HEADER, verifySessionToken } from '../shared/session';
 import { appCallbackBase, serviceAuthHeaders } from '../shared/app-callback';
-import { resolveServiceToken } from '../plugins/auth-identity/index';
+import {
+  resolveServiceToken,
+  resolveSessionBearerEnabled,
+  resolveAuthConfig,
+} from '../plugins/auth-identity/index';
+import * as authStore from '../plugins/auth-identity/store';
 import { hasValidServiceToken } from '../shared/service-auth';
 import { verifyAccessTokenDetailed, bearerFrom, type VerifiedToken } from '../mcp/verify';
 import { scopesSatisfy } from '../mcp/oauth';
@@ -284,6 +289,38 @@ export function registerMcpRoutes(
   };
   const mcp = () => getBackends().then((b) => b.mcp);
 
+  // SESSION-BEARER fallback (test-flagged tenants only). When MCP_ACCEPT_SESSION_BEARER=true is set
+  // for an app, a forge-session JWT (the C10 signed session token) is accepted as an OAuth bearer at
+  // the MCP endpoint — letting a seeded member's connector authenticate AS the member without going
+  // through the browser-based OAuth authorize flow. NEVER active on apps without the flag.
+  //
+  // The synthetic VerifiedToken is granted all registered tool scopes for the app so per-tool scope
+  // enforcement passes unchanged. `clientId` is the sentinel 'session-bearer' for observability.
+  // Security: the flag must be explicitly set in the app's C5 vault or env — it is off by default,
+  // and it never affects the standard OAuth access-token path or non-test-flagged tenants.
+  async function verifySessionBearer(
+    appId: string,
+    rawToken: string | null,
+  ): Promise<VerifiedToken | null> {
+    if (!rawToken) return null;
+    try {
+      if (!(await resolveSessionBearerEnabled(appId))) return null;
+      const cfg = await resolveAuthConfig(appId);
+      if (!cfg.sessionSecret) return null;
+      const claims = verifySessionToken(rawToken, cfg.sessionSecret);
+      if (!claims) return null;
+      const session = await authStore.getSession(appId, claims.sessionId);
+      if (!session || session.revoked || new Date(session.expires_at).getTime() <= Date.now())
+        return null;
+      // Grant all registered tool scopes so per-tool enforcement passes for the member.
+      const tools = await (await mcp()).listTools(appId);
+      const scopes = [...new Set(tools.map((t) => t.scope).filter(Boolean))];
+      return { userId: claims.userId, scopes, clientId: 'session-bearer' };
+    } catch {
+      return null;
+    }
+  }
+
   // issuerBase — the PINNED OAuth authorization-server / issuer origin (RFC 8414). The AS must stay on the
   // certless MACHINE-FACING api host: the browser consent + DCR flow can't present a client cert, so the AS
   // never relocates to a dedicated mTLS host. INDEPENDENT of the browser-facing `/connect/*` callback
@@ -406,11 +443,18 @@ export function registerMcpRoutes(
     // token with no bound resource still verifies (back-compat with tokens issued before aud-binding). The
     // resource id is PER-HOST (resourceBase): a token minted for the dedicated mTLS host is accepted only on
     // that host, and the WWW-Authenticate pointer names the same host so discovery loops back consistently.
-    const { verified, reason } = await verifyAccessTokenDetailed(
+    //
+    // Session-bearer fallback: for test-flagged tenants (MCP_ACCEPT_SESSION_BEARER=true) the bearer may be
+    // a forge-session JWT instead of an OAuth access token — lets seeded members authenticate as themselves
+    // without the browser-based authorize flow. Inactive unless the flag is set; production unaffected.
+    const rawBearer = bearerFrom(req.headers.authorization);
+    const { verified: oauthVerified, reason: oauthReason } = await verifyAccessTokenDetailed(
       app_.id,
-      bearerFrom(req.headers.authorization),
+      rawBearer,
       `${resourceBase(req)}/mcp`,
     );
+    const verified = oauthVerified ?? (await verifySessionBearer(app_.id, rawBearer));
+    const reason: string | undefined = verified ? undefined : (oauthReason ?? 'invalid_token');
     if (!verified) {
       // C36 — a transport auth rejection used to die INVISIBLY (no span, zero trace-side evidence a client
       // was knocking). Emit a short span with the reject reason (invalid_token vs resource_mismatch) + the
@@ -678,10 +722,12 @@ export function registerMcpRoutes(
         },
         // The C29 governance SEAM: the app's handler gets the user + the tool's safety family/high-risk hint
         // and runs its own authorize() (the platform enforced scope; the app decides allow/stage/deny).
+        // `user.group_id` is set for member-scoped tokens (group_id on the OAuth grant, or session-bearer
+        // for test tenants) so the app can apply per-actor privacy grading correctly.
         body: JSON.stringify({
           tool: name,
           arguments: args,
-          user: { id: verified.userId },
+          user: { id: verified.userId, ...(verified.groupId ? { group_id: verified.groupId } : {}) },
           family: tool.family,
           high_risk: tool.high_risk ?? false,
           client_id: verified.clientId,
@@ -770,11 +816,13 @@ export function registerMcpRoutes(
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
 
-    const { verified } = await verifyAccessTokenDetailed(
+    const rawBearerGet = bearerFrom(req.headers.authorization);
+    const { verified: oauthVerifiedGet } = await verifyAccessTokenDetailed(
       app_.id,
-      bearerFrom(req.headers.authorization),
+      rawBearerGet,
       `${resourceBase(req)}/mcp`,
     );
+    const verified = oauthVerifiedGet ?? (await verifySessionBearer(app_.id, rawBearerGet));
     if (!verified) {
       return reply
         .status(401)
