@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.22.0] - 2026-08-07
+
+### Added
+- **Runner-liveness autohealing — `terraform/modules/runner`** (closes 2026-08-06 incident).
+  A local HTTP health probe (`runner-health-probe.service` on `:9090/health`) runs on every
+  runner VM and returns `200 OK` only when the GitHub Actions runner service is active,
+  GitHub-registered (`.runner` config present), and has written a diagnostic log entry within
+  the last `idle_threshold_minutes` (default 15 min). The MIG `auto_healing_policies` block
+  keys on this signal: after 3 consecutive probe failures (90 s) past the 300 s initial-delay
+  grace window, the MIG automatically replaces the instance — the exact fix that would have
+  resolved the 7-hour wedge incident in under 16 minutes.
+  - **Idle-stuck vs. GitHub outage**: the runner logs connection-error retries during a GitHub
+    outage, so the probe stays green during GitHub unavailability (no pool thrashing). Only a
+    truly hung process stops writing logs and trips the threshold.
+  - **New variables** (all backward-compatible with safe defaults): `network`,
+    `health_check_port`, `idle_threshold_minutes`, `autohealing_initial_delay_sec`.
+  - **New firewall rule** scoped to GCP health-check probe source CIDRs
+    (`35.191.0.0/16`, `130.211.0.0/22`) and a `<name>-hc` network tag on the instance template.
+  - **New outputs**: `health_check_id`, `mig_name`.
+  - **`startup.sh.tpl`**: startup script refactored to a `templatefile()` template for
+    maintainability; installs and enables `runner-health-probe.service` before runner registration.
+  - **`RUNBOOK.md`**: tuning rationale, break-glass `gcloud compute instance-groups managed
+    rolling-action replace` one-liner, PAT rotation notes, and live probe diagnostics.
+  - `terraform validate` green; backward-compatible (existing callers need no changes).
+
 ## [1.21.1] 2026-08-07
 
 ### Added

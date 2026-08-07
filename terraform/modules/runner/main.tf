@@ -8,6 +8,19 @@
 # This VM is where everything security-sensitive in CI actually executes (checkout, secrets,
 # deploys) — GitHub only ever supplies the control plane. That asymmetry is the whole §10.3-A
 # decision.
+#
+# AUTOHEALING (added 2026-08-07, closes 2026-08-06 incident):
+# A local HTTP probe (:health_check_port/health) returns 200 only when the runner service is
+# active, registered with GitHub, and has written a diagnostic log within idle_threshold_minutes.
+# The MIG autohealing policy keys on this signal: unhealthy for more than
+# (unhealthy_threshold × check_interval_sec) seconds after the initial_delay_sec grace window
+# causes the instance to be automatically replaced.
+#
+# See RUNBOOK.md for tuning rationale and break-glass procedures.
+
+# ---------------------------------------------------------------------------
+# Variables
+# ---------------------------------------------------------------------------
 
 variable "project_id" { type = string }
 variable "region" { type = string }
@@ -25,6 +38,66 @@ variable "runner_version" {
   type    = string
   default = "2.326.0"
 }
+
+# --- Autohealing variables (all have safe defaults; existing callers need no changes) ---
+
+variable "network" {
+  type        = string
+  default     = "default"
+  description = <<-EOT
+    VPC network name (or self-link) that the MIG instances are attached to.
+    Used to scope the health-check firewall ingress rule.
+    Defaults to "default" for backward compatibility; override with the name
+    exported from the network module (e.g. module.network.network_name).
+  EOT
+}
+
+variable "health_check_port" {
+  type        = number
+  default     = 9090
+  description = <<-EOT
+    TCP port on which the runner-liveness probe listens.
+    GCP health check probers reach this port; a firewall rule is created
+    automatically to allow 35.191.0.0/16 + 130.211.0.0/22 ingress.
+  EOT
+}
+
+variable "idle_threshold_minutes" {
+  type    = number
+  default = 15
+  description = <<-EOT
+    Number of minutes without ANY _diag/*.log update before the runner is
+    considered idle-stuck and the health probe returns 503.
+
+    Rationale (see RUNBOOK.md for the full story):
+    • The runner pings GitHub ~every 50 s and writes Runner_*.log on each attempt,
+      including connection-error retries during a GitHub-side outage.
+    • That means the log stays fresh during a GitHub outage → autohealing does NOT
+      fire while GitHub is merely unavailable (no pool thrashing on outages).
+    • Only a genuinely hung process — one that has stopped writing entirely — lets
+      the log go stale past this threshold.
+    • 15 min gives substantial margin above the ~50 s normal write cadence while
+      staying well below the 7-hour incident that motivated this feature.
+    • During a long-running CI job, Worker_*.log files are written continuously, so
+      a job lasting > 15 min does NOT falsely trip the threshold.
+  EOT
+}
+
+variable "autohealing_initial_delay_sec" {
+  type    = number
+  default = 300
+  description = <<-EOT
+    Seconds the MIG waits after instance creation before starting health checks.
+    Must cover: OS boot + toolchain install (apt docker/node) + runner binary
+    download + GitHub registration. Empirically 2–3 min on e2-medium Spot;
+    300 s (5 min) provides comfortable headroom for slow package mirrors.
+    Replacing without this grace period would create a boot-loop.
+  EOT
+}
+
+# ---------------------------------------------------------------------------
+# Secret + service account (unchanged)
+# ---------------------------------------------------------------------------
 
 resource "google_secret_manager_secret" "runner_pat" {
   project   = var.project_id
@@ -47,52 +120,69 @@ resource "google_secret_manager_secret_iam_member" "pat_access" {
   member    = "serviceAccount:${google_service_account.runner.email}"
 }
 
-locals {
-  startup = <<-EOT
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # The CI TOOLCHAIN, not just docker. Found live (2026-07-29): setup-terraform dies without
-    # unzip; `npm ci` needs system node (the runner bundles node for ACTIONS only). Node 22 via
-    # nodesource — Debian 12's packaged node is too old for the forge CLI.
-    if ! command -v node >/dev/null || ! command -v unzip >/dev/null; then
-      apt-get update -y && apt-get install -y docker.io jq curl unzip git ca-certificates
-      curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-      apt-get install -y nodejs
-      systemctl enable --now docker
-    fi
-    useradd -m runner 2>/dev/null || true
-    usermod -aG docker runner
+# ---------------------------------------------------------------------------
+# Health check — MIG autohealing signal
+# ---------------------------------------------------------------------------
+# Global health check (accepted by regional MIGs for auto_healing_policies).
+# check_interval_sec  = 30  → probe every 30 s
+# timeout_sec         = 5   → probe must respond within 5 s
+# healthy_threshold   = 1   → one pass restores healthy state
+# unhealthy_threshold = 3   → three consecutive failures (90 s) → declare unhealthy
+#
+# Why threshold=3 (not lower): transient probe timeouts (brief OS load spike, GC
+# pause) should not trigger a replacement.  Three consecutive failures = 90 s of
+# sustained unhealthiness, which is meaningful rather than noise.
 
-    cd /home/runner
-    if [ ! -d actions-runner ]; then
-      mkdir actions-runner && cd actions-runner
-      curl -sL "https://github.com/actions/runner/releases/download/v${var.runner_version}/actions-runner-linux-x64-${var.runner_version}.tar.gz" | tar xz
-      chown -R runner:runner /home/runner/actions-runner
-    else
-      cd actions-runner
-    fi
+resource "google_compute_health_check" "runner_liveness" {
+  project             = var.project_id
+  name                = "${var.name}-liveness"
+  check_interval_sec  = 30
+  timeout_sec         = 5
+  healthy_threshold   = 1
+  unhealthy_threshold = 3
 
-    PAT="$(gcloud secrets versions access latest --secret=github-runner-pat --project=${var.project_id})"
-    # org-level registration token (short-lived; the PAT never touches the runner config)
-    TOKEN="$(curl -s -X POST -H "Authorization: Bearer $PAT" \
-      "https://api.github.com/orgs/${var.github_owner}/actions/runners/registration-token" | jq -r .token)"
-
-    sudo -u runner ./config.sh --unattended --replace \
-      --url "https://github.com/${var.github_owner}" \
-      --token "$TOKEN" \
-      --name "$(hostname)" \
-      --labels "gcp,self-hosted,linux,x64" || true
-
-    ./svc.sh install runner || true
-    ./svc.sh start
-  EOT
+  http_health_check {
+    port         = var.health_check_port
+    request_path = "/health"
+  }
 }
+
+# ---------------------------------------------------------------------------
+# Firewall — allow GCP health check probers to reach :health_check_port
+# ---------------------------------------------------------------------------
+# Source ranges are the well-known GCP health-check probe origin CIDRs.
+# The target_tag scopes the rule to runner instances only.
+
+resource "google_compute_firewall" "runner_health_check_ingress" {
+  project     = var.project_id
+  name        = "${var.name}-hc-ingress"
+  network     = var.network
+  description = "Allow GCP health-check probers to reach the runner liveness probe."
+  direction   = "INGRESS"
+
+  allow {
+    protocol = "tcp"
+    ports    = [tostring(var.health_check_port)]
+  }
+
+  # Well-known GCP health check probe source ranges (documented at
+  # https://cloud.google.com/load-balancing/docs/health-check-concepts#ip-ranges).
+  source_ranges = ["35.191.0.0/16", "130.211.0.0/22"]
+  target_tags   = ["${var.name}-hc"]
+}
+
+# ---------------------------------------------------------------------------
+# Instance template
+# ---------------------------------------------------------------------------
 
 resource "google_compute_instance_template" "runner" {
   project      = var.project_id
   name_prefix  = "${var.name}-"
   machine_type = var.machine_type
   region       = var.region
+
+  # Network tag used by the health-check firewall rule above.
+  tags = ["${var.name}-hc"]
 
   scheduling {
     provisioning_model = "SPOT"
@@ -121,12 +211,22 @@ resource "google_compute_instance_template" "runner" {
     scopes = ["cloud-platform"] # IAM is the real boundary, not legacy scopes
   }
 
-  metadata_startup_script = local.startup
+  metadata_startup_script = templatefile("${path.module}/startup.sh.tpl", {
+    runner_version         = var.runner_version
+    project_id             = var.project_id
+    github_owner           = var.github_owner
+    health_check_port      = var.health_check_port
+    idle_threshold_minutes = var.idle_threshold_minutes
+  })
 
   lifecycle {
     create_before_destroy = true
   }
 }
+
+# ---------------------------------------------------------------------------
+# Regional MIG with autohealing policy
+# ---------------------------------------------------------------------------
 
 resource "google_compute_region_instance_group_manager" "runner" {
   project            = var.project_id
@@ -145,7 +245,28 @@ resource "google_compute_region_instance_group_manager" "runner" {
     max_unavailable_fixed = 3
     max_surge_fixed       = 0
   }
+
+  # Autohealing: replace an instance when the liveness probe fails for
+  # (unhealthy_threshold × check_interval_sec) = 90 s after the initial grace window.
+  # initial_delay_sec covers boot + toolchain install + runner registration
+  # (empirically 2-3 min; 300 s gives comfortable headroom).
+  auto_healing_policies {
+    health_check      = google_compute_health_check.runner_liveness.id
+    initial_delay_sec = var.autohealing_initial_delay_sec
+  }
 }
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
 
 output "runner_service_account" { value = google_service_account.runner.email }
 output "pat_secret" { value = google_secret_manager_secret.runner_pat.secret_id }
+output "health_check_id" {
+  value       = google_compute_health_check.runner_liveness.id
+  description = "Self-link of the MIG liveness health check (useful for dashboards/alerts)."
+}
+output "mig_name" {
+  value       = google_compute_region_instance_group_manager.runner.name
+  description = "Name of the regional MIG — used in break-glass replacement commands."
+}
