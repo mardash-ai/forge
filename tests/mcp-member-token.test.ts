@@ -378,10 +378,7 @@ const seedMember = async (email: string): Promise<string> => {
 };
 
 // The admin mint request helper.
-const adminMint = (
-  body: Record<string, unknown>,
-  headers: Record<string, string> = {},
-) =>
+const adminMint = (body: Record<string, unknown>, headers: Record<string, string> = {}) =>
   oauthServer.inject({
     method: 'POST',
     url: '/oauth/admin/token',

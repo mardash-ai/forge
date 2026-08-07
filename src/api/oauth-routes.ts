@@ -570,11 +570,15 @@ export function registerOAuthRoutes(
 
     const userId = typeof b.user_id === 'string' ? b.user_id.trim() : '';
     if (!userId)
-      return reply.status(400).send({ error: 'invalid_request', error_description: '`user_id` is required.' });
+      return reply
+        .status(400)
+        .send({ error: 'invalid_request', error_description: '`user_id` is required.' });
 
     const clientId = typeof b.client_id === 'string' ? b.client_id.trim() : '';
     if (!clientId)
-      return reply.status(400).send({ error: 'invalid_request', error_description: '`client_id` is required.' });
+      return reply
+        .status(400)
+        .send({ error: 'invalid_request', error_description: '`client_id` is required.' });
 
     const store_ = await mcp();
 
@@ -591,7 +595,7 @@ export function registerOAuthRoutes(
     if (!user)
       return reply.status(400).send({
         error: 'invalid_request',
-        error_description: '`user_id` not found in this app\'s identity store.',
+        error_description: "`user_id` not found in this app's identity store.",
       });
 
     // Scopes: use the caller-supplied set (validated as a subset of the client's scope), or default to
@@ -604,7 +608,7 @@ export function registerOAuthRoutes(
         if (!scopesSubset(requestedScopes, clientScopes)) {
           return reply.status(400).send({
             error: 'invalid_scope',
-            error_description: 'requested scope exceeds the client\'s registered scope.',
+            error_description: "requested scope exceeds the client's registered scope.",
           });
         }
       }
