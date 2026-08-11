@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.26.4] - 2026-08-11
+
+### Fixed
+
+- **infra: set `deletion_protection = false` on Cloud Run v2 Job.** google provider v6 added
+  `deletion_protection` to Cloud Run v2 Jobs with a default of `true`. The tainted job from
+  the failed first apply needed destroy+recreate, but the deletion protection blocked it.
+  The job holds no durable state (all state is in Cloud SQL), so false is correct here.
+
 ## [1.26.3] - 2026-08-11
 
 ### Fixed

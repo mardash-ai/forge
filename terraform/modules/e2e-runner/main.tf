@@ -328,8 +328,11 @@ resource "google_cloud_run_v2_job" "runner" {
   project  = var.project_id
   location = var.region
   name     = var.name
-  # Note: google_cloud_run_v2_job does not expose deletion_protection (unlike v2 services).
-  # The job holds no durable state (all state is in Cloud SQL); accidental deletion is safe.
+
+  # google provider v6 added deletion_protection to Cloud Run v2 Jobs (defaults to true).
+  # The job holds no durable state (all state is in Cloud SQL), so accidental deletion is
+  # not a data-loss risk — set false to allow Terraform to manage the lifecycle.
+  deletion_protection = false
 
   # Cloud Run v2 validates that all referenced secrets have a "latest" version at job creation
   # time. Without explicit depends_on, Terraform may attempt to create the job concurrently
