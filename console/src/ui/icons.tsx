@@ -362,6 +362,22 @@ const IconBoards = () => (
   </I>
 );
 
+/**
+ * E2E tests — assertion rows: two passed (filled dot + bar), one failed (X + dashed bar).
+ * The question: "did the model give the right answers?" The glyph reads the same way the results
+ * table does — pass, pass, fail — so the icon IS the screen's subject, not an abstraction of it.
+ */
+const IconEvals = () => (
+  <I>
+    <circle cx="3.8" cy="4.8" r="1.4" fill="currentColor" stroke="none" />
+    <path d="M6.8 4.8H13" />
+    <circle cx="3.8" cy="8.4" r="1.4" fill="currentColor" stroke="none" />
+    <path d="M6.8 8.4H11.4" />
+    <path d="M2.9 11.6L4.7 13.4M4.7 11.6L2.9 13.4" />
+    <path d="M6.8 12.5H12.4" strokeDasharray="1.5 1.4" />
+  </I>
+);
+
 export const RAIL_ICON = {
   overview: IconOverview,
   timeline: IconTimeline,
@@ -382,6 +398,7 @@ export const RAIL_ICON = {
   explore: IconExplore,
   audit: IconAudit,
   docs: IconDocs,
+  evals: IconEvals,
 } as const;
 
 // ── Status glyphs ──────────────────────────────────────────────────────────────────────────────

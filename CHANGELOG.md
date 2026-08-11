@@ -1,5 +1,45 @@
 # Changelog
 
+## [1.23.1] - 2026-08-11
+
+### Added
+- **Control-plane eval-results Postgres schema + tenant lease (`cp-results` backend).**
+
+  New `FORGE_CP_RESULTS_BACKEND=postgres` store domain backed by six tables on the forge
+  control-plane Cloud SQL instance. This is the single contract that the UI (t1), read API/MCP
+  tools (t4), publisher (t3), and Terraform (t6) build against. Nothing in dorinda-prod's serving
+  path reads it.
+
+  **Tables:**
+  - `forge_cp_eval_runs` — run-level metrics: workflows attempted, pass rate, withheld-vs-rejected
+    split, p50/p99 workflow duration (forge-hat fields), token spend, provider, trigger source,
+    stable `run_id`, canonical URL.
+  - `forge_cp_eval_workflows` — per-workflow drilldown: verdict, run-integrity class, prompt,
+    forge-hat duration capture, token counts, provider.
+  - `forge_cp_eval_scenes` — every scene with its assertions (`{name, expected, operator}`) and
+    observed values (`{name, value}`), plus a boolean pass/fail.
+  - `forge_cp_eval_mcp_calls` — every MCP tool call and response (request jsonb, response jsonb,
+    forge-hat per-call duration, error, called_at).
+  - `forge_cp_eval_claims` — extracted claims and structured cassette content (`cassette jsonb`),
+    claim verdict (verified/refuted/unverifiable), and supporting evidence.
+  - `forge_cp_tenant_lease` — single row (`id = 1`) holding `holder`, `source`, `since`,
+    `heartbeat`. The conditional `ON CONFLICT … WHERE heartbeat < now() - N seconds` upsert makes
+    this the cross-host lock's authority: a runner steals the lease only when the current
+    holder's heartbeat is stale.
+
+  **TypeScript contract:** `src/storage/backends/cp-results/types.ts` exports all domain types
+  (`EvalRun`, `EvalWorkflow`, `EvalScene`, `EvalMcpCall`, `EvalClaim`, `TenantLease`) and the
+  `CpResultsBackend` interface. `PgCpResultsBackend` implements all CRUD + the lease acquire /
+  renew / release / get operations.
+
+  **Wiring:** `StoreConfig.cpResults` + `FORGE_CP_RESULTS_BACKEND` env var; `needsDatabase()`
+  updated; `ensureCpResultsSchema` called at boot when enabled; `Backends.cpResults?` field
+  present when postgres.
+
+  **Tests:** `tests/pg-cp-results.test.ts` — 15 tests covering full CRUD, idempotency on all
+  insert operations, FK cascade, and the complete lease acquire/steal/renew/release lifecycle.
+  Runs under `npm run test:pg` (skipped on filesystem run).
+
 ## [1.23.0] - 2026-08-07
 
 ### Added

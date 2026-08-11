@@ -1,0 +1,290 @@
+// Control-plane-only eval-results store — TypeScript contract types.
+//
+// This is the single contract that the UI (t1), read API/MCP tools (t4), publisher (t3), and
+// Terraform (t6) build against. Nothing in dorinda-prod's serving path reads these tables;
+// they live exclusively on the forge control-plane Cloud SQL instance.
+
+// ---------------------------------------------------------------------------
+// Domain shapes (what callers get back)
+// ---------------------------------------------------------------------------
+
+export interface EvalRun {
+  run_id: string;
+  tenant_id: string;
+  canonical_url: string | null;
+  provider: string | null;
+  trigger_source: string | null;
+  workflows_attempted: number;
+  workflows_passed: number;
+  workflows_failed: number;
+  pass_rate: number | null; // 0.0–1.0; null until at least one workflow completes
+  withheld_count: number;
+  rejected_count: number;
+  p50_duration_ms: number | null; // forge-hat duration bucket (p50)
+  p99_duration_ms: number | null; // forge-hat duration bucket (p99)
+  total_input_tokens: number;
+  total_output_tokens: number;
+  status: EvalRunStatus;
+  started_at: string; // ISO-8601
+  completed_at: string | null;
+  meta: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export type EvalRunStatus = 'running' | 'completed' | 'failed' | 'aborted';
+
+export interface EvalWorkflow {
+  id: string;
+  run_id: string;
+  workflow_id: string;
+  tenant_id: string;
+  verdict: WorkflowVerdict;
+  integrity_class: IntegrityClass | null;
+  prompt: string | null;
+  duration_ms: number | null; // forge-hat duration capture
+  started_at: string | null;
+  completed_at: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  provider: string | null;
+  meta: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export type WorkflowVerdict = 'pass' | 'fail' | 'error' | 'skip';
+export type IntegrityClass = 'clean' | 'degraded' | 'corrupted' | 'unknown';
+
+export interface EvalScene {
+  id: string;
+  workflow_id: string;
+  run_id: string;
+  scene_index: number;
+  scene_name: string | null;
+  assertions: SceneAssertion[];
+  observed_values: ObservedValue[];
+  passed: boolean | null;
+  created_at: string;
+}
+
+export interface SceneAssertion {
+  name: string;
+  expected: unknown;
+  operator: string; // e.g. 'eq', 'contains', 'matches', 'gt'
+}
+
+export interface ObservedValue {
+  name: string;
+  value: unknown;
+}
+
+export interface EvalMcpCall {
+  id: string;
+  workflow_id: string;
+  run_id: string;
+  call_index: number;
+  tool_name: string;
+  request: Record<string, unknown>;
+  response: Record<string, unknown> | null;
+  duration_ms: number | null; // forge-hat duration capture per call
+  error: string | null;
+  called_at: string | null;
+  created_at: string;
+}
+
+export interface EvalClaim {
+  id: string;
+  workflow_id: string;
+  run_id: string;
+  claim_index: number;
+  claim_type: string | null;
+  claim_text: string | null;
+  verdict: ClaimVerdict | null;
+  evidence: Record<string, unknown>;
+  cassette: Record<string, unknown>; // structured cassette content
+  created_at: string;
+}
+
+export type ClaimVerdict = 'verified' | 'refuted' | 'unverifiable';
+
+export interface TenantLease {
+  holder: string; // identifier of the process/host that holds the lease
+  source: string; // human-readable source tag (hostname, pod name, etc.)
+  since: string; // ISO-8601 — when this holder acquired the lease
+  heartbeat: string; // ISO-8601 — last heartbeat from the holder
+}
+
+// ---------------------------------------------------------------------------
+// Input types (what callers pass in)
+// ---------------------------------------------------------------------------
+
+export interface EvalRunInput {
+  run_id: string;
+  tenant_id: string;
+  canonical_url?: string;
+  provider?: string;
+  trigger_source?: string;
+  started_at?: string; // defaults to now()
+  meta?: Record<string, unknown>;
+}
+
+export interface EvalRunUpdate {
+  workflows_attempted?: number;
+  workflows_passed?: number;
+  workflows_failed?: number;
+  pass_rate?: number;
+  withheld_count?: number;
+  rejected_count?: number;
+  p50_duration_ms?: number;
+  p99_duration_ms?: number;
+  total_input_tokens?: number;
+  total_output_tokens?: number;
+  status?: EvalRunStatus;
+  completed_at?: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface EvalWorkflowInput {
+  id: string;
+  run_id: string;
+  workflow_id: string;
+  tenant_id: string;
+  verdict: WorkflowVerdict;
+  integrity_class?: IntegrityClass;
+  prompt?: string;
+  duration_ms?: number;
+  started_at?: string;
+  completed_at?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  provider?: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface EvalSceneInput {
+  id: string;
+  workflow_id: string;
+  run_id: string;
+  scene_index: number;
+  scene_name?: string;
+  assertions?: SceneAssertion[];
+  observed_values?: ObservedValue[];
+  passed?: boolean;
+}
+
+export interface EvalMcpCallInput {
+  id: string;
+  workflow_id: string;
+  run_id: string;
+  call_index: number;
+  tool_name: string;
+  request: Record<string, unknown>;
+  response?: Record<string, unknown>;
+  duration_ms?: number;
+  error?: string;
+  called_at?: string;
+}
+
+export interface EvalClaimInput {
+  id: string;
+  workflow_id: string;
+  run_id: string;
+  claim_index: number;
+  claim_type?: string;
+  claim_text?: string;
+  verdict?: ClaimVerdict;
+  evidence?: Record<string, unknown>;
+  cassette?: Record<string, unknown>;
+}
+
+export interface TenantLeaseInput {
+  holder: string;
+  source: string;
+  /** Seconds before a stale heartbeat can be stolen. Default: 60. */
+  staleAfterSeconds?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Backend interface (the stable contract all tiers depend on)
+// ---------------------------------------------------------------------------
+
+export interface CpResultsBackend {
+  // --- Run-level metrics --------------------------------------------------
+
+  /** Insert or update a run row (idempotent on run_id). */
+  upsertRun(input: EvalRunInput): Promise<EvalRun>;
+
+  /** Patch run-level aggregate metrics. Returns null if run_id not found. */
+  updateRun(runId: string, update: EvalRunUpdate): Promise<EvalRun | null>;
+
+  /** Fetch a single run by run_id. */
+  getRun(runId: string): Promise<EvalRun | null>;
+
+  /** List runs for a tenant, newest-first. */
+  listRuns(tenantId: string, limit?: number): Promise<EvalRun[]>;
+
+  // --- Per-workflow drilldown ---------------------------------------------
+
+  /** Insert a workflow row. Idempotent on id (ON CONFLICT DO NOTHING). */
+  insertWorkflow(input: EvalWorkflowInput): Promise<EvalWorkflow>;
+
+  /** Fetch a single workflow row. */
+  getWorkflow(id: string): Promise<EvalWorkflow | null>;
+
+  /** List all workflows for a run, by insertion order. */
+  listWorkflows(runId: string): Promise<EvalWorkflow[]>;
+
+  // --- Scenes (assertions + observed values) ------------------------------
+
+  /** Insert a scene row. Idempotent on (workflow_id, scene_index). */
+  insertScene(input: EvalSceneInput): Promise<EvalScene>;
+
+  /** List all scenes for a workflow, ordered by scene_index. */
+  listScenes(workflowId: string): Promise<EvalScene[]>;
+
+  // --- MCP tool calls + responses -----------------------------------------
+
+  /** Insert an MCP call row. Idempotent on (workflow_id, call_index). */
+  insertMcpCall(input: EvalMcpCallInput): Promise<EvalMcpCall>;
+
+  /** List all MCP calls for a workflow, ordered by call_index. */
+  listMcpCalls(workflowId: string): Promise<EvalMcpCall[]>;
+
+  // --- Extracted claims / cassette content --------------------------------
+
+  /** Insert a claim row. Idempotent on (workflow_id, claim_index). */
+  insertClaim(input: EvalClaimInput): Promise<EvalClaim>;
+
+  /** List all claims for a workflow, ordered by claim_index. */
+  listClaims(workflowId: string): Promise<EvalClaim[]>;
+
+  // --- Tenant lease (single-row cross-host lock) --------------------------
+
+  /**
+   * Attempt to acquire the single tenant-lease row.
+   * Returns the lease if acquired; null if a live holder already owns it.
+   * Steals the lease only when the current holder's heartbeat is stale
+   * (older than `input.staleAfterSeconds`, default 60 s).
+   */
+  acquireLease(input: TenantLeaseInput): Promise<TenantLease | null>;
+
+  /**
+   * Renew the heartbeat timestamp.
+   * Returns true if the caller is the current holder; false otherwise.
+   */
+  renewLease(holder: string): Promise<boolean>;
+
+  /**
+   * Release the lease (only succeeds if caller is the current holder).
+   * Returns true if released; false if caller is not the holder.
+   */
+  releaseLease(holder: string): Promise<boolean>;
+
+  /** Read the current lease row (null if no lease exists). */
+  getLease(): Promise<TenantLease | null>;
+
+  // --- Utilities ----------------------------------------------------------
+  __truncateAllForTests(): Promise<void>;
+  close?(): Promise<void>;
+}

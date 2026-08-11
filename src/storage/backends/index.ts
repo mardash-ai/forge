@@ -53,6 +53,8 @@ import type { PushBackend } from './push/types';
 import { FsPushBackend } from './push/fs';
 import { PgPushBackend, ensurePushSchema } from './push/pg';
 import { DualWritePushBackend } from './push/dual';
+import type { CpResultsBackend } from './cp-results/types';
+import { PgCpResultsBackend, ensureCpResultsSchema } from './cp-results/pg';
 
 export { loadStoreConfig, needsDatabase } from './config';
 export type { StoreConfig, BackendKind } from './config';
@@ -76,6 +78,8 @@ export interface Backends {
   billing: BillingBackend;
   push: PushBackend;
   blobs: BlobBackend;
+  // Control-plane-only eval-results store. Present only when FORGE_CP_RESULTS_BACKEND=postgres.
+  cpResults?: CpResultsBackend;
   // The Postgres pool, when one was opened (shared across domains as more migrate).
   pool?: Pool;
   describe(): string;
@@ -108,6 +112,7 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     if (cfg.billing === 'postgres') await ensureBillingSchema(pool);
     if (cfg.push === 'postgres') await ensurePushSchema(pool);
     if (cfg.blobs === 's3') await ensureBlobSchema(pool);
+    if (cfg.cpResults === 'postgres') await ensureCpResultsSchema(pool);
   }
 
   // identity
@@ -300,6 +305,16 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     blobsLabel = 'filesystem';
   }
 
+  // cp-results (control-plane-only eval store) — Postgres-only; no filesystem fallback.
+  let cpResults: CpResultsBackend | undefined;
+  let cpResultsLabel: string;
+  if (cfg.cpResults === 'postgres') {
+    cpResults = new PgCpResultsBackend(pool!);
+    cpResultsLabel = 'postgres';
+  } else {
+    cpResultsLabel = 'disabled';
+  }
+
   return {
     identity,
     search,
@@ -314,9 +329,10 @@ export async function makeBackends(cfg: StoreConfig = loadStoreConfig()): Promis
     billing,
     push,
     blobs,
+    cpResults,
     pool,
     describe: () =>
-      `identity=${identityLabel} search=${searchLabel} events=${eventsLabel} notifications=${notificationsLabel} secrets=${secretsLabel} resources=${resourcesLabel} policy=${policyLabel} mcp=${mcpLabel} connections=${connectionsLabel} membership=${membershipLabel} billing=${billingLabel} push=${pushLabel} blobs=${blobsLabel}`,
+      `identity=${identityLabel} search=${searchLabel} events=${eventsLabel} notifications=${notificationsLabel} secrets=${secretsLabel} resources=${resourcesLabel} policy=${policyLabel} mcp=${mcpLabel} connections=${connectionsLabel} membership=${membershipLabel} billing=${billingLabel} push=${pushLabel} blobs=${blobsLabel} cpResults=${cpResultsLabel}`,
     async close() {
       await identity.close?.();
       await search.close?.();

@@ -30,6 +30,9 @@ export interface StoreConfig {
   billing: BackendKind;
   push: BackendKind;
   blobs: BlobBackendKind;
+  // Control-plane-only eval-results store (Cloud SQL). Uses the shared FORGE_DB_URL pool when set to
+  // 'postgres'; absent (filesystem) by default so nothing regresses on local / data-plane deploys.
+  cpResults: BackendKind;
   s3?: S3Settings;
   // Migration window: when a Postgres backend is selected, ALSO write-through to the filesystem
   // (read from Postgres). Lets a deploy de-risk the cutover — flip reads back to FS with no data
@@ -47,6 +50,7 @@ export interface StoreConfig {
   billingDualWrite: boolean;
   pushDualWrite: boolean;
   blobsDualWrite: boolean;
+  // cpResults has no dual-write mode — it's always-Postgres (control-plane only).
   dbUrl?: string;
   poolMax: number;
 }
@@ -103,6 +107,9 @@ export function loadStoreConfig(env: NodeJS.ProcessEnv = process.env): StoreConf
     // P33 — blobs are decoupled from the structured-store switch: filesystem unless S3 is explicitly
     // configured or requested. (S3 keeps its metadata in Postgres → needsDatabase() still opens the pool.)
     blobs: pickBlob(env.FORGE_BLOBS_BACKEND, Boolean(s3)),
+    // Control-plane-only results store; disabled (filesystem sentinel) by default so local / data-plane
+    // deploys don't require it. Enable via FORGE_CP_RESULTS_BACKEND=postgres.
+    cpResults: pick(env.FORGE_CP_RESULTS_BACKEND, 'filesystem'),
     s3,
     identityDualWrite: flag(env.FORGE_IDENTITY_DUAL_WRITE),
     searchDualWrite: flag(env.FORGE_SEARCH_DUAL_WRITE),
@@ -138,6 +145,7 @@ export function needsDatabase(cfg: StoreConfig): boolean {
     cfg.membership === 'postgres' ||
     cfg.billing === 'postgres' ||
     cfg.push === 'postgres' ||
-    cfg.blobs === 's3'
+    cfg.blobs === 's3' ||
+    cfg.cpResults === 'postgres'
   );
 }

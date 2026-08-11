@@ -139,6 +139,7 @@ const NAV_GROUPS: ReadonlyArray<readonly [string, ReadonlyArray<readonly [Screen
       ['explore', 'Explore'],
       ['audit', 'Audit'],
       ['docs', 'Docs'],
+      ['evals', 'E2E Tests'],
     ],
   ],
 ] as const;
@@ -166,7 +167,8 @@ type Screen =
   | 'boards'
   | 'explore'
   | 'audit'
-  | 'docs';
+  | 'docs'
+  | 'evals';
 
 const sevTone: Record<string, StatusTone> = { critical: 'crit', warn: 'warn', info: 'info' };
 
