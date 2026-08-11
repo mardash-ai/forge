@@ -238,6 +238,45 @@ Each released version maps to a published control-plane image tag
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-08-11
+
+### Added
+- **terraform: dedicated eval-runner infrastructure (Cloud SQL + Cloud Run Job + SA + Secrets).**
+
+  New `terraform/modules/eval-runner/` module provisions the complete forge eval-runner stack:
+
+  - **Cloud SQL instance `forge-eval-runner`** — a dedicated Postgres 16 instance for the
+    `cp-results` backend (eval run history, workflow results, tenant lease). Separate from
+    dorinda-prod's application instance with its own user, password, database, and private IP.
+    `db-custom-1-3840` / 10 GB SSD with autoresize; backups + PITR enabled; private IP only.
+    Enforces the separation invariant: no schema or network overlap with production data.
+
+  - **Cloud Run Job `forge-eval-runner`** — runs the released forge control-plane image as a
+    triggered (not long-running) job. `max_retries = 0` (eval runs are not idempotent — each
+    mints a new `run_id`). VPC egress `PRIVATE_RANGES_ONLY` so Cloud SQL private-IP routes
+    through the VPC while Anthropic/OpenAI/target-app calls go direct. Image is
+    `ignore_changes` so release CI can update the digest without a TF plan conflict.
+
+  - **Service account `forge-eval-runner`** — least-privilege SA bound only to the five
+    eval-runner secrets (`secretAccessor`) and `roles/cloudsql.client` on the project (for the
+    direct private-IP Cloud SQL connection). No project-wide secret access.
+
+  - **Secret Manager entries:**
+    - `forge-eval-runner-db-password` — TF-seeded (random_password, 32 hex chars)
+    - `forge-eval-runner-db-url` — TF-seeded composed `postgresql://` URL (`FORGE_DB_URL`)
+    - `forge-eval-runner-anthropic-key` — container; value added out-of-band (OOB)
+    - `forge-eval-runner-openai-key` — container; value OOB
+    - `forge-eval-runner-service-token` — container; value OOB (`AUTH_SERVICE_TOKEN` for
+      minting MCP access tokens against the target app)
+
+  - **`PROVIDER_ACCOUNTS.md`** (new) — GCP resource inventory documenting all service accounts,
+    Cloud SQL instances, Cloud Run services/jobs, and Secret Manager secrets in the estate.
+    Updated in the same change as the TF resources per guardrail 1. Apply gate re-stated:
+    `terraform plan` must be presented and Mark must explicitly approve before `apply`.
+
+  **Apply gate:** architecture + ~$10–15/mo billed cost approved 2026-08-11. Apply-time
+  approval still required (`forge infra plan` → review → `forge infra apply`).
+
 ## [1.21.0] - 2026-08-06
 
 ### Added
