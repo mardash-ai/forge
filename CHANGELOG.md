@@ -1,5 +1,62 @@
 # Changelog
 
+## [1.26.0] - 2026-08-11
+
+### Added
+
+- **terraform: rename eval-runner → e2e-runner and instantiate the forge E2E runner stack.**
+
+  Addresses the t6 false-complete (2026-08-11): the eval-runner module was committed but never
+  instantiated in a root terraform, so CI applied zero changes and the cloud readback found
+  nothing. This change fixes both the naming and the missing instantiation.
+
+  **Rename (no old 'eval' naming remains for E2E resources):**
+  - `terraform/modules/eval-runner/` → `terraform/modules/e2e-runner/`
+  - Module default `name` var: `forge-eval-runner` → `e2e-runner`
+  - New `sql_instance_name` var (default `e2e-results`) separates the Cloud SQL instance name
+    from the job/SA/secret prefix — Cloud SQL instance is `e2e-results`, everything else is `e2e-runner`.
+  - All resource labels, comments, and display names updated from "eval" to "E2E".
+
+  **Instantiation (forge stack root terraform):**
+  - `infra/main.tf` — new root terraform configuration for the forge stack. Declares the GCS
+    backend (empty block, bucket/prefix injected at init), the google + random providers, data
+    sources for the existing `dorinda` VPC and `dorinda-us-east1` subnet, and a
+    `module "e2e_runner"` call with `name="e2e-runner"`, `sql_instance_name="e2e-results"`,
+    `tier="db-f1-micro"` (smallest Postgres tier).
+  - `forge.infra.json` — declares the forge stack: kind=service, state_bucket=dorinda-tf-state,
+    env `prod-a` (project=dorinda-prod, region=us-east1). Verify check: gcloud readback confirms
+    `e2e-results` RUNNABLE + `e2e-runner` job present.
+
+  **Push-gated CI apply (`.github/workflows/infra.yml`):**
+  - Triggers on push to main (or PR) when `infra/**`, `forge.infra.json`, or
+    `terraform/modules/e2e-runner/**` change.
+  - Runs on the self-hosted GCP pool (`[self-hosted, gcp]`).
+  - Auth via Workload Identity Federation — no service-account key (§2.5 rule 3).
+    WIF binding for `mardash-ai/forge` added to `forge-deployer` SA.
+  - On PR: `forge infra plan` (read-only). On merge: `forge infra apply` (§3.7 read-back
+    inside) + `forge infra verify` (gcloud readback gate).
+  - Nightly: `forge infra status` (drift detection).
+
+  **Resources created by this apply (Mark's 2026-08-11 approval):**
+  - Cloud SQL instance **`e2e-results`** — Postgres 16, db-f1-micro, 10 GB SSD, private IP
+    only, backups + PITR, separate from dorinda-pg.
+  - Cloud Run Job **`e2e-runner`** — max_retries=0, PRIVATE_RANGES_ONLY VPC egress,
+    placeholder image at first apply.
+  - Service account **`e2e-runner`** — least-privilege: secretAccessor on its own 5 secrets
+    only + roles/cloudsql.client.
+  - Secrets: `e2e-runner-{db-password,db-url}` (TF-seeded), `{anthropic-key,openai-key,
+    service-token}` (OOB containers).
+
+  **Green gate:** `gcloud sql instances describe e2e-results` → state RUNNABLE;
+  `gcloud run jobs describe e2e-runner --region=us-east1` → job present;
+  `e2e-runner@dorinda-prod.iam.gserviceaccount.com` resolvable.
+
+  **PROVIDER_ACCOUNTS.md** updated in same change: all `forge-eval-runner` entries replaced
+  with `e2e-runner` / `e2e-results`, `forge-deployer` WIF binding for forge repo documented.
+
+  **Separation invariant enforced:** `e2e-results` Cloud SQL is its own instance; `dorinda-pg`
+  is untouched by this plan/apply.
+
 ## [1.24.0] - 2026-08-11
 
 ### Added

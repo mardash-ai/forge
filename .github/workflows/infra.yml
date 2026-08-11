@@ -1,0 +1,69 @@
+name: infra
+
+# Push-gated terraform apply for the forge stack (e2e-runner infra in dorinda-prod).
+# PR → plan (read-only, for review); merge to main → apply + §3.7 read-back + verify;
+# nightly → drift detection.
+#
+# Auth: Workload Identity Federation — no service-account key ever exists (§2.5 rule 3).
+# Runner: self-hosted GCP pool (the same pool used by dorinda-api, dorinda-forge-console, etc.).
+# Approval: Mark's 2026-08-11 authorization covers the e2e-runner apply (Cloud SQL e2e-results
+#   + Cloud Run Job e2e-runner + SA + secrets). Apply-time approval re-stated in PROVIDER_ACCOUNTS.md.
+
+on:
+  pull_request:
+    paths: ['infra/**', 'forge.infra.json', 'terraform/modules/e2e-runner/**']
+  push:
+    branches: [main]
+    paths: ['infra/**', 'forge.infra.json', 'terraform/modules/e2e-runner/**']
+  schedule:
+    - cron: '23 7 * * *' # nightly drift check — a console change must break a build
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # WIF
+
+env:
+  ENV_NAME: prod-a
+
+jobs:
+  infra:
+    runs-on: [self-hosted, gcp]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (WIF — no keys)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/754310769371/locations/global/workloadIdentityPools/github-ci/providers/github-oidc
+          service_account: forge-deployer@dorinda-prod.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Install forge CLI deps
+        run: npm ci --omit=optional
+
+      - name: Lint (fmt + validate — before any provider call)
+        run: node node_modules/.bin/tsx src/infra/cli.ts lint
+
+      - name: Plan (PRs and drift schedule)
+        if: github.event_name != 'push'
+        run: node node_modules/.bin/tsx src/infra/cli.ts plan --env "$ENV_NAME"
+
+      - name: Apply + read-back (merges to main only)
+        if: github.event_name == 'push'
+        run: node node_modules/.bin/tsx src/infra/cli.ts apply --env "$ENV_NAME"
+
+      - name: Verify — gcloud readback (post-apply gate)
+        if: github.event_name == 'push'
+        run: node node_modules/.bin/tsx src/infra/cli.ts verify --env "$ENV_NAME"
+
+      - name: Drift gate (schedule only) — exits 2 on drift
+        if: github.event_name == 'schedule'
+        run: node node_modules/.bin/tsx src/infra/cli.ts status --env "$ENV_NAME"

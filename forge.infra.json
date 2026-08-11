@@ -1,0 +1,20 @@
+{
+  "stack": "forge",
+  "kind": "service",
+  "state_bucket": "dorinda-tf-state",
+  "required_platform_contract": 1,
+  "envs": {
+    "prod-a": {
+      "project_id": "dorinda-prod",
+      "region": "us-east1",
+      "vars": {}
+    }
+  },
+  "verify": [
+    {
+      "kind": "command",
+      "run": "gcloud sql instances describe e2e-results --project=dorinda-prod --format=value(state) | grep -q RUNNABLE && gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=value(name) | grep -q e2e-runner",
+      "cwd": "."
+    }
+  ]
+}

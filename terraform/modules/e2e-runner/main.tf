@@ -1,16 +1,16 @@
-# forge module: eval-runner — dedicated Cloud SQL + Cloud Run Job for the forge eval harness.
+# forge module: e2e-runner — dedicated Cloud SQL + Cloud Run Job for the forge E2E harness.
 #
-# SEPARATION INVARIANT: this Cloud SQL instance is DEDICATED to the eval/cp-results backend.
+# SEPARATION INVARIANT: this Cloud SQL instance is DEDICATED to the e2e/cp-results backend.
 # It is NEVER a database on dorinda-prod's application instance. Its own instance, its own
 # user, its own schema — no network or schema overlap with production.
 #
-# Cloud SQL: a small Postgres 16 instance for the cp-results backend (eval run history,
+# Cloud SQL: a small Postgres 16 instance for the cp-results backend (E2E run history,
 # workflow results, tenant lease). The cp-results tables are append-mostly and modest in size;
-# db-custom-1-3840 at 10 GB with autoresize is correct sizing for this load.
+# db-f1-micro at 10 GB with autoresize is correct sizing for this load.
 #
 # Cloud Run Job: runs the released forge control-plane image (image = var.image, defaulting to
 # a placeholder at first apply, replaced by release CI). The job is TRIGGERED — not a long-
-# running service. One execution per eval run; max_retries = 0 (eval is not idempotent).
+# running service. One execution per E2E run; max_retries = 0 (E2E is not idempotent).
 #
 # Secrets: the db password and composed DATABASE_URL are seeded by Terraform (random_password).
 # The API-key and service-token containers are created here; values are added out-of-band per
@@ -29,9 +29,15 @@ variable "project_id" { type = string }
 variable "region" { type = string }
 
 variable "name" {
-  type    = string
-  default = "forge-eval-runner"
-  description = "Base name for all resources in this module. Changing this creates new resources."
+  type        = string
+  default     = "e2e-runner"
+  description = "Base name for the Cloud Run Job, service account, and secret prefixes. Changing this creates new resources."
+}
+
+variable "sql_instance_name" {
+  type        = string
+  default     = "e2e-results"
+  description = "Name of the dedicated Cloud SQL instance for E2E results. Separate from the job name to keep resource identity clear."
 }
 
 variable "network_id" {
@@ -51,7 +57,7 @@ variable "image" {
   type        = string
   default     = "us-docker.pkg.dev/cloudrun/container/hello"
   description = <<-EOT
-    Full image reference for the eval runner (forge control-plane image, digest-pinned in CI).
+    Full image reference for the E2E runner (forge control-plane image, digest-pinned in CI).
     Defaults to a public placeholder so the first apply creates the job resource before any
     release CI run has pushed the real image — the same placeholder-first pattern the service
     module uses. The release workflow updates the image out-of-band; TF ignores_changes on it.
@@ -59,9 +65,9 @@ variable "image" {
 }
 
 variable "tier" {
-  type    = string
-  default = "db-custom-1-3840"
-  description = "Cloud SQL machine tier. 1 vCPU / 3.75 GB — correct for the eval/cp-results load."
+  type        = string
+  default     = "db-f1-micro"
+  description = "Cloud SQL machine tier. db-f1-micro (shared-core, 0.6 GB) — smallest correct sizing for the E2E/cp-results load."
 }
 
 variable "disk_gb" {
@@ -75,13 +81,13 @@ variable "disk_gb" {
 }
 
 variable "job_timeout" {
-  type    = string
-  default = "3600s"
-  description = "Timeout for a single eval-runner job execution. An eval suite can take O(minutes)."
+  type        = string
+  default     = "3600s"
+  description = "Timeout for a single E2E runner job execution. An E2E suite can take O(minutes)."
 }
 
 # ---------------------------------------------------------------------------
-# Cloud SQL: dedicated eval / cp-results Postgres instance
+# Cloud SQL: dedicated E2E / cp-results Postgres instance
 # ---------------------------------------------------------------------------
 # DEDICATED instance — NOT a database on dorinda-prod's application Cloud SQL.
 # Isolation: separate instance, separate DB user, separate password, separate schema.
@@ -95,9 +101,9 @@ resource "random_password" "db" {
   # a class of "works in psql but not in the app" bugs. Hex-safe avoids that class.
 }
 
-resource "google_sql_database_instance" "eval_pg" {
+resource "google_sql_database_instance" "e2e_pg" {
   project             = var.project_id
-  name                = var.name
+  name                = var.sql_instance_name
   region              = var.region
   database_version    = "POSTGRES_16"
   deletion_protection = true # a terraform destroy must not be able to take the data with it
@@ -107,7 +113,7 @@ resource "google_sql_database_instance" "eval_pg" {
     # also rejects db-custom-* tiers. Matching the product database module.
     edition           = "ENTERPRISE"
     tier              = var.tier
-    availability_type = "ZONAL" # eval data is not HA-critical; REGIONAL is an in-place upgrade
+    availability_type = "ZONAL" # E2E data is not HA-critical; REGIONAL is an in-place upgrade
     disk_type         = "PD_SSD"
     disk_size         = var.disk_gb
     disk_autoresize   = true
@@ -142,13 +148,13 @@ resource "google_sql_database_instance" "eval_pg" {
 
 resource "google_sql_database" "cp_results" {
   project  = var.project_id
-  instance = google_sql_database_instance.eval_pg.name
+  instance = google_sql_database_instance.e2e_pg.name
   name     = "cp_results"
 }
 
 resource "google_sql_user" "app" {
   project  = var.project_id
-  instance = google_sql_database_instance.eval_pg.name
+  instance = google_sql_database_instance.e2e_pg.name
   name     = "app"
   password = random_password.db.result
 }
@@ -178,7 +184,7 @@ resource "google_secret_manager_secret_version" "db_url" {
   secret = google_secret_manager_secret.db_url.id
   # Direct private-IP postgresql:// URL — no Cloud SQL Auth Proxy socket needed.
   # The Cloud Run Job reaches the private IP via Direct VPC Egress.
-  secret_data = "postgresql://${google_sql_user.app.name}:${random_password.db.result}@${google_sql_database_instance.eval_pg.private_ip_address}:5432/${google_sql_database.cp_results.name}"
+  secret_data = "postgresql://${google_sql_user.app.name}:${random_password.db.result}@${google_sql_database_instance.e2e_pg.private_ip_address}:5432/${google_sql_database.cp_results.name}"
 }
 
 # API key and service token containers: values supplied out-of-band (never in TF state).
@@ -211,7 +217,7 @@ resource "google_secret_manager_secret" "service_token" {
 resource "google_service_account" "runner" {
   project      = var.project_id
   account_id   = var.name
-  display_name = "Forge eval runner — Cloud Run Job SA"
+  display_name = "Forge E2E runner — Cloud Run Job SA"
 }
 
 resource "google_secret_manager_secret_iam_member" "runner_db_password" {
@@ -258,9 +264,9 @@ resource "google_project_iam_member" "runner_sql_client" {
 }
 
 # ---------------------------------------------------------------------------
-# Cloud Run Job: eval runner
+# Cloud Run Job: E2E runner
 # ---------------------------------------------------------------------------
-# max_retries = 0: eval is not idempotent — each execution mints a new run ID and writes
+# max_retries = 0: E2E is not idempotent — each execution mints a new run ID and writes
 # to cp_results. An automatic retry would create a duplicate run, not fix the first one.
 #
 # vpc_access.egress = PRIVATE_RANGES_ONLY: Cloud SQL private IP is a private range and
@@ -278,7 +284,7 @@ resource "google_cloud_run_v2_job" "runner" {
   # The job holds no durable state (all state is in Cloud SQL); accidental deletion is safe.
 
   template {
-    # task_count = 1 (default): each eval run is a single sequential task.
+    # task_count = 1 (default): each E2E run is a single sequential task.
     parallelism = 1
     task_count  = 1
 
@@ -359,17 +365,17 @@ resource "google_cloud_run_v2_job" "runner" {
 # ---------------------------------------------------------------------------
 
 output "sql_instance_name" {
-  value       = google_sql_database_instance.eval_pg.name
+  value       = google_sql_database_instance.e2e_pg.name
   description = "Cloud SQL instance name (for gcloud / connection-string reference)."
 }
 
 output "sql_connection_name" {
-  value       = google_sql_database_instance.eval_pg.connection_name
+  value       = google_sql_database_instance.e2e_pg.connection_name
   description = "Cloud SQL connection name (project:region:instance)."
 }
 
 output "sql_private_ip" {
-  value       = google_sql_database_instance.eval_pg.private_ip_address
+  value       = google_sql_database_instance.e2e_pg.private_ip_address
   description = "Private IP of the Cloud SQL instance (direct VPC connection)."
 }
 
