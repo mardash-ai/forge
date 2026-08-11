@@ -329,6 +329,12 @@ resource "google_cloud_run_v2_job" "runner" {
   location = var.region
   name     = var.name
 
+  labels = {
+    managed-by = "terraform"
+    stack      = "forge"
+    purpose    = "e2e-runner"
+  }
+
   # google provider v6 added deletion_protection to Cloud Run v2 Jobs (defaults to true).
   # The job holds no durable state (all state is in Cloud SQL), so accidental deletion is
   # not a data-loss risk — set false to allow Terraform to manage the lifecycle fully

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.26.6] - 2026-08-11
+
+### Fixed
+
+- **infra: fix verify command — use `--format=yaml` instead of `--format=value(...)`.** Bash
+  interprets `value(state)` as a subshell, causing a syntax error when the verify command is
+  run via `bash -lc`. Switched to `--format=yaml` with `grep -q 'state: RUNNABLE'` / `grep -q
+  'name: e2e-runner'`, which avoids parentheses entirely.
+- **infra: add resource labels to Cloud Run Job** to ensure the CI apply after the verify fix
+  has non-zero changes (labels: managed-by, stack, purpose).
+
 ## [1.26.5] - 2026-08-11
 
 ### Fixed

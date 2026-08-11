@@ -13,7 +13,7 @@
   "verify": [
     {
       "kind": "command",
-      "run": "gcloud sql instances describe e2e-results --project=dorinda-prod --format=value(state) | grep -q RUNNABLE && gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=value(name) | grep -q e2e-runner",
+      "run": "gcloud sql instances describe e2e-results --project=dorinda-prod --format=yaml | grep -q 'state: RUNNABLE' && gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=yaml | grep -q 'name: e2e-runner'",
       "cwd": "."
     }
   ]
