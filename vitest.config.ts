@@ -41,6 +41,7 @@ export default defineConfig(
             FORGE_MEMBERSHIP_BACKEND: 'postgres',
             FORGE_BILLING_BACKEND: 'postgres',
             FORGE_PUSH_BACKEND: 'postgres',
+            FORGE_CP_RESULTS_BACKEND: 'postgres',
             // Blobs: use S3 only when FORGE_S3_ENDPOINT is explicitly provided; otherwise leave
             // blobs on the filesystem backend so pg-blobs.test.ts self-skips rather than every
             // test file failing because MinIO is not in this environment.

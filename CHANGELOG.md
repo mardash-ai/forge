@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.23.3] - 2026-08-11
+
+### Fixed
+- **Activate `FORGE_CP_RESULTS_BACKEND` in the pg test environment.**
+
+  When `TEST_DATABASE_URL` is set (injected by CI / the orchestrator verify gate), the vitest
+  config now includes `FORGE_CP_RESULTS_BACKEND: 'postgres'` so `pg-cp-results.test.ts` runs
+  rather than self-skipping. Previously that suite was silently skipped in the full pg run,
+  causing the orchestrator gate to accept a partial suite as green.
+
 ## [1.23.2] - 2026-08-11
 
 ### Added
