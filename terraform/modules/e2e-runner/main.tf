@@ -220,6 +220,44 @@ resource "google_secret_manager_secret" "service_token" {
   # Same token the app's data-plane uses for service-to-service auth (C10 §P34).
 }
 
+# Placeholder versions for OOB secrets — Cloud Run v2 requires ALL referenced secrets to have
+# at least one version before the job resource can be created (the API validates existence of
+# version "latest" at creation time). These placeholder versions allow bootstrapping; operators
+# replace them out-of-band with real values. The ignore_changes lifecycle block prevents
+# Terraform from reverting operator-seeded values on subsequent plan/apply cycles.
+# See PROVIDER_ACCOUNTS.md § "Setting out-of-band secrets after first apply".
+
+resource "google_secret_manager_secret_version" "anthropic_key" {
+  secret      = google_secret_manager_secret.anthropic_key.id
+  secret_data = "PLACEHOLDER_REPLACE_WITH_REAL_ANTHROPIC_KEY"
+
+  lifecycle {
+    # Operator adds the real value via:
+    #   printf '%s' 'sk-ant-...' | gcloud secrets versions add e2e-runner-anthropic-key \
+    #     --project dorinda-prod --data-file=-
+    # TF must not revert the operator-seeded value on subsequent plan/apply.
+    ignore_changes = [secret_data]
+  }
+}
+
+resource "google_secret_manager_secret_version" "openai_key" {
+  secret      = google_secret_manager_secret.openai_key.id
+  secret_data = "PLACEHOLDER_REPLACE_WITH_REAL_OPENAI_KEY"
+
+  lifecycle {
+    ignore_changes = [secret_data]
+  }
+}
+
+resource "google_secret_manager_secret_version" "service_token" {
+  secret      = google_secret_manager_secret.service_token.id
+  secret_data = "PLACEHOLDER_REPLACE_WITH_REAL_SERVICE_TOKEN"
+
+  lifecycle {
+    ignore_changes = [secret_data]
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Service account (least-privilege): reads only the secrets it needs
 # ---------------------------------------------------------------------------
@@ -292,6 +330,18 @@ resource "google_cloud_run_v2_job" "runner" {
   name     = var.name
   # Note: google_cloud_run_v2_job does not expose deletion_protection (unlike v2 services).
   # The job holds no durable state (all state is in Cloud SQL); accidental deletion is safe.
+
+  # Cloud Run v2 validates that all referenced secrets have a "latest" version at job creation
+  # time. Without explicit depends_on, Terraform may attempt to create the job concurrently
+  # with (or before) the secret versions, causing the GCP API to reject the job with "secret
+  # version not found". The depends_on ensures versions exist before the job resource is sent
+  # to the API.
+  depends_on = [
+    google_secret_manager_secret_version.db_url,
+    google_secret_manager_secret_version.anthropic_key,
+    google_secret_manager_secret_version.openai_key,
+    google_secret_manager_secret_version.service_token,
+  ]
 
   template {
     # task_count = 1 (default): each E2E run is a single sequential task.

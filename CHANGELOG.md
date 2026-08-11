@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.26.3] - 2026-08-11
+
+### Fixed
+
+- **infra: add placeholder secret versions + `depends_on` to Cloud Run Job.** Cloud Run v2
+  validates that all referenced secrets have a `latest` version at job-creation time. The 3
+  OOB secrets (anthropic-key, openai-key, service-token) had no version, and the db-url
+  version was created concurrently with the job. Fix: add TF-managed placeholder versions for
+  all 3 OOB secrets (with `ignore_changes = [secret_data]` so operator-seeded values persist),
+  and add `depends_on` to the Cloud Run Job covering all 4 version resources. Operators seed
+  real values out-of-band per PROVIDER_ACCOUNTS.md.
+
 ## [1.26.2] - 2026-08-11
 
 ### Fixed
