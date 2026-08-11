@@ -21,8 +21,12 @@ import { timingSafeEqual, createHmac, randomBytes, createVerify, createPublicKey
 
 import { envelope, type Finding, type MetricIntent, type QuotaGauge, type Revision } from './domain';
 import {
-  queryListRuns, queryGetRun, queryGetWorkflow, queryDiffRuns,
-  TRIAGE_INSTRUCTIONS, E2E_MCP_TOOLS,
+  queryListRuns,
+  queryGetRun,
+  queryGetWorkflow,
+  queryDiffRuns,
+  TRIAGE_INSTRUCTIONS,
+  E2E_MCP_TOOLS,
 } from './e2e-api';
 import { getEvalStore } from './e2e-store';
 import type { PgCpResultsBackend } from '../storage/backends/cp-results/pg';
@@ -1699,7 +1703,10 @@ export function buildServer(
   // have the cp-results database configured.
 
   const NOT_CONFIGURED = {
-    error: { code: 'not_configured', message: 'e2e store not configured — set CONSOLE_CP_DB_URL or FORGE_DB_URL' },
+    error: {
+      code: 'not_configured',
+      message: 'e2e store not configured — set CONSOLE_CP_DB_URL or FORGE_DB_URL',
+    },
   };
 
   app.get('/api/e2e/runs', async (req, reply) => {
@@ -1719,7 +1726,8 @@ export function buildServer(
     if (!store) return reply.code(501).send(NOT_CONFIGURED);
     const { run_id } = req.params as { run_id: string };
     const detail = await queryGetRun(store, run_id);
-    if (!detail) return reply.code(404).send({ error: { code: 'not_found', message: `run ${run_id} not found` } });
+    if (!detail)
+      return reply.code(404).send({ error: { code: 'not_found', message: `run ${run_id} not found` } });
     return envelope(detail);
   });
 
@@ -1790,7 +1798,9 @@ export function buildServer(
   // RFC 9728 discovery — advertises this server as the protected resource + points at the auth
   // server. The "auth server" for the console is the console itself (bearer-token or OIDC).
   app.get('/.well-known/oauth-protected-resource/mcp', async (req, reply) => {
-    const proto = String(req.headers['x-forwarded-proto'] ?? 'https').split(',')[0]!.trim();
+    const proto = String(req.headers['x-forwarded-proto'] ?? 'https')
+      .split(',')[0]!
+      .trim();
     const host = String(req.headers['x-forwarded-host'] ?? req.headers['host'] ?? 'localhost');
     const base = (process.env.CONSOLE_PUBLIC_URL ?? `${proto}://${host}`).replace(/\/+$/, '');
     return reply
@@ -1847,7 +1857,8 @@ export function buildServer(
       if (method === 'tools/call') {
         const toolName = params?.name as string | undefined;
         const args = (params?.arguments as Record<string, unknown> | undefined) ?? {};
-        if (!toolName) return reply.status(200).send(mcpError(id!, -32602, 'tools/call requires a string `name`.'));
+        if (!toolName)
+          return reply.status(200).send(mcpError(id!, -32602, 'tools/call requires a string `name`.'));
 
         // Validate tool name BEFORE the store check so unknown tools get -32601 (Method Not Found)
         // regardless of whether the store is configured.
@@ -1879,20 +1890,47 @@ export function buildServer(
             const runId = typeof args.run_id === 'string' ? args.run_id : '';
             if (!runId) return reply.status(200).send(mcpError(id!, -32602, 'run_id is required.'));
             const detail = await queryGetRun(store, runId);
-            if (!detail) return reply.status(200).send(mcpResult(id!, { content: [{ type: 'text', text: `run ${runId} not found.` }], isError: true }));
+            if (!detail)
+              return reply
+                .status(200)
+                .send(
+                  mcpResult(id!, {
+                    content: [{ type: 'text', text: `run ${runId} not found.` }],
+                    isError: true,
+                  }),
+                );
             result = detail;
           } else if (toolName === 'get_workflow_result') {
             const wfId = typeof args.workflow_id === 'string' ? args.workflow_id : '';
             if (!wfId) return reply.status(200).send(mcpError(id!, -32602, 'workflow_id is required.'));
             const wfResult = await queryGetWorkflow(store, wfId);
-            if (!wfResult) return reply.status(200).send(mcpResult(id!, { content: [{ type: 'text', text: `workflow ${wfId} not found.` }], isError: true }));
+            if (!wfResult)
+              return reply
+                .status(200)
+                .send(
+                  mcpResult(id!, {
+                    content: [{ type: 'text', text: `workflow ${wfId} not found.` }],
+                    isError: true,
+                  }),
+                );
             result = wfResult;
           } else if (toolName === 'diff_e2e_runs') {
             const runId = typeof args.run_id === 'string' ? args.run_id : '';
             const baselineId = typeof args.baseline_run_id === 'string' ? args.baseline_run_id : '';
-            if (!runId || !baselineId) return reply.status(200).send(mcpError(id!, -32602, 'run_id and baseline_run_id are required.'));
+            if (!runId || !baselineId)
+              return reply
+                .status(200)
+                .send(mcpError(id!, -32602, 'run_id and baseline_run_id are required.'));
             const diff = await queryDiffRuns(store, runId, baselineId);
-            if (!diff) return reply.status(200).send(mcpResult(id!, { content: [{ type: 'text', text: 'one or both run_ids not found.' }], isError: true }));
+            if (!diff)
+              return reply
+                .status(200)
+                .send(
+                  mcpResult(id!, {
+                    content: [{ type: 'text', text: 'one or both run_ids not found.' }],
+                    isError: true,
+                  }),
+                );
             result = diff;
           } else {
             // This branch is unreachable — all valid tools are handled above and unknown tools
@@ -1919,7 +1957,9 @@ export function buildServer(
 
       return reply.status(200).send(mcpError(id!, -32601, `Method not found: ${method}`));
     } catch (e) {
-      return reply.status(200).send(mcpError(body?.id ?? null, -32603, `Internal error: ${(e as Error).message ?? e}`));
+      return reply
+        .status(200)
+        .send(mcpError(body?.id ?? null, -32603, `Internal error: ${(e as Error).message ?? e}`));
     }
   });
 
@@ -1933,16 +1973,25 @@ export function buildServer(
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
-      'Connection': 'keep-alive',
+      Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
     });
     res.write(': connected\n\n');
     const hb = setInterval(() => {
-      try { res.write(': ping\n\n'); } catch { /* socket gone */ }
+      try {
+        res.write(': ping\n\n');
+      } catch {
+        /* socket gone */
+      }
     }, 25_000);
     hb.unref?.();
     let done = false;
-    const cleanup = () => { if (!done) { done = true; clearInterval(hb); } };
+    const cleanup = () => {
+      if (!done) {
+        done = true;
+        clearInterval(hb);
+      }
+    };
     req.raw.on('close', cleanup);
     req.raw.on('error', cleanup);
   });

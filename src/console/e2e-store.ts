@@ -12,7 +12,13 @@
 import { Pool } from 'pg';
 import { PgCpResultsBackend, ensureCpResultsSchema } from '../storage/backends/cp-results/pg';
 
-export type { EvalRun, EvalWorkflow, EvalScene, EvalMcpCall, EvalClaim } from '../storage/backends/cp-results/types';
+export type {
+  EvalRun,
+  EvalWorkflow,
+  EvalScene,
+  EvalMcpCall,
+  EvalClaim,
+} from '../storage/backends/cp-results/types';
 
 let _pool: Pool | null = null;
 let _initPromise: Promise<PgCpResultsBackend | null> | null = null;

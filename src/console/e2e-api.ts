@@ -62,10 +62,7 @@ export async function queryListRuns(
   return store.listAllRuns(opts);
 }
 
-export async function queryGetRun(
-  store: PgCpResultsBackend,
-  runId: string,
-): Promise<RunDetail | null> {
+export async function queryGetRun(store: PgCpResultsBackend, runId: string): Promise<RunDetail | null> {
   const run = await store.getRun(runId);
   if (!run) return null;
   const allWorkflows = await store.listWorkflows(runId);
@@ -92,10 +89,7 @@ export async function queryDiffRuns(
   runId: string,
   baselineRunId: string,
 ): Promise<DiffResult | null> {
-  const [runExists, baselineExists] = await Promise.all([
-    store.getRun(runId),
-    store.getRun(baselineRunId),
-  ]);
+  const [runExists, baselineExists] = await Promise.all([store.getRun(runId), store.getRun(baselineRunId)]);
   if (!runExists || !baselineExists) return null;
 
   const [runWorkflows, baselineWorkflows] = await Promise.all([
@@ -124,7 +118,14 @@ export async function queryDiffRuns(
     }
   }
 
-  return { run_id: runId, baseline_run_id: baselineRunId, regressions, improvements, new_failures, new_passes };
+  return {
+    run_id: runId,
+    baseline_run_id: baselineRunId,
+    regressions,
+    improvements,
+    new_failures,
+    new_passes,
+  };
 }
 
 // ── MCP surface ─────────────────────────────────────────────────────────────

@@ -6,7 +6,13 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { PgCpResultsBackend } from '../src/storage/backends/cp-results/pg';
-import type { EvalRun, EvalWorkflow, EvalScene, EvalMcpCall, EvalClaim } from '../src/storage/backends/cp-results/types';
+import type {
+  EvalRun,
+  EvalWorkflow,
+  EvalScene,
+  EvalMcpCall,
+  EvalClaim,
+} from '../src/storage/backends/cp-results/types';
 import {
   queryListRuns,
   queryGetRun,
@@ -34,8 +40,13 @@ async function withOidcEnv(fn: () => Promise<void>): Promise<void> {
     CONSOLE_SESSION_SECRET: SESSION_SECRET,
     CONSOLE_INSECURE_COOKIES: '1',
   };
-  for (const [k, v] of Object.entries(envVars)) { saved[k] = process.env[k]; process.env[k] = v; }
-  try { await fn(); } finally {
+  for (const [k, v] of Object.entries(envVars)) {
+    saved[k] = process.env[k];
+    process.env[k] = v;
+  }
+  try {
+    await fn();
+  } finally {
     for (const [k, v] of Object.entries(saved)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
@@ -52,8 +63,13 @@ async function withAutomationEnv(fn: () => Promise<void>): Promise<void> {
     CONSOLE_INSECURE_COOKIES: '1',
     CONSOLE_AUTOMATION_TOKEN: AUTOMATION_TOKEN,
   };
-  for (const [k, v] of Object.entries(envVars)) { saved[k] = process.env[k]; process.env[k] = v; }
-  try { await fn(); } finally {
+  for (const [k, v] of Object.entries(envVars)) {
+    saved[k] = process.env[k];
+    process.env[k] = v;
+  }
+  try {
+    await fn();
+  } finally {
     for (const [k, v] of Object.entries(saved)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
@@ -169,7 +185,9 @@ function makeClaim(overrides: Partial<EvalClaim> = {}): EvalClaim {
 }
 
 /** Build a minimal mock PgCpResultsBackend. Only the methods used by e2e-api are needed. */
-function makeMockStore(overrides: Partial<Record<keyof PgCpResultsBackend, unknown>> = {}): PgCpResultsBackend {
+function makeMockStore(
+  overrides: Partial<Record<keyof PgCpResultsBackend, unknown>> = {},
+): PgCpResultsBackend {
   return {
     listAllRuns: vi.fn().mockResolvedValue([]),
     getRun: vi.fn().mockResolvedValue(null),
@@ -205,7 +223,9 @@ describe('queryListRuns', () => {
     expect(result).toHaveLength(1);
     expect(result[0]!.run_id).toBe('run_001');
     expect((store.listAllRuns as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toEqual({
-      tenant: 'tenant_a', limit: 5, status: 'completed',
+      tenant: 'tenant_a',
+      limit: 5,
+      status: 'completed',
     });
   });
 
@@ -227,7 +247,7 @@ describe('queryGetRun', () => {
     const run = makeRun();
     const pass = makeWorkflow({ id: 'wf_pass', workflow_id: 'case_pass', verdict: 'pass' });
     const fail = makeWorkflow({ id: 'wf_fail', workflow_id: 'case_fail', verdict: 'fail' });
-    const err  = makeWorkflow({ id: 'wf_err',  workflow_id: 'case_err',  verdict: 'error' });
+    const err = makeWorkflow({ id: 'wf_err', workflow_id: 'case_err', verdict: 'error' });
     const skip = makeWorkflow({ id: 'wf_skip', workflow_id: 'case_skip', verdict: 'skip' });
     const store = makeMockStore({
       getRun: vi.fn().mockResolvedValue(run),
@@ -238,7 +258,7 @@ describe('queryGetRun', () => {
     expect(detail!.run.run_id).toBe('run_001');
     expect(detail!.failures).toHaveLength(2);
     expect(detail!.failure_count).toBe(2);
-    expect(detail!.failures.map(f => f.id).sort()).toEqual(['wf_err', 'wf_fail'].sort());
+    expect(detail!.failures.map((f) => f.id).sort()).toEqual(['wf_err', 'wf_fail'].sort());
   });
 
   it('returns failure_count = 0 when all workflows pass', async () => {
@@ -289,13 +309,14 @@ describe('queryDiffRuns', () => {
   });
 
   it('identifies regressions correctly', async () => {
-    const runWf   = makeWorkflow({ workflow_id: 'case_1', verdict: 'fail', run_id: 'run_002', id: 'wf_r2_1' });
-    const baseWf  = makeWorkflow({ workflow_id: 'case_1', verdict: 'pass', run_id: 'run_001', id: 'wf_r1_1' });
+    const runWf = makeWorkflow({ workflow_id: 'case_1', verdict: 'fail', run_id: 'run_002', id: 'wf_r2_1' });
+    const baseWf = makeWorkflow({ workflow_id: 'case_1', verdict: 'pass', run_id: 'run_001', id: 'wf_r1_1' });
     const store = makeMockStore({
       getRun: vi.fn().mockResolvedValue(makeRun()),
-      listWorkflows: vi.fn()
-        .mockResolvedValueOnce([runWf])    // run_002 workflows
-        .mockResolvedValueOnce([baseWf]),  // run_001 (baseline) workflows
+      listWorkflows: vi
+        .fn()
+        .mockResolvedValueOnce([runWf]) // run_002 workflows
+        .mockResolvedValueOnce([baseWf]), // run_001 (baseline) workflows
     });
     const diff = await queryDiffRuns(store, 'run_002', 'run_001');
     expect(diff!.regressions).toHaveLength(1);
@@ -306,13 +327,11 @@ describe('queryDiffRuns', () => {
   });
 
   it('identifies improvements correctly', async () => {
-    const runWf  = makeWorkflow({ workflow_id: 'case_2', verdict: 'pass',  run_id: 'run_002', id: 'wf_r2_2' });
-    const baseWf = makeWorkflow({ workflow_id: 'case_2', verdict: 'fail',  run_id: 'run_001', id: 'wf_r1_2' });
+    const runWf = makeWorkflow({ workflow_id: 'case_2', verdict: 'pass', run_id: 'run_002', id: 'wf_r2_2' });
+    const baseWf = makeWorkflow({ workflow_id: 'case_2', verdict: 'fail', run_id: 'run_001', id: 'wf_r1_2' });
     const store = makeMockStore({
       getRun: vi.fn().mockResolvedValue(makeRun()),
-      listWorkflows: vi.fn()
-        .mockResolvedValueOnce([runWf])
-        .mockResolvedValueOnce([baseWf]),
+      listWorkflows: vi.fn().mockResolvedValueOnce([runWf]).mockResolvedValueOnce([baseWf]),
     });
     const diff = await queryDiffRuns(store, 'run_002', 'run_001');
     expect(diff!.improvements).toHaveLength(1);
@@ -320,12 +339,18 @@ describe('queryDiffRuns', () => {
   });
 
   it('classifies new failing workflows correctly', async () => {
-    const newFail = makeWorkflow({ workflow_id: 'case_new', verdict: 'fail', run_id: 'run_002', id: 'wf_r2_new' });
+    const newFail = makeWorkflow({
+      workflow_id: 'case_new',
+      verdict: 'fail',
+      run_id: 'run_002',
+      id: 'wf_r2_new',
+    });
     const store = makeMockStore({
       getRun: vi.fn().mockResolvedValue(makeRun()),
-      listWorkflows: vi.fn()
-        .mockResolvedValueOnce([newFail])  // run
-        .mockResolvedValueOnce([]),        // baseline — no workflows
+      listWorkflows: vi
+        .fn()
+        .mockResolvedValueOnce([newFail]) // run
+        .mockResolvedValueOnce([]), // baseline — no workflows
     });
     const diff = await queryDiffRuns(store, 'run_002', 'run_001');
     expect(diff!.new_failures).toHaveLength(1);
@@ -333,12 +358,15 @@ describe('queryDiffRuns', () => {
   });
 
   it('classifies new passing workflows correctly', async () => {
-    const newPass = makeWorkflow({ workflow_id: 'case_new', verdict: 'pass', run_id: 'run_002', id: 'wf_r2_new' });
+    const newPass = makeWorkflow({
+      workflow_id: 'case_new',
+      verdict: 'pass',
+      run_id: 'run_002',
+      id: 'wf_r2_new',
+    });
     const store = makeMockStore({
       getRun: vi.fn().mockResolvedValue(makeRun()),
-      listWorkflows: vi.fn()
-        .mockResolvedValueOnce([newPass])
-        .mockResolvedValueOnce([]),
+      listWorkflows: vi.fn().mockResolvedValueOnce([newPass]).mockResolvedValueOnce([]),
     });
     const diff = await queryDiffRuns(store, 'run_002', 'run_001');
     expect(diff!.new_passes).toHaveLength(1);
@@ -353,9 +381,7 @@ describe('queryDiffRuns', () => {
     const b_imp = makeWorkflow({ workflow_id: 'imp', verdict: 'fail', run_id: 'run_001', id: 'b_i' });
     const store = makeMockStore({
       getRun: vi.fn().mockResolvedValue(makeRun()),
-      listWorkflows: vi.fn()
-        .mockResolvedValueOnce([r1, i1, n1])
-        .mockResolvedValueOnce([b_reg, b_imp]),
+      listWorkflows: vi.fn().mockResolvedValueOnce([r1, i1, n1]).mockResolvedValueOnce([b_reg, b_imp]),
     });
     const diff = await queryDiffRuns(store, 'run_002', 'run_001');
     expect(diff!.regressions).toHaveLength(1);
@@ -389,7 +415,7 @@ describe('E2E_MCP_TOOLS', () => {
     expect(E2E_MCP_TOOLS).toHaveLength(4);
   });
   it('tool names are the canonical set', () => {
-    const names = E2E_MCP_TOOLS.map(t => t.name);
+    const names = E2E_MCP_TOOLS.map((t) => t.name);
     expect(names).toContain('list_e2e_runs');
     expect(names).toContain('get_e2e_run');
     expect(names).toContain('get_workflow_result');
@@ -504,7 +530,9 @@ describe('console server — GET /api/e2e/* REST endpoints', () => {
         headers: { cookie: authed() },
       });
       expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body) as { data: { scenes: unknown[]; mcp_calls: unknown[]; claims: unknown[] } };
+      const body = JSON.parse(res.body) as {
+        data: { scenes: unknown[]; mcp_calls: unknown[]; claims: unknown[] };
+      };
       expect(body.data.scenes).toHaveLength(1);
       expect(body.data.mcp_calls).toHaveLength(1);
       expect(body.data.claims).toHaveLength(1);
@@ -672,7 +700,9 @@ describe('console server — POST /mcp (JSON-RPC)', () => {
         url: '/mcp',
         headers: { authorization: `Bearer ${AUTOMATION_TOKEN}` },
         payload: {
-          jsonrpc: '2.0', id: 4, method: 'tools/call',
+          jsonrpc: '2.0',
+          id: 4,
+          method: 'tools/call',
           params: { name: 'list_e2e_runs', arguments: { limit: 5 } },
         },
       });
@@ -693,7 +723,9 @@ describe('console server — POST /mcp (JSON-RPC)', () => {
         url: '/mcp',
         headers: { authorization: `Bearer ${AUTOMATION_TOKEN}` },
         payload: {
-          jsonrpc: '2.0', id: 5, method: 'tools/call',
+          jsonrpc: '2.0',
+          id: 5,
+          method: 'tools/call',
           params: { name: 'get_e2e_run', arguments: { run_id: 'missing' } },
         },
       });
@@ -703,13 +735,11 @@ describe('console server — POST /mcp (JSON-RPC)', () => {
   });
 
   it('tools/call diff_e2e_runs returns regression info', async () => {
-    const runWf  = makeWorkflow({ workflow_id: 'case_1', verdict: 'fail', run_id: 'run_002', id: 'wf_r2' });
+    const runWf = makeWorkflow({ workflow_id: 'case_1', verdict: 'fail', run_id: 'run_002', id: 'wf_r2' });
     const baseWf = makeWorkflow({ workflow_id: 'case_1', verdict: 'pass', run_id: 'run_001', id: 'wf_r1' });
     const store = makeMockStore({
       getRun: vi.fn().mockResolvedValue(makeRun()),
-      listWorkflows: vi.fn()
-        .mockResolvedValueOnce([runWf])
-        .mockResolvedValueOnce([baseWf]),
+      listWorkflows: vi.fn().mockResolvedValueOnce([runWf]).mockResolvedValueOnce([baseWf]),
     });
     await withAutomationEnv(async () => {
       const app = buildServer(undefined, undefined, async () => store);
@@ -719,7 +749,9 @@ describe('console server — POST /mcp (JSON-RPC)', () => {
         url: '/mcp',
         headers: { authorization: `Bearer ${AUTOMATION_TOKEN}` },
         payload: {
-          jsonrpc: '2.0', id: 6, method: 'tools/call',
+          jsonrpc: '2.0',
+          id: 6,
+          method: 'tools/call',
           params: { name: 'diff_e2e_runs', arguments: { run_id: 'run_002', baseline_run_id: 'run_001' } },
         },
       });
@@ -739,7 +771,9 @@ describe('console server — POST /mcp (JSON-RPC)', () => {
         url: '/mcp',
         headers: { authorization: `Bearer ${AUTOMATION_TOKEN}` },
         payload: {
-          jsonrpc: '2.0', id: 7, method: 'tools/call',
+          jsonrpc: '2.0',
+          id: 7,
+          method: 'tools/call',
           params: { name: 'nonexistent_tool', arguments: {} },
         },
       });
@@ -757,7 +791,9 @@ describe('console server — POST /mcp (JSON-RPC)', () => {
         url: '/mcp',
         headers: { authorization: `Bearer ${AUTOMATION_TOKEN}` },
         payload: {
-          jsonrpc: '2.0', id: 8, method: 'tools/call',
+          jsonrpc: '2.0',
+          id: 8,
+          method: 'tools/call',
           params: { name: 'list_e2e_runs', arguments: {} },
         },
       });
