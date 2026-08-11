@@ -1,5 +1,5 @@
-import type { Pool } from 'pg';
-import { nowIso } from '../../../shared/time';
+import type { Pool } from "pg";
+import { nowIso } from "../../../shared/time";
 import type {
   CpResultsBackend,
   EvalRun,
@@ -15,7 +15,7 @@ import type {
   EvalClaimInput,
   TenantLease,
   TenantLeaseInput,
-} from './types';
+} from "./types";
 
 // Control-plane-only Postgres results store.
 //
@@ -234,11 +234,13 @@ function rowToRun(r: RunRow): EvalRun {
     pass_rate: r.pass_rate != null ? Number(r.pass_rate) : null,
     withheld_count: Number(r.withheld_count),
     rejected_count: Number(r.rejected_count),
-    p50_duration_ms: r.p50_duration_ms != null ? Number(r.p50_duration_ms) : null,
-    p99_duration_ms: r.p99_duration_ms != null ? Number(r.p99_duration_ms) : null,
+    p50_duration_ms:
+      r.p50_duration_ms != null ? Number(r.p50_duration_ms) : null,
+    p99_duration_ms:
+      r.p99_duration_ms != null ? Number(r.p99_duration_ms) : null,
     total_input_tokens: toBigInt(r.total_input_tokens),
     total_output_tokens: toBigInt(r.total_output_tokens),
-    status: r.status as EvalRun['status'],
+    status: r.status as EvalRun["status"],
     started_at: toIso(r.started_at)!,
     completed_at: toIso(r.completed_at),
     meta: (r.meta as Record<string, unknown>) ?? {},
@@ -272,8 +274,9 @@ function rowToWorkflow(r: WorkflowRow): EvalWorkflow {
     run_id: r.run_id,
     workflow_id: r.workflow_id,
     tenant_id: r.tenant_id,
-    verdict: r.verdict as EvalWorkflow['verdict'],
-    integrity_class: (r.integrity_class as EvalWorkflow['integrity_class']) ?? null,
+    verdict: r.verdict as EvalWorkflow["verdict"],
+    integrity_class:
+      (r.integrity_class as EvalWorkflow["integrity_class"]) ?? null,
     prompt: r.prompt,
     duration_ms: r.duration_ms != null ? Number(r.duration_ms) : null,
     started_at: toIso(r.started_at),
@@ -306,8 +309,8 @@ function rowToScene(r: SceneRow): EvalScene {
     run_id: r.run_id,
     scene_index: Number(r.scene_index),
     scene_name: r.scene_name,
-    assertions: (r.assertions as EvalScene['assertions']) ?? [],
-    observed_values: (r.observed_values as EvalScene['observed_values']) ?? [],
+    assertions: (r.assertions as EvalScene["assertions"]) ?? [],
+    observed_values: (r.observed_values as EvalScene["observed_values"]) ?? [],
     passed: r.passed,
     created_at: toIso(r.created_at)!,
   };
@@ -335,7 +338,8 @@ function rowToMcpCall(r: McpCallRow): EvalMcpCall {
     call_index: Number(r.call_index),
     tool_name: r.tool_name,
     request: (r.request as Record<string, unknown>) ?? {},
-    response: r.response != null ? (r.response as Record<string, unknown>) : null,
+    response:
+      r.response != null ? (r.response as Record<string, unknown>) : null,
     duration_ms: r.duration_ms != null ? Number(r.duration_ms) : null,
     error: r.error,
     called_at: toIso(r.called_at),
@@ -364,7 +368,7 @@ function rowToClaim(r: ClaimRow): EvalClaim {
     claim_index: Number(r.claim_index),
     claim_type: r.claim_type,
     claim_text: r.claim_text,
-    verdict: (r.verdict as EvalClaim['verdict']) ?? null,
+    verdict: (r.verdict as EvalClaim["verdict"]) ?? null,
     evidence: (r.evidence as Record<string, unknown>) ?? {},
     cassette: (r.cassette as Record<string, unknown>) ?? {},
     created_at: toIso(r.created_at)!,
@@ -427,31 +431,34 @@ export class PgCpResultsBackend implements CpResultsBackend {
     return rowToRun(r.rows[0]!);
   }
 
-  async updateRun(runId: string, update: EvalRunUpdate): Promise<EvalRun | null> {
+  async updateRun(
+    runId: string,
+    update: EvalRunUpdate,
+  ): Promise<EvalRun | null> {
     // Build a CASE-based partial UPDATE so null fields don't overwrite good data.
-    const sets: string[] = ['updated_at = now()'];
+    const sets: string[] = ["updated_at = now()"];
     const params: unknown[] = [runId];
     let i = 2;
 
     function addSet(col: string, val: unknown, cast?: string) {
       if (val === undefined) return;
-      sets.push(`${col} = $${i}${cast ? `::${cast}` : ''}`);
+      sets.push(`${col} = $${i}${cast ? `::${cast}` : ""}`);
       params.push(val);
       i++;
     }
 
-    addSet('workflows_attempted', update.workflows_attempted);
-    addSet('workflows_passed', update.workflows_passed);
-    addSet('workflows_failed', update.workflows_failed);
-    addSet('pass_rate', update.pass_rate);
-    addSet('withheld_count', update.withheld_count);
-    addSet('rejected_count', update.rejected_count);
-    addSet('p50_duration_ms', update.p50_duration_ms);
-    addSet('p99_duration_ms', update.p99_duration_ms);
-    addSet('total_input_tokens', update.total_input_tokens);
-    addSet('total_output_tokens', update.total_output_tokens);
-    addSet('status', update.status);
-    addSet('completed_at', update.completed_at ?? null, 'timestamptz');
+    addSet("workflows_attempted", update.workflows_attempted);
+    addSet("workflows_passed", update.workflows_passed);
+    addSet("workflows_failed", update.workflows_failed);
+    addSet("pass_rate", update.pass_rate);
+    addSet("withheld_count", update.withheld_count);
+    addSet("rejected_count", update.rejected_count);
+    addSet("p50_duration_ms", update.p50_duration_ms);
+    addSet("p99_duration_ms", update.p99_duration_ms);
+    addSet("total_input_tokens", update.total_input_tokens);
+    addSet("total_output_tokens", update.total_output_tokens);
+    addSet("status", update.status);
+    addSet("completed_at", update.completed_at ?? null, "timestamptz");
     if (update.meta !== undefined) {
       sets.push(`meta = meta || $${i}::jsonb`);
       params.push(JSON.stringify(update.meta));
@@ -459,7 +466,7 @@ export class PgCpResultsBackend implements CpResultsBackend {
     }
 
     const r = await this.pool.query<RunRow>(
-      `UPDATE forge_cp_eval_runs SET ${sets.join(', ')} WHERE run_id = $1 RETURNING *`,
+      `UPDATE forge_cp_eval_runs SET ${sets.join(", ")} WHERE run_id = $1 RETURNING *`,
       params,
     );
     return r.rows[0] ? rowToRun(r.rows[0]) : null;
@@ -467,15 +474,18 @@ export class PgCpResultsBackend implements CpResultsBackend {
 
   async getRun(runId: string): Promise<EvalRun | null> {
     const r = await this.pool.query<RunRow>(
-      'SELECT * FROM forge_cp_eval_runs WHERE run_id = $1',
+      "SELECT * FROM forge_cp_eval_runs WHERE run_id = $1",
       [runId],
     );
     return r.rows[0] ? rowToRun(r.rows[0]) : null;
   }
 
-  async listRuns(tenantId: string, limit: number = DEFAULT_RUN_LIST_LIMIT): Promise<EvalRun[]> {
+  async listRuns(
+    tenantId: string,
+    limit: number = DEFAULT_RUN_LIST_LIMIT,
+  ): Promise<EvalRun[]> {
     const r = await this.pool.query<RunRow>(
-      'SELECT * FROM forge_cp_eval_runs WHERE tenant_id = $1 ORDER BY started_at DESC LIMIT $2',
+      "SELECT * FROM forge_cp_eval_runs WHERE tenant_id = $1 ORDER BY started_at DESC LIMIT $2",
       [tenantId, limit],
     );
     return r.rows.map(rowToRun);
@@ -515,7 +525,7 @@ export class PgCpResultsBackend implements CpResultsBackend {
     // If row already existed (DO NOTHING), fetch it.
     if (!r.rows[0]) {
       const existing = await this.pool.query<WorkflowRow>(
-        'SELECT * FROM forge_cp_eval_workflows WHERE id = $1',
+        "SELECT * FROM forge_cp_eval_workflows WHERE id = $1",
         [input.id],
       );
       return rowToWorkflow(existing.rows[0]!);
@@ -525,7 +535,7 @@ export class PgCpResultsBackend implements CpResultsBackend {
 
   async getWorkflow(id: string): Promise<EvalWorkflow | null> {
     const r = await this.pool.query<WorkflowRow>(
-      'SELECT * FROM forge_cp_eval_workflows WHERE id = $1',
+      "SELECT * FROM forge_cp_eval_workflows WHERE id = $1",
       [id],
     );
     return r.rows[0] ? rowToWorkflow(r.rows[0]) : null;
@@ -533,7 +543,7 @@ export class PgCpResultsBackend implements CpResultsBackend {
 
   async listWorkflows(runId: string): Promise<EvalWorkflow[]> {
     const r = await this.pool.query<WorkflowRow>(
-      'SELECT * FROM forge_cp_eval_workflows WHERE run_id = $1 ORDER BY created_at',
+      "SELECT * FROM forge_cp_eval_workflows WHERE run_id = $1 ORDER BY created_at",
       [runId],
     );
     return r.rows.map(rowToWorkflow);
@@ -563,7 +573,7 @@ export class PgCpResultsBackend implements CpResultsBackend {
     );
     if (!r.rows[0]) {
       const existing = await this.pool.query<SceneRow>(
-        'SELECT * FROM forge_cp_eval_scenes WHERE workflow_id = $1 AND scene_index = $2',
+        "SELECT * FROM forge_cp_eval_scenes WHERE workflow_id = $1 AND scene_index = $2",
         [input.workflow_id, input.scene_index],
       );
       return rowToScene(existing.rows[0]!);
@@ -573,7 +583,7 @@ export class PgCpResultsBackend implements CpResultsBackend {
 
   async listScenes(workflowId: string): Promise<EvalScene[]> {
     const r = await this.pool.query<SceneRow>(
-      'SELECT * FROM forge_cp_eval_scenes WHERE workflow_id = $1 ORDER BY scene_index',
+      "SELECT * FROM forge_cp_eval_scenes WHERE workflow_id = $1 ORDER BY scene_index",
       [workflowId],
     );
     return r.rows.map(rowToScene);
@@ -606,7 +616,7 @@ export class PgCpResultsBackend implements CpResultsBackend {
     );
     if (!r.rows[0]) {
       const existing = await this.pool.query<McpCallRow>(
-        'SELECT * FROM forge_cp_eval_mcp_calls WHERE workflow_id = $1 AND call_index = $2',
+        "SELECT * FROM forge_cp_eval_mcp_calls WHERE workflow_id = $1 AND call_index = $2",
         [input.workflow_id, input.call_index],
       );
       return rowToMcpCall(existing.rows[0]!);
@@ -616,7 +626,7 @@ export class PgCpResultsBackend implements CpResultsBackend {
 
   async listMcpCalls(workflowId: string): Promise<EvalMcpCall[]> {
     const r = await this.pool.query<McpCallRow>(
-      'SELECT * FROM forge_cp_eval_mcp_calls WHERE workflow_id = $1 ORDER BY call_index',
+      "SELECT * FROM forge_cp_eval_mcp_calls WHERE workflow_id = $1 ORDER BY call_index",
       [workflowId],
     );
     return r.rows.map(rowToMcpCall);
@@ -648,7 +658,7 @@ export class PgCpResultsBackend implements CpResultsBackend {
     );
     if (!r.rows[0]) {
       const existing = await this.pool.query<ClaimRow>(
-        'SELECT * FROM forge_cp_eval_claims WHERE workflow_id = $1 AND claim_index = $2',
+        "SELECT * FROM forge_cp_eval_claims WHERE workflow_id = $1 AND claim_index = $2",
         [input.workflow_id, input.claim_index],
       );
       return rowToClaim(existing.rows[0]!);
@@ -658,7 +668,7 @@ export class PgCpResultsBackend implements CpResultsBackend {
 
   async listClaims(workflowId: string): Promise<EvalClaim[]> {
     const r = await this.pool.query<ClaimRow>(
-      'SELECT * FROM forge_cp_eval_claims WHERE workflow_id = $1 ORDER BY claim_index',
+      "SELECT * FROM forge_cp_eval_claims WHERE workflow_id = $1 ORDER BY claim_index",
       [workflowId],
     );
     return r.rows.map(rowToClaim);
@@ -705,7 +715,7 @@ export class PgCpResultsBackend implements CpResultsBackend {
 
   async getLease(): Promise<TenantLease | null> {
     const r = await this.pool.query<LeaseRow>(
-      'SELECT holder, source, since, heartbeat FROM forge_cp_tenant_lease WHERE id = 1',
+      "SELECT holder, source, since, heartbeat FROM forge_cp_tenant_lease WHERE id = 1",
     );
     return r.rows[0] ? rowToLease(r.rows[0]) : null;
   }
