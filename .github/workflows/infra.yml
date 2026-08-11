@@ -5,7 +5,9 @@ name: infra
 # nightly → drift detection.
 #
 # Auth: Workload Identity Federation — no service-account key ever exists (§2.5 rule 3).
-# Runner: self-hosted GCP pool (the same pool used by dorinda-api, dorinda-forge-console, etc.).
+# Runner: ubuntu-latest (github-hosted). Terraform contacts GCP via the public Cloud APIs, so
+# no VPC access is needed for infra apply — only WIF credentials. The self-hosted pool is
+# reserved for deploys that need private-network egress.
 # Approval: Mark's 2026-08-11 authorization covers the e2e-runner apply (Cloud SQL e2e-results
 #   + Cloud Run Job e2e-runner + SA + secrets). Apply-time approval re-stated in PROVIDER_ACCOUNTS.md.
 
@@ -28,7 +30,7 @@ env:
 
 jobs:
   infra:
-    runs-on: [self-hosted, gcp]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
