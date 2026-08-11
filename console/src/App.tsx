@@ -4609,11 +4609,15 @@ const EVAL_RUNS: EvalRun[] = [
 const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
   'eval-2026-08-10-a': [
     {
-      id: 'w-auth', slug: 'auth-happy-path', label: 'Auth: happy path sign-in',
-      outcome: 'accepted', cost_cents: 7,
+      id: 'w-auth',
+      slug: 'auth-happy-path',
+      label: 'Auth: happy path sign-in',
+      outcome: 'accepted',
+      cost_cents: 7,
       scenes: [
         {
-          id: 's-auth-1', label: 'Sign-in with valid credentials',
+          id: 's-auth-1',
+          label: 'Sign-in with valid credentials',
           assertions: [
             { id: 'a1', label: 'Session token issued', outcome: 'accepted', score: 1.0 },
             { id: 'a2', label: 'Response within 2s', outcome: 'accepted', score: 0.96 },
@@ -4621,7 +4625,8 @@ const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
           ],
         },
         {
-          id: 's-auth-2', label: 'Sign-in with invalid credentials',
+          id: 's-auth-2',
+          label: 'Sign-in with invalid credentials',
           assertions: [
             { id: 'a4', label: '401 returned immediately', outcome: 'accepted', score: 1.0 },
             { id: 'a5', label: 'No session created', outcome: 'accepted', score: 1.0 },
@@ -4630,11 +4635,15 @@ const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
       ],
     },
     {
-      id: 'w-deleg-create', slug: 'delegation-create', label: 'Delegation: create with budget',
-      outcome: 'accepted', cost_cents: 9,
+      id: 'w-deleg-create',
+      slug: 'delegation-create',
+      label: 'Delegation: create with budget',
+      outcome: 'accepted',
+      cost_cents: 9,
       scenes: [
         {
-          id: 's-dc-1', label: 'Create delegation under budget',
+          id: 's-dc-1',
+          label: 'Create delegation under budget',
           assertions: [
             { id: 'b1', label: 'Delegation persisted', outcome: 'accepted', score: 1.0 },
             { id: 'b2', label: 'Budget deducted correctly', outcome: 'accepted', score: 1.0 },
@@ -4644,11 +4653,15 @@ const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
       ],
     },
     {
-      id: 'w-deleg-override', slug: 'delegation-override', label: 'Delegation: stakeholder override',
-      outcome: 'accepted', cost_cents: 8,
+      id: 'w-deleg-override',
+      slug: 'delegation-override',
+      label: 'Delegation: stakeholder override',
+      outcome: 'accepted',
+      cost_cents: 8,
       scenes: [
         {
-          id: 's-do-1', label: 'Override approved by stakeholder',
+          id: 's-do-1',
+          label: 'Override approved by stakeholder',
           assertions: [
             { id: 'c1', label: 'Override recorded', outcome: 'accepted', score: 1.0 },
             { id: 'c2', label: 'Original budget restored', outcome: 'accepted', score: 1.0 },
@@ -4657,11 +4670,15 @@ const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
       ],
     },
     {
-      id: 'w-member-dash', slug: 'member-dashboard', label: 'Member: dashboard initial load',
-      outcome: 'accepted', cost_cents: 6,
+      id: 'w-member-dash',
+      slug: 'member-dashboard',
+      label: 'Member: dashboard initial load',
+      outcome: 'accepted',
+      cost_cents: 6,
       scenes: [
         {
-          id: 's-md-1', label: 'Dashboard load with 10 delegations',
+          id: 's-md-1',
+          label: 'Dashboard load with 10 delegations',
           assertions: [
             { id: 'd1', label: 'All delegations visible', outcome: 'accepted', score: 1.0 },
             { id: 'd2', label: 'Load under 800ms', outcome: 'accepted', score: 0.94 },
@@ -4670,11 +4687,15 @@ const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
       ],
     },
     {
-      id: 'w-advance-fire', slug: 'advance-fire', label: 'Advance: fire with 48h lead',
-      outcome: 'accepted', cost_cents: 8,
+      id: 'w-advance-fire',
+      slug: 'advance-fire',
+      label: 'Advance: fire with 48h lead',
+      outcome: 'accepted',
+      cost_cents: 8,
       scenes: [
         {
-          id: 's-af-1', label: 'Advance fired 48h before due',
+          id: 's-af-1',
+          label: 'Advance fired 48h before due',
           assertions: [
             { id: 'e1', label: 'Advance event emitted', outcome: 'accepted', score: 1.0 },
             { id: 'e2', label: 'Correct recipient targeted', outcome: 'accepted', score: 1.0 },
@@ -4683,11 +4704,15 @@ const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
       ],
     },
     {
-      id: 'w-reminder', slug: 'reminder-accuracy', label: 'Reminder: timing accuracy',
-      outcome: 'accepted', cost_cents: 7,
+      id: 'w-reminder',
+      slug: 'reminder-accuracy',
+      label: 'Reminder: timing accuracy',
+      outcome: 'accepted',
+      cost_cents: 7,
       scenes: [
         {
-          id: 's-ra-1', label: 'Reminder fires within ±5 min window',
+          id: 's-ra-1',
+          label: 'Reminder fires within ±5 min window',
           assertions: [
             { id: 'f1', label: 'Reminder delivered', outcome: 'accepted', score: 1.0 },
             { id: 'f2', label: 'Timestamp within tolerance', outcome: 'accepted', score: 1.0 },
@@ -4696,14 +4721,21 @@ const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
       ],
     },
     {
-      id: 'w-triage', slug: 'triage-suggestion', label: 'Triage: suggestion quality',
-      outcome: 'rejected', cost_cents: 9,
+      id: 'w-triage',
+      slug: 'triage-suggestion',
+      label: 'Triage: suggestion quality',
+      outcome: 'rejected',
+      cost_cents: 9,
       scenes: [
         {
-          id: 's-ts-1', label: 'Normal triage prompt',
+          id: 's-ts-1',
+          label: 'Normal triage prompt',
           assertions: [
             {
-              id: 'g1', label: 'Response identifies root issue', outcome: 'rejected', score: 0.62,
+              id: 'g1',
+              label: 'Response identifies root issue',
+              outcome: 'rejected',
+              score: 0.62,
               reason: 'Model identified symptom rather than root cause in 3 of 5 cases',
             },
             { id: 'g2', label: 'Response within 3 sentences', outcome: 'accepted', score: 0.88 },
@@ -4711,14 +4743,21 @@ const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
           ],
         },
         {
-          id: 's-ts-2', label: 'Complex multi-delegation case',
+          id: 's-ts-2',
+          label: 'Complex multi-delegation case',
           assertions: [
             {
-              id: 'g4', label: 'Identifies all affected delegations', outcome: 'rejected', score: 0.41,
+              id: 'g4',
+              label: 'Identifies all affected delegations',
+              outcome: 'rejected',
+              score: 0.41,
               reason: 'Missing cross-member delegation links in 4 of 5 cases',
             },
             {
-              id: 'g5', label: 'Suggests appropriate escalation path', outcome: 'rejected', score: 0.55,
+              id: 'g5',
+              label: 'Suggests appropriate escalation path',
+              outcome: 'rejected',
+              score: 0.55,
               reason: 'Escalation path omitted or incorrect in majority of cases',
             },
           ],
@@ -4726,11 +4765,15 @@ const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
       ],
     },
     {
-      id: 'w-privacy', slug: 'privacy-redaction', label: 'Privacy: PII redaction',
-      outcome: 'accepted', cost_cents: 7,
+      id: 'w-privacy',
+      slug: 'privacy-redaction',
+      label: 'Privacy: PII redaction',
+      outcome: 'accepted',
+      cost_cents: 7,
       scenes: [
         {
-          id: 's-pr-1', label: 'Email and phone redaction in logs',
+          id: 's-pr-1',
+          label: 'Email and phone redaction in logs',
           assertions: [
             { id: 'h1', label: 'Email address redacted', outcome: 'accepted', score: 1.0 },
             { id: 'h2', label: 'Phone number redacted', outcome: 'accepted', score: 1.0 },
@@ -4739,11 +4782,15 @@ const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
       ],
     },
     {
-      id: 'w-isolation', slug: 'cross-member-isolation', label: 'Cross-member: data isolation',
-      outcome: 'accepted', cost_cents: 8,
+      id: 'w-isolation',
+      slug: 'cross-member-isolation',
+      label: 'Cross-member: data isolation',
+      outcome: 'accepted',
+      cost_cents: 8,
       scenes: [
         {
-          id: 's-ci-1', label: 'Member A cannot access Member B data',
+          id: 's-ci-1',
+          label: 'Member A cannot access Member B data',
           assertions: [
             { id: 'i1', label: 'Cross-member query returns 403', outcome: 'accepted', score: 1.0 },
             { id: 'i2', label: 'No data leak in response body', outcome: 'accepted', score: 1.0 },
@@ -4752,11 +4799,15 @@ const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
       ],
     },
     {
-      id: 'w-token', slug: 'token-refresh', label: 'Session: token refresh',
-      outcome: 'accepted', cost_cents: 6,
+      id: 'w-token',
+      slug: 'token-refresh',
+      label: 'Session: token refresh',
+      outcome: 'accepted',
+      cost_cents: 6,
       scenes: [
         {
-          id: 's-tr-1', label: 'Expired token refreshed transparently',
+          id: 's-tr-1',
+          label: 'Expired token refreshed transparently',
           assertions: [
             { id: 'j1', label: 'New token issued', outcome: 'accepted', score: 1.0 },
             { id: 'j2', label: 'Old token invalidated', outcome: 'accepted', score: 1.0 },
@@ -4765,14 +4816,22 @@ const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
       ],
     },
     {
-      id: 'w-webhook', slug: 'webhook-retry', label: 'Webhook: delivery retry',
-      outcome: 'withheld', withheld_reason: 'timeout', cost_cents: 0,
+      id: 'w-webhook',
+      slug: 'webhook-retry',
+      label: 'Webhook: delivery retry',
+      outcome: 'withheld',
+      withheld_reason: 'timeout',
+      cost_cents: 0,
       scenes: [
         {
-          id: 's-wr-1', label: 'Retry on initial delivery failure',
+          id: 's-wr-1',
+          label: 'Retry on initial delivery failure',
           assertions: [
             {
-              id: 'k1', label: 'Retry within 30s', outcome: 'withheld', score: null,
+              id: 'k1',
+              label: 'Retry within 30s',
+              outcome: 'withheld',
+              score: null,
               reason: 'Runner did not receive webhook endpoint response within the SLA window',
             },
           ],
@@ -4780,21 +4839,29 @@ const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
       ],
     },
     {
-      id: 'w-search', slug: 'search-relevance', label: 'Search: result relevance',
-      outcome: 'rejected', cost_cents: 12,
+      id: 'w-search',
+      slug: 'search-relevance',
+      label: 'Search: result relevance',
+      outcome: 'rejected',
+      cost_cents: 12,
       scenes: [
         {
-          id: 's-sr-1', label: 'Top-3 results relevance',
+          id: 's-sr-1',
+          label: 'Top-3 results relevance',
           assertions: [
             {
-              id: 'l1', label: 'Precision@3 ≥ 0.80', outcome: 'rejected', score: 0.66,
+              id: 'l1',
+              label: 'Precision@3 ≥ 0.80',
+              outcome: 'rejected',
+              score: 0.66,
               reason: 'Averaged 0.66 across test queries, threshold is 0.80',
             },
             { id: 'l2', label: 'No stale results (>7d)', outcome: 'accepted', score: 1.0 },
           ],
         },
         {
-          id: 's-sr-2', label: 'Fuzzy query handling',
+          id: 's-sr-2',
+          label: 'Fuzzy query handling',
           assertions: [
             { id: 'l3', label: 'Spell-corrected query matches', outcome: 'accepted', score: 0.92 },
             { id: 'l4', label: 'Empty result set handled gracefully', outcome: 'accepted', score: 1.0 },
@@ -4804,28 +4871,170 @@ const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
     },
   ],
   'eval-2026-08-08-a': [
-    { id: 'w-auth', slug: 'auth-happy-path', label: 'Auth: happy path sign-in', outcome: 'accepted', cost_cents: 7, scenes: [] },
-    { id: 'w-deleg-create', slug: 'delegation-create', label: 'Delegation: create with budget', outcome: 'accepted', cost_cents: 9, scenes: [] },
-    { id: 'w-deleg-override', slug: 'delegation-override', label: 'Delegation: stakeholder override', outcome: 'accepted', cost_cents: 8, scenes: [] },
-    { id: 'w-member-dash', slug: 'member-dashboard', label: 'Member: dashboard initial load', outcome: 'accepted', cost_cents: 6, scenes: [] },
-    { id: 'w-advance-fire', slug: 'advance-fire', label: 'Advance: fire with 48h lead', outcome: 'accepted', cost_cents: 8, scenes: [] },
-    { id: 'w-reminder', slug: 'reminder-accuracy', label: 'Reminder: timing accuracy', outcome: 'accepted', cost_cents: 7, scenes: [] },
-    { id: 'w-triage', slug: 'triage-suggestion', label: 'Triage: suggestion quality', outcome: 'accepted', cost_cents: 9, scenes: [] },
-    { id: 'w-privacy', slug: 'privacy-redaction', label: 'Privacy: PII redaction', outcome: 'accepted', cost_cents: 7, scenes: [] },
-    { id: 'w-isolation', slug: 'cross-member-isolation', label: 'Cross-member: data isolation', outcome: 'accepted', cost_cents: 8, scenes: [] },
-    { id: 'w-token', slug: 'token-refresh', label: 'Session: token refresh', outcome: 'accepted', cost_cents: 6, scenes: [] },
-    { id: 'w-webhook', slug: 'webhook-retry', label: 'Webhook: delivery retry', outcome: 'withheld', withheld_reason: 'timeout', cost_cents: 0, scenes: [] },
-    { id: 'w-search', slug: 'search-relevance', label: 'Search: result relevance', outcome: 'rejected', cost_cents: 11, scenes: [] },
+    {
+      id: 'w-auth',
+      slug: 'auth-happy-path',
+      label: 'Auth: happy path sign-in',
+      outcome: 'accepted',
+      cost_cents: 7,
+      scenes: [],
+    },
+    {
+      id: 'w-deleg-create',
+      slug: 'delegation-create',
+      label: 'Delegation: create with budget',
+      outcome: 'accepted',
+      cost_cents: 9,
+      scenes: [],
+    },
+    {
+      id: 'w-deleg-override',
+      slug: 'delegation-override',
+      label: 'Delegation: stakeholder override',
+      outcome: 'accepted',
+      cost_cents: 8,
+      scenes: [],
+    },
+    {
+      id: 'w-member-dash',
+      slug: 'member-dashboard',
+      label: 'Member: dashboard initial load',
+      outcome: 'accepted',
+      cost_cents: 6,
+      scenes: [],
+    },
+    {
+      id: 'w-advance-fire',
+      slug: 'advance-fire',
+      label: 'Advance: fire with 48h lead',
+      outcome: 'accepted',
+      cost_cents: 8,
+      scenes: [],
+    },
+    {
+      id: 'w-reminder',
+      slug: 'reminder-accuracy',
+      label: 'Reminder: timing accuracy',
+      outcome: 'accepted',
+      cost_cents: 7,
+      scenes: [],
+    },
+    {
+      id: 'w-triage',
+      slug: 'triage-suggestion',
+      label: 'Triage: suggestion quality',
+      outcome: 'accepted',
+      cost_cents: 9,
+      scenes: [],
+    },
+    {
+      id: 'w-privacy',
+      slug: 'privacy-redaction',
+      label: 'Privacy: PII redaction',
+      outcome: 'accepted',
+      cost_cents: 7,
+      scenes: [],
+    },
+    {
+      id: 'w-isolation',
+      slug: 'cross-member-isolation',
+      label: 'Cross-member: data isolation',
+      outcome: 'accepted',
+      cost_cents: 8,
+      scenes: [],
+    },
+    {
+      id: 'w-token',
+      slug: 'token-refresh',
+      label: 'Session: token refresh',
+      outcome: 'accepted',
+      cost_cents: 6,
+      scenes: [],
+    },
+    {
+      id: 'w-webhook',
+      slug: 'webhook-retry',
+      label: 'Webhook: delivery retry',
+      outcome: 'withheld',
+      withheld_reason: 'timeout',
+      cost_cents: 0,
+      scenes: [],
+    },
+    {
+      id: 'w-search',
+      slug: 'search-relevance',
+      label: 'Search: result relevance',
+      outcome: 'rejected',
+      cost_cents: 11,
+      scenes: [],
+    },
   ],
   'eval-2026-08-05-a': [
-    { id: 'w-auth', slug: 'auth-happy-path', label: 'Auth: happy path sign-in', outcome: 'accepted', cost_cents: 6, scenes: [] },
-    { id: 'w-deleg-create', slug: 'delegation-create', label: 'Delegation: create with budget', outcome: 'accepted', cost_cents: 8, scenes: [] },
-    { id: 'w-deleg-override', slug: 'delegation-override', label: 'Delegation: stakeholder override', outcome: 'accepted', cost_cents: 7, scenes: [] },
-    { id: 'w-member-dash', slug: 'member-dashboard', label: 'Member: dashboard initial load', outcome: 'accepted', cost_cents: 6, scenes: [] },
-    { id: 'w-advance-fire', slug: 'advance-fire', label: 'Advance: fire with 48h lead', outcome: 'accepted', cost_cents: 7, scenes: [] },
-    { id: 'w-reminder', slug: 'reminder-accuracy', label: 'Reminder: timing accuracy', outcome: 'accepted', cost_cents: 7, scenes: [] },
-    { id: 'w-triage', slug: 'triage-suggestion', label: 'Triage: suggestion quality', outcome: 'accepted', cost_cents: 8, scenes: [] },
-    { id: 'w-webhook', slug: 'webhook-retry', label: 'Webhook: delivery retry', outcome: 'withheld', withheld_reason: 'provider_error', cost_cents: 0, scenes: [] },
+    {
+      id: 'w-auth',
+      slug: 'auth-happy-path',
+      label: 'Auth: happy path sign-in',
+      outcome: 'accepted',
+      cost_cents: 6,
+      scenes: [],
+    },
+    {
+      id: 'w-deleg-create',
+      slug: 'delegation-create',
+      label: 'Delegation: create with budget',
+      outcome: 'accepted',
+      cost_cents: 8,
+      scenes: [],
+    },
+    {
+      id: 'w-deleg-override',
+      slug: 'delegation-override',
+      label: 'Delegation: stakeholder override',
+      outcome: 'accepted',
+      cost_cents: 7,
+      scenes: [],
+    },
+    {
+      id: 'w-member-dash',
+      slug: 'member-dashboard',
+      label: 'Member: dashboard initial load',
+      outcome: 'accepted',
+      cost_cents: 6,
+      scenes: [],
+    },
+    {
+      id: 'w-advance-fire',
+      slug: 'advance-fire',
+      label: 'Advance: fire with 48h lead',
+      outcome: 'accepted',
+      cost_cents: 7,
+      scenes: [],
+    },
+    {
+      id: 'w-reminder',
+      slug: 'reminder-accuracy',
+      label: 'Reminder: timing accuracy',
+      outcome: 'accepted',
+      cost_cents: 7,
+      scenes: [],
+    },
+    {
+      id: 'w-triage',
+      slug: 'triage-suggestion',
+      label: 'Triage: suggestion quality',
+      outcome: 'accepted',
+      cost_cents: 8,
+      scenes: [],
+    },
+    {
+      id: 'w-webhook',
+      slug: 'webhook-retry',
+      label: 'Webhook: delivery retry',
+      outcome: 'withheld',
+      withheld_reason: 'provider_error',
+      cost_cents: 0,
+      scenes: [],
+    },
   ],
 };
 
@@ -4838,7 +5047,15 @@ const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
  * Deliberately minimal: one stroke, no axes, no labels — the table carries those. The sparkline
  * answers "getting better or worse?" at a glance without adding a chart.
  */
-function EvalSparkline({ rates, width = 80, height = 28 }: { rates: number[]; width?: number; height?: number }) {
+function EvalSparkline({
+  rates,
+  width = 80,
+  height = 28,
+}: {
+  rates: number[];
+  width?: number;
+  height?: number;
+}) {
   if (rates.length < 2) return null;
   const padV = 3;
   const min = Math.min(...rates);
@@ -4867,19 +5084,18 @@ function EvalSparkline({ rates, width = 80, height = 28 }: { rates: number[]; wi
         strokeLinecap="round"
         opacity={0.8}
       />
-      <circle
-        cx={toX(rates.length - 1).toFixed(1)}
-        cy={toY(last).toFixed(1)}
-        r={2.5}
-        fill={trend}
-      />
+      <circle cx={toX(rates.length - 1).toFixed(1)} cy={toY(last).toFixed(1)} r={2.5} fill={trend} />
     </svg>
   );
 }
 
 // ── Eval outcome badge (withheld is muted-on-selected, distinct from crit) ──────────────────────
 
-function EvalOutcomeBadge({ outcome, withheld_reason, selected = false }: {
+function EvalOutcomeBadge({
+  outcome,
+  withheld_reason,
+  selected = false,
+}: {
   outcome: EvalWorkflow['outcome'];
   withheld_reason?: string;
   selected?: boolean;
@@ -4896,7 +5112,7 @@ function EvalOutcomeBadge({ outcome, withheld_reason, selected = false }: {
   const color = selected ? 'var(--text-muted)' : 'var(--unknown-text)';
   const bg = selected ? 'var(--bg-selected)' : 'var(--unknown-wash)';
   const border = selected ? 'var(--line)' : 'var(--unknown-line)';
-  const label = withheld_reason ? EVAL_WITHHELD_REASONS[withheld_reason] ?? withheld_reason : undefined;
+  const label = withheld_reason ? (EVAL_WITHHELD_REASONS[withheld_reason] ?? withheld_reason) : undefined;
   return (
     <span
       title={label}
@@ -4998,7 +5214,9 @@ function buildTriagePrompt(run: EvalRun, workflows: EvalWorkflow[]): string {
   const failureList = failures
     .map((w) => {
       const mark = w.outcome === 'rejected' ? '×' : '⊘';
-      const why = w.withheld_reason ? ` (withheld: ${EVAL_WITHHELD_REASONS[w.withheld_reason] ?? w.withheld_reason})` : '';
+      const why = w.withheld_reason
+        ? ` (withheld: ${EVAL_WITHHELD_REASONS[w.withheld_reason] ?? w.withheld_reason})`
+        : '';
       return `  ${mark} ${w.slug}  —  ${w.label}${why}`;
     })
     .join('\n');
@@ -5082,21 +5300,16 @@ function Evals() {
 
   const withheldReasons = [
     ...new Set(
-      workflows
-        .filter((w) => w.outcome === 'withheld' && w.withheld_reason)
-        .map((w) => w.withheld_reason!),
+      workflows.filter((w) => w.outcome === 'withheld' && w.withheld_reason).map((w) => w.withheld_reason!),
     ),
   ];
 
   // Cost estimate for trigger modal (~$1 full suite per requirement)
   const slugCount = triggerSlugs.split('\n').filter((s) => s.trim()).length || 1;
-  const triggerCostCents =
-    triggerScope === 'full' ? 100 : triggerScope === 'suite' ? 45 : slugCount * 8;
+  const triggerCostCents = triggerScope === 'full' ? 100 : triggerScope === 'suite' ? 45 : slugCount * 8;
 
   // Run-over-run acceptance rate trend (oldest → newest)
-  const trendRates = [...EVAL_RUNS]
-    .reverse()
-    .map((r) => r.accepted / r.total);
+  const trendRates = [...EVAL_RUNS].reverse().map((r) => r.accepted / r.total);
 
   // ── Navigation helpers ──────────────────────────────────────────────────────────────────────
   const goToRun = (id: string) => {
@@ -5120,7 +5333,10 @@ function Evals() {
   };
   const toggleFilter = (outcome: 'accepted' | 'rejected' | 'withheld') => {
     setOutcomeFilter((prev) => {
-      if (prev === outcome) { setReasonFilter(null); return null; }
+      if (prev === outcome) {
+        setReasonFilter(null);
+        return null;
+      }
       setReasonFilter(null);
       return outcome;
     });
@@ -5130,8 +5346,14 @@ function Evals() {
     if (!run) return;
     const prompt = buildTriagePrompt(run, workflows);
     navigator.clipboard.writeText(prompt).then(
-      () => { setTriageFlash(true); setTimeout(() => setTriageFlash(false), 2200); },
-      () => { setTriageFlash(true); setTimeout(() => setTriageFlash(false), 2200); },
+      () => {
+        setTriageFlash(true);
+        setTimeout(() => setTriageFlash(false), 2200);
+      },
+      () => {
+        setTriageFlash(true);
+        setTimeout(() => setTriageFlash(false), 2200);
+      },
     );
   };
 
@@ -5146,16 +5368,26 @@ function Evals() {
     }
   };
 
-  const closeTrigger = () => { setTriggerOpen(false); setTriggerStep('config'); };
+  const closeTrigger = () => {
+    setTriggerOpen(false);
+    setTriggerStep('config');
+  };
 
   // ── Breadcrumb ──────────────────────────────────────────────────────────────────────────────
   // Each item carries its own nav target so clicking "E2E Tests" from scene view goes all the
   // way back to the runs list — not just one step up.
   const Crumbs = ({ items }: { items: Array<{ label: string; onClick?: () => void }> }) => (
-    <nav aria-label="Drilldown" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+    <nav
+      aria-label="Drilldown"
+      style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}
+    >
       {items.map((item, i) => (
         <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {i > 0 && <span aria-hidden style={{ color: 'var(--text-faint)', userSelect: 'none' }}>›</span>}
+          {i > 0 && (
+            <span aria-hidden style={{ color: 'var(--text-faint)', userSelect: 'none' }}>
+              ›
+            </span>
+          )}
           {item.onClick ? (
             <button
               onClick={item.onClick}
@@ -5170,7 +5402,13 @@ function Evals() {
               {item.label}
             </button>
           ) : (
-            <span style={{ color: i === items.length - 1 ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: i === items.length - 1 ? 500 : 400, fontSize: 13 }}>
+            <span
+              style={{
+                color: i === items.length - 1 ? 'var(--text-primary)' : 'var(--text-secondary)',
+                fontWeight: i === items.length - 1 ? 500 : 400,
+                fontSize: 13,
+              }}
+            >
               {item.label}
             </span>
           )}
@@ -5194,7 +5432,9 @@ function Evals() {
         justifyContent: 'center',
         background: 'rgba(0,0,0,0.72)',
       }}
-      onClick={(e) => { if (e.target === e.currentTarget) closeTrigger(); }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) closeTrigger();
+      }}
     >
       <div
         style={{
@@ -5209,29 +5449,42 @@ function Evals() {
       >
         {triggerStep === 'config' ? (
           <>
-            <h2 style={{ fontSize: 'var(--t-title)', fontWeight: 600, letterSpacing: '-0.01em', marginBottom: 20 }}>
+            <h2
+              style={{
+                fontSize: 'var(--t-title)',
+                fontWeight: 600,
+                letterSpacing: '-0.01em',
+                marginBottom: 20,
+              }}
+            >
               Configure eval run
             </h2>
 
             <div style={{ display: 'grid', gap: 16 }}>
               {/* Scope */}
               <div>
-                <div className="micro" style={{ marginBottom: 8 }}>Scope</div>
+                <div className="micro" style={{ marginBottom: 8 }}>
+                  Scope
+                </div>
                 <Segmented
                   ariaLabel="Eval scope"
                   value={triggerScope}
                   onChange={setTriggerScope}
-                  options={[
-                    ['full', 'Full catalogue'],
-                    ['suite', 'Named suite'],
-                    ['pick', 'Hand-picked'],
-                  ] as const}
+                  options={
+                    [
+                      ['full', 'Full catalogue'],
+                      ['suite', 'Named suite'],
+                      ['pick', 'Hand-picked'],
+                    ] as const
+                  }
                 />
               </div>
 
               {triggerScope === 'suite' && (
                 <div>
-                  <div className="micro" style={{ marginBottom: 8 }}>Suite</div>
+                  <div className="micro" style={{ marginBottom: 8 }}>
+                    Suite
+                  </div>
                   <Select
                     ariaLabel="Suite name"
                     value={triggerSuite}
@@ -5249,7 +5502,9 @@ function Evals() {
 
               {triggerScope === 'pick' && (
                 <div>
-                  <div className="micro" style={{ marginBottom: 8 }}>Workflow slugs — one per line</div>
+                  <div className="micro" style={{ marginBottom: 8 }}>
+                    Workflow slugs — one per line
+                  </div>
                   <Textarea
                     ariaLabel="Workflow slugs"
                     value={triggerSlugs}
@@ -5262,48 +5517,90 @@ function Evals() {
 
               {/* Provider */}
               <div>
-                <div className="micro" style={{ marginBottom: 8 }}>Provider</div>
+                <div className="micro" style={{ marginBottom: 8 }}>
+                  Provider
+                </div>
                 <Segmented
                   ariaLabel="Provider"
                   value={triggerProvider}
                   onChange={setTriggerProvider}
-                  options={[
-                    ['openai', 'OpenAI'],
-                    ['anthropic', 'Anthropic'],
-                    ['both', 'Both'],
-                  ] as const}
+                  options={
+                    [
+                      ['openai', 'OpenAI'],
+                      ['anthropic', 'Anthropic'],
+                      ['both', 'Both'],
+                    ] as const
+                  }
                 />
               </div>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 24 }}>
-              <Button variant="secondary" onClick={closeTrigger}>Cancel</Button>
-              <Button
-                variant="primary"
-                onClick={() => setTriggerStep('confirm')}
-              >
+              <Button variant="secondary" onClick={closeTrigger}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={() => setTriggerStep('confirm')}>
                 Review cost →
               </Button>
             </div>
           </>
         ) : (
           <>
-            <h2 style={{ fontSize: 'var(--t-title)', fontWeight: 600, letterSpacing: '-0.01em', marginBottom: 20 }}>
+            <h2
+              style={{
+                fontSize: 'var(--t-title)',
+                fontWeight: 600,
+                letterSpacing: '-0.01em',
+                marginBottom: 20,
+              }}
+            >
               Confirm eval run
             </h2>
 
             <div style={{ display: 'grid', gap: 10, marginBottom: 20 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '9px 0', borderBottom: '1px solid var(--line-faint)' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: 13,
+                  padding: '9px 0',
+                  borderBottom: '1px solid var(--line-faint)',
+                }}
+              >
                 <span style={{ color: 'var(--text-muted)' }}>Scope</span>
-                <span>{triggerScope === 'full' ? 'Full catalogue (12 workflows)' : triggerScope === 'suite' ? `Suite: ${triggerSuite}` : `${slugCount} workflow${slugCount === 1 ? '' : 's'}`}</span>
+                <span>
+                  {triggerScope === 'full'
+                    ? 'Full catalogue (12 workflows)'
+                    : triggerScope === 'suite'
+                      ? `Suite: ${triggerSuite}`
+                      : `${slugCount} workflow${slugCount === 1 ? '' : 's'}`}
+                </span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '9px 0', borderBottom: '1px solid var(--line-faint)' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: 13,
+                  padding: '9px 0',
+                  borderBottom: '1px solid var(--line-faint)',
+                }}
+              >
                 <span style={{ color: 'var(--text-muted)' }}>Provider</span>
                 <span>{triggerProvider}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '9px 0', borderBottom: '1px solid var(--line-faint)' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: 13,
+                  padding: '9px 0',
+                  borderBottom: '1px solid var(--line-faint)',
+                }}
+              >
                 <span style={{ color: 'var(--text-muted)' }}>Estimated cost</span>
-                <span className="num" style={{ fontWeight: 600 }}>~${(triggerCostCents / 100).toFixed(2)}</span>
+                <span className="num" style={{ fontWeight: 600 }}>
+                  ~${(triggerCostCents / 100).toFixed(2)}
+                </span>
               </div>
             </div>
 
@@ -5320,10 +5617,10 @@ function Evals() {
                 lineHeight: '20px',
               }}
             >
-              <strong style={{ color: 'var(--warn-text)' }}>Operator-only run.</strong>{' '}
-              Eval runs invoke the live runner image against real provider APIs. Each run requires
-              explicit per-run approval — carried over approvals are not valid. Copy the run spec
-              below and send it to the operator channel.
+              <strong style={{ color: 'var(--warn-text)' }}>Operator-only run.</strong> Eval runs invoke the
+              live runner image against real provider APIs. Each run requires explicit per-run approval —
+              carried over approvals are not valid. Copy the run spec below and send it to the operator
+              channel.
             </div>
 
             <div
@@ -5346,7 +5643,9 @@ function Evals() {
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <Button variant="secondary" onClick={() => setTriggerStep('config')}>← Back</Button>
+              <Button variant="secondary" onClick={() => setTriggerStep('config')}>
+                ← Back
+              </Button>
               <Button
                 variant="secondary"
                 onClick={() => {
@@ -5379,28 +5678,48 @@ function Evals() {
         />
 
         <Toolbar>
-          <Button variant="primary" onClick={() => { setTriggerOpen(true); setTriggerStep('config'); }}>
+          <Button
+            variant="primary"
+            onClick={() => {
+              setTriggerOpen(true);
+              setTriggerStep('config');
+            }}
+          >
             Launch run
           </Button>
-          <Note>{EVAL_RUNS.length} runs · acceptance trending {trendRates[trendRates.length - 1]! < trendRates[trendRates.length - 2]! ? '↓' : '↑'}</Note>
+          <Note>
+            {EVAL_RUNS.length} runs · acceptance trending{' '}
+            {trendRates[trendRates.length - 1]! < trendRates[trendRates.length - 2]! ? '↓' : '↑'}
+          </Note>
           <div style={{ flex: 1 }} />
           <EvalSparkline rates={trendRates} width={96} height={32} />
         </Toolbar>
 
         <Card pad={false}>
-          <Table head={['Run', 'Date', 'Provider', 'Scope', 'Accepted', 'Rejected', 'Withheld', 'Cost', 'Trend', '']}>
+          <Table
+            head={[
+              'Run',
+              'Date',
+              'Provider',
+              'Scope',
+              'Accepted',
+              'Rejected',
+              'Withheld',
+              'Cost',
+              'Trend',
+              '',
+            ]}
+          >
             {EVAL_RUNS.map((r) => {
               const rate = r.accepted / r.total;
               const prevRun = EVAL_RUNS[EVAL_RUNS.indexOf(r) + 1];
               const prevRate = prevRun ? prevRun.accepted / prevRun.total : null;
               const delta = prevRate !== null ? rate - prevRate : null;
               return (
-                <tr
-                  key={r.id}
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => goToRun(r.id)}
-                >
-                  <Td primary mono>{r.label}</Td>
+                <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => goToRun(r.id)}>
+                  <Td primary mono>
+                    {r.label}
+                  </Td>
                   <Td mono>{r.startedAt.slice(0, 10)}</Td>
                   <Td>{r.provider}</Td>
                   <Td>{r.scope}</Td>
@@ -5408,18 +5727,33 @@ function Evals() {
                     <span style={{ color: 'var(--ok-text)' }}>{r.accepted}</span>
                   </Td>
                   <Td right mono>
-                    {r.rejected > 0
-                      ? <span style={{ color: 'var(--crit-text)' }}>{r.rejected}</span>
-                      : <span style={{ color: 'var(--text-faint)' }}>0</span>}
+                    {r.rejected > 0 ? (
+                      <span style={{ color: 'var(--crit-text)' }}>{r.rejected}</span>
+                    ) : (
+                      <span style={{ color: 'var(--text-faint)' }}>0</span>
+                    )}
                   </Td>
                   <Td right mono>
-                    {r.withheld > 0
-                      ? <span style={{ color: 'var(--unknown-text)' }}>{r.withheld}</span>
-                      : <span style={{ color: 'var(--text-faint)' }}>0</span>}
+                    {r.withheld > 0 ? (
+                      <span style={{ color: 'var(--unknown-text)' }}>{r.withheld}</span>
+                    ) : (
+                      <span style={{ color: 'var(--text-faint)' }}>0</span>
+                    )}
                   </Td>
-                  <Td right mono>${(r.cost_cents / 100).toFixed(2)}</Td>
+                  <Td right mono>
+                    ${(r.cost_cents / 100).toFixed(2)}
+                  </Td>
                   <Td mono>
-                    <span style={{ color: delta === null ? 'var(--text-faint)' : delta >= 0 ? 'var(--ok-text)' : 'var(--crit-text)' }}>
+                    <span
+                      style={{
+                        color:
+                          delta === null
+                            ? 'var(--text-faint)'
+                            : delta >= 0
+                              ? 'var(--ok-text)'
+                              : 'var(--crit-text)',
+                      }}
+                    >
                       {delta === null ? '—' : `${delta >= 0 ? '+' : ''}${Math.round(delta * 100)}pp`}
                     </span>
                   </Td>
@@ -5461,28 +5795,55 @@ function Evals() {
               whiteSpace: 'nowrap',
             }}
           >
-            ↻ Re-run of <span className="mono" style={{ color: 'var(--text-secondary)' }}>{rerunQueued}</span> queued — awaiting operator approval
+            ↻ Re-run of{' '}
+            <span className="mono" style={{ color: 'var(--text-secondary)' }}>
+              {rerunQueued}
+            </span>{' '}
+            queued — awaiting operator approval
           </div>
         )}
 
-        <Crumbs items={[
-          { label: 'E2E Tests', onClick: () => { setView('runs'); setRunId(''); setOutcomeFilter(null); setReasonFilter(null); } },
-          { label: run.label },
-        ]} />
+        <Crumbs
+          items={[
+            {
+              label: 'E2E Tests',
+              onClick: () => {
+                setView('runs');
+                setRunId('');
+                setOutcomeFilter(null);
+                setReasonFilter(null);
+              },
+            },
+            { label: run.label },
+          ]}
+        />
 
         {/* Run-over-run trend + triage button */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18, gap: 16, flexWrap: 'wrap' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            marginBottom: 18,
+            gap: 16,
+            flexWrap: 'wrap',
+          }}
+        >
           <div>
-            <div className="micro" style={{ marginBottom: 8 }}>Acceptance rate — run over run</div>
+            <div className="micro" style={{ marginBottom: 8 }}>
+              Acceptance rate — run over run
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <EvalSparkline rates={trendRates} width={160} height={44} />
               <div style={{ fontSize: 12, color: 'var(--text-faint)', lineHeight: '17px' }}>
                 {[...EVAL_RUNS].reverse().map((r, i, arr) => (
                   <div key={r.id}>
-                    <span className="mono" style={{ color: r.id === run.id ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                    <span
+                      className="mono"
+                      style={{ color: r.id === run.id ? 'var(--text-primary)' : 'var(--text-muted)' }}
+                    >
                       {r.startedAt.slice(5, 10)}
-                    </span>
-                    {' '}
+                    </span>{' '}
                     <span style={{ color: r.id === run.id ? 'var(--ok-text)' : 'var(--text-faint)' }}>
                       {Math.round((r.accepted / r.total) * 100)}%
                     </span>
@@ -5536,7 +5897,17 @@ function Evals() {
             }}
           >
             <div className="micro">Cost</div>
-            <div className="num" style={{ fontSize: 'var(--t-metric)', fontWeight: 500, lineHeight: 'var(--lh-metric)', letterSpacing: '-0.02em', color: 'var(--text-primary)', marginTop: 3 }}>
+            <div
+              className="num"
+              style={{
+                fontSize: 'var(--t-metric)',
+                fontWeight: 500,
+                lineHeight: 'var(--lh-metric)',
+                letterSpacing: '-0.02em',
+                color: 'var(--text-primary)',
+                marginTop: 3,
+              }}
+            >
               ${(run.cost_cents / 100).toFixed(2)}
             </div>
           </div>
@@ -5550,7 +5921,7 @@ function Evals() {
               <button
                 key={r}
                 aria-pressed={reasonFilter === r}
-                onClick={() => setReasonFilter((prev) => prev === r ? null : r)}
+                onClick={() => setReasonFilter((prev) => (prev === r ? null : r))}
                 style={{
                   height: 22,
                   padding: '0 9px',
@@ -5568,7 +5939,18 @@ function Evals() {
                 }}
               >
                 {reasonFilter === r && (
-                  <span aria-hidden style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 2, background: 'var(--filament)', borderRadius: '0 0 0 3px' }} />
+                  <span
+                    aria-hidden
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: 2,
+                      background: 'var(--filament)',
+                      borderRadius: '0 0 0 3px',
+                    }}
+                  />
                 )}
                 ⊘ {EVAL_WITHHELD_REASONS[r] ?? r}
               </button>
@@ -5592,11 +5974,20 @@ function Evals() {
             }}
           >
             <span style={{ flex: 1, minWidth: 0 }}>
-              Re-run <span className="mono" style={{ color: 'var(--text-primary)' }}>{rerunSlug}</span>
-              {' '}<span style={{ color: 'var(--text-faint)' }}>— estimated ~{(8 / 100).toFixed(2).replace('0.', '')}¢ · requires operator approval</span>
+              Re-run{' '}
+              <span className="mono" style={{ color: 'var(--text-primary)' }}>
+                {rerunSlug}
+              </span>{' '}
+              <span style={{ color: 'var(--text-faint)' }}>
+                — estimated ~{(8 / 100).toFixed(2).replace('0.', '')}¢ · requires operator approval
+              </span>
             </span>
-            <Button variant="secondary" onClick={() => setRerunSlug(null)}>Cancel</Button>
-            <Button variant="primary" onClick={() => handleRerun(rerunSlug)}>Queue re-run</Button>
+            <Button variant="secondary" onClick={() => setRerunSlug(null)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={() => handleRerun(rerunSlug)}>
+              Queue re-run
+            </Button>
           </div>
         )}
 
@@ -5605,18 +5996,24 @@ function Evals() {
           <Table head={['Slug', 'Workflow', 'Outcome', 'Cost', '']}>
             {filteredWorkflows.length === 0 ? (
               <tr>
-                <td colSpan={5} style={{ padding: '28px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                <td
+                  colSpan={5}
+                  style={{
+                    padding: '28px 16px',
+                    textAlign: 'center',
+                    color: 'var(--text-muted)',
+                    fontSize: 13,
+                  }}
+                >
                   No workflows match the current filter
                 </td>
               </tr>
             ) : (
               filteredWorkflows.map((w) => (
-                <tr
-                  key={w.id}
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => goToWorkflow(w.id)}
-                >
-                  <Td mono primary>{w.slug}</Td>
+                <tr key={w.id} style={{ cursor: 'pointer' }} onClick={() => goToWorkflow(w.id)}>
+                  <Td mono primary>
+                    {w.slug}
+                  </Td>
                   <Td>{w.label}</Td>
                   <Td>
                     <EvalOutcomeBadge
@@ -5626,7 +6023,11 @@ function Evals() {
                     />
                   </Td>
                   <Td right mono>
-                    {w.cost_cents > 0 ? `${w.cost_cents}¢` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                    {w.cost_cents > 0 ? (
+                      `${w.cost_cents}¢`
+                    ) : (
+                      <span style={{ color: 'var(--text-faint)' }}>—</span>
+                    )}
                   </Td>
                   <Td>
                     <button
@@ -5660,17 +6061,29 @@ function Evals() {
   if (view === 'workflow' && run && workflow) {
     return (
       <>
-        <Crumbs items={[
-          { label: 'E2E Tests', onClick: () => { setView('runs'); setRunId(''); } },
-          { label: run.label, onClick: () => { setView('run'); setWorkflowId(''); } },
-          { label: workflow.label },
-        ]} />
+        <Crumbs
+          items={[
+            {
+              label: 'E2E Tests',
+              onClick: () => {
+                setView('runs');
+                setRunId('');
+              },
+            },
+            {
+              label: run.label,
+              onClick: () => {
+                setView('run');
+                setWorkflowId('');
+              },
+            },
+            { label: workflow.label },
+          ]}
+        />
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
           <EvalOutcomeBadge outcome={workflow.outcome} withheld_reason={workflow.withheld_reason} />
-          <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>
-            {workflow.slug}
-          </span>
+          <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>{workflow.slug}</span>
           <div style={{ flex: 1 }} />
           <button
             onClick={(e) => {
@@ -5711,11 +6124,18 @@ function Evals() {
             }}
           >
             <span style={{ flex: 1, minWidth: 0 }}>
-              ~8¢ to re-run <span className="mono" style={{ color: 'var(--text-primary)' }}>{workflow.slug}</span>
-              {' '}<span style={{ color: 'var(--text-faint)' }}>· requires operator approval</span>
+              ~8¢ to re-run{' '}
+              <span className="mono" style={{ color: 'var(--text-primary)' }}>
+                {workflow.slug}
+              </span>{' '}
+              <span style={{ color: 'var(--text-faint)' }}>· requires operator approval</span>
             </span>
-            <Button variant="secondary" onClick={() => setRerunSlug(null)}>Cancel</Button>
-            <Button variant="primary" onClick={() => handleRerun(workflow.slug)}>Queue re-run</Button>
+            <Button variant="secondary" onClick={() => setRerunSlug(null)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={() => handleRerun(workflow.slug)}>
+              Queue re-run
+            </Button>
           </div>
         )}
 
@@ -5737,7 +6157,9 @@ function Evals() {
                 return (
                   <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => goToScene(s.id)}>
                     <Td primary>{s.label}</Td>
-                    <Td right mono>{s.assertions.length}</Td>
+                    <Td right mono>
+                      {s.assertions.length}
+                    </Td>
                     <Td right mono>
                       <span style={{ color: sa > 0 ? 'var(--ok-text)' : 'var(--text-faint)' }}>{sa}</span>
                     </Td>
@@ -5745,9 +6167,13 @@ function Evals() {
                       <span style={{ color: sr > 0 ? 'var(--crit-text)' : 'var(--text-faint)' }}>{sr}</span>
                     </Td>
                     <Td right mono>
-                      <span style={{ color: sw > 0 ? 'var(--unknown-text)' : 'var(--text-faint)' }}>{sw}</span>
+                      <span style={{ color: sw > 0 ? 'var(--unknown-text)' : 'var(--text-faint)' }}>
+                        {sw}
+                      </span>
                     </Td>
-                    <Td><span style={{ color: 'var(--text-faint)', fontSize: 12 }}>→</span></Td>
+                    <Td>
+                      <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>→</span>
+                    </Td>
                   </tr>
                 );
               })}
@@ -5762,12 +6188,33 @@ function Evals() {
   if (view === 'scene' && run && workflow && scene) {
     return (
       <>
-        <Crumbs items={[
-          { label: 'E2E Tests', onClick: () => { setView('runs'); setRunId(''); } },
-          { label: run.label, onClick: () => { setView('run'); setWorkflowId(''); setSceneId(''); } },
-          { label: workflow.label, onClick: () => { setView('workflow'); setSceneId(''); } },
-          { label: scene.label },
-        ]} />
+        <Crumbs
+          items={[
+            {
+              label: 'E2E Tests',
+              onClick: () => {
+                setView('runs');
+                setRunId('');
+              },
+            },
+            {
+              label: run.label,
+              onClick: () => {
+                setView('run');
+                setWorkflowId('');
+                setSceneId('');
+              },
+            },
+            {
+              label: workflow.label,
+              onClick: () => {
+                setView('workflow');
+                setSceneId('');
+              },
+            },
+            { label: scene.label },
+          ]}
+        />
 
         <Card pad={false}>
           <Table head={['Assertion', 'Outcome', 'Score', 'Reason']}>
@@ -5802,10 +6249,22 @@ function Evals() {
                       <EvalOutcomeBadge outcome={a.outcome} />
                     </Td>
                     <Td right mono>
-                      {a.score !== null
-                        ? <span style={{ color: a.score >= 0.8 ? 'var(--ok-text)' : a.score >= 0.6 ? 'var(--warn-text)' : 'var(--crit-text)' }}>{a.score.toFixed(2)}</span>
-                        : <EvalOutcomeBadge outcome="withheld" />
-                      }
+                      {a.score !== null ? (
+                        <span
+                          style={{
+                            color:
+                              a.score >= 0.8
+                                ? 'var(--ok-text)'
+                                : a.score >= 0.6
+                                  ? 'var(--warn-text)'
+                                  : 'var(--crit-text)',
+                          }}
+                        >
+                          {a.score.toFixed(2)}
+                        </span>
+                      ) : (
+                        <EvalOutcomeBadge outcome="withheld" />
+                      )}
                     </Td>
                     <Td clamp>{a.reason ?? <span style={{ color: 'var(--text-faint)' }}>—</span>}</Td>
                   </tr>
@@ -5822,12 +6281,25 @@ function Evals() {
                           lineHeight: '20px',
                         }}
                       >
-                        <div className="micro" style={{ marginBottom: 6 }}>Failure detail</div>
+                        <div className="micro" style={{ marginBottom: 6 }}>
+                          Failure detail
+                        </div>
                         {a.reason}
                         {a.score !== null && (
                           <div style={{ marginTop: 8, display: 'flex', gap: 12 }}>
                             <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>Score</span>
-                            <span className="mono" style={{ fontSize: 12, color: a.score >= 0.8 ? 'var(--ok-text)' : a.score >= 0.6 ? 'var(--warn-text)' : 'var(--crit-text)' }}>
+                            <span
+                              className="mono"
+                              style={{
+                                fontSize: 12,
+                                color:
+                                  a.score >= 0.8
+                                    ? 'var(--ok-text)'
+                                    : a.score >= 0.6
+                                      ? 'var(--warn-text)'
+                                      : 'var(--crit-text)',
+                              }}
+                            >
                               {a.score.toFixed(2)} / 1.00
                             </span>
                           </div>
@@ -5849,7 +6321,12 @@ function Evals() {
     <>
       <Head screen="evals" title="E2E Tests" sub="Fixture-backed eval run results." />
       <Card>
-        <Empty kind="no-results" title="No run selected" detail="Select a run from the list above." action={<Button onClick={() => setView('runs')}>← Back to runs</Button>} />
+        <Empty
+          kind="no-results"
+          title="No run selected"
+          detail="Select a run from the list above."
+          action={<Button onClick={() => setView('runs')}>← Back to runs</Button>}
+        />
       </Card>
     </>
   );
