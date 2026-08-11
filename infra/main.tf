@@ -78,6 +78,8 @@ data "google_compute_subnetwork" "subnet" {
 # Mark's apply approval: 2026-08-11.
 # Cost: ~$7–10/mo (db-f1-micro Cloud SQL) + $0 at rest for the Cloud Run Job.
 # Separation invariant: this Cloud SQL instance is NEVER shared with dorinda-pg.
+# Re-apply 2026-08-11: previous CI run cancelled after 11m (in-progress SQL creation);
+# no resources exist yet — this apply is the first successful one, NON-ZERO changes expected.
 
 module "e2e_runner" {
   source = "../terraform/modules/e2e-runner"

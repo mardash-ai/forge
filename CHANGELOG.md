@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.26.1] - 2026-08-11
+
+### Fixed
+
+- **infra: annotate re-apply after cancelled CI run.** The 2026-08-11 infra CI run for
+  `c055edf` was cancelled after 11 minutes mid-Cloud-SQL-creation; no GCP resources were
+  provisioned. This commit re-triggers infra.yml to apply the e2e-runner stack for the first
+  time (e2e-results Cloud SQL + e2e-runner Cloud Run Job + SA + secrets — non-zero changes).
+
 ## [1.26.0] - 2026-08-11
 
 ### Added
