@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.26.5] - 2026-08-11
+
+### Fixed
+
+- **infra: re-trigger apply after manual deletion of tainted Cloud Run Job.** The tainted
+  Cloud Run Job (from the first failed apply) had `deletion_protection=true` in GCP state,
+  blocking Terraform's destroy+recreate plan. Job was deleted from GCP manually so Terraform
+  can now create it fresh with the correct config (placeholder OOB secret versions, depends_on,
+  deletion_protection=false).
+
 ## [1.26.4] - 2026-08-11
 
 ### Fixed
