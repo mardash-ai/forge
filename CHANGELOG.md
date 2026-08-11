@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.23.2] - 2026-08-11
+
+### Added
+- **E2E Tests tab in the Investigate section (console).**
+
+  Fixture-backed eval reader — a pure reader over the eval store rendered against approved design
+  tokens, wired to fixture data so it can ship now in parallel with the live schema (t8 will adopt
+  the real endpoints). No hand-assembled state: every number on screen comes from the fixture
+  objects; swapping the source is a one-line change when the API lands.
+
+  **Drilldown hierarchy:** runs list → run detail → workflow detail → scene detail → single
+  assertion expand. Each level has a breadcrumb with targeted navigation (not just "go back one").
+
+  **Run detail:**
+  - Top-line metric tiles (Accepted / Rejected / Withheld / Cost) are keyboard-operable `<button>`
+    elements that filter the workflow table; click-again clears the filter.
+  - Active tile carries a 2px ember left-inset (the same filament the rail uses for "you are here").
+  - Withheld ⊘ renders in `--unknown-text` (violet-grey) normally and in `--text-muted` when the
+    tile is selected — muted-on-selected, visually distinct from crit (rose-red).
+  - Integrity pills (shown only when the Withheld filter is active) narrow the withheld set by
+    `withheld_reason`: budget_cap / provider_error / timeout / policy.
+  - Per-workflow ↻ Re-run: clicking shows a toast-level cents confirm bar; confirming queues a
+    targeted re-run (gate: operator approval required).
+  - **Triage with Claude:** one-click copies a READY-TO-RUN triage prompt to the clipboard
+    containing run_id, canonical URL, top-line numbers, failure list, MCP tool paths, and standing
+    triage instructions. Flash confirmation shown after copy.
+
+  **Trigger control:** "Launch run" opens a modal with scope (Full catalogue / Named suite /
+  Hand-picked workflow slugs), provider (openai / anthropic / both), and a two-step cost-confirm
+  showing estimated spend (~$1 full suite). The Launch button is disabled with a Mark-only gate
+  notice; "Copy spec" is the available action.
+
+  **Run-over-run trend:** acceptance-rate sparkline across the last N runs, shown in both the runs
+  list toolbar and the run detail header.
+
+  No new palette entries — all styles use `tokens.css` verbatim (surfaces, text, line, ember accent
+  for primary actions, ok/warn/crit/unknown for status).
+
 ## [1.23.1] - 2026-08-11
 
 ### Added
