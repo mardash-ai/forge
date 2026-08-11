@@ -1891,28 +1891,24 @@ export function buildServer(
             if (!runId) return reply.status(200).send(mcpError(id!, -32602, 'run_id is required.'));
             const detail = await queryGetRun(store, runId);
             if (!detail)
-              return reply
-                .status(200)
-                .send(
-                  mcpResult(id!, {
-                    content: [{ type: 'text', text: `run ${runId} not found.` }],
-                    isError: true,
-                  }),
-                );
+              return reply.status(200).send(
+                mcpResult(id!, {
+                  content: [{ type: 'text', text: `run ${runId} not found.` }],
+                  isError: true,
+                }),
+              );
             result = detail;
           } else if (toolName === 'get_workflow_result') {
             const wfId = typeof args.workflow_id === 'string' ? args.workflow_id : '';
             if (!wfId) return reply.status(200).send(mcpError(id!, -32602, 'workflow_id is required.'));
             const wfResult = await queryGetWorkflow(store, wfId);
             if (!wfResult)
-              return reply
-                .status(200)
-                .send(
-                  mcpResult(id!, {
-                    content: [{ type: 'text', text: `workflow ${wfId} not found.` }],
-                    isError: true,
-                  }),
-                );
+              return reply.status(200).send(
+                mcpResult(id!, {
+                  content: [{ type: 'text', text: `workflow ${wfId} not found.` }],
+                  isError: true,
+                }),
+              );
             result = wfResult;
           } else if (toolName === 'diff_e2e_runs') {
             const runId = typeof args.run_id === 'string' ? args.run_id : '';
@@ -1923,14 +1919,12 @@ export function buildServer(
                 .send(mcpError(id!, -32602, 'run_id and baseline_run_id are required.'));
             const diff = await queryDiffRuns(store, runId, baselineId);
             if (!diff)
-              return reply
-                .status(200)
-                .send(
-                  mcpResult(id!, {
-                    content: [{ type: 'text', text: 'one or both run_ids not found.' }],
-                    isError: true,
-                  }),
-                );
+              return reply.status(200).send(
+                mcpResult(id!, {
+                  content: [{ type: 'text', text: 'one or both run_ids not found.' }],
+                  isError: true,
+                }),
+              );
             result = diff;
           } else {
             // This branch is unreachable — all valid tools are handled above and unknown tools
