@@ -1,5 +1,45 @@
 # Changelog
 
+## [1.24.0] - 2026-08-11
+
+### Added
+- **E2E read API + MCP tools on the forge-console backend.**
+
+  The console now serves the eval/e2e store as both clean REST JSON endpoints and as four
+  Streamable-HTTP MCP tools — from a single source of truth. Human views (the console UI) and
+  agent views (the MCP tools) call identical query functions; there is no separate "agent copy"
+  that can drift.
+
+  **REST endpoints (all require console auth):**
+  - `GET /api/e2e/runs` — list runs, optional `?tenant=`, `?status=`, `?limit=`
+  - `GET /api/e2e/runs/:run_id` — run top-line + failure list
+  - `GET /api/e2e/runs/:run_id/workflows/:id` — full per-workflow drilldown (scenes, mcp_calls, claims, integrity)
+  - `GET /api/e2e/workflows/:id` — same drilldown by row id directly
+  - `GET /api/e2e/diff?run_id=…&baseline_run_id=…` — regression diff (regressions / improvements / new_failures / new_passes)
+
+  **MCP surface (`POST /mcp`, Streamable HTTP, JSON-RPC 2.0):**
+  - `list_e2e_runs` — latest N runs with pass_rate trend, withheld_count, canonical_url
+  - `get_e2e_run` — top-line + failure list for a specific run
+  - `get_workflow_result` — full drilldown: assertions, scenes, tool calls/responses, claims, integrity_class
+  - `diff_e2e_runs` — regressions vs a prior baseline run
+
+  **Auth:** console automation bearer token (`CONSOLE_AUTOMATION_TOKEN`) is the intended agent
+  credential; the `POST /mcp` transport is exempted from the automation-token readonly-POST guard
+  since the JSON-RPC POST is the transport, not a write operation. OIDC session cookies also work
+  (for claude.ai browser connector).
+
+  **RFC 9728 discovery:** `GET /.well-known/oauth-protected-resource/mcp` (public) lets MCP
+  clients discover the auth server before acquiring a token.
+
+  **Triage instructions (guardrail 2):** returned in the MCP `initialize` response `instructions`
+  field so every connected agent session receives the standing triage protocol before any tool call.
+
+  **Graceful degradation:** all endpoints return `501` (REST) or `isError: true` (MCP) when
+  `CONSOLE_CP_DB_URL` / `FORGE_DB_URL` is not configured.
+
+  **`PgCpResultsBackend.listAllRuns`:** new class method (not in the `CpResultsBackend` interface)
+  for the console's operator view across all tenants.
+
 ## [1.23.3] - 2026-08-11
 
 ### Fixed

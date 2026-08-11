@@ -42,6 +42,7 @@ COPY package.json package-lock.json* ./
 RUN npm ci || npm install
 
 COPY tsconfig.json ./
+COPY CHANGELOG.md ./
 COPY src ./src
 COPY tests ./tests
 

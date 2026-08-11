@@ -20,6 +20,12 @@ import { join, normalize, extname } from 'node:path';
 import { timingSafeEqual, createHmac, randomBytes, createVerify, createPublicKey } from 'node:crypto';
 
 import { envelope, type Finding, type MetricIntent, type QuotaGauge, type Revision } from './domain';
+import {
+  queryListRuns, queryGetRun, queryGetWorkflow, queryDiffRuns,
+  TRIAGE_INSTRUCTIONS, E2E_MCP_TOOLS,
+} from './e2e-api';
+import { getEvalStore } from './e2e-store';
+import type { PgCpResultsBackend } from '../storage/backends/cp-results/pg';
 import { aggregate, createRegistry, type ProviderContext, type ProviderRegistry } from './providers/types';
 import type {
   CredentialsProvider,
@@ -427,6 +433,11 @@ export function createAuth(): ConsoleAuth {
 
 export const WRITE_ROUTES = [
   '/api/actions/dispatch',
+  // The console MCP endpoint (POST /mcp) uses HTTP POST as the JSON-RPC 2.0 transport — it is NOT
+  // a data-write route. All exposed tools are read-only by construction. Declared here so the
+  // "every mutating route must be declared" guard passes; the route comment + the readonly-exemption
+  // in the auth middleware distinguish it from the audited write operations below.
+  '/mcp',
   // ── The Data section. Every one of these changes a real account or a real tenant's data, so
   // every one of them is audited BY CONSTRUCTION: this list is what the guard test checks a
   // mutating route against, and an unlisted POST/DELETE fails the build rather than shipping.
@@ -500,7 +511,12 @@ const MIME: Record<string, string> = {
  */
 export const REGISTERED_ROUTES: string[] = [];
 
-export function buildServer(registry = buildRegistry(), auth = createAuth()): FastifyInstance {
+export function buildServer(
+  registry = buildRegistry(),
+  auth = createAuth(),
+  /** Eval-store provider — defaults to the lazy process-wide singleton. Overridden in tests. */
+  evalStoreGetter: () => Promise<PgCpResultsBackend | null> = getEvalStore,
+): FastifyInstance {
   const app = Fastify({ logger: false, bodyLimit: 1_000_000 });
 
   REGISTERED_ROUTES.length = 0;
@@ -538,6 +554,9 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     '/auth/login',
     '/auth/callback',
     '/auth/signout',
+    // RFC 9728 MCP protected-resource discovery doc — must be public so MCP clients can
+    // discover the auth server before they have a token.
+    '/.well-known/oauth-protected-resource/mcp',
   ]);
 
   app.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -548,8 +567,9 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     if (!r.ok) {
       // Browser navigation lands on the login page — in EVERY auth mode, including unconfigured
       // fail-closed (the page then says sign-in is unavailable instead of serving raw JSON).
-      // API calls get 401 so the SPA can handle them programmatically.
-      if (!reqPath.startsWith('/api/')) {
+      // API calls and MCP protocol paths get 401 so clients handle them programmatically.
+      // The /mcp path is a machine-facing JSON-RPC endpoint, not a browsing context.
+      if (!reqPath.startsWith('/api/') && !reqPath.startsWith('/mcp')) {
         void reply.code(302).header('Location', '/login').send('');
         return;
       }
@@ -560,7 +580,11 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     // Automation token is read-only by construction: every audited write route refuses it.
     // This check is at the transport layer — not duplicated per handler — so there is no way
     // for a future write route to escape the constraint by omitting a per-handler check.
-    if (r.readonly && /^(POST|PUT|PATCH|DELETE)$/i.test(req.method)) {
+    //
+    // EXCEPTION: the console MCP endpoint (POST /mcp) uses HTTP POST as the JSON-RPC 2.0
+    // transport — its tools are read-only by design and the automation token is the intended
+    // auth credential for agent callers. The MCP route itself enforces read-only semantics.
+    if (r.readonly && /^(POST|PUT|PATCH|DELETE)$/i.test(req.method) && !reqPath.startsWith('/mcp')) {
       reply.code(403).send({
         error: {
           code: 'forbidden',
@@ -1665,6 +1689,264 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
     }
   });
 
+  // ── E2E read API ─────────────────────────────────────────────────────────────────────────────
+  //
+  // These endpoints serve the SAME data as the MCP tools below — one source, no drift.
+  // Both paths call the same query functions from e2e-api.ts.
+  //
+  // The store is optional: when CONSOLE_CP_DB_URL / FORGE_DB_URL is absent the endpoints return
+  // 501 rather than crashing. This is the graceful-degradation path for deployments that don't
+  // have the cp-results database configured.
+
+  const NOT_CONFIGURED = {
+    error: { code: 'not_configured', message: 'e2e store not configured — set CONSOLE_CP_DB_URL or FORGE_DB_URL' },
+  };
+
+  app.get('/api/e2e/runs', async (req, reply) => {
+    const store = await evalStoreGetter();
+    if (!store) return reply.code(501).send(NOT_CONFIGURED);
+    const q = req.query as { tenant?: string; limit?: string; status?: string };
+    const runs = await queryListRuns(store, {
+      tenant: q.tenant,
+      limit: q.limit ? Number(q.limit) : undefined,
+      status: q.status,
+    });
+    return envelope(runs);
+  });
+
+  app.get('/api/e2e/runs/:run_id', async (req, reply) => {
+    const store = await evalStoreGetter();
+    if (!store) return reply.code(501).send(NOT_CONFIGURED);
+    const { run_id } = req.params as { run_id: string };
+    const detail = await queryGetRun(store, run_id);
+    if (!detail) return reply.code(404).send({ error: { code: 'not_found', message: `run ${run_id} not found` } });
+    return envelope(detail);
+  });
+
+  // Workflow drilldown by the workflow row id (the "id" field, not the suite-level "workflow_id").
+  app.get('/api/e2e/runs/:run_id/workflows/:workflow_row_id', async (req, reply) => {
+    const store = await evalStoreGetter();
+    if (!store) return reply.code(501).send(NOT_CONFIGURED);
+    const { workflow_row_id } = req.params as { run_id: string; workflow_row_id: string };
+    const result = await queryGetWorkflow(store, workflow_row_id);
+    if (!result)
+      return reply.code(404).send({
+        error: { code: 'not_found', message: `workflow ${workflow_row_id} not found` },
+      });
+    return envelope(result);
+  });
+
+  // Also support /api/e2e/workflows/:id directly (without the run_id prefix) — same handler.
+  app.get('/api/e2e/workflows/:workflow_row_id', async (req, reply) => {
+    const store = await evalStoreGetter();
+    if (!store) return reply.code(501).send(NOT_CONFIGURED);
+    const { workflow_row_id } = req.params as { workflow_row_id: string };
+    const result = await queryGetWorkflow(store, workflow_row_id);
+    if (!result)
+      return reply.code(404).send({
+        error: { code: 'not_found', message: `workflow ${workflow_row_id} not found` },
+      });
+    return envelope(result);
+  });
+
+  app.get('/api/e2e/diff', async (req, reply) => {
+    const store = await evalStoreGetter();
+    if (!store) return reply.code(501).send(NOT_CONFIGURED);
+    const q = req.query as { run_id?: string; baseline_run_id?: string };
+    if (!q.run_id || !q.baseline_run_id) {
+      return reply.code(400).send({
+        error: { code: 'bad_request', message: 'run_id and baseline_run_id are required' },
+      });
+    }
+    const diff = await queryDiffRuns(store, q.run_id, q.baseline_run_id);
+    if (!diff)
+      return reply.code(404).send({
+        error: { code: 'not_found', message: 'one or both run_ids not found' },
+      });
+    return envelope(diff);
+  });
+
+  // ── Console MCP server ────────────────────────────────────────────────────────────────────────
+  //
+  // A lightweight Streamable-HTTP MCP server (JSON-RPC 2.0) that exposes the e2e read surface as
+  // agent-callable tools. Auth: the same bearer token as the console automation API
+  // (CONSOLE_AUTOMATION_TOKEN) or the OIDC session cookie. Tools are read-only by construction.
+  //
+  // Reachable from Claude Code:
+  //   claude mcp add forge-console https://<CONSOLE_PUBLIC_URL>/mcp \
+  //     --header "Authorization: Bearer <CONSOLE_AUTOMATION_TOKEN>"
+  //
+  // Reachable from claude.ai connector: configure the connector URL as
+  //   <CONSOLE_PUBLIC_URL>/mcp and set the API key to CONSOLE_AUTOMATION_TOKEN.
+  //
+  //   POST /mcp             JSON-RPC 2.0: initialize | ping | tools/list | tools/call
+  //   GET  /mcp             SSE server→client stream (heartbeat only; tool list is static)
+  //   GET  /.well-known/oauth-protected-resource/mcp  RFC 9728 discovery doc (PUBLIC)
+
+  const MCP_CONSOLE_VERSION = '1.0.0';
+  const MCP_PROTOCOL_VERSION = '2025-06-18';
+  const MCP_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
+
+  // RFC 9728 discovery — advertises this server as the protected resource + points at the auth
+  // server. The "auth server" for the console is the console itself (bearer-token or OIDC).
+  app.get('/.well-known/oauth-protected-resource/mcp', async (req, reply) => {
+    const proto = String(req.headers['x-forwarded-proto'] ?? 'https').split(',')[0]!.trim();
+    const host = String(req.headers['x-forwarded-host'] ?? req.headers['host'] ?? 'localhost');
+    const base = (process.env.CONSOLE_PUBLIC_URL ?? `${proto}://${host}`).replace(/\/+$/, '');
+    return reply
+      .header('content-security-policy', MCP_CSP)
+      .status(200)
+      .send({ resource: `${base}/mcp`, authorization_servers: [base] });
+  });
+
+  // POST /mcp — JSON-RPC 2.0 request/response.
+  // Auth is already enforced by the onRequest hook above; we only reach here with a valid session.
+  app.post('/mcp', async (req, reply) => {
+    reply.header('content-security-policy', MCP_CSP);
+
+    const body = req.body as
+      | { jsonrpc?: string; id?: string | number; method?: string; params?: Record<string, unknown> }
+      | undefined;
+
+    if (!body || body.jsonrpc !== '2.0' || typeof body.method !== 'string') {
+      return reply.status(200).send(mcpError(body?.id ?? null, -32600, 'Invalid Request'));
+    }
+    const { id, method, params } = body;
+    if (id === undefined) {
+      // JSON-RPC notification — no response body.
+      return reply.status(202).send();
+    }
+
+    try {
+      if (method === 'ping') return reply.status(200).send(mcpResult(id!, {}));
+
+      if (method === 'initialize') {
+        return reply.status(200).send(
+          mcpResult(id!, {
+            protocolVersion: (params?.protocolVersion as string) || MCP_PROTOCOL_VERSION,
+            capabilities: { tools: { listChanged: false } },
+            serverInfo: { name: 'forge-console-e2e', version: MCP_CONSOLE_VERSION },
+            instructions: TRIAGE_INSTRUCTIONS,
+          }),
+        );
+      }
+
+      if (method === 'tools/list') {
+        return reply.status(200).send(
+          mcpResult(id!, {
+            tools: E2E_MCP_TOOLS.map((t) => ({
+              name: t.name,
+              description: t.description,
+              inputSchema: t.inputSchema,
+              annotations: { readOnlyHint: true },
+            })),
+          }),
+        );
+      }
+
+      if (method === 'tools/call') {
+        const toolName = params?.name as string | undefined;
+        const args = (params?.arguments as Record<string, unknown> | undefined) ?? {};
+        if (!toolName) return reply.status(200).send(mcpError(id!, -32602, 'tools/call requires a string `name`.'));
+
+        // Validate tool name BEFORE the store check so unknown tools get -32601 (Method Not Found)
+        // regardless of whether the store is configured.
+        const KNOWN_TOOLS = new Set(['list_e2e_runs', 'get_e2e_run', 'get_workflow_result', 'diff_e2e_runs']);
+        if (!KNOWN_TOOLS.has(toolName)) {
+          return reply.status(200).send(mcpError(id!, -32601, `Unknown tool: ${toolName}`));
+        }
+
+        const store = await evalStoreGetter();
+        if (!store) {
+          // Store not configured — return an MCP tool error (isError: true) so the agent sees it.
+          return reply.status(200).send(
+            mcpResult(id!, {
+              content: [{ type: 'text', text: 'e2e store not configured (no database URL).' }],
+              isError: true,
+            }),
+          );
+        }
+
+        let result: unknown;
+        try {
+          if (toolName === 'list_e2e_runs') {
+            result = await queryListRuns(store, {
+              tenant: typeof args.tenant === 'string' ? args.tenant : undefined,
+              limit: typeof args.limit === 'number' ? args.limit : undefined,
+              status: typeof args.status === 'string' ? args.status : undefined,
+            });
+          } else if (toolName === 'get_e2e_run') {
+            const runId = typeof args.run_id === 'string' ? args.run_id : '';
+            if (!runId) return reply.status(200).send(mcpError(id!, -32602, 'run_id is required.'));
+            const detail = await queryGetRun(store, runId);
+            if (!detail) return reply.status(200).send(mcpResult(id!, { content: [{ type: 'text', text: `run ${runId} not found.` }], isError: true }));
+            result = detail;
+          } else if (toolName === 'get_workflow_result') {
+            const wfId = typeof args.workflow_id === 'string' ? args.workflow_id : '';
+            if (!wfId) return reply.status(200).send(mcpError(id!, -32602, 'workflow_id is required.'));
+            const wfResult = await queryGetWorkflow(store, wfId);
+            if (!wfResult) return reply.status(200).send(mcpResult(id!, { content: [{ type: 'text', text: `workflow ${wfId} not found.` }], isError: true }));
+            result = wfResult;
+          } else if (toolName === 'diff_e2e_runs') {
+            const runId = typeof args.run_id === 'string' ? args.run_id : '';
+            const baselineId = typeof args.baseline_run_id === 'string' ? args.baseline_run_id : '';
+            if (!runId || !baselineId) return reply.status(200).send(mcpError(id!, -32602, 'run_id and baseline_run_id are required.'));
+            const diff = await queryDiffRuns(store, runId, baselineId);
+            if (!diff) return reply.status(200).send(mcpResult(id!, { content: [{ type: 'text', text: 'one or both run_ids not found.' }], isError: true }));
+            result = diff;
+          } else {
+            // This branch is unreachable — all valid tools are handled above and unknown tools
+            // are caught before the store check. Kept as a type-narrowing safety net.
+            return reply.status(200).send(mcpError(id!, -32601, `Unknown tool: ${toolName}`));
+          }
+        } catch (e) {
+          return reply.status(200).send(
+            mcpResult(id!, {
+              content: [{ type: 'text', text: `tool error: ${(e as Error).message ?? String(e)}` }],
+              isError: true,
+            }),
+          );
+        }
+
+        const text = JSON.stringify(result);
+        return reply.status(200).send(
+          mcpResult(id!, {
+            content: [{ type: 'text', text }],
+            structuredContent: result,
+          }),
+        );
+      }
+
+      return reply.status(200).send(mcpError(id!, -32601, `Method not found: ${method}`));
+    } catch (e) {
+      return reply.status(200).send(mcpError(body?.id ?? null, -32603, `Internal error: ${(e as Error).message ?? e}`));
+    }
+  });
+
+  // GET /mcp — SSE server→client stream. Keeps the connection alive with heartbeat pings.
+  // The console MCP surface is static (tools don't change at runtime), so we don't push
+  // notifications/tools/list_changed. The stream exists for spec compliance and keep-alive.
+  app.get('/mcp', async (req, reply) => {
+    reply.header('content-security-policy', MCP_CSP);
+    reply.hijack();
+    const res = reply.raw;
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.write(': connected\n\n');
+    const hb = setInterval(() => {
+      try { res.write(': ping\n\n'); } catch { /* socket gone */ }
+    }, 25_000);
+    hb.unref?.();
+    let done = false;
+    const cleanup = () => { if (!done) { done = true; clearInterval(hb); } };
+    req.raw.on('close', cleanup);
+    req.raw.on('error', cleanup);
+  });
+
   // ── The single write ──
 
   app.post('/api/actions/dispatch', async (req, reply) => {
@@ -1701,6 +1983,14 @@ export function buildServer(registry = buildRegistry(), auth = createAuth()): Fa
   });
 
   // ── SPA ──
+
+  // ── JSON-RPC helpers (console MCP) ──
+  function mcpResult(id: string | number | null, result: unknown) {
+    return { jsonrpc: '2.0' as const, id, result };
+  }
+  function mcpError(id: string | number | null, code: number, message: string) {
+    return { jsonrpc: '2.0' as const, id, error: { code, message } };
+  }
 
   app.setNotFoundHandler(async (req, reply) => {
     // API 404s must stay 404s — swallowing them into the SPA shell turns a typo'd route into a

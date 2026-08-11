@@ -478,6 +478,34 @@ export class PgCpResultsBackend implements CpResultsBackend {
     return r.rows.map(rowToRun);
   }
 
+  /**
+   * List runs across ALL tenants (operator / console read-path).
+   *
+   * Not part of the `CpResultsBackend` interface (which is per-tenant): this method is for the
+   * forge-console read API and MCP tools that serve the OPERATOR view across the entire estate.
+   * Optional tenant / status filters narrow the result; limit is capped at 100.
+   */
+  async listAllRuns(opts: { tenant?: string; status?: string; limit?: number } = {}): Promise<EvalRun[]> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    let i = 1;
+    if (opts.tenant) {
+      conditions.push(`tenant_id = $${i++}`);
+      params.push(opts.tenant);
+    }
+    if (opts.status) {
+      conditions.push(`status = $${i++}`);
+      params.push(opts.status);
+    }
+    params.push(Math.min(opts.limit ?? 20, 100));
+    const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+    const r = await this.pool.query<RunRow>(
+      `SELECT * FROM forge_cp_eval_runs${where} ORDER BY started_at DESC LIMIT $${i}`,
+      params,
+    );
+    return r.rows.map(rowToRun);
+  }
+
   // --- Per-workflow drilldown ----------------------------------------------
 
   async insertWorkflow(input: EvalWorkflowInput): Promise<EvalWorkflow> {
