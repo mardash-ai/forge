@@ -460,6 +460,7 @@ export default function App() {
           {screen === 'connections' && <Connections />}
           {screen === 'testtenants' && <TestTenants />}
           {screen === 'docs' && <Docs />}
+          {screen === 'evals' && <Evals />}
         </main>
       </div>
     </div>
@@ -4502,6 +4503,1354 @@ function Boards() {
           )}
         </>
       )}
+    </>
+  );
+}
+
+// ── E2E Tests (Evals) ──────────────────────────────────────────────────────────────────────────
+//
+// A pure READER over the eval store — the UI renders exclusively from fixtures (parallel to the
+// live schema which ships later). No hand-assembled state: every number on screen comes from the
+// fixture objects below, so when the real API lands, swapping the source is a one-line change.
+
+interface EvalRun {
+  id: string;
+  label: string;
+  startedAt: string;
+  finishedAt: string;
+  status: 'complete' | 'running' | 'failed';
+  provider: 'openai' | 'anthropic' | 'both';
+  scope: string;
+  accepted: number;
+  rejected: number;
+  withheld: number;
+  total: number;
+  cost_cents: number;
+}
+
+interface EvalWorkflow {
+  id: string;
+  slug: string;
+  label: string;
+  outcome: 'accepted' | 'rejected' | 'withheld';
+  withheld_reason?: 'budget_cap' | 'provider_error' | 'timeout' | 'policy';
+  cost_cents: number;
+  scenes: EvalScene[];
+}
+
+interface EvalScene {
+  id: string;
+  label: string;
+  assertions: EvalAssertion[];
+}
+
+interface EvalAssertion {
+  id: string;
+  label: string;
+  outcome: 'accepted' | 'rejected' | 'withheld';
+  score: number | null;
+  reason?: string;
+}
+
+const EVAL_WITHHELD_REASONS: Record<string, string> = {
+  budget_cap: 'Budget cap',
+  provider_error: 'Provider error',
+  timeout: 'Timeout',
+  policy: 'Policy gate',
+};
+
+const EVAL_RUNS: EvalRun[] = [
+  {
+    id: 'eval-2026-08-10-a',
+    label: 'eval-2026-08-10-a',
+    startedAt: '2026-08-10T06:14:22Z',
+    finishedAt: '2026-08-10T06:41:09Z',
+    status: 'complete',
+    provider: 'both',
+    scope: 'full',
+    accepted: 9,
+    rejected: 2,
+    withheld: 1,
+    total: 12,
+    cost_cents: 87,
+  },
+  {
+    id: 'eval-2026-08-08-a',
+    label: 'eval-2026-08-08-a',
+    startedAt: '2026-08-08T06:09:55Z',
+    finishedAt: '2026-08-08T06:38:41Z',
+    status: 'complete',
+    provider: 'both',
+    scope: 'full',
+    accepted: 10,
+    rejected: 1,
+    withheld: 1,
+    total: 12,
+    cost_cents: 91,
+  },
+  {
+    id: 'eval-2026-08-05-a',
+    label: 'eval-2026-08-05-a',
+    startedAt: '2026-08-05T07:22:10Z',
+    finishedAt: '2026-08-05T07:38:44Z',
+    status: 'complete',
+    provider: 'anthropic',
+    scope: 'core',
+    accepted: 7,
+    rejected: 0,
+    withheld: 1,
+    total: 8,
+    cost_cents: 42,
+  },
+];
+
+// Scenes are fully authored only for the most recent run so the drilldown is interactive.
+// Historical runs carry empty scene arrays — operators triage current failures, not historical ones.
+const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
+  'eval-2026-08-10-a': [
+    {
+      id: 'w-auth', slug: 'auth-happy-path', label: 'Auth: happy path sign-in',
+      outcome: 'accepted', cost_cents: 7,
+      scenes: [
+        {
+          id: 's-auth-1', label: 'Sign-in with valid credentials',
+          assertions: [
+            { id: 'a1', label: 'Session token issued', outcome: 'accepted', score: 1.0 },
+            { id: 'a2', label: 'Response within 2s', outcome: 'accepted', score: 0.96 },
+            { id: 'a3', label: 'Audit record created', outcome: 'accepted', score: 1.0 },
+          ],
+        },
+        {
+          id: 's-auth-2', label: 'Sign-in with invalid credentials',
+          assertions: [
+            { id: 'a4', label: '401 returned immediately', outcome: 'accepted', score: 1.0 },
+            { id: 'a5', label: 'No session created', outcome: 'accepted', score: 1.0 },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'w-deleg-create', slug: 'delegation-create', label: 'Delegation: create with budget',
+      outcome: 'accepted', cost_cents: 9,
+      scenes: [
+        {
+          id: 's-dc-1', label: 'Create delegation under budget',
+          assertions: [
+            { id: 'b1', label: 'Delegation persisted', outcome: 'accepted', score: 1.0 },
+            { id: 'b2', label: 'Budget deducted correctly', outcome: 'accepted', score: 1.0 },
+            { id: 'b3', label: 'Stakeholders notified', outcome: 'accepted', score: 0.91 },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'w-deleg-override', slug: 'delegation-override', label: 'Delegation: stakeholder override',
+      outcome: 'accepted', cost_cents: 8,
+      scenes: [
+        {
+          id: 's-do-1', label: 'Override approved by stakeholder',
+          assertions: [
+            { id: 'c1', label: 'Override recorded', outcome: 'accepted', score: 1.0 },
+            { id: 'c2', label: 'Original budget restored', outcome: 'accepted', score: 1.0 },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'w-member-dash', slug: 'member-dashboard', label: 'Member: dashboard initial load',
+      outcome: 'accepted', cost_cents: 6,
+      scenes: [
+        {
+          id: 's-md-1', label: 'Dashboard load with 10 delegations',
+          assertions: [
+            { id: 'd1', label: 'All delegations visible', outcome: 'accepted', score: 1.0 },
+            { id: 'd2', label: 'Load under 800ms', outcome: 'accepted', score: 0.94 },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'w-advance-fire', slug: 'advance-fire', label: 'Advance: fire with 48h lead',
+      outcome: 'accepted', cost_cents: 8,
+      scenes: [
+        {
+          id: 's-af-1', label: 'Advance fired 48h before due',
+          assertions: [
+            { id: 'e1', label: 'Advance event emitted', outcome: 'accepted', score: 1.0 },
+            { id: 'e2', label: 'Correct recipient targeted', outcome: 'accepted', score: 1.0 },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'w-reminder', slug: 'reminder-accuracy', label: 'Reminder: timing accuracy',
+      outcome: 'accepted', cost_cents: 7,
+      scenes: [
+        {
+          id: 's-ra-1', label: 'Reminder fires within ±5 min window',
+          assertions: [
+            { id: 'f1', label: 'Reminder delivered', outcome: 'accepted', score: 1.0 },
+            { id: 'f2', label: 'Timestamp within tolerance', outcome: 'accepted', score: 1.0 },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'w-triage', slug: 'triage-suggestion', label: 'Triage: suggestion quality',
+      outcome: 'rejected', cost_cents: 9,
+      scenes: [
+        {
+          id: 's-ts-1', label: 'Normal triage prompt',
+          assertions: [
+            {
+              id: 'g1', label: 'Response identifies root issue', outcome: 'rejected', score: 0.62,
+              reason: 'Model identified symptom rather than root cause in 3 of 5 cases',
+            },
+            { id: 'g2', label: 'Response within 3 sentences', outcome: 'accepted', score: 0.88 },
+            { id: 'g3', label: 'No PII in response', outcome: 'accepted', score: 1.0 },
+          ],
+        },
+        {
+          id: 's-ts-2', label: 'Complex multi-delegation case',
+          assertions: [
+            {
+              id: 'g4', label: 'Identifies all affected delegations', outcome: 'rejected', score: 0.41,
+              reason: 'Missing cross-member delegation links in 4 of 5 cases',
+            },
+            {
+              id: 'g5', label: 'Suggests appropriate escalation path', outcome: 'rejected', score: 0.55,
+              reason: 'Escalation path omitted or incorrect in majority of cases',
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'w-privacy', slug: 'privacy-redaction', label: 'Privacy: PII redaction',
+      outcome: 'accepted', cost_cents: 7,
+      scenes: [
+        {
+          id: 's-pr-1', label: 'Email and phone redaction in logs',
+          assertions: [
+            { id: 'h1', label: 'Email address redacted', outcome: 'accepted', score: 1.0 },
+            { id: 'h2', label: 'Phone number redacted', outcome: 'accepted', score: 1.0 },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'w-isolation', slug: 'cross-member-isolation', label: 'Cross-member: data isolation',
+      outcome: 'accepted', cost_cents: 8,
+      scenes: [
+        {
+          id: 's-ci-1', label: 'Member A cannot access Member B data',
+          assertions: [
+            { id: 'i1', label: 'Cross-member query returns 403', outcome: 'accepted', score: 1.0 },
+            { id: 'i2', label: 'No data leak in response body', outcome: 'accepted', score: 1.0 },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'w-token', slug: 'token-refresh', label: 'Session: token refresh',
+      outcome: 'accepted', cost_cents: 6,
+      scenes: [
+        {
+          id: 's-tr-1', label: 'Expired token refreshed transparently',
+          assertions: [
+            { id: 'j1', label: 'New token issued', outcome: 'accepted', score: 1.0 },
+            { id: 'j2', label: 'Old token invalidated', outcome: 'accepted', score: 1.0 },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'w-webhook', slug: 'webhook-retry', label: 'Webhook: delivery retry',
+      outcome: 'withheld', withheld_reason: 'timeout', cost_cents: 0,
+      scenes: [
+        {
+          id: 's-wr-1', label: 'Retry on initial delivery failure',
+          assertions: [
+            {
+              id: 'k1', label: 'Retry within 30s', outcome: 'withheld', score: null,
+              reason: 'Runner did not receive webhook endpoint response within the SLA window',
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'w-search', slug: 'search-relevance', label: 'Search: result relevance',
+      outcome: 'rejected', cost_cents: 12,
+      scenes: [
+        {
+          id: 's-sr-1', label: 'Top-3 results relevance',
+          assertions: [
+            {
+              id: 'l1', label: 'Precision@3 ≥ 0.80', outcome: 'rejected', score: 0.66,
+              reason: 'Averaged 0.66 across test queries, threshold is 0.80',
+            },
+            { id: 'l2', label: 'No stale results (>7d)', outcome: 'accepted', score: 1.0 },
+          ],
+        },
+        {
+          id: 's-sr-2', label: 'Fuzzy query handling',
+          assertions: [
+            { id: 'l3', label: 'Spell-corrected query matches', outcome: 'accepted', score: 0.92 },
+            { id: 'l4', label: 'Empty result set handled gracefully', outcome: 'accepted', score: 1.0 },
+          ],
+        },
+      ],
+    },
+  ],
+  'eval-2026-08-08-a': [
+    { id: 'w-auth', slug: 'auth-happy-path', label: 'Auth: happy path sign-in', outcome: 'accepted', cost_cents: 7, scenes: [] },
+    { id: 'w-deleg-create', slug: 'delegation-create', label: 'Delegation: create with budget', outcome: 'accepted', cost_cents: 9, scenes: [] },
+    { id: 'w-deleg-override', slug: 'delegation-override', label: 'Delegation: stakeholder override', outcome: 'accepted', cost_cents: 8, scenes: [] },
+    { id: 'w-member-dash', slug: 'member-dashboard', label: 'Member: dashboard initial load', outcome: 'accepted', cost_cents: 6, scenes: [] },
+    { id: 'w-advance-fire', slug: 'advance-fire', label: 'Advance: fire with 48h lead', outcome: 'accepted', cost_cents: 8, scenes: [] },
+    { id: 'w-reminder', slug: 'reminder-accuracy', label: 'Reminder: timing accuracy', outcome: 'accepted', cost_cents: 7, scenes: [] },
+    { id: 'w-triage', slug: 'triage-suggestion', label: 'Triage: suggestion quality', outcome: 'accepted', cost_cents: 9, scenes: [] },
+    { id: 'w-privacy', slug: 'privacy-redaction', label: 'Privacy: PII redaction', outcome: 'accepted', cost_cents: 7, scenes: [] },
+    { id: 'w-isolation', slug: 'cross-member-isolation', label: 'Cross-member: data isolation', outcome: 'accepted', cost_cents: 8, scenes: [] },
+    { id: 'w-token', slug: 'token-refresh', label: 'Session: token refresh', outcome: 'accepted', cost_cents: 6, scenes: [] },
+    { id: 'w-webhook', slug: 'webhook-retry', label: 'Webhook: delivery retry', outcome: 'withheld', withheld_reason: 'timeout', cost_cents: 0, scenes: [] },
+    { id: 'w-search', slug: 'search-relevance', label: 'Search: result relevance', outcome: 'rejected', cost_cents: 11, scenes: [] },
+  ],
+  'eval-2026-08-05-a': [
+    { id: 'w-auth', slug: 'auth-happy-path', label: 'Auth: happy path sign-in', outcome: 'accepted', cost_cents: 6, scenes: [] },
+    { id: 'w-deleg-create', slug: 'delegation-create', label: 'Delegation: create with budget', outcome: 'accepted', cost_cents: 8, scenes: [] },
+    { id: 'w-deleg-override', slug: 'delegation-override', label: 'Delegation: stakeholder override', outcome: 'accepted', cost_cents: 7, scenes: [] },
+    { id: 'w-member-dash', slug: 'member-dashboard', label: 'Member: dashboard initial load', outcome: 'accepted', cost_cents: 6, scenes: [] },
+    { id: 'w-advance-fire', slug: 'advance-fire', label: 'Advance: fire with 48h lead', outcome: 'accepted', cost_cents: 7, scenes: [] },
+    { id: 'w-reminder', slug: 'reminder-accuracy', label: 'Reminder: timing accuracy', outcome: 'accepted', cost_cents: 7, scenes: [] },
+    { id: 'w-triage', slug: 'triage-suggestion', label: 'Triage: suggestion quality', outcome: 'accepted', cost_cents: 8, scenes: [] },
+    { id: 'w-webhook', slug: 'webhook-retry', label: 'Webhook: delivery retry', outcome: 'withheld', withheld_reason: 'provider_error', cost_cents: 0, scenes: [] },
+  ],
+};
+
+// ── Eval outcome helpers ────────────────────────────────────────────────────────────────────────
+
+// ── Mini trend sparkline ──────────────────────────────────────────────────────────────────────
+
+/**
+ * A compact acceptance-rate sparkline across a sequence of values.
+ * Deliberately minimal: one stroke, no axes, no labels — the table carries those. The sparkline
+ * answers "getting better or worse?" at a glance without adding a chart.
+ */
+function EvalSparkline({ rates, width = 80, height = 28 }: { rates: number[]; width?: number; height?: number }) {
+  if (rates.length < 2) return null;
+  const padV = 3;
+  const min = Math.min(...rates);
+  const max = Math.max(...rates);
+  const range = max - min || 0.01;
+  const toY = (v: number) => padV + (height - padV * 2) * (1 - (v - min) / range);
+  const toX = (i: number) => (i / (rates.length - 1)) * width;
+  const pts = rates.map((r, i) => `${toX(i).toFixed(1)},${toY(r).toFixed(1)}`).join(' ');
+  const last = rates[rates.length - 1]!;
+  const prev = rates[rates.length - 2]!;
+  const trend = last >= prev ? 'var(--ok)' : 'var(--crit)';
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      aria-label={`Acceptance rate trend: ${rates.map((r) => Math.round(r * 100) + '%').join(' → ')}`}
+      style={{ display: 'block', flex: '0 0 auto' }}
+    >
+      <polyline
+        points={pts}
+        fill="none"
+        stroke={trend}
+        strokeWidth={1.8}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        opacity={0.8}
+      />
+      <circle
+        cx={toX(rates.length - 1).toFixed(1)}
+        cy={toY(last).toFixed(1)}
+        r={2.5}
+        fill={trend}
+      />
+    </svg>
+  );
+}
+
+// ── Eval outcome badge (withheld is muted-on-selected, distinct from crit) ──────────────────────
+
+function EvalOutcomeBadge({ outcome, withheld_reason, selected = false }: {
+  outcome: EvalWorkflow['outcome'];
+  withheld_reason?: string;
+  selected?: boolean;
+}) {
+  if (outcome === 'accepted') {
+    return <Pill tone="ok">✓ Accepted</Pill>;
+  }
+  if (outcome === 'rejected') {
+    return <Pill tone="crit">× Rejected</Pill>;
+  }
+  // Withheld: ⊘ rendered in --unknown-text normally; muted to --text-muted when selected.
+  // This keeps it visually distinct from crit (rose) while signalling "selected" via the ember
+  // inset on the parent tile rather than by amplifying the withheld colour.
+  const color = selected ? 'var(--text-muted)' : 'var(--unknown-text)';
+  const bg = selected ? 'var(--bg-selected)' : 'var(--unknown-wash)';
+  const border = selected ? 'var(--line)' : 'var(--unknown-line)';
+  const label = withheld_reason ? EVAL_WITHHELD_REASONS[withheld_reason] ?? withheld_reason : undefined;
+  return (
+    <span
+      title={label}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        height: 19,
+        padding: '0 8px',
+        borderRadius: 3,
+        background: bg,
+        color,
+        border: `1px dashed ${border}`,
+        fontSize: 10.5,
+        fontWeight: 600,
+        letterSpacing: '0.07em',
+        textTransform: 'uppercase',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      ⊘{label ? ` ${label}` : ' Withheld'}
+    </span>
+  );
+}
+
+// ── Eval filter tile (keyboard-operable, ember inset when active) ──────────────────────────────
+
+function EvalFilterTile({
+  label,
+  count,
+  tone,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  tone: 'ok' | 'crit' | 'unknown';
+  active: boolean;
+  onClick: () => void;
+}) {
+  // When active: ember left-inset carries the selection signal; count goes achromatic (muted).
+  // When inactive: count takes the status colour so the severity reads immediately.
+  // This is the "muted-on-selected" rule applied uniformly — including withheld (unknown tone).
+  const countColor = active ? 'var(--text-primary)' : `var(--${tone}-text)`;
+  return (
+    <button
+      aria-pressed={active}
+      onClick={onClick}
+      style={{
+        position: 'relative',
+        background: active ? 'var(--bg-selected)' : 'var(--bg-surface)',
+        border: `1px solid ${active ? 'var(--line-strong)' : 'var(--line)'}`,
+        borderRadius: 'var(--r-lg)',
+        padding: '13px 15px 13px 18px',
+        textAlign: 'left',
+        cursor: 'pointer',
+        minWidth: 120,
+        boxShadow: active ? 'none' : 'var(--inner-lip)',
+        overflow: 'hidden',
+      }}
+    >
+      {/* THE EMBER INSET — selection signal. Same rule as the rail filament. */}
+      {active && (
+        <span
+          aria-hidden
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 2,
+            borderRadius: '0 0 0 var(--r-lg)',
+            background: 'var(--filament)',
+          }}
+        />
+      )}
+      <div className="micro">{label}</div>
+      <div
+        style={{
+          fontSize: 'var(--t-metric)',
+          fontWeight: 500,
+          lineHeight: 'var(--lh-metric)',
+          letterSpacing: '-0.02em',
+          color: countColor,
+          marginTop: 3,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {count}
+      </div>
+    </button>
+  );
+}
+
+// ── Eval triage prompt builder ─────────────────────────────────────────────────────────────────
+
+function buildTriagePrompt(run: EvalRun, workflows: EvalWorkflow[]): string {
+  const failures = workflows.filter((w) => w.outcome !== 'accepted');
+  const failureList = failures
+    .map((w) => {
+      const mark = w.outcome === 'rejected' ? '×' : '⊘';
+      const why = w.withheld_reason ? ` (withheld: ${EVAL_WITHHELD_REASONS[w.withheld_reason] ?? w.withheld_reason})` : '';
+      return `  ${mark} ${w.slug}  —  ${w.label}${why}`;
+    })
+    .join('\n');
+
+  return `Triage eval run ${run.id}
+
+Run:      ${run.label}
+URL:      https://console.dorinda.ai/?s=evals&run=${run.id}
+Date:     ${run.startedAt}
+Provider: ${run.provider}
+
+Results: ${run.accepted} accepted / ${run.rejected} rejected / ${run.withheld} withheld of ${run.total}
+Cost:    $${(run.cost_cents / 100).toFixed(2)}
+
+Failures:
+${failureList || '  (none)'}
+
+Reach the eval store via the MCP tools:
+  forge://evals/runs/${run.id}                 — full run manifest
+  forge://evals/runs/${run.id}/workflows        — workflow list
+  forge://evals/runs/${run.id}/workflows/{slug} — single workflow + assertions
+
+Standing triage instructions:
+1. For each rejected workflow, read the full assertion log and identify the root cause.
+2. For withheld workflows, check withheld_reason and determine if it is a platform issue or a
+   flaky provider — provider_error and timeout are usually retriable; budget_cap and policy are not.
+3. Summarise findings in a TRIAGE REPORT with:
+     verdict: regression | known-flake | provider-outage
+     affected-scope: which workflows and why
+     recommended-action: re-run / fix / escalate / accept
+4. Do not guess — read the actual assertion data before drawing conclusions.
+`;
+}
+
+// ── Evals screen ──────────────────────────────────────────────────────────────────────────────
+
+function Evals() {
+  type EvalView = 'runs' | 'run' | 'workflow' | 'scene';
+  const [view, setView] = useState<EvalView>('runs');
+  const [runId, setRunId] = useState('');
+  const [workflowId, setWorkflowId] = useState('');
+  const [sceneId, setSceneId] = useState('');
+
+  // Run detail: outcome filter tile (click-again clears)
+  const [outcomeFilter, setOutcomeFilter] = useState<'accepted' | 'rejected' | 'withheld' | null>(null);
+  // Run detail: integrity pill (narrows withheld subset by reason)
+  const [reasonFilter, setReasonFilter] = useState<string | null>(null);
+
+  // Trigger modal
+  const [triggerOpen, setTriggerOpen] = useState(false);
+  const [triggerStep, setTriggerStep] = useState<'config' | 'confirm'>('config');
+  const [triggerScope, setTriggerScope] = useState<'full' | 'suite' | 'pick'>('full');
+  const [triggerProvider, setTriggerProvider] = useState<'openai' | 'anthropic' | 'both'>('both');
+  const [triggerSuite, setTriggerSuite] = useState('core');
+  const [triggerSlugs, setTriggerSlugs] = useState('');
+
+  // Re-run confirm (per workflow row): stores slug being re-run
+  const [rerunSlug, setRerunSlug] = useState<string | null>(null);
+  const [rerunQueued, setRerunQueued] = useState<string | null>(null);
+
+  // Triage clipboard flash
+  const [triageFlash, setTriageFlash] = useState(false);
+
+  // Assertion expand
+  const [expandedAssertion, setExpandedAssertion] = useState<string | null>(null);
+
+  // ── Derived data ────────────────────────────────────────────────────────────────────────────
+  const run = EVAL_RUNS.find((r) => r.id === runId) ?? null;
+  const workflows = EVAL_WORKFLOWS[runId] ?? [];
+  const workflow = workflows.find((w) => w.id === workflowId) ?? null;
+  const scene = workflow?.scenes.find((s) => s.id === sceneId) ?? null;
+
+  const filteredWorkflows =
+    outcomeFilter !== null
+      ? workflows.filter((w) => {
+          if (w.outcome !== outcomeFilter) return false;
+          if (outcomeFilter === 'withheld' && reasonFilter) return w.withheld_reason === reasonFilter;
+          return true;
+        })
+      : workflows;
+
+  const withheldReasons = [
+    ...new Set(
+      workflows
+        .filter((w) => w.outcome === 'withheld' && w.withheld_reason)
+        .map((w) => w.withheld_reason!),
+    ),
+  ];
+
+  // Cost estimate for trigger modal (~$1 full suite per requirement)
+  const slugCount = triggerSlugs.split('\n').filter((s) => s.trim()).length || 1;
+  const triggerCostCents =
+    triggerScope === 'full' ? 100 : triggerScope === 'suite' ? 45 : slugCount * 8;
+
+  // Run-over-run acceptance rate trend (oldest → newest)
+  const trendRates = [...EVAL_RUNS]
+    .reverse()
+    .map((r) => r.accepted / r.total);
+
+  // ── Navigation helpers ──────────────────────────────────────────────────────────────────────
+  const goToRun = (id: string) => {
+    setRunId(id);
+    setView('run');
+    setOutcomeFilter(null);
+    setReasonFilter(null);
+    setWorkflowId('');
+    setSceneId('');
+  };
+  const goToWorkflow = (id: string) => {
+    setWorkflowId(id);
+    setView('workflow');
+    setSceneId('');
+    setExpandedAssertion(null);
+  };
+  const goToScene = (id: string) => {
+    setSceneId(id);
+    setView('scene');
+    setExpandedAssertion(null);
+  };
+  const toggleFilter = (outcome: 'accepted' | 'rejected' | 'withheld') => {
+    setOutcomeFilter((prev) => {
+      if (prev === outcome) { setReasonFilter(null); return null; }
+      setReasonFilter(null);
+      return outcome;
+    });
+  };
+
+  const handleTriage = () => {
+    if (!run) return;
+    const prompt = buildTriagePrompt(run, workflows);
+    navigator.clipboard.writeText(prompt).then(
+      () => { setTriageFlash(true); setTimeout(() => setTriageFlash(false), 2200); },
+      () => { setTriageFlash(true); setTimeout(() => setTriageFlash(false), 2200); },
+    );
+  };
+
+  const handleRerun = (slug: string) => {
+    if (rerunSlug === slug) {
+      // Confirm: "queue" the run (gate: Mark-only, so we show a queued flash)
+      setRerunSlug(null);
+      setRerunQueued(slug);
+      setTimeout(() => setRerunQueued(null), 3000);
+    } else {
+      setRerunSlug(slug);
+    }
+  };
+
+  const closeTrigger = () => { setTriggerOpen(false); setTriggerStep('config'); };
+
+  // ── Breadcrumb ──────────────────────────────────────────────────────────────────────────────
+  // Each item carries its own nav target so clicking "E2E Tests" from scene view goes all the
+  // way back to the runs list — not just one step up.
+  const Crumbs = ({ items }: { items: Array<{ label: string; onClick?: () => void }> }) => (
+    <nav aria-label="Drilldown" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+      {items.map((item, i) => (
+        <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {i > 0 && <span aria-hidden style={{ color: 'var(--text-faint)', userSelect: 'none' }}>›</span>}
+          {item.onClick ? (
+            <button
+              onClick={item.onClick}
+              style={{
+                color: 'var(--text-secondary)',
+                fontSize: 13,
+                textDecoration: 'underline',
+                textDecorationColor: 'var(--link-rule)',
+                textUnderlineOffset: 2,
+              }}
+            >
+              {item.label}
+            </button>
+          ) : (
+            <span style={{ color: i === items.length - 1 ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: i === items.length - 1 ? 500 : 400, fontSize: 13 }}>
+              {item.label}
+            </span>
+          )}
+        </span>
+      ))}
+    </nav>
+  );
+
+  // ── Trigger modal ────────────────────────────────────────────────────────────────────────────
+  const TriggerModal = () => (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Launch eval run"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 100,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'rgba(0,0,0,0.72)',
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) closeTrigger(); }}
+    >
+      <div
+        style={{
+          background: 'var(--bg-overlay)',
+          border: '1px solid var(--line-strong)',
+          borderRadius: 'var(--r-xl)',
+          boxShadow: 'var(--shadow-pop)',
+          width: 480,
+          maxWidth: 'calc(100vw - 32px)',
+          padding: 24,
+        }}
+      >
+        {triggerStep === 'config' ? (
+          <>
+            <h2 style={{ fontSize: 'var(--t-title)', fontWeight: 600, letterSpacing: '-0.01em', marginBottom: 20 }}>
+              Configure eval run
+            </h2>
+
+            <div style={{ display: 'grid', gap: 16 }}>
+              {/* Scope */}
+              <div>
+                <div className="micro" style={{ marginBottom: 8 }}>Scope</div>
+                <Segmented
+                  ariaLabel="Eval scope"
+                  value={triggerScope}
+                  onChange={setTriggerScope}
+                  options={[
+                    ['full', 'Full catalogue'],
+                    ['suite', 'Named suite'],
+                    ['pick', 'Hand-picked'],
+                  ] as const}
+                />
+              </div>
+
+              {triggerScope === 'suite' && (
+                <div>
+                  <div className="micro" style={{ marginBottom: 8 }}>Suite</div>
+                  <Select
+                    ariaLabel="Suite name"
+                    value={triggerSuite}
+                    onChange={setTriggerSuite}
+                    width={280}
+                    options={[
+                      ['core', 'core — auth, delegation, member'],
+                      ['auth', 'auth — sign-in, token, isolation'],
+                      ['privacy', 'privacy — redaction, isolation'],
+                      ['search', 'search — relevance, fuzzy'],
+                    ]}
+                  />
+                </div>
+              )}
+
+              {triggerScope === 'pick' && (
+                <div>
+                  <div className="micro" style={{ marginBottom: 8 }}>Workflow slugs — one per line</div>
+                  <Textarea
+                    ariaLabel="Workflow slugs"
+                    value={triggerSlugs}
+                    onChange={setTriggerSlugs}
+                    rows={5}
+                    placeholder={'auth-happy-path\ndelegation-create\ntriage-suggestion'}
+                  />
+                </div>
+              )}
+
+              {/* Provider */}
+              <div>
+                <div className="micro" style={{ marginBottom: 8 }}>Provider</div>
+                <Segmented
+                  ariaLabel="Provider"
+                  value={triggerProvider}
+                  onChange={setTriggerProvider}
+                  options={[
+                    ['openai', 'OpenAI'],
+                    ['anthropic', 'Anthropic'],
+                    ['both', 'Both'],
+                  ] as const}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 24 }}>
+              <Button variant="secondary" onClick={closeTrigger}>Cancel</Button>
+              <Button
+                variant="primary"
+                onClick={() => setTriggerStep('confirm')}
+              >
+                Review cost →
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h2 style={{ fontSize: 'var(--t-title)', fontWeight: 600, letterSpacing: '-0.01em', marginBottom: 20 }}>
+              Confirm eval run
+            </h2>
+
+            <div style={{ display: 'grid', gap: 10, marginBottom: 20 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '9px 0', borderBottom: '1px solid var(--line-faint)' }}>
+                <span style={{ color: 'var(--text-muted)' }}>Scope</span>
+                <span>{triggerScope === 'full' ? 'Full catalogue (12 workflows)' : triggerScope === 'suite' ? `Suite: ${triggerSuite}` : `${slugCount} workflow${slugCount === 1 ? '' : 's'}`}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '9px 0', borderBottom: '1px solid var(--line-faint)' }}>
+                <span style={{ color: 'var(--text-muted)' }}>Provider</span>
+                <span>{triggerProvider}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '9px 0', borderBottom: '1px solid var(--line-faint)' }}>
+                <span style={{ color: 'var(--text-muted)' }}>Estimated cost</span>
+                <span className="num" style={{ fontWeight: 600 }}>~${(triggerCostCents / 100).toFixed(2)}</span>
+              </div>
+            </div>
+
+            {/* MARK-ONLY GATE — eval runs cost real money and require explicit per-run approval */}
+            <div
+              style={{
+                background: 'var(--warn-wash)',
+                border: '1px solid color-mix(in srgb, var(--warn) 30%, transparent)',
+                borderRadius: 'var(--r-md)',
+                padding: '11px 13px',
+                marginBottom: 20,
+                fontSize: 13,
+                color: 'var(--warn-text)',
+                lineHeight: '20px',
+              }}
+            >
+              <strong style={{ color: 'var(--warn-text)' }}>Operator-only run.</strong>{' '}
+              Eval runs invoke the live runner image against real provider APIs. Each run requires
+              explicit per-run approval — carried over approvals are not valid. Copy the run spec
+              below and send it to the operator channel.
+            </div>
+
+            <div
+              style={{
+                background: 'var(--bg-inset)',
+                border: '1px solid var(--line)',
+                borderRadius: 'var(--r-md)',
+                padding: '10px 12px',
+                fontFamily: 'var(--mono)',
+                fontSize: 'var(--t-data)',
+                color: 'var(--text-secondary)',
+                lineHeight: 1.6,
+                marginBottom: 20,
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {`forge eval run \\
+  --scope ${triggerScope === 'pick' ? triggerSlugs.split('\n').filter(Boolean).join(',') : triggerScope === 'suite' ? triggerSuite : 'full'} \\
+  --provider ${triggerProvider}`}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <Button variant="secondary" onClick={() => setTriggerStep('config')}>← Back</Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  const cmd = `forge eval run --scope ${triggerScope === 'pick' ? triggerSlugs.split('\n').filter(Boolean).join(',') : triggerScope === 'suite' ? triggerSuite : 'full'} --provider ${triggerProvider}`;
+                  navigator.clipboard.writeText(cmd).catch(() => undefined);
+                  closeTrigger();
+                }}
+              >
+                Copy spec
+              </Button>
+              <Button variant="primary" disabled title="Requires explicit per-run operator approval">
+                Launch
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  // ── Render: runs list ────────────────────────────────────────────────────────────────────────
+  if (view === 'runs') {
+    return (
+      <>
+        {triggerOpen && <TriggerModal />}
+        <Head
+          screen="evals"
+          title="E2E Tests"
+          sub="Fixture-backed eval runs — assertion-level results across the full workflow catalogue. Every number comes from the store; nothing is hand-assembled."
+        />
+
+        <Toolbar>
+          <Button variant="primary" onClick={() => { setTriggerOpen(true); setTriggerStep('config'); }}>
+            Launch run
+          </Button>
+          <Note>{EVAL_RUNS.length} runs · acceptance trending {trendRates[trendRates.length - 1]! < trendRates[trendRates.length - 2]! ? '↓' : '↑'}</Note>
+          <div style={{ flex: 1 }} />
+          <EvalSparkline rates={trendRates} width={96} height={32} />
+        </Toolbar>
+
+        <Card pad={false}>
+          <Table head={['Run', 'Date', 'Provider', 'Scope', 'Accepted', 'Rejected', 'Withheld', 'Cost', 'Trend', '']}>
+            {EVAL_RUNS.map((r) => {
+              const rate = r.accepted / r.total;
+              const prevRun = EVAL_RUNS[EVAL_RUNS.indexOf(r) + 1];
+              const prevRate = prevRun ? prevRun.accepted / prevRun.total : null;
+              const delta = prevRate !== null ? rate - prevRate : null;
+              return (
+                <tr
+                  key={r.id}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => goToRun(r.id)}
+                >
+                  <Td primary mono>{r.label}</Td>
+                  <Td mono>{r.startedAt.slice(0, 10)}</Td>
+                  <Td>{r.provider}</Td>
+                  <Td>{r.scope}</Td>
+                  <Td right mono>
+                    <span style={{ color: 'var(--ok-text)' }}>{r.accepted}</span>
+                  </Td>
+                  <Td right mono>
+                    {r.rejected > 0
+                      ? <span style={{ color: 'var(--crit-text)' }}>{r.rejected}</span>
+                      : <span style={{ color: 'var(--text-faint)' }}>0</span>}
+                  </Td>
+                  <Td right mono>
+                    {r.withheld > 0
+                      ? <span style={{ color: 'var(--unknown-text)' }}>{r.withheld}</span>
+                      : <span style={{ color: 'var(--text-faint)' }}>0</span>}
+                  </Td>
+                  <Td right mono>${(r.cost_cents / 100).toFixed(2)}</Td>
+                  <Td mono>
+                    <span style={{ color: delta === null ? 'var(--text-faint)' : delta >= 0 ? 'var(--ok-text)' : 'var(--crit-text)' }}>
+                      {delta === null ? '—' : `${delta >= 0 ? '+' : ''}${Math.round(delta * 100)}pp`}
+                    </span>
+                  </Td>
+                  <Td>
+                    <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>→</span>
+                  </Td>
+                </tr>
+              );
+            })}
+          </Table>
+        </Card>
+      </>
+    );
+  }
+
+  // ── Render: run detail ───────────────────────────────────────────────────────────────────────
+  if (view === 'run' && run) {
+    return (
+      <>
+        {triggerOpen && <TriggerModal />}
+
+        {/* Re-run queued toast */}
+        {rerunQueued && (
+          <div
+            aria-live="polite"
+            style={{
+              position: 'fixed',
+              bottom: 24,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              background: 'var(--bg-overlay)',
+              border: '1px solid var(--line-strong)',
+              borderRadius: 'var(--r-lg)',
+              padding: '10px 16px',
+              fontSize: 13,
+              color: 'var(--text-primary)',
+              boxShadow: 'var(--shadow-pop)',
+              zIndex: 50,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            ↻ Re-run of <span className="mono" style={{ color: 'var(--text-secondary)' }}>{rerunQueued}</span> queued — awaiting operator approval
+          </div>
+        )}
+
+        <Crumbs items={[
+          { label: 'E2E Tests', onClick: () => { setView('runs'); setRunId(''); setOutcomeFilter(null); setReasonFilter(null); } },
+          { label: run.label },
+        ]} />
+
+        {/* Run-over-run trend + triage button */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18, gap: 16, flexWrap: 'wrap' }}>
+          <div>
+            <div className="micro" style={{ marginBottom: 8 }}>Acceptance rate — run over run</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <EvalSparkline rates={trendRates} width={160} height={44} />
+              <div style={{ fontSize: 12, color: 'var(--text-faint)', lineHeight: '17px' }}>
+                {[...EVAL_RUNS].reverse().map((r, i, arr) => (
+                  <div key={r.id}>
+                    <span className="mono" style={{ color: r.id === run.id ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                      {r.startedAt.slice(5, 10)}
+                    </span>
+                    {' '}
+                    <span style={{ color: r.id === run.id ? 'var(--ok-text)' : 'var(--text-faint)' }}>
+                      {Math.round((r.accepted / r.total) * 100)}%
+                    </span>
+                    {i < arr.length - 1 && ' → '}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <Button
+            variant={triageFlash ? 'primary' : 'secondary'}
+            onClick={handleTriage}
+            title="Copy a ready-to-run triage prompt to the clipboard"
+          >
+            {triageFlash ? '✓ Copied' : 'Triage with Claude'}
+          </Button>
+        </div>
+
+        {/* Top-line metric tiles — keyboard-operable filter buttons */}
+        <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+          <EvalFilterTile
+            label="Accepted"
+            count={run.accepted}
+            tone="ok"
+            active={outcomeFilter === 'accepted'}
+            onClick={() => toggleFilter('accepted')}
+          />
+          <EvalFilterTile
+            label="Rejected"
+            count={run.rejected}
+            tone="crit"
+            active={outcomeFilter === 'rejected'}
+            onClick={() => toggleFilter('rejected')}
+          />
+          <EvalFilterTile
+            label="Withheld"
+            count={run.withheld}
+            tone="unknown"
+            active={outcomeFilter === 'withheld'}
+            onClick={() => toggleFilter('withheld')}
+          />
+          {/* Cost tile — informational only, not a filter */}
+          <div
+            style={{
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--line)',
+              borderRadius: 'var(--r-lg)',
+              padding: '13px 15px 13px 18px',
+              minWidth: 120,
+              boxShadow: 'var(--inner-lip)',
+            }}
+          >
+            <div className="micro">Cost</div>
+            <div className="num" style={{ fontSize: 'var(--t-metric)', fontWeight: 500, lineHeight: 'var(--lh-metric)', letterSpacing: '-0.02em', color: 'var(--text-primary)', marginTop: 3 }}>
+              ${(run.cost_cents / 100).toFixed(2)}
+            </div>
+          </div>
+        </div>
+
+        {/* Integrity pills — narrow withheld set by reason (only when withheld filter is active) */}
+        {outcomeFilter === 'withheld' && withheldReasons.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+            <span className="micro">Withheld by reason:</span>
+            {withheldReasons.map((r) => (
+              <button
+                key={r}
+                aria-pressed={reasonFilter === r}
+                onClick={() => setReasonFilter((prev) => prev === r ? null : r)}
+                style={{
+                  height: 22,
+                  padding: '0 9px',
+                  borderRadius: 3,
+                  fontSize: 10.5,
+                  fontWeight: 600,
+                  letterSpacing: '0.07em',
+                  textTransform: 'uppercase',
+                  cursor: 'pointer',
+                  background: reasonFilter === r ? 'var(--unknown-wash)' : 'transparent',
+                  border: `1px ${reasonFilter === r ? 'solid' : 'dashed'} var(--unknown-line)`,
+                  color: reasonFilter === r ? 'var(--unknown-text)' : 'var(--text-faint)',
+                  whiteSpace: 'nowrap',
+                  position: 'relative',
+                }}
+              >
+                {reasonFilter === r && (
+                  <span aria-hidden style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 2, background: 'var(--filament)', borderRadius: '0 0 0 3px' }} />
+                )}
+                ⊘ {EVAL_WITHHELD_REASONS[r] ?? r}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Re-run confirm bar (appears when a workflow ↻ was clicked) */}
+        {rerunSlug && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: '10px 14px',
+              background: 'var(--bg-raised)',
+              border: '1px solid var(--line-strong)',
+              borderRadius: 'var(--r-md)',
+              marginBottom: 14,
+              fontSize: 13,
+            }}
+          >
+            <span style={{ flex: 1, minWidth: 0 }}>
+              Re-run <span className="mono" style={{ color: 'var(--text-primary)' }}>{rerunSlug}</span>
+              {' '}<span style={{ color: 'var(--text-faint)' }}>— estimated ~{(8 / 100).toFixed(2).replace('0.', '')}¢ · requires operator approval</span>
+            </span>
+            <Button variant="secondary" onClick={() => setRerunSlug(null)}>Cancel</Button>
+            <Button variant="primary" onClick={() => handleRerun(rerunSlug)}>Queue re-run</Button>
+          </div>
+        )}
+
+        {/* Workflow table */}
+        <Card pad={false}>
+          <Table head={['Slug', 'Workflow', 'Outcome', 'Cost', '']}>
+            {filteredWorkflows.length === 0 ? (
+              <tr>
+                <td colSpan={5} style={{ padding: '28px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                  No workflows match the current filter
+                </td>
+              </tr>
+            ) : (
+              filteredWorkflows.map((w) => (
+                <tr
+                  key={w.id}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => goToWorkflow(w.id)}
+                >
+                  <Td mono primary>{w.slug}</Td>
+                  <Td>{w.label}</Td>
+                  <Td>
+                    <EvalOutcomeBadge
+                      outcome={w.outcome}
+                      withheld_reason={w.withheld_reason}
+                      selected={outcomeFilter === 'withheld' && w.outcome === 'withheld'}
+                    />
+                  </Td>
+                  <Td right mono>
+                    {w.cost_cents > 0 ? `${w.cost_cents}¢` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                  </Td>
+                  <Td>
+                    <button
+                      title={`Re-run ${w.slug} (~8¢)`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (rerunSlug === w.slug) handleRerun(w.slug);
+                        else setRerunSlug(w.slug);
+                      }}
+                      style={{
+                        color: rerunSlug === w.slug ? 'var(--ember-core)' : 'var(--text-faint)',
+                        fontSize: 14,
+                        padding: '2px 4px',
+                        borderRadius: 3,
+                        lineHeight: 1,
+                      }}
+                    >
+                      ↻
+                    </button>
+                  </Td>
+                </tr>
+              ))
+            )}
+          </Table>
+        </Card>
+      </>
+    );
+  }
+
+  // ── Render: workflow detail ──────────────────────────────────────────────────────────────────
+  if (view === 'workflow' && run && workflow) {
+    return (
+      <>
+        <Crumbs items={[
+          { label: 'E2E Tests', onClick: () => { setView('runs'); setRunId(''); } },
+          { label: run.label, onClick: () => { setView('run'); setWorkflowId(''); } },
+          { label: workflow.label },
+        ]} />
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+          <EvalOutcomeBadge outcome={workflow.outcome} withheld_reason={workflow.withheld_reason} />
+          <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>
+            {workflow.slug}
+          </span>
+          <div style={{ flex: 1 }} />
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setRerunSlug(workflow.slug);
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              height: 'var(--control-h)',
+              padding: '0 11px',
+              borderRadius: 'var(--r-md)',
+              fontSize: 12.5,
+              background: 'var(--bg-raised)',
+              border: '1px solid var(--line-strong)',
+              color: 'var(--text-secondary)',
+              cursor: 'pointer',
+            }}
+            title={`Re-run ${workflow.slug} (~8¢ · requires operator approval)`}
+          >
+            ↻ Re-run
+          </button>
+        </div>
+
+        {rerunSlug === workflow.slug && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: '10px 14px',
+              background: 'var(--bg-raised)',
+              border: '1px solid var(--line-strong)',
+              borderRadius: 'var(--r-md)',
+              marginBottom: 16,
+              fontSize: 13,
+            }}
+          >
+            <span style={{ flex: 1, minWidth: 0 }}>
+              ~8¢ to re-run <span className="mono" style={{ color: 'var(--text-primary)' }}>{workflow.slug}</span>
+              {' '}<span style={{ color: 'var(--text-faint)' }}>· requires operator approval</span>
+            </span>
+            <Button variant="secondary" onClick={() => setRerunSlug(null)}>Cancel</Button>
+            <Button variant="primary" onClick={() => handleRerun(workflow.slug)}>Queue re-run</Button>
+          </div>
+        )}
+
+        {workflow.scenes.length === 0 ? (
+          <Card>
+            <Empty
+              kind="no-results"
+              title="No scene data for this run"
+              detail="Scene-level detail is retained only for the current run. Re-run this workflow to generate fresh assertion data."
+            />
+          </Card>
+        ) : (
+          <Card pad={false}>
+            <Table head={['Scene', 'Assertions', 'Accepted', 'Rejected', 'Withheld', '']}>
+              {workflow.scenes.map((s) => {
+                const sa = s.assertions.filter((a) => a.outcome === 'accepted').length;
+                const sr = s.assertions.filter((a) => a.outcome === 'rejected').length;
+                const sw = s.assertions.filter((a) => a.outcome === 'withheld').length;
+                return (
+                  <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => goToScene(s.id)}>
+                    <Td primary>{s.label}</Td>
+                    <Td right mono>{s.assertions.length}</Td>
+                    <Td right mono>
+                      <span style={{ color: sa > 0 ? 'var(--ok-text)' : 'var(--text-faint)' }}>{sa}</span>
+                    </Td>
+                    <Td right mono>
+                      <span style={{ color: sr > 0 ? 'var(--crit-text)' : 'var(--text-faint)' }}>{sr}</span>
+                    </Td>
+                    <Td right mono>
+                      <span style={{ color: sw > 0 ? 'var(--unknown-text)' : 'var(--text-faint)' }}>{sw}</span>
+                    </Td>
+                    <Td><span style={{ color: 'var(--text-faint)', fontSize: 12 }}>→</span></Td>
+                  </tr>
+                );
+              })}
+            </Table>
+          </Card>
+        )}
+      </>
+    );
+  }
+
+  // ── Render: scene detail (assertions + single-assertion expand) ──────────────────────────────
+  if (view === 'scene' && run && workflow && scene) {
+    return (
+      <>
+        <Crumbs items={[
+          { label: 'E2E Tests', onClick: () => { setView('runs'); setRunId(''); } },
+          { label: run.label, onClick: () => { setView('run'); setWorkflowId(''); setSceneId(''); } },
+          { label: workflow.label, onClick: () => { setView('workflow'); setSceneId(''); } },
+          { label: scene.label },
+        ]} />
+
+        <Card pad={false}>
+          <Table head={['Assertion', 'Outcome', 'Score', 'Reason']}>
+            {scene.assertions.map((a) => {
+              const expanded = expandedAssertion === a.id;
+              return (
+                <>
+                  <tr
+                    key={a.id}
+                    style={{ cursor: a.reason ? 'pointer' : 'default' }}
+                    onClick={() => a.reason && setExpandedAssertion(expanded ? null : a.id)}
+                  >
+                    <Td primary>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {a.reason && (
+                          <span
+                            aria-hidden
+                            style={{
+                              fontSize: 10,
+                              color: 'var(--text-faint)',
+                              transform: expanded ? 'rotate(90deg)' : 'none',
+                              display: 'inline-block',
+                            }}
+                          >
+                            ▶
+                          </span>
+                        )}
+                        {a.label}
+                      </span>
+                    </Td>
+                    <Td>
+                      <EvalOutcomeBadge outcome={a.outcome} />
+                    </Td>
+                    <Td right mono>
+                      {a.score !== null
+                        ? <span style={{ color: a.score >= 0.8 ? 'var(--ok-text)' : a.score >= 0.6 ? 'var(--warn-text)' : 'var(--crit-text)' }}>{a.score.toFixed(2)}</span>
+                        : <EvalOutcomeBadge outcome="withheld" />
+                      }
+                    </Td>
+                    <Td clamp>{a.reason ?? <span style={{ color: 'var(--text-faint)' }}>—</span>}</Td>
+                  </tr>
+                  {expanded && a.reason && (
+                    <tr key={`${a.id}-detail`}>
+                      <td
+                        colSpan={4}
+                        style={{
+                          padding: '12px 16px 14px 32px',
+                          background: 'var(--bg-inset)',
+                          borderBottom: '1px solid var(--line-faint)',
+                          fontSize: 13,
+                          color: 'var(--text-secondary)',
+                          lineHeight: '20px',
+                        }}
+                      >
+                        <div className="micro" style={{ marginBottom: 6 }}>Failure detail</div>
+                        {a.reason}
+                        {a.score !== null && (
+                          <div style={{ marginTop: 8, display: 'flex', gap: 12 }}>
+                            <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>Score</span>
+                            <span className="mono" style={{ fontSize: 12, color: a.score >= 0.8 ? 'var(--ok-text)' : a.score >= 0.6 ? 'var(--warn-text)' : 'var(--crit-text)' }}>
+                              {a.score.toFixed(2)} / 1.00
+                            </span>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </>
+              );
+            })}
+          </Table>
+        </Card>
+      </>
+    );
+  }
+
+  // Fallback: if navigation state is inconsistent, return to runs list
+  return (
+    <>
+      <Head screen="evals" title="E2E Tests" sub="Fixture-backed eval run results." />
+      <Card>
+        <Empty kind="no-results" title="No run selected" detail="Select a run from the list above." action={<Button onClick={() => setView('runs')}>← Back to runs</Button>} />
+      </Card>
     </>
   );
 }
