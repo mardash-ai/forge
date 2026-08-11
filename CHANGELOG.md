@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.26.2] - 2026-08-11
+
+### Fixed
+
+- **infra: expand `replication { auto {} }` to multi-line HCL in e2e-runner module.** Terraform
+  fmt -check and validate on ubuntu-latest (Terraform 1.10+) reject nested blocks on the same
+  line as their parent. Expanded all 5 `replication { auto {} }` occurrences to multi-line form
+  so terraform fmt -check passes and apply can proceed.
+
 ## [1.26.1] - 2026-08-11
 
 ### Fixed

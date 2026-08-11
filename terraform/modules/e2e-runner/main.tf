@@ -166,7 +166,9 @@ resource "google_sql_user" "app" {
 resource "google_secret_manager_secret" "db_password" {
   project   = var.project_id
   secret_id = "${var.name}-db-password"
-  replication { auto {} }
+  replication {
+    auto {}
+  }
 }
 
 resource "google_secret_manager_secret_version" "db_password" {
@@ -177,7 +179,9 @@ resource "google_secret_manager_secret_version" "db_password" {
 resource "google_secret_manager_secret" "db_url" {
   project   = var.project_id
   secret_id = "${var.name}-db-url"
-  replication { auto {} }
+  replication {
+    auto {}
+  }
 }
 
 resource "google_secret_manager_secret_version" "db_url" {
@@ -193,19 +197,25 @@ resource "google_secret_manager_secret_version" "db_url" {
 resource "google_secret_manager_secret" "anthropic_key" {
   project   = var.project_id
   secret_id = "${var.name}-anthropic-key"
-  replication { auto {} }
+  replication {
+    auto {}
+  }
 }
 
 resource "google_secret_manager_secret" "openai_key" {
   project   = var.project_id
   secret_id = "${var.name}-openai-key"
-  replication { auto {} }
+  replication {
+    auto {}
+  }
 }
 
 resource "google_secret_manager_secret" "service_token" {
   project   = var.project_id
   secret_id = "${var.name}-service-token"
-  replication { auto {} }
+  replication {
+    auto {}
+  }
   # AUTH_SERVICE_TOKEN for minting MCP access tokens against the target app's forge instance.
   # Same token the app's data-plane uses for service-to-service auth (C10 §P34).
 }
