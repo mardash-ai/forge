@@ -32,7 +32,7 @@ export interface EvalRun {
   updated_at: string;
 }
 
-export type EvalRunStatus = "running" | "completed" | "failed" | "aborted";
+export type EvalRunStatus = 'running' | 'completed' | 'failed' | 'aborted';
 
 export interface EvalWorkflow {
   id: string;
@@ -53,8 +53,8 @@ export interface EvalWorkflow {
   updated_at: string;
 }
 
-export type WorkflowVerdict = "pass" | "fail" | "error" | "skip";
-export type IntegrityClass = "clean" | "degraded" | "corrupted" | "unknown";
+export type WorkflowVerdict = 'pass' | 'fail' | 'error' | 'skip';
+export type IntegrityClass = 'clean' | 'degraded' | 'corrupted' | 'unknown';
 
 export interface EvalScene {
   id: string;
@@ -106,7 +106,7 @@ export interface EvalClaim {
   created_at: string;
 }
 
-export type ClaimVerdict = "verified" | "refuted" | "unverifiable";
+export type ClaimVerdict = 'verified' | 'refuted' | 'unverifiable';
 
 export interface TenantLease {
   holder: string; // identifier of the process/host that holds the lease
