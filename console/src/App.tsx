@@ -6033,7 +6033,7 @@ function getWorkflowTier(wf: E2EWorkflow): string | null {
   const tier = (wf.meta as { tier?: string }).tier;
   if (tier) return tier;
   const m = wf.workflow_id.match(/^([a-z]+\d+)-/);
-  return m ? m[1] ?? null : null;
+  return m ? (m[1] ?? null) : null;
 }
 
 function e2eParam(name: string): string | null {
@@ -6100,7 +6100,9 @@ function Evals() {
   // Derive the available filter values from the current run's workflows.
   const allLanes = [...new Set(allWorkflows.flatMap((w) => w.lanes))].sort();
   const allICs = [...new Set(allWorkflows.map((w) => getEffectiveIC(w)))].sort();
-  const allTiers = [...new Set(allWorkflows.map((w) => getWorkflowTier(w)).filter((t): t is string => t !== null))].sort();
+  const allTiers = [
+    ...new Set(allWorkflows.map((w) => getWorkflowTier(w)).filter((t): t is string => t !== null)),
+  ].sort();
 
   const filteredWorkflows: E2EWorkflow[] = allWorkflows.filter((w) => {
     if (verdictFilter !== 'all') {
@@ -6108,7 +6110,8 @@ function Evals() {
       if (verdictFilter === 'fail' && w.verdict !== 'fail' && w.verdict !== 'error') return false;
       if (verdictFilter === 'withheld' && w.verdict !== 'skip') return false;
     }
-    if (reasonFilter && (w.meta as { withheld_reason?: string }).withheld_reason !== reasonFilter) return false;
+    if (reasonFilter && (w.meta as { withheld_reason?: string }).withheld_reason !== reasonFilter)
+      return false;
     if (laneFilter && !w.lanes.includes(laneFilter)) return false;
     if (icFilter && getEffectiveIC(w) !== icFilter) return false;
     if (tierFilter && getWorkflowTier(w) !== tierFilter) return false;
@@ -6121,9 +6124,13 @@ function Evals() {
   // If the expanded workflow is on a different page, jump there silently.
   const effectivePage = expandedPage >= 0 && expandedPage !== wfPage ? expandedPage : wfPage;
   const totalPages = Math.max(1, Math.ceil(filteredWorkflows.length / E2E_WF_PAGE_SIZE));
-  const pagedWorkflows = filteredWorkflows.slice(effectivePage * E2E_WF_PAGE_SIZE, (effectivePage + 1) * E2E_WF_PAGE_SIZE);
+  const pagedWorkflows = filteredWorkflows.slice(
+    effectivePage * E2E_WF_PAGE_SIZE,
+    (effectivePage + 1) * E2E_WF_PAGE_SIZE,
+  );
 
-  const hasActiveFilters = verdictFilter !== 'all' || !!reasonFilter || !!laneFilter || !!icFilter || !!tierFilter;
+  const hasActiveFilters =
+    verdictFilter !== 'all' || !!reasonFilter || !!laneFilter || !!icFilter || !!tierFilter;
   const clearFilters = () => {
     setVerdictFilter('all');
     setReasonFilter(null);
@@ -6261,9 +6268,19 @@ function Evals() {
             E2E results store not connected
           </div>
           <div style={{ color: 'var(--ink)', lineHeight: 1.5 }}>
-            <code style={{ fontFamily: 'var(--mono)', fontSize: 13, background: 'rgba(0,0,0,.25)', borderRadius: 3, padding: '1px 5px' }}>CONSOLE_CP_DB_URL</code>{' '}
-            is unset on this control plane — no run data is being collected or shown.
-            Set the variable and restart the console to connect.
+            <code
+              style={{
+                fontFamily: 'var(--mono)',
+                fontSize: 13,
+                background: 'rgba(0,0,0,.25)',
+                borderRadius: 3,
+                padding: '1px 5px',
+              }}
+            >
+              CONSOLE_CP_DB_URL
+            </code>{' '}
+            is unset on this control plane — no run data is being collected or shown. Set the variable and
+            restart the console to connect.
           </div>
         </div>
       </div>
@@ -6290,8 +6307,19 @@ function Evals() {
             E2E results store unreachable
           </div>
           <div style={{ color: 'var(--ink)', lineHeight: 1.5 }}>
-            {runsApi.error ?? 'Unknown error'} — check that the console container can reach the database and that{' '}
-            <code style={{ fontFamily: 'var(--mono)', fontSize: 13, background: 'rgba(0,0,0,.25)', borderRadius: 3, padding: '1px 5px' }}>CONSOLE_CP_DB_URL</code>{' '}
+            {runsApi.error ?? 'Unknown error'} — check that the console container can reach the database and
+            that{' '}
+            <code
+              style={{
+                fontFamily: 'var(--mono)',
+                fontSize: 13,
+                background: 'rgba(0,0,0,.25)',
+                borderRadius: 3,
+                padding: '1px 5px',
+              }}
+            >
+              CONSOLE_CP_DB_URL
+            </code>{' '}
             is set correctly. Reload to retry.
           </div>
         </div>
@@ -6315,7 +6343,10 @@ function Evals() {
         }}
       >
         <span>⚠</span>
-        <span>SAMPLE DATA — development mode only. Not connected to a real store. These numbers are compiled-in fixtures.</span>
+        <span>
+          SAMPLE DATA — development mode only. Not connected to a real store. These numbers are compiled-in
+          fixtures.
+        </span>
       </div>
     ) : null;
 
@@ -6337,7 +6368,8 @@ function Evals() {
                 padding: '7px 14px',
                 border: '1px solid var(--ember-deep)',
                 borderRadius: 6,
-                background: 'linear-gradient(180deg,var(--ember-glow),var(--ember-core) 55%,var(--ember-deep))',
+                background:
+                  'linear-gradient(180deg,var(--ember-glow),var(--ember-core) 55%,var(--ember-deep))',
                 color: '#1c1006',
                 fontWeight: 650,
                 fontSize: 14,
@@ -6349,7 +6381,8 @@ function Evals() {
           )}
           {runsState === 'connected' && (
             <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-              {runs.length} run{runs.length !== 1 ? 's' : ''} · last {runs[0]?.started_at?.slice(0, 10) ?? '—'}
+              {runs.length} run{runs.length !== 1 ? 's' : ''} · last{' '}
+              {runs[0]?.started_at?.slice(0, 10) ?? '—'}
             </span>
           )}
           {runsState === 'loading' && (
@@ -6358,94 +6391,100 @@ function Evals() {
         </div>
 
         {/* Run history table — only rendered when the store is connected (or dev fixture) */}
-        {(runsState === 'connected' || usingFixture) && <>
-        <h2
-          style={{
-            fontSize: 11,
-            letterSpacing: '.08em',
-            textTransform: 'uppercase',
-            color: 'var(--text-muted)',
-            marginBottom: 10,
-            fontWeight: 600,
-          }}
-        >
-          Run history
-        </h2>
-        <div
-          style={{
-            overflowX: 'auto',
-            border: '1px solid var(--line)',
-            borderRadius: 8,
-            background: 'var(--bg-surface)',
-            marginBottom: 16,
-          }}
-        >
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                {(['Run', 'Source', 'Provider', 'Attempted', 'Pass', 'Withheld', 'Spend'] as const).map(
-                  (h) => (
-                    <th key={h} style={th}>
-                      {h}
-                    </th>
-                  ),
-                )}
-                <th style={{ ...th, minWidth: 260 }}>Accepted (sparkline)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.map((r, ri) => (
-                <tr
-                  key={r.run_id}
-                  style={rowBase}
-                  onClick={() => handleSelectRun(r.run_id)}
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      handleSelectRun(r.run_id);
-                    }
-                  }}
-                  aria-label={`Load run ${r.run_id}`}
-                >
-                  <td
-                    style={{
-                      ...cell,
-                      fontFamily: 'var(--mono)',
-                      fontSize: 12.5,
-                      color: 'var(--ember-core)',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {r.run_id}
-                  </td>
-                  <td style={{ ...cell, color: 'var(--text-muted)', fontSize: 12.5, whiteSpace: 'nowrap' }}>
-                    {r.trigger_source ?? '—'}
-                  </td>
-                  <td style={{ ...cell, fontFamily: 'var(--mono)', fontSize: 12.5, whiteSpace: 'nowrap' }}>
-                    {r.provider ?? '—'}
-                  </td>
-                  <td style={{ ...cell, textAlign: 'right' }} className="num">
-                    {r.workflows_attempted}
-                  </td>
-                  <td style={{ ...cell, textAlign: 'right', color: 'var(--ok-text)' }} className="num">
-                    {r.workflows_passed}
-                  </td>
-                  <td style={{ ...cell, textAlign: 'right', color: 'var(--text-muted)' }} className="num">
-                    {r.withheld_count}
-                  </td>
-                  <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>
-                    {fmtE2eSpend(r.spend_cents)}
-                  </td>
-                  <td style={{ ...cell, padding: '2px 12px', minWidth: 260 }}>
-                    {ri === 0 ? <E2ESparkline runs={sparklineRuns} /> : null}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        </>}
+        {(runsState === 'connected' || usingFixture) && (
+          <>
+            <h2
+              style={{
+                fontSize: 11,
+                letterSpacing: '.08em',
+                textTransform: 'uppercase',
+                color: 'var(--text-muted)',
+                marginBottom: 10,
+                fontWeight: 600,
+              }}
+            >
+              Run history
+            </h2>
+            <div
+              style={{
+                overflowX: 'auto',
+                border: '1px solid var(--line)',
+                borderRadius: 8,
+                background: 'var(--bg-surface)',
+                marginBottom: 16,
+              }}
+            >
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    {(['Run', 'Source', 'Provider', 'Attempted', 'Pass', 'Withheld', 'Spend'] as const).map(
+                      (h) => (
+                        <th key={h} style={th}>
+                          {h}
+                        </th>
+                      ),
+                    )}
+                    <th style={{ ...th, minWidth: 260 }}>Accepted (sparkline)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map((r, ri) => (
+                    <tr
+                      key={r.run_id}
+                      style={rowBase}
+                      onClick={() => handleSelectRun(r.run_id)}
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleSelectRun(r.run_id);
+                        }
+                      }}
+                      aria-label={`Load run ${r.run_id}`}
+                    >
+                      <td
+                        style={{
+                          ...cell,
+                          fontFamily: 'var(--mono)',
+                          fontSize: 12.5,
+                          color: 'var(--ember-core)',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {r.run_id}
+                      </td>
+                      <td
+                        style={{ ...cell, color: 'var(--text-muted)', fontSize: 12.5, whiteSpace: 'nowrap' }}
+                      >
+                        {r.trigger_source ?? '—'}
+                      </td>
+                      <td
+                        style={{ ...cell, fontFamily: 'var(--mono)', fontSize: 12.5, whiteSpace: 'nowrap' }}
+                      >
+                        {r.provider ?? '—'}
+                      </td>
+                      <td style={{ ...cell, textAlign: 'right' }} className="num">
+                        {r.workflows_attempted}
+                      </td>
+                      <td style={{ ...cell, textAlign: 'right', color: 'var(--ok-text)' }} className="num">
+                        {r.workflows_passed}
+                      </td>
+                      <td style={{ ...cell, textAlign: 'right', color: 'var(--text-muted)' }} className="num">
+                        {r.withheld_count}
+                      </td>
+                      <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>
+                        {fmtE2eSpend(r.spend_cents)}
+                      </td>
+                      <td style={{ ...cell, padding: '2px 12px', minWidth: 260 }}>
+                        {ri === 0 ? <E2ESparkline runs={sparklineRuns} /> : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
 
         {runModalOpen && (
           <E2ERunModal
@@ -6587,58 +6626,70 @@ function Evals() {
           filter strip reads as an unexplained second subset (Mark, 2026-08-13).
           ONLY rendered when connected — never show fixture numbers to a production viewer. */}
       {showRunDetail && (
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 10, marginBottom: 14 }}>
-        <E2EMetricTile
-          filter
-          active={verdictFilter === 'all'}
-          onClick={() => { setVerdictFilter('all'); setWfPage(0); }}
-          label="Attempted"
-          value={activeRun?.workflows_attempted ?? '—'}
-          sub={fmtE2ePctOfCatalogue(activeRun)}
-        />
-        <E2EMetricTile
-          filter
-          active={verdictFilter === 'pass'}
-          onClick={() => { setVerdictFilter('pass'); setWfPage(0); }}
-          label="Accepted"
-          value={activeRun?.workflows_passed ?? '—'}
-          color="var(--ok-text)"
-          sub={fmtE2ePctOfRunnable(activeRun)}
-        />
-        <E2EMetricTile
-          filter
-          active={verdictFilter === 'fail'}
-          onClick={() => { setVerdictFilter('fail'); setWfPage(0); }}
-          label="Rejected"
-          value={activeRun?.workflows_failed ?? '—'}
-          color="var(--crit-text)"
-          sub="honest reds"
-        />
-        <E2EMetricTile
-          filter
-          active={verdictFilter === 'withheld'}
-          onClick={() => { setVerdictFilter('withheld'); setWfPage(0); }}
-          label="Withheld"
-          value={activeRun?.withheld_count ?? '—'}
-          color="var(--text-muted)"
-          sub="⊘ blind ≠ failed"
-        />
-        <E2EMetricTile
-          label="p50 duration"
-          value={fmtE2eDuration(activeRun?.p50_duration_ms ?? null)}
-          sub="per workflow"
-        />
-        <E2EMetricTile
-          label="p99 duration"
-          value={fmtE2eDuration(activeRun?.p99_duration_ms ?? null)}
-          sub="slow tail"
-        />
-        <E2EMetricTile
-          label="Spend"
-          value={fmtE2eSpend(activeRun?.spend_cents ?? 0)}
-          sub={fmtE2eSpendSub(activeRun)}
-        />
-      </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 10, marginBottom: 14 }}>
+          <E2EMetricTile
+            filter
+            active={verdictFilter === 'all'}
+            onClick={() => {
+              setVerdictFilter('all');
+              setWfPage(0);
+            }}
+            label="Attempted"
+            value={activeRun?.workflows_attempted ?? '—'}
+            sub={fmtE2ePctOfCatalogue(activeRun)}
+          />
+          <E2EMetricTile
+            filter
+            active={verdictFilter === 'pass'}
+            onClick={() => {
+              setVerdictFilter('pass');
+              setWfPage(0);
+            }}
+            label="Accepted"
+            value={activeRun?.workflows_passed ?? '—'}
+            color="var(--ok-text)"
+            sub={fmtE2ePctOfRunnable(activeRun)}
+          />
+          <E2EMetricTile
+            filter
+            active={verdictFilter === 'fail'}
+            onClick={() => {
+              setVerdictFilter('fail');
+              setWfPage(0);
+            }}
+            label="Rejected"
+            value={activeRun?.workflows_failed ?? '—'}
+            color="var(--crit-text)"
+            sub="honest reds"
+          />
+          <E2EMetricTile
+            filter
+            active={verdictFilter === 'withheld'}
+            onClick={() => {
+              setVerdictFilter('withheld');
+              setWfPage(0);
+            }}
+            label="Withheld"
+            value={activeRun?.withheld_count ?? '—'}
+            color="var(--text-muted)"
+            sub="⊘ blind ≠ failed"
+          />
+          <E2EMetricTile
+            label="p50 duration"
+            value={fmtE2eDuration(activeRun?.p50_duration_ms ?? null)}
+            sub="per workflow"
+          />
+          <E2EMetricTile
+            label="p99 duration"
+            value={fmtE2eDuration(activeRun?.p99_duration_ms ?? null)}
+            sub="slow tail"
+          />
+          <E2EMetricTile
+            label="Spend"
+            value={fmtE2eSpend(activeRun?.spend_cents ?? 0)}
+            sub={fmtE2eSpendSub(activeRun)}
+          />
+        </div>
       )}
 
       {/* ── Filter bar: lane / integrity-class / tier + clear-all ────────────
@@ -6657,7 +6708,16 @@ function Evals() {
             background: 'var(--bg-surface)',
           }}
         >
-          <span style={{ fontSize: 11, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+          <span
+            style={{
+              fontSize: 11,
+              letterSpacing: '.07em',
+              textTransform: 'uppercase',
+              color: 'var(--text-muted)',
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+            }}
+          >
             Filter
           </span>
 
@@ -6665,7 +6725,10 @@ function Evals() {
           {allLanes.length > 0 && (
             <select
               value={laneFilter ?? ''}
-              onChange={(e) => { setLaneFilter(e.target.value || null); setWfPage(0); }}
+              onChange={(e) => {
+                setLaneFilter(e.target.value || null);
+                setWfPage(0);
+              }}
               style={{
                 font: 'inherit',
                 fontSize: 13,
@@ -6679,7 +6742,11 @@ function Evals() {
               aria-label="Filter by lane"
             >
               <option value="">All lanes</option>
-              {allLanes.map((l) => <option key={l} value={l}>{l}</option>)}
+              {allLanes.map((l) => (
+                <option key={l} value={l}>
+                  {l}
+                </option>
+              ))}
             </select>
           )}
 
@@ -6687,7 +6754,10 @@ function Evals() {
           {allICs.length > 0 && (
             <select
               value={icFilter ?? ''}
-              onChange={(e) => { setIcFilter(e.target.value || null); setWfPage(0); }}
+              onChange={(e) => {
+                setIcFilter(e.target.value || null);
+                setWfPage(0);
+              }}
               style={{
                 font: 'inherit',
                 fontSize: 13,
@@ -6701,7 +6771,11 @@ function Evals() {
               aria-label="Filter by integrity class"
             >
               <option value="">All integrity classes</option>
-              {allICs.map((ic) => <option key={ic} value={ic}>{ic}</option>)}
+              {allICs.map((ic) => (
+                <option key={ic} value={ic}>
+                  {ic}
+                </option>
+              ))}
             </select>
           )}
 
@@ -6709,7 +6783,10 @@ function Evals() {
           {allTiers.length > 0 && (
             <select
               value={tierFilter ?? ''}
-              onChange={(e) => { setTierFilter(e.target.value || null); setWfPage(0); }}
+              onChange={(e) => {
+                setTierFilter(e.target.value || null);
+                setWfPage(0);
+              }}
               style={{
                 font: 'inherit',
                 fontSize: 13,
@@ -6723,7 +6800,11 @@ function Evals() {
               aria-label="Filter by tier"
             >
               <option value="">All tiers</option>
-              {allTiers.map((t) => <option key={t} value={t}>{t}</option>)}
+              {allTiers.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
             </select>
           )}
 
@@ -6752,365 +6833,372 @@ function Evals() {
       )}
 
       {/* Showing N of M caption + pagination controls */}
-      {showRunDetail && allWorkflows.length > 0 && (() => {
-        const attempted = activeRun?.workflows_attempted ?? allWorkflows.length;
-        const storeHas = allWorkflows.length;
-        const showingN = filteredWorkflows.length;
-        const captionExtra = storeHas < attempted
-          ? ` — the store holds detail for ${storeHas}`
-          : '';
-        const filterNote = hasActiveFilters && showingN < storeHas
-          ? ` · ${storeHas - showingN} hidden by filters`
-          : '';
-        return (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-            <span style={{ fontSize: 12.5, color: 'var(--text-faint)' }}>
-              Showing {showingN} of {attempted}{captionExtra}{filterNote}
-            </span>
-            {totalPages > 1 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <button
-                  onClick={() => setWfPage((p) => Math.max(0, p - 1))}
-                  disabled={effectivePage === 0}
-                  style={{
-                    font: 'inherit',
-                    fontSize: 12,
-                    padding: '3px 8px',
-                    border: '1px solid var(--line)',
-                    borderRadius: 5,
-                    background: 'var(--bg-raised)',
-                    color: effectivePage === 0 ? 'var(--text-faint)' : 'var(--ink)',
-                    cursor: effectivePage === 0 ? 'default' : 'pointer',
-                  }}
-                >
-                  ‹ Prev
-                </button>
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  Page {effectivePage + 1} / {totalPages}
-                </span>
-                <button
-                  onClick={() => setWfPage((p) => Math.min(totalPages - 1, p + 1))}
-                  disabled={effectivePage >= totalPages - 1}
-                  style={{
-                    font: 'inherit',
-                    fontSize: 12,
-                    padding: '3px 8px',
-                    border: '1px solid var(--line)',
-                    borderRadius: 5,
-                    background: 'var(--bg-raised)',
-                    color: effectivePage >= totalPages - 1 ? 'var(--text-faint)' : 'var(--ink)',
-                    cursor: effectivePage >= totalPages - 1 ? 'default' : 'pointer',
-                  }}
-                >
-                  Next ›
-                </button>
-              </div>
-            )}
-          </div>
-        );
-      })()}
+      {showRunDetail &&
+        allWorkflows.length > 0 &&
+        (() => {
+          const attempted = activeRun?.workflows_attempted ?? allWorkflows.length;
+          const storeHas = allWorkflows.length;
+          const showingN = filteredWorkflows.length;
+          const captionExtra = storeHas < attempted ? ` — the store holds detail for ${storeHas}` : '';
+          const filterNote =
+            hasActiveFilters && showingN < storeHas ? ` · ${storeHas - showingN} hidden by filters` : '';
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+              <span style={{ fontSize: 12.5, color: 'var(--text-faint)' }}>
+                Showing {showingN} of {attempted}
+                {captionExtra}
+                {filterNote}
+              </span>
+              {totalPages > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <button
+                    onClick={() => setWfPage((p) => Math.max(0, p - 1))}
+                    disabled={effectivePage === 0}
+                    style={{
+                      font: 'inherit',
+                      fontSize: 12,
+                      padding: '3px 8px',
+                      border: '1px solid var(--line)',
+                      borderRadius: 5,
+                      background: 'var(--bg-raised)',
+                      color: effectivePage === 0 ? 'var(--text-faint)' : 'var(--ink)',
+                      cursor: effectivePage === 0 ? 'default' : 'pointer',
+                    }}
+                  >
+                    ‹ Prev
+                  </button>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    Page {effectivePage + 1} / {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setWfPage((p) => Math.min(totalPages - 1, p + 1))}
+                    disabled={effectivePage >= totalPages - 1}
+                    style={{
+                      font: 'inherit',
+                      fontSize: 12,
+                      padding: '3px 8px',
+                      border: '1px solid var(--line)',
+                      borderRadius: 5,
+                      background: 'var(--bg-raised)',
+                      color: effectivePage >= totalPages - 1 ? 'var(--text-faint)' : 'var(--ink)',
+                      cursor: effectivePage >= totalPages - 1 ? 'default' : 'pointer',
+                    }}
+                  >
+                    Next ›
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
       {/* Workflow table — only rendered when store is connected (real or dev fixture) */}
-      {showRunDetail && <div
-        style={{
-          overflowX: 'auto',
-          border: '1px solid var(--line)',
-          borderRadius: 8,
-          background: 'var(--bg-surface)',
-          marginBottom: 16,
-        }}
-      >
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr>
-              <th style={{ ...th, minWidth: 200 }}>Workflow</th>
-              <th style={th}>Lanes</th>
-              <th style={th}>Verdict</th>
-              <th style={{ ...th, textAlign: 'right' }}>Trials</th>
-              <th style={{ ...th, minWidth: 220 }}>Failing bar</th>
-              <th style={{ ...th, minWidth: 100 }} />
-            </tr>
-          </thead>
-          <tbody>
-            {pagedWorkflows.length === 0 ? (
+      {showRunDetail && (
+        <div
+          style={{
+            overflowX: 'auto',
+            border: '1px solid var(--line)',
+            borderRadius: 8,
+            background: 'var(--bg-surface)',
+            marginBottom: 16,
+          }}
+        >
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
               <tr>
-                <td
-                  colSpan={6}
-                  style={{ ...cell, textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}
-                >
-                  {hasActiveFilters ? 'No workflows match the active filters.' : 'No workflows in this run.'}
-                </td>
+                <th style={{ ...th, minWidth: 200 }}>Workflow</th>
+                <th style={th}>Lanes</th>
+                <th style={th}>Verdict</th>
+                <th style={{ ...th, textAlign: 'right' }}>Trials</th>
+                <th style={{ ...th, minWidth: 220 }}>Failing bar</th>
+                <th style={{ ...th, minWidth: 100 }} />
               </tr>
-            ) : (
-              pagedWorkflows.flatMap((wf) => {
-                const isExpanded = expandedWfId === wf.id;
-                const isRerunPending = rerunWfId === wf.id;
-                const isRerunQueued = rerunFlash === wf.id;
-                const drawerWfResult: E2EWorkflowResult =
-                  usingFixture && wf.id === E2E_FIXTURE_WORKFLOW_RESULT.workflow.id
-                    ? E2E_FIXTURE_WORKFLOW_RESULT
-                    : { workflow: wf, scenes: [], mcp_calls: [], claims: [] };
-                return [
-                  <tr
-                    key={wf.id}
-                    style={{
-                      ...rowBase,
-                      background: isExpanded ? 'var(--bg-selected)' : undefined,
-                      borderLeft: isExpanded ? '3px solid var(--ember-core)' : '3px solid transparent',
-                    }}
-                    onClick={() => {
-                      setExpandedWfId(isExpanded ? null : wf.id);
-                      setCassetteOpen(false);
-                    }}
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        setExpandedWfId(isExpanded ? null : wf.id);
-                      }
-                    }}
-                    aria-expanded={isExpanded}
+            </thead>
+            <tbody>
+              {pagedWorkflows.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={6}
+                    style={{ ...cell, textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}
                   >
-                    <td style={{ ...cell, fontFamily: 'var(--mono)', fontSize: 12.5, maxWidth: 260 }}>
-                      <span
-                        style={{
-                          display: 'block',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {wf.workflow_id}
-                      </span>
-                      {wf.prompt && (
+                    {hasActiveFilters
+                      ? 'No workflows match the active filters.'
+                      : 'No workflows in this run.'}
+                  </td>
+                </tr>
+              ) : (
+                pagedWorkflows.flatMap((wf) => {
+                  const isExpanded = expandedWfId === wf.id;
+                  const isRerunPending = rerunWfId === wf.id;
+                  const isRerunQueued = rerunFlash === wf.id;
+                  const drawerWfResult: E2EWorkflowResult =
+                    usingFixture && wf.id === E2E_FIXTURE_WORKFLOW_RESULT.workflow.id
+                      ? E2E_FIXTURE_WORKFLOW_RESULT
+                      : { workflow: wf, scenes: [], mcp_calls: [], claims: [] };
+                  return [
+                    <tr
+                      key={wf.id}
+                      style={{
+                        ...rowBase,
+                        background: isExpanded ? 'var(--bg-selected)' : undefined,
+                        borderLeft: isExpanded ? '3px solid var(--ember-core)' : '3px solid transparent',
+                      }}
+                      onClick={() => {
+                        setExpandedWfId(isExpanded ? null : wf.id);
+                        setCassetteOpen(false);
+                      }}
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setExpandedWfId(isExpanded ? null : wf.id);
+                        }
+                      }}
+                      aria-expanded={isExpanded}
+                    >
+                      <td style={{ ...cell, fontFamily: 'var(--mono)', fontSize: 12.5, maxWidth: 260 }}>
                         <span
                           style={{
                             display: 'block',
-                            color: 'var(--text-muted)',
-                            fontSize: 12,
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
-                            marginTop: 2,
                           }}
                         >
-                          {wf.prompt}
+                          {wf.workflow_id}
                         </span>
-                      )}
-                    </td>
-                    <td style={{ ...cell, whiteSpace: 'nowrap' }}>
-                      {wf.lanes.length > 0 ? (
-                        wf.lanes.map((l) => <Chip key={l}>{l}</Chip>)
-                      ) : (
-                        <span style={{ color: 'var(--text-faint)' }}>—</span>
-                      )}
-                    </td>
-                    <td style={cell}>
-                      <E2EVerdictPill verdict={wf.verdict} />
-                    </td>
-                    <td
-                      style={{
-                        ...cell,
-                        fontFamily: 'var(--mono)',
-                        fontSize: 12.5,
-                        textAlign: 'right',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {fmtTrials(wf.trials_total, wf.trials_passed, wf.verdict)}
-                    </td>
-                    <td
-                      style={{
-                        ...cell,
-                        color: wf.failing_bar ? 'var(--crit-text)' : 'var(--text-muted)',
-                        fontSize: 12.5,
-                        maxWidth: 280,
-                      }}
-                    >
-                      <span
+                        {wf.prompt && (
+                          <span
+                            style={{
+                              display: 'block',
+                              color: 'var(--text-muted)',
+                              fontSize: 12,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              marginTop: 2,
+                            }}
+                          >
+                            {wf.prompt}
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ ...cell, whiteSpace: 'nowrap' }}>
+                        {wf.lanes.length > 0 ? (
+                          wf.lanes.map((l) => <Chip key={l}>{l}</Chip>)
+                        ) : (
+                          <span style={{ color: 'var(--text-faint)' }}>—</span>
+                        )}
+                      </td>
+                      <td style={cell}>
+                        <E2EVerdictPill verdict={wf.verdict} />
+                      </td>
+                      <td
                         style={{
-                          display: 'block',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
+                          ...cell,
+                          fontFamily: 'var(--mono)',
+                          fontSize: 12.5,
+                          textAlign: 'right',
                           whiteSpace: 'nowrap',
                         }}
                       >
-                        {wf.failing_bar
-                          ? wf.failing_bar
-                          : wf.verdict === 'skip'
-                            ? `withheld — ${String(wf.meta.withheld_reason ?? 'no trial ran')}`
-                            : '—'}
-                      </span>
-                    </td>
-                    <td style={{ ...cell, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {wf.verdict !== 'skip' &&
-                        (isRerunQueued ? (
-                          <span style={{ fontSize: 12.5, color: 'var(--ok-text)' }}>✓ queued</span>
-                        ) : isRerunPending ? (
-                          <>
+                        {fmtTrials(wf.trials_total, wf.trials_passed, wf.verdict)}
+                      </td>
+                      <td
+                        style={{
+                          ...cell,
+                          color: wf.failing_bar ? 'var(--crit-text)' : 'var(--text-muted)',
+                          fontSize: 12.5,
+                          maxWidth: 280,
+                        }}
+                      >
+                        <span
+                          style={{
+                            display: 'block',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {wf.failing_bar
+                            ? wf.failing_bar
+                            : wf.verdict === 'skip'
+                              ? `withheld — ${String(wf.meta.withheld_reason ?? 'no trial ran')}`
+                              : '—'}
+                        </span>
+                      </td>
+                      <td style={{ ...cell, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {wf.verdict !== 'skip' &&
+                          (isRerunQueued ? (
+                            <span style={{ fontSize: 12.5, color: 'var(--ok-text)' }}>✓ queued</span>
+                          ) : isRerunPending ? (
+                            <>
+                              <button
+                                onClick={(e) => handleRerun(wf.id, e)}
+                                style={{
+                                  fontSize: 12,
+                                  padding: '3px 9px',
+                                  border: '1px solid var(--crit)',
+                                  borderRadius: 5,
+                                  color: 'var(--crit-text)',
+                                  background: 'var(--crit-wash)',
+                                  cursor: 'pointer',
+                                  marginRight: 4,
+                                }}
+                              >
+                                Confirm re-run
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRerunWfId(null);
+                                }}
+                                style={{
+                                  fontSize: 12,
+                                  padding: '3px 6px',
+                                  border: '1px solid var(--line)',
+                                  borderRadius: 5,
+                                  background: 'var(--bg-surface)',
+                                  color: 'var(--text-muted)',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                ✕
+                              </button>
+                            </>
+                          ) : (
                             <button
                               onClick={(e) => handleRerun(wf.id, e)}
                               style={{
                                 fontSize: 12,
                                 padding: '3px 9px',
-                                border: '1px solid var(--crit)',
-                                borderRadius: 5,
-                                color: 'var(--crit-text)',
-                                background: 'var(--crit-wash)',
-                                cursor: 'pointer',
-                                marginRight: 4,
-                              }}
-                            >
-                              Confirm re-run
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setRerunWfId(null);
-                              }}
-                              style={{
-                                fontSize: 12,
-                                padding: '3px 6px',
                                 border: '1px solid var(--line)',
                                 borderRadius: 5,
+                                color: 'var(--text-secondary)',
                                 background: 'var(--bg-surface)',
-                                color: 'var(--text-muted)',
                                 cursor: 'pointer',
                               }}
+                              title={`Re-run ${wf.workflow_id}`}
                             >
-                              ✕
+                              ↻ Re-run
                             </button>
-                          </>
-                        ) : (
-                          <button
-                            onClick={(e) => handleRerun(wf.id, e)}
-                            style={{
-                              fontSize: 12,
-                              padding: '3px 9px',
-                              border: '1px solid var(--line)',
-                              borderRadius: 5,
-                              color: 'var(--text-secondary)',
-                              background: 'var(--bg-surface)',
-                              cursor: 'pointer',
-                            }}
-                            title={`Re-run ${wf.workflow_id}`}
-                          >
-                            ↻ Re-run
-                          </button>
-                        ))}
-                    </td>
-                  </tr>,
-                  isExpanded ? (
-                    <tr key={`${wf.id}-drawer`} style={{ borderBottom: '1px solid var(--line)' }}>
-                      <td colSpan={6} style={{ padding: '0 12px 12px' }}>
-                        <E2EDrilldownDrawer
-                          wfResult={drawerWfResult}
-                          onCassette={() => setCassetteOpen(true)}
-                          onTriageWf={() => {
-                            if (!activeRun) return;
-                            const prompt = buildE2eTriagePrompt(activeRun, [wf]);
-                            navigator.clipboard.writeText(prompt).catch(() => {});
-                          }}
-                        />
+                          ))}
                       </td>
-                    </tr>
-                  ) : null,
-                ].filter((x): x is React.ReactElement => x !== null);
-              })
-            )}
-          </tbody>
-        </table>
-      </div>}
+                    </tr>,
+                    isExpanded ? (
+                      <tr key={`${wf.id}-drawer`} style={{ borderBottom: '1px solid var(--line)' }}>
+                        <td colSpan={6} style={{ padding: '0 12px 12px' }}>
+                          <E2EDrilldownDrawer
+                            wfResult={drawerWfResult}
+                            onCassette={() => setCassetteOpen(true)}
+                            onTriageWf={() => {
+                              if (!activeRun) return;
+                              const prompt = buildE2eTriagePrompt(activeRun, [wf]);
+                              navigator.clipboard.writeText(prompt).catch(() => {});
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    ) : null,
+                  ].filter((x): x is React.ReactElement => x !== null);
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Bottom row: duration chart + integrity strip — only when connected */}
-      {showRunDetail && <>
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: 16,
-          marginBottom: 16,
-          alignItems: 'start',
-        }}
-      >
-        {activeRun && <E2EDurationChart run={activeRun} prevRun={prevRun} />}
-
-        {/* Integrity strip — withheld-by-cause */}
-        <section
-          style={{
-            background: 'var(--bg-surface)',
-            border: '1px solid var(--line)',
-            borderRadius: 8,
-            padding: 16,
-          }}
-        >
-          <h2
+      {showRunDetail && (
+        <>
+          <div
             style={{
-              fontSize: 11,
-              letterSpacing: '.08em',
-              textTransform: 'uppercase',
-              color: 'var(--text-muted)',
-              marginBottom: 10,
-              fontWeight: 600,
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 16,
+              marginBottom: 16,
+              alignItems: 'start',
             }}
           >
-            Withheld by cause
-          </h2>
-          {breakdown.length === 0 ? (
-            <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No withheld workflows.</div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {breakdown.map(({ reason, count }) => (
-                <button
-                  key={reason}
-                  onClick={() => {
-                    setVerdictFilter('withheld');
-                    setReasonFilter(reasonFilter === reason ? null : reason);
-                  }}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '6px 10px',
-                    borderRadius: 6,
-                    border: '1px solid var(--line)',
-                    background: reasonFilter === reason ? 'var(--bg-selected)' : 'var(--bg-raised)',
-                    color: 'var(--text-secondary)',
-                    fontSize: 13,
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                    boxShadow: reasonFilter === reason ? 'inset 0 -2px 0 var(--ember-core)' : undefined,
-                  }}
-                >
-                  <span className="mono" style={{ fontSize: 12 }}>
-                    {reason}
-                  </span>
-                  <span className="num" style={{ color: 'var(--text-muted)' }}>
-                    {count} trial{count !== 1 ? 's' : ''}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-          {activeRun?.meta?.trials_ran_clean !== undefined && (
-            <div
+            {activeRun && <E2EDurationChart run={activeRun} prevRun={prevRun} />}
+
+            {/* Integrity strip — withheld-by-cause */}
+            <section
               style={{
-                marginTop: 12,
-                padding: '6px 10px',
-                borderRadius: 6,
-                border: '1px solid var(--ok)',
-                background: 'var(--ok-wash)',
-                color: 'var(--ok-text)',
-                fontSize: 12.5,
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--line)',
+                borderRadius: 8,
+                padding: 16,
               }}
             >
-              {String(activeRun.meta.trials_ran_clean)} / {String(activeRun.meta.trials_total ?? '?')} trials
-              ran clean
-            </div>
-          )}
-        </section>
-      </div>
-      </>}
+              <h2
+                style={{
+                  fontSize: 11,
+                  letterSpacing: '.08em',
+                  textTransform: 'uppercase',
+                  color: 'var(--text-muted)',
+                  marginBottom: 10,
+                  fontWeight: 600,
+                }}
+              >
+                Withheld by cause
+              </h2>
+              {breakdown.length === 0 ? (
+                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No withheld workflows.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {breakdown.map(({ reason, count }) => (
+                    <button
+                      key={reason}
+                      onClick={() => {
+                        setVerdictFilter('withheld');
+                        setReasonFilter(reasonFilter === reason ? null : reason);
+                      }}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '6px 10px',
+                        borderRadius: 6,
+                        border: '1px solid var(--line)',
+                        background: reasonFilter === reason ? 'var(--bg-selected)' : 'var(--bg-raised)',
+                        color: 'var(--text-secondary)',
+                        fontSize: 13,
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        boxShadow: reasonFilter === reason ? 'inset 0 -2px 0 var(--ember-core)' : undefined,
+                      }}
+                    >
+                      <span className="mono" style={{ fontSize: 12 }}>
+                        {reason}
+                      </span>
+                      <span className="num" style={{ color: 'var(--text-muted)' }}>
+                        {count} trial{count !== 1 ? 's' : ''}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {activeRun?.meta?.trials_ran_clean !== undefined && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: '6px 10px',
+                    borderRadius: 6,
+                    border: '1px solid var(--ok)',
+                    background: 'var(--ok-wash)',
+                    color: 'var(--ok-text)',
+                    fontSize: 12.5,
+                  }}
+                >
+                  {String(activeRun.meta.trials_ran_clean)} / {String(activeRun.meta.trials_total ?? '?')}{' '}
+                  trials ran clean
+                </div>
+              )}
+            </section>
+          </div>
+        </>
+      )}
     </>
   );
 }
