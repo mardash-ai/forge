@@ -1,0 +1,403 @@
+<title>E2E tests — forge console mock</title>
+<style>
+:root{
+  /* forge console tokens — verbatim from forge/console/src/design/tokens.css */
+  --ground:#0f1211; --panel:#161a19; --panel2:#1d2220; --inset:#0a0d0c; --line:#262c2a; --line-strong:#363e3b;
+  --ink:#e8eae7; --muted:#8b928e; --faint:#78807c;
+  --accent:#ff8a3c; --accent-bg:#2a1a10; --accent-strong:#ffc48a;
+  --pass:#3dd68c; --pass-text:#6ee7ae; --pass-bg:#0d2a1e;
+  --fail:#f2555a; --fail-text:#ff8a8d; --fail-bg:#2e1215;
+  --warn:#e9b949; --warn-bg:#2a2109;
+  --withheld:#8b928e; --withheld-bg:#212927;
+  --chart-a:#4D8EC4; --chart-b:#C97A4A; --focus:#ffa96b;
+}
+/* committed dark — the console is a single-theme surface; every color painted explicitly */
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);
+  font:15px/1.5 -apple-system,"Helvetica Neue",Segoe UI,sans-serif;}
+.mock-banner{background:var(--accent-bg);color:var(--accent);border-bottom:1px solid var(--line);
+  padding:6px 20px;font-size:12.5px;letter-spacing:.04em;text-transform:uppercase;font-weight:600}
+.topbar{display:flex;align-items:center;gap:14px;padding:10px 20px;border-bottom:1px solid var(--line);background:var(--panel)}
+.wordmark{font-family:"Avenir Next","Helvetica Neue",sans-serif;font-weight:600;letter-spacing:.02em}
+.crumb{color:var(--muted);font-size:13.5px}
+.crumb b{color:var(--ink);font-weight:600}
+main{max-width:1120px;margin:0 auto;padding:22px 20px 80px;display:flex;flex-direction:column;gap:22px}
+h1{font-family:"Avenir Next","Helvetica Neue",sans-serif;font-size:22px;margin:0;letter-spacing:.01em;text-wrap:balance}
+h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 10px;font-weight:600}
+.row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.spacer{flex:1}
+button{font:inherit;cursor:pointer;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:7px 14px}
+button:focus-visible,.wfrow:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.btn-primary{background:linear-gradient(180deg,var(--accent-strong),var(--accent) 55%,#c2410c);border-color:#c2410c;color:#1c1006;font-weight:650}
+.btn-ghost{background:transparent}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px}
+.mono{font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;font-size:12.5px}
+.num{font-variant-numeric:tabular-nums}
+button.pill{border:none}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:99px;padding:2px 9px;font-size:12px;font-weight:600}
+.pill.pass{background:var(--pass-bg);color:var(--pass-text)}
+.pill.fail{background:var(--fail-bg);color:var(--fail-text)}
+.pill.withheld{background:var(--withheld-bg);color:var(--withheld)}
+.pill.warn{background:var(--warn-bg);color:var(--warn)}
+.chip{display:inline-block;border:1px solid var(--line);border-radius:5px;padding:1px 7px;font-size:11.5px;color:var(--muted)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:10px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.tile .k{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.tile .v{font-size:24px;font-weight:650;margin-top:2px;font-variant-numeric:tabular-nums}
+.tile.filter{cursor:pointer}
+.tile.filter:hover{border-color:var(--line-strong)}
+.tile.filter.active{box-shadow:inset 0 -3px 0 var(--accent);border-color:var(--line-strong)}
+.tile .s{font-size:12px;color:var(--faint);margin-top:2px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:left;font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line)}
+td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.runrow{cursor:pointer}
+.runrow:hover,.wfrow:hover{background:var(--panel2)}
+.runrow.sel{background:var(--panel2);box-shadow:inset 3px 0 0 var(--accent)}
+.wfrow{cursor:pointer}
+.scroll{overflow-x:auto}
+.spark{display:block}
+.drawer{border-left:3px solid var(--accent);background:var(--panel2);border-radius:0 8px 8px 0;padding:16px;margin-top:2px}
+.scene{border:1px solid var(--line);border-radius:7px;background:var(--panel);padding:10px 12px;margin-top:10px}
+.scene h4{margin:0 0 6px;font-size:13.5px}
+.assert{display:flex;gap:8px;font-size:13px;padding:3px 0;align-items:baseline}
+.assert .obs{color:var(--muted)}
+.ok{color:var(--pass);font-weight:700}.bad{color:var(--fail);font-weight:700}
+.kv{display:grid;grid-template-columns:120px 1fr;gap:4px 12px;font-size:13px}
+.kv dt{color:var(--muted)}.kv dd{margin:0}
+pre{background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin:6px 0 0;overflow-x:auto;font-size:12px;line-height:1.45}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--ground);
+  padding:9px 16px;border-radius:7px;font-size:13.5px;opacity:0;pointer-events:none;transition:opacity .2s}
+.toast.show{opacity:1}
+@media (prefers-reduced-motion: reduce){.toast{transition:none}}
+.modal-wrap{position:fixed;inset:0;background:rgba(8,12,16,.55);display:none;align-items:center;justify-content:center;padding:20px}
+.modal-wrap.open{display:flex}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:10px;max-width:520px;width:100%;padding:20px}
+fieldset{border:1px solid var(--line);border-radius:7px;margin:0 0 12px;padding:10px 12px}
+legend{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:0 4px}
+label{display:flex;gap:8px;align-items:center;font-size:14px;padding:3px 0}
+input[type=text]{font:inherit;background:var(--inset);border:1px solid var(--line);border-radius:6px;color:var(--ink);padding:6px 9px;width:100%}
+.cost{background:var(--accent-bg);color:var(--accent);border-radius:7px;padding:9px 12px;font-size:13.5px;font-weight:600}
+.cassette-wrap{position:fixed;inset:0;background:rgba(8,12,16,.55);display:none;justify-content:flex-end}
+.cassette-wrap.open{display:flex}
+.cassette{background:var(--panel);border-left:1px solid var(--line);width:min(680px,100%);height:100%;overflow-y:auto;padding:20px}
+.turn{margin:14px 0}
+.turn .who{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:4px;font-weight:600}
+.bubble{border:1px solid var(--line);border-radius:9px;padding:10px 13px;background:var(--panel2);font-size:14px}
+.bubble.user{background:var(--accent-bg);border-color:var(--accent-bg)}
+.toolcard{border:1px solid var(--line);border-left:3px solid var(--chart-a);border-radius:7px;margin:8px 0 8px 18px;padding:8px 11px;background:var(--panel)}
+.toolcard .t{font-size:12px;color:var(--muted)}
+.claims{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 0 18px}
+.legend{display:flex;gap:14px;font-size:12.5px;color:var(--muted);align-items:center}
+.swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+</style>
+
+<div class="mock-banner">Design mockup · forge console tokens (tokens.css, verbatim) · real 2026-08-11 run data · nothing wired</div>
+<div class="topbar">
+  <span class="wordmark">forge console</span>
+  <span class="crumb">Investigate › <b>E2E tests</b></span>
+  <span class="spacer"></span>
+  <span class="chip">operator: mark@mardash.ai</span>
+</div>
+
+<main>
+  <div class="row">
+    <h1>E2E tests</h1>
+    <span class="spacer"></span>
+    <button class="btn-ghost" id="triageBtn" title="Copies a ready-to-run triage prompt">⧉ Triage with Claude</button>
+    <button class="btn-primary" id="runBtn">▸ Run tests</button>
+  </div>
+
+  <!-- ============ RUN HISTORY ============ -->
+  <section class="panel">
+    <h2>Run history</h2>
+    <div class="row" style="align-items:flex-start">
+      <div class="scroll" style="flex:2;min-width:420px">
+        <table>
+          <thead><tr><th>Run</th><th>Source</th><th>Provider</th><th class="num">Attempted</th><th class="num">Pass</th><th class="num">Withheld</th><th class="num">Spend</th><th></th></tr></thead>
+          <tbody>
+            <tr class="runrow sel" tabindex="0"><td class="mono">2026-08-11T10-35</td><td><span class="chip">manual · victory lap</span></td><td><span class="chip">openai</span></td><td class="num">75</td><td class="num">31 <span class="pill fail">22 ✗</span></td><td class="num">21 ⊘</td><td class="num">$1.04</td><td>›</td></tr>
+            <tr class="runrow" tabindex="0"><td class="mono">2026-08-10T02-00</td><td><span class="chip">nightly</span></td><td><span class="chip">openai</span></td><td class="num">75</td><td class="num">39</td><td class="num">7 ⊘</td><td class="num">$0.97</td><td>›</td></tr>
+            <tr class="runrow" tabindex="0"><td class="mono">2026-08-09T02-00</td><td><span class="chip">nightly</span></td><td><span class="chip">openai</span></td><td class="num">75</td><td class="num">43</td><td class="num">6 ⊘</td><td class="num">$1.01</td><td>›</td></tr>
+            <tr class="runrow" tabindex="0"><td class="mono">2026-08-08T02-41</td><td><span class="chip">manual · salvage</span></td><td><span class="chip">openai</span></td><td class="num">75</td><td class="num">26</td><td class="num">7 ⊘</td><td class="num">$1.02</td><td>›</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <figure style="flex:1;min-width:260px;margin:0">
+        <figcaption style="font-size:12.5px;color:var(--muted);margin-bottom:4px">Accepted workflows, last 6 runs</figcaption>
+        <svg class="spark" viewBox="0 0 260 84" width="100%" height="84" role="img" aria-label="Accepted workflows trend, last six runs: 12, 26, 36, 43, 39, 31">
+          <line x1="0" y1="70" x2="260" y2="70" stroke="var(--line)"/>
+          <path d="M8,64 L58,49 L108,38 L158,30 L208,35 L252,44 L252,70 L8,70 Z" fill="var(--chart-a)" opacity=".16"/>
+          <path d="M8,64 L58,49 L108,38 L158,30 L208,35 L252,44" fill="none" stroke="var(--chart-a)" stroke-width="2"/>
+          <circle cx="252" cy="44" r="4" fill="var(--chart-a)"/>
+          <text x="252" y="36" text-anchor="end" font-size="11" fill="var(--muted)">31</text>
+          <text x="158" y="22" text-anchor="middle" font-size="11" fill="var(--muted)">43</text>
+        </svg>
+        <div class="legend" style="margin-top:6px"><span><span class="swatch" style="background:var(--chart-a)"></span>accepted</span><span title="withheld are excluded — a blind channel is not a fail">⊘ withheld excluded</span></div>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============ RUN DETAIL ============ -->
+  <section>
+    <div class="row" style="margin-bottom:10px">
+      <h2 style="margin:0">Run <span class="mono">2026-08-11T10-35</span> · api v0.67.1 · 42 min</h2>
+      <span class="spacer"></span>
+      <span class="chip">trigger: manual (victory lap)</span>
+    </div>
+    <div class="tiles">
+      <div class="tile filter" role="button" tabindex="0" data-f="all"><div class="k">Attempted</div><div class="v">75<span style="font-size:14px;color:var(--faint)">/75</span></div><div class="s">100% of catalogue</div></div>
+      <div class="tile filter" role="button" tabindex="0" data-f="pass"><div class="k">Accepted</div><div class="v" style="color:var(--pass)">31</div><div class="s">57% of runnable</div></div>
+      <div class="tile filter" role="button" tabindex="0" data-f="fail"><div class="k">Rejected</div><div class="v" style="color:var(--fail)">22</div><div class="s">honest reds</div></div>
+      <div class="tile filter" role="button" tabindex="0" data-f="withheld"><div class="k">Withheld</div><div class="v" style="color:var(--withheld)">21<span style="font-size:14px">+1</span></div><div class="s">⊘ blind ≠ failed</div></div>
+      <div class="tile"><div class="k">p50 duration</div><div class="v">14<span style="font-size:14px">s</span></div><div class="s">per workflow</div></div>
+      <div class="tile"><div class="k">p99 duration</div><div class="v">3:42</div><div class="s">h8-two-people…</div></div>
+      <div class="tile"><div class="k">Spend</div><div class="v">$1.04</div><div class="s">2.9M in · 84% cached</div></div>
+    </div>
+    <div style="margin-top:10px;font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600">Run integrity — trials withheld, by cause <span style="text-transform:none;letter-spacing:0;font-weight:400">(rig/environment, never a product verdict — click to filter)</span></div>
+    <div class="row" style="margin-top:6px">
+      <span class="pill pass" title="trials where the rig worked end-to-end — every verdict is a real product reading">138/177 trials RAN-CLEAN</span>
+      <button class="pill withheld pfilter" data-reason="credential-expiry" title="a credential died mid-run — observation went blind. Fix: re-auth, re-run">⊘ 28 trials · credential-expiry</button>
+      <button class="pill withheld pfilter" data-reason="credential-missing" title="a required credential does not exist on this runner. Fix: supply the key">⊘ 5 trials · credential-missing</button>
+      <button class="pill withheld pfilter" data-reason="arm-never-delivered" title="the session never reached Dorinda — nothing it did can prove anything">⊘ 5 trials · arm-never-delivered</button>
+      <button class="pill withheld pfilter" data-reason="unseeded-premise" title="the fixture needs a precondition this lane cannot create">⊘ 1 trial · unseeded-premise</button>
+    </div>
+  </section>
+
+  <!-- ============ WORKFLOWS ============ -->
+  <section class="panel">
+    <h2>Workflows <span style="text-transform:none;letter-spacing:0;color:var(--faint)">— click a row for the full drilldown</span></h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Workflow</th><th>Lanes</th><th>Verdict</th><th class="num">Trials</th><th class="num">Duration</th><th>Failing bar</th><th></th></tr></thead>
+        <tbody>
+          <tr class="wfrow" tabindex="0" id="wfSel" aria-expanded="true" data-v="fail">
+            <td><div class="mono">draft-approve-sent</div><div style="font-size:12.5px;color:var(--muted)">Draft → approve → actually sent</div></td>
+            <td><span class="chip">openai</span></td>
+            <td><span class="pill fail">✗ rejected</span></td>
+            <td class="num">0/3</td><td class="num">1:12</td>
+            <td class="mono" style="color:var(--fail)">exactly 1 email on gmail where to:no-reply@… → found 0</td><td style="white-space:nowrap"><button class="btn-ghost rerun" data-wf="draft-approve-sent" data-cost="$0.05" title="Re-run just this workflow">↻ Re-run</button></td>
+          </tr>
+          <tr><td colspan="7" style="padding:0 0 6px">
+            <!-- ============ DRILLDOWN DRAWER ============ -->
+            <div class="drawer">
+              <div class="row">
+                <strong>draft-approve-sent</strong> <span class="chip">trial 1 of 3</span>
+                <span class="pill pass">integrity: ran-clean</span>
+                <span class="spacer"></span>
+                <button class="btn-ghost mono" id="cassetteBtn" style="font-size:12px">cassette ▸</button>
+                <button class="btn-ghost" id="triageWf">⧉ Triage this workflow</button>
+              </div>
+
+              <div class="scene">
+                <h4><span class="ok">✓</span> Turn 2 — Mark asks for an email to Sam</h4>
+                <div class="kv"><dt>Prompt</dt><dd>“Email Sam and ask when we’ll have the roof quote in writing.”</dd></div>
+                <div class="assert"><span class="ok">✓</span><span>must: tool <code class="mono">draft_email</code> is called</span></div>
+                <div class="assert"><span class="ok">✓</span><span>must: claim <code class="mono">askedClarifyingQuestion</code> is true</span></div>
+                <div class="assert"><span class="ok">✓</span><span>must NOT: claim <code class="mono">claimedEmailDelivery</code> is “staged”</span></div>
+                <details><summary style="cursor:pointer;font-size:13px;color:var(--accent)">1 tool call — draft_email</summary>
+                  <pre class="mono">→ draft_email { to: "Sam", subject: "Roof quote timeline", body: "…" }
+← 200 · isError: true
+  { "status": "ambiguous_recipient",
+    "recipientQuery": "Sam",
+    "candidates": [
+      { "name": "Sam Whitaker",      "email": "no-reply@mardash.ai",           "source": "contact" },
+      { "name": "Sam Whitaker-Cruz", "email": "robin.hat+partner@dorinda.test","source": "member"  } ] }</pre>
+                </details>
+              </div>
+
+              <div class="scene">
+                <h4><span class="ok">✓</span> Turn 3 — Robin answers: the roofer</h4>
+                <div class="kv"><dt>Prompt</dt><dd>“The roofer — Sam Whitaker of ABC Roofing, no-reply@mardash.ai. Not my Sam.”</dd></div>
+                <div class="assert"><span class="ok">✓</span><span>must: claim <code class="mono">claimedEmailDelivery</code> is “staged”</span></div>
+                <div class="assert"><span class="ok">✓</span><span>must: approval <code class="mono">preview</code> contains <code class="mono">no-reply@mardash.ai</code></span></div>
+              </div>
+
+              <div class="scene">
+                <h4><span class="ok">✓</span> Turn 4 — Mark approves the send</h4>
+                <div class="assert"><span class="ok">✓</span><span>must: tool <code class="mono">approve</code> is called</span></div>
+              </div>
+
+              <div class="scene">
+                <h4><span class="bad">✗</span> Verify — the real message is in Gmail Sent</h4>
+                <div class="assert"><span class="bad">✗</span><span>must: exactly 1 email on <code class="mono">gmail</code> where <code class="mono">{to: no-reply@mardash.ai}</code></span></div>
+                <div class="assert"><span></span><span class="obs">observed: found 0, expected 1 — the approve returned <code class="mono">status:"sent", messageId:19fe8aa2…</code> but no matching message is visible in Sent</span></div>
+              </div>
+            </div>
+          </td></tr>
+
+          <tr class="wfrow" tabindex="0">
+            <td data-parent-v="fail"><div class="mono">cross-ai-memory</div><div style="font-size:12.5px;color:var(--muted)">Captured in ChatGPT, recalled in Claude</div></td>
+            <td><span class="chip">openai</span> <span class="chip">anthropic</span></td>
+            <td><span class="pill fail">✗ rejected</span></td>
+            <td class="num">0/1</td><td class="num">2:04</td>
+            <td class="mono" style="color:var(--fail)">Claude host: Tool output schema validation failed</td><td style="white-space:nowrap"><button class="btn-ghost rerun" data-wf="cross-ai-memory" data-cost="$0.07" title="Re-run just this workflow">↻ Re-run</button></td>
+          </tr>
+          <tr class="wfrow" tabindex="0" data-v="pass">
+            <td><div class="mono">view-vs-edit-asked</div><div style="font-size:12.5px;color:var(--muted)">“View vs. edit” defaults to view — and says so</div></td>
+            <td><span class="chip">openai</span></td>
+            <td><span class="pill pass">✓ accepted</span></td>
+            <td class="num">5/5</td><td class="num">0:51</td><td></td><td style="white-space:nowrap"><button class="btn-ghost rerun" data-wf="view-vs-edit-asked" data-cost="$0.05" title="Re-run just this workflow">↻ Re-run</button></td>
+          </tr>
+          <tr class="wfrow" tabindex="0" data-v="withheld" data-reason="deploy-window">
+            <td><div class="mono">h5-teen-share-up</div><div style="font-size:12.5px;color:var(--muted)">Alex hands it up — teen share-up, and the refused reach</div></td>
+            <td><span class="chip">openai</span> <span class="chip">anthropic</span></td>
+            <td><span class="pill withheld">⊘ withheld</span></td>
+            <td class="num">—</td><td class="num">0:09</td>
+            <td class="mono" style="color:var(--withheld)">INFRA-FAIL(deploy-window) — re-run</td><td style="white-space:nowrap"><button class="btn-ghost rerun" data-wf="h5-teen-share-up" data-cost="$0.04" title="Re-run just this workflow">↻ Re-run</button></td>
+          </tr>
+          <tr class="wfrow" tabindex="0" data-v="pass">
+            <td><div class="mono">reminder-fires</div><div style="font-size:12.5px;color:var(--muted)">A one-time reminder actually fires</div></td>
+            <td><span class="chip">openai</span></td>
+            <td><span class="pill pass">✓ accepted</span></td>
+            <td class="num">3/3</td><td class="num">0:44</td><td></td><td style="white-space:nowrap"><button class="btn-ghost rerun" data-wf="reminder-fires" data-cost="$0.03" title="Re-run just this workflow">↻ Re-run</button></td>
+          </tr>
+          <tr class="wfrow" tabindex="0" data-v="pass">
+            <td><div class="mono">get-rid-of-it-is-ambiguous</div><div style="font-size:12.5px;color:var(--muted)">“Get rid of it” is ambiguous — ask before anything irreversible</div></td>
+            <td><span class="chip">openai</span></td>
+            <td><span class="pill pass">✓ accepted</span></td>
+            <td class="num">5/5</td><td class="num">1:03</td><td></td><td style="white-space:nowrap"><button class="btn-ghost rerun" data-wf="get-rid-of-it-is-ambiguous" data-cost="$0.05" title="Re-run just this workflow">↻ Re-run</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div style="margin-top:8px;font-size:12.5px;color:var(--faint)">Showing 6 of 75 · full table filters by verdict, lane, integrity class, and tier</div>
+  </section>
+
+  <!-- ============ DURATION DISTRIBUTION ============ -->
+  <section class="panel" style="max-width:560px">
+    <h2>Workflow duration — this run vs previous nightly</h2>
+    <svg viewBox="0 0 520 120" width="100%" role="img" aria-label="Duration percentiles: this run p50 14 seconds p99 222 seconds; previous nightly p50 16 seconds p99 201 seconds">
+      <text x="0" y="26" font-size="12" fill="var(--muted)">p50</text>
+      <rect x="46" y="14" width="70"  height="14" rx="4" fill="var(--chart-a)"/>
+      <text x="122" y="26" font-size="12" fill="var(--ink)" class="num">14s · this run</text>
+      <rect x="46" y="34" width="80"  height="14" rx="4" fill="var(--chart-b)"/>
+      <text x="132" y="46" font-size="12" fill="var(--muted)" class="num">16s · nightly 08-10</text>
+      <text x="0" y="86" font-size="12" fill="var(--muted)">p99</text>
+      <rect x="46" y="74" width="333" height="14" rx="4" fill="var(--chart-a)"/>
+      <text x="385" y="86" font-size="12" fill="var(--ink)" class="num">3:42</text>
+      <rect x="46" y="94" width="301" height="14" rx="4" fill="var(--chart-b)"/>
+      <text x="353" y="106" font-size="12" fill="var(--muted)" class="num">3:21</text>
+    </svg>
+    <div class="legend" style="margin-top:6px">
+      <span><span class="swatch" style="background:var(--chart-a)"></span>this run</span>
+      <span><span class="swatch" style="background:var(--chart-b)"></span>nightly 08-10</span>
+    </div>
+  </section>
+</main>
+
+<!-- ============ RUN MODAL ============ -->
+<div class="modal-wrap" id="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+  <div class="modal">
+    <h1 id="mTitle" style="font-size:18px;margin-bottom:14px">Run remote tests</h1>
+    <fieldset><legend>Scope</legend>
+      <label><input type="radio" name="scope" checked> Full catalogue — 75 workflows</label>
+      <label><input type="radio" name="scope"> Suite <input type="text" placeholder="privacy-tier" style="max-width:180px"></label>
+      <label><input type="radio" name="scope"> Named workflows <input type="text" placeholder="draft-approve-sent, h9-privacy-sweep" ></label>
+    </fieldset>
+    <fieldset><legend>Provider</legend>
+      <label><input type="checkbox" checked> openai (gpt-5.1)</label>
+      <label><input type="checkbox"> anthropic (claude)</label>
+    </fieldset>
+    <div class="cost">Estimated spend: <span class="num">$1.04</span> · ~40 min · runs in Cloud Run, tenant lock honored</div>
+    <div class="row" style="margin-top:14px">
+      <span class="spacer"></span>
+      <button id="mCancel">Cancel</button>
+      <button class="btn-primary">Run 75 workflows</button>
+    </div>
+  </div>
+</div>
+
+<div class="cassette-wrap" id="cassette" role="dialog" aria-modal="true" aria-label="Cassette transcript">
+  <div class="cassette">
+    <div class="row">
+      <strong class="mono">W-025.jsonl</strong> <span class="chip">trial 1</span> <span class="chip">remote · openai</span>
+      <span class="spacer"></span>
+      <button class="btn-ghost mono" style="font-size:12px">⇩ raw JSONL</button>
+      <button class="btn-ghost" id="copyCass">⧉ copy for agent</button>
+      <button id="cassClose" aria-label="Close">✕</button>
+    </div>
+
+    <div class="turn"><div class="who">Robin</div><div class="bubble user">Use Dorinda.</div></div>
+    <div class="turn"><div class="who">Assistant · 2 tool calls · 43.9k in / 526 out</div>
+      <div class="toolcard mono"><div class="t">→ use_dorinda {}</div><div class="t">← session contract · household 5 · visibility summary · tz America/New_York</div></div>
+      <div class="toolcard mono"><div class="t">→ whats_next {}</div><div class="t">← overdue 1 · waitingOn 1 · dueSoon 0</div></div>
+      <div class="bubble">Connected to robin@dorinda.test. Here’s your current snapshot: Overdue 1 → <b>Renew car registration</b>… Waiting on someone: 1 → <b>Roof quote — ABC Roofing</b> (waiting on Sam)…</div>
+      <div class="claims"><span class="chip">statedAccountEmail ✓</span><span class="chip">claimedNothingOnFile: false ✓</span></div>
+    </div>
+
+    <div class="turn"><div class="who">Robin</div><div class="bubble user">Email Sam and ask when we’ll have the roof quote in writing.</div></div>
+    <div class="turn"><div class="who">Assistant · 1 tool call</div>
+      <div class="toolcard mono"><div class="t">→ draft_email { to: "Sam", subject: "Roof quote timeline" }</div><div class="t">← ambiguous_recipient · candidates: Sam Whitaker (contact) · Sam Whitaker-Cruz (member)</div></div>
+      <div class="bubble">“Sam” matches more than one person — the roofer Sam Whitaker (ABC Roofing) or your Sam (household). Which one should this go to?</div>
+      <div class="claims"><span class="chip">askedClarifyingQuestion ✓</span><span class="chip">claimedEmailDelivery: none ✓</span></div>
+    </div>
+
+    <div class="turn"><div class="who">Robin</div><div class="bubble user">The roofer — Sam Whitaker of ABC Roofing, no-reply@mardash.ai. Not my Sam.</div></div>
+    <div class="turn"><div class="who">Assistant · 1 tool call</div>
+      <div class="toolcard mono"><div class="t">→ draft_email { to: "no-reply@mardash.ai", … }</div><div class="t">← staged · approvalId 0959a9f3 · requiresApproval: true</div></div>
+      <div class="bubble">Staged it for your approval — it won’t send until you say so.</div>
+      <div class="claims"><span class="chip">claimedEmailDelivery: staged ✓</span></div>
+    </div>
+
+    <div class="turn"><div class="who">Robin</div><div class="bubble user">Approve it.</div></div>
+    <div class="turn"><div class="who">Assistant · 1 tool call</div>
+      <div class="toolcard mono"><div class="t">→ approve { id: 0959a9f3 }</div><div class="t">← status: sent · messageId 19fe8aa2e178bd28</div></div>
+      <div class="bubble">Approved and sent to no-reply@mardash.ai.</div>
+    </div>
+
+    <div class="turn"><div class="who">Verify · gmail (delegated read)</div>
+      <div class="toolcard mono" style="border-left-color:var(--fail)"><div class="t">→ messages.list q=to:no-reply@mardash.ai subject:quote · trial-bounded</div><div class="t" style="color:var(--fail)">← 0 messages — bar expected exactly 1 ✗</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast">Triage prompt copied — paste into any Claude</div>
+
+<script>
+const toast=document.getElementById('toast');
+function copyPrompt(text){
+  navigator.clipboard&&navigator.clipboard.writeText(text).catch(()=>{});
+  toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2200);
+}
+const runPrompt=`Triage E2E run 2026-08-11T10-35 (forge-hat, remote/openai, api v0.67.1).
+Top-line: 75 attempted · 31 accepted · 22 rejected · 21+1 withheld (28 credential-expiry, 5 credential-missing, 5 arm-never-delivered, 1 unseeded) · 138/177 trials RAN-CLEAN.
+Failures to triage: draft-approve-sent, cross-ai-memory, h9-privacy-sweep, … (full list via API).
+Fetch evidence with the e2e MCP tools: get_e2e_run("2026-08-11T10-35"), get_workflow_result(run, slug), diff_e2e_runs(run, "2026-08-10T02-00").
+For each failure: classify (product / harness / host / environment), find the root cause from the drilldown (scenes, assertions, tool calls), and file findings in forge-hat/knowledge/findings.yaml (evidence: this run_id) and goals in dorinda-orchestrator/goals/ for product fixes. Never lower a bar to make a run green.`;
+document.getElementById('triageBtn').onclick=()=>copyPrompt(runPrompt);
+document.getElementById('triageWf').onclick=()=>copyPrompt('Triage workflow draft-approve-sent in run 2026-08-11T10-35: the approve returned status:"sent" with a messageId but the Gmail Sent verify found 0 matching messages. Fetch get_workflow_result("2026-08-11T10-35","draft-approve-sent") and determine whether the send, the observation window, or the assertion is at fault.');
+const cass=document.getElementById('cassette');
+document.getElementById('cassetteBtn').onclick=()=>cass.classList.add('open');
+document.getElementById('cassClose').onclick=()=>cass.classList.remove('open');
+cass.addEventListener('click',e=>{if(e.target===cass)cass.classList.remove('open')});
+document.getElementById('copyCass').onclick=()=>copyPrompt('Cassette W-025 trial 1 (run 2026-08-11T10-35): full transcript attached via get_workflow_result — the approve returned status:sent + messageId but the trial-bounded Gmail read found 0. Adjudicate: send failure, observation window, or assertion.');
+const drawerRow=document.querySelector('tr td[colspan]')?.closest('tr');
+function applyFilter(v,reason){
+  document.querySelectorAll('.tile.filter').forEach(t=>t.classList.toggle('active', t.dataset.f===v && v!=='all'));
+  document.querySelectorAll('tbody .wfrow').forEach(r=>{
+    const show=(v==='all'||r.dataset.v===v)&&(!reason||r.dataset.reason===reason);
+    r.style.display=show?'':'none';
+  });
+  if(drawerRow) drawerRow.style.display=(v==='all'||v==='fail')&&!reason?'':'none';
+}
+let cur='all';
+document.querySelectorAll('.tile.filter').forEach(t=>{
+  const go=()=>{cur=(cur===t.dataset.f)?'all':t.dataset.f;applyFilter(cur,null);};
+  t.onclick=go; t.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}};
+});
+document.querySelectorAll('.pfilter').forEach(pb=>{
+  pb.onclick=()=>{cur='withheld';applyFilter('withheld',pb.dataset.reason);};
+});
+document.querySelectorAll('.rerun').forEach(b=>{
+  b.onclick=e=>{e.stopPropagation();
+    toast.textContent=`Targeted re-run queued: ${b.dataset.wf} · openai · est ${b.dataset.cost}`;
+    toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2600);
+  };
+});
+const modal=document.getElementById('modal');
+document.getElementById('runBtn').onclick=()=>modal.classList.add('open');
+document.getElementById('mCancel').onclick=()=>modal.classList.remove('open');
+modal.addEventListener('click',e=>{if(e.target===modal)modal.classList.remove('open')});
+</script>
