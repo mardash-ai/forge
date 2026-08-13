@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.28.5] - 2026-08-13
+
+### Fixed
+
+- **The first real click died instantly because the job forced forge'''s eval CLI onto forge-hat'''s
+  image.** The e2e-runner module set `command = ["./node_modules/.bin/tsx", "src/cli/index.ts"]`
+  and `args = ["eval"]` — forge'''s own eval entrypoint. None of it exists in the forge-hat image
+  (no tsx binary, no `src/cli/index.ts`, no `eval` command), so the container could not exec and
+  Cloud Run reported "Application failed to start" seconds after the click, instead of a 40-minute
+  suite run. Both overrides are removed: forge-hat'''s image declares its own entrypoint
+  (`node --experimental-strip-types src/cli/main.ts`) and default command, and scope/provider
+  already travel as environment variables rather than argv. A fourth verify block asserts the job
+  carries no command override, so this cannot silently return — confirmed failing against the
+  broken job before commit.
+
 ## [1.28.4] - 2026-08-13
 
 ### Fixed

@@ -28,6 +28,12 @@
       "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '.spec.template.spec.template.spec.containers[0].image | startswith(\"us-east1-docker.pkg.dev/dorinda-prod/forge-hat/\")' > /dev/null",
       "cwd": ".",
       "note": "the E2E runner runs the forge-hat image from Artifact Registry, not GHCR or a placeholder"
+    },
+    {
+      "kind": "command",
+      "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '(.spec.template.spec.template.spec.containers[0] | has(\"command\") | not) or (.spec.template.spec.template.spec.containers[0].command == null)' > /dev/null",
+      "cwd": ".",
+      "note": "the job does not override the image entrypoint \u2014 forge-hat declares how it starts"
     }
   ]
 }

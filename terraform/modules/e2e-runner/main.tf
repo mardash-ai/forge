@@ -397,13 +397,22 @@ resource "google_cloud_run_v2_job" "runner" {
       containers {
         image = var.image
 
-        # Run the forge eval CLI, not the long-running API server (the Dockerfile CMD default).
-        # command maps to Docker ENTRYPOINT; args maps to CMD and is REPLACED by --args at
-        # invocation time (gcloud run jobs execute --args "eval,<suite>,--app,<app>,...").
-        # Full default execution: tsx src/cli/index.ts eval
-        # The suite file, --app, and --mcp-url are provided by the invoker at execution time.
-        command = ["./node_modules/.bin/tsx", "src/cli/index.ts"]
-        args    = ["eval"]
+        # ⛔ NO command/args override. This job runs FORGE-HAT — the acceptance harness — whose
+        # image already declares the right entrypoint and default command:
+        #
+        #   ENTRYPOINT ["node", "--experimental-strip-types", "src/cli/main.ts"]
+        #   CMD        ["remote", "--suite", "full", "--record", "--provider", "openai"]
+        #
+        # This block used to force `./node_modules/.bin/tsx src/cli/index.ts eval` — forge's own
+        # eval CLI, which does not exist in the forge-hat image (no tsx binary, no src/cli/index.ts,
+        # no `eval` command). The container could not exec at all, so the first real click died
+        # instantly with "Application failed to start" instead of running the suite (2026-08-13).
+        #
+        # Scope and provider reach the run as ENVIRONMENT variables (E2E_SUITE, E2E_WORKFLOWS,
+        # E2E_PROVIDER, set by POST /api/e2e/runs), not as argv — so nothing here needs to vary
+        # per invocation. Leaving both unset means the image is the single source of truth for how
+        # it is started, and a forge-hat change to its own entrypoint cannot be silently overridden
+        # by this stack.
 
         # cp-results backend: use FORGE_DB_URL (the single connection-string secret).
         env {
