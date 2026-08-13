@@ -74,3 +74,55 @@ export function buildExecutionConsoleUrl(executionName: string, project: string)
   if (!region || !jobName || !id) return null;
   return `https://console.cloud.google.com/run/jobs/details/${region}/${jobName}/executions/${id}?project=${encodeURIComponent(project)}`;
 }
+
+/** Terminal-or-not state of a Cloud Run Job execution, as the console needs it. */
+export interface ExecutionState {
+  /** 'running' while in flight; otherwise the outcome. 'unknown' when the API cannot say. */
+  state: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';
+  completed_at?: string;
+  message?: string;
+}
+
+/**
+ * Read an execution's current state.
+ *
+ * This exists because a pre-created run row is only ever finalised by the RUNNER, and a runner that
+ * dies before it can publish leaves the row saying "running" forever — which is what happened on
+ * 2026-08-13: the container could not exec, Cloud Run failed the execution in seconds, and the
+ * console kept showing a run in progress with no way to ever learn otherwise. The execution is the
+ * source of truth; the row must be reconciled against it rather than trusted.
+ */
+export async function getExecutionState(
+  executionName: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<ExecutionState> {
+  try {
+    const res = (await gcpJson({
+      url: `${RUN_V2}/${executionName}`,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    })) as {
+      completionTime?: string;
+      succeededCount?: number;
+      failedCount?: number;
+      cancelledCount?: number;
+      conditions?: Array<{ type?: string; state?: string; message?: string }>;
+    };
+    if (!res.completionTime) return { state: 'running' };
+    const completed_at = res.completionTime;
+    if ((res.cancelledCount ?? 0) > 0) return { state: 'cancelled', completed_at };
+    if ((res.failedCount ?? 0) > 0) {
+      const failure = res.conditions?.find((c) => c.state === 'CONDITION_FAILED');
+      return {
+        state: 'failed',
+        completed_at,
+        ...(failure?.message ? { message: failure.message } : {}),
+      };
+    }
+    if ((res.succeededCount ?? 0) > 0) return { state: 'succeeded', completed_at };
+    // Completed with no counters is not something to guess about.
+    return { state: 'unknown', completed_at };
+  } catch (e) {
+    // A read failure must never rewrite a row — 'unknown' leaves it alone.
+    return { state: 'unknown', message: (e as Error).message };
+  }
+}

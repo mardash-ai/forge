@@ -5,6 +5,7 @@
  * All tests run against in-memory mocks — no database required.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { reconcileRunningRuns } from '../src/console/server';
 import type { PgCpResultsBackend } from '../src/storage/backends/cp-results/pg';
 import type {
   EvalRun,
@@ -26,6 +27,9 @@ import { buildServer, makeSessionCookie, OIDC_SESSION_COOKIE } from '../src/cons
 // Mock the GCP jobs module so POST /api/e2e/runs tests never hit the real Cloud Run API.
 // vi.mock is hoisted, so this runs before any import in this file.
 vi.mock('../src/plugins/console-gcp/jobs', () => ({
+  // Default: an execution still in flight, so reconciliation leaves rows untouched unless a test
+  // says otherwise. Reconciliation reads this to decide whether a 'running' row has really ended.
+  getExecutionState: vi.fn().mockResolvedValue({ state: 'running' }),
   triggerCloudRunJob: vi.fn().mockResolvedValue({
     operation_name: 'projects/test-project/locations/us-east1/operations/op-123',
     execution_name: 'projects/test-project/locations/us-east1/jobs/forge-e2e-runner/executions/exec-123',
@@ -1056,5 +1060,69 @@ describe('POST /api/e2e/runs — e2e trigger', () => {
         expect(lastCall?.env['E2E_PROVIDER']).toBe('openai');
       });
     });
+  });
+});
+
+// ── A run row must never sit at "running" after its execution has ended ─────────────────────────
+//
+// The row is pre-created as 'running' on click and finalised by the RUNNER. On 2026-08-13 the
+// container could not exec, Cloud Run failed the execution in seconds, and the row stayed
+// "running…" in the tab indefinitely because nothing ever revisited it. The execution is the
+// source of truth; these tests pin that the row follows it.
+describe('reconcileRunningRuns', () => {
+  const rowRunning = (over: Record<string, unknown> = {}) => ({
+    run_id: 'run-x',
+    status: 'running',
+    started_at: new Date().toISOString(),
+    meta: { execution_name: 'projects/p/locations/r/jobs/j/executions/e' },
+    ...over,
+  });
+
+  it('marks a row failed when its execution failed', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    const store = { updateRun: async (_id: string, p: Record<string, unknown>) => void patches.push(p) };
+    const rows = [rowRunning()];
+    await reconcileRunningRuns(store, rows as never[], async () => ({ state: 'failed', completed_at: '2026-08-13T20:00:00Z' }));
+    expect(rows[0]!.status).toBe('failed');
+    expect(patches[0]!['status']).toBe('failed');
+    expect(patches[0]!['completed_at']).toBe('2026-08-13T20:00:00Z');
+  });
+
+  it('leaves a genuinely running execution alone', async () => {
+    const patches: unknown[] = [];
+    const store = { updateRun: async () => void patches.push(1) };
+    const rows = [rowRunning()];
+    await reconcileRunningRuns(store, rows as never[], async () => ({ state: 'running' }));
+    expect(rows[0]!.status).toBe('running');
+    expect(patches).toHaveLength(0);
+  });
+
+  it('never rewrites a row when the execution state cannot be read', async () => {
+    // A lookup failure is not evidence of anything. Guessing here would replace one wrong status
+    // with another, and an API blip would start marking healthy runs as failed.
+    const patches: unknown[] = [];
+    const store = { updateRun: async () => void patches.push(1) };
+    const rows = [rowRunning()];
+    await reconcileRunningRuns(store, rows as never[], async () => ({ state: 'unknown', message: '503' }));
+    expect(rows[0]!.status).toBe('running');
+    expect(patches).toHaveLength(0);
+  });
+
+  it('aborts a stale row that never recorded an execution', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    const store = { updateRun: async (_id: string, p: Record<string, unknown>) => void patches.push(p) };
+    const rows = [rowRunning({ meta: {}, started_at: new Date(Date.now() - 10 * 60_000).toISOString() })];
+    await reconcileRunningRuns(store, rows as never[], async () => ({ state: 'running' }));
+    expect(rows[0]!.status).toBe('aborted');
+    expect(patches[0]!['status']).toBe('aborted');
+  });
+
+  it('does not abort a row whose trigger is still in flight', async () => {
+    const patches: unknown[] = [];
+    const store = { updateRun: async () => void patches.push(1) };
+    const rows = [rowRunning({ meta: {}, started_at: new Date().toISOString() })];
+    await reconcileRunningRuns(store, rows as never[], async () => ({ state: 'running' }));
+    expect(rows[0]!.status).toBe('running');
+    expect(patches).toHaveLength(0);
   });
 });

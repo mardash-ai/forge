@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.28.6] - 2026-08-13
+
+### Fixed
+
+- **A run could sit at "running…" forever after its execution had ended.** The row is pre-created
+  as `running` on click and finalised by the RUNNER; when the runner never gets that far — the
+  2026-08-13 container that could not exec died in seconds — nothing ever revisited the row, and the
+  tab showed a run in progress that had ended long ago. The Cloud Run execution is now the source of
+  truth: on every read, `running` rows are reconciled against `getExecutionState` and take the
+  execution'''s outcome (failed / aborted / completed), persisted so a row heals once. A row that
+  never recorded an execution and is older than the trigger timeout is marked aborted. Deliberately
+  conservative: an unreadable execution state NEVER rewrites a row (an API blip must not start
+  marking healthy runs failed), and reconciliation is wrapped so it can never turn a working list
+  view into a 500 — a slightly stale status beats an empty page.
+- **The infra workflow was invalid, so no apply had run since 20:08Z.** Removing the GHCR
+  digest-resolution step left two empty `env:` blocks — valid YAML, rejected by Actions, which
+  failed the whole workflow with no jobs and no logs. actionlint now runs against every workflow
+  before push.
+
 ## [1.28.5] - 2026-08-13
 
 ### Fixed

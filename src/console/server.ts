@@ -62,10 +62,94 @@ import {
   type CostProvider,
   type DriftProvider,
 } from '../plugins/console-gcp/ops';
-import { triggerCloudRunJob, buildExecutionConsoleUrl } from '../plugins/console-gcp/jobs';
+import { triggerCloudRunJob, buildExecutionConsoleUrl, getExecutionState } from '../plugins/console-gcp/jobs';
 import { createGitHubPipelinesProvider } from '../plugins/console-github/pipelines';
 import { createDorindaTenantProvider, TenantAppError } from '../plugins/console-dorinda/tenants';
 import type { TenantProvider } from './providers/tenants';
+
+/**
+ * Reconcile `running` rows against their Cloud Run execution.
+ *
+ * A run row is pre-created as 'running' the moment the operator clicks, and it is the RUNNER's job
+ * to finalise it. When the runner never gets that far — on 2026-08-13 the container could not exec
+ * and Cloud Run failed the execution within seconds — the row says "running" forever, and the tab
+ * shows a run in progress that ended long ago. Nothing in the system ever revisited it.
+ *
+ * So the execution is treated as the source of truth and the row follows it, on every read:
+ *   - execution finished  → the row takes its outcome (failed / aborted / completed)
+ *   - execution running   → left alone
+ *   - state unreadable    → left alone; a lookup failure must never rewrite a record
+ *   - no execution name AND older than the trigger timeout → the trigger never took; mark aborted,
+ *     because a row that can never be finalised is worse than an honest failure
+ *
+ * Corrections are persisted, so a row heals once rather than being recomputed on every request.
+ */
+const RUN_STALE_WITHOUT_EXECUTION_MS = 5 * 60 * 1000;
+
+export async function reconcileRunningRuns<
+  T extends { run_id: string; status?: string; started_at?: string; meta?: Record<string, unknown> },
+>(
+  store: { updateRun: (id: string, patch: Record<string, unknown>) => Promise<unknown> } | null,
+  runs: T[],
+  // Injected so the reconciliation logic is testable without reaching Cloud Run.
+  readState: (
+    name: string,
+    opts?: { signal?: AbortSignal },
+  ) => Promise<{
+    state: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';
+    completed_at?: string;
+    message?: string;
+  }> = getExecutionState,
+): Promise<T[]> {
+  if (!store || !Array.isArray(runs) || runs.length === 0) return runs;
+  // Reconciliation is an ENHANCEMENT to the read path. A store that cannot persist, or any error
+  // raised while reconciling, must never turn a working list view into a 500 — the tab showing
+  // slightly stale status beats the tab showing nothing. (Caught by the existing endpoint tests,
+  // which hand in a read-only store: the first cut threw and took the whole list down with it.)
+  if (typeof (store as { updateRun?: unknown }).updateRun !== 'function') return runs;
+  const running = runs.filter((r) => r?.status === 'running');
+  if (running.length === 0) return runs;
+
+  try {
+    await Promise.all(
+      running.map(async (row) => {
+        const executionName = (row.meta as { execution_name?: string } | undefined)?.execution_name;
+        if (!executionName) {
+          const startedMs = row.started_at ? Date.parse(row.started_at) : NaN;
+          const stale = Number.isFinite(startedMs) && Date.now() - startedMs > RUN_STALE_WITHOUT_EXECUTION_MS;
+          if (!stale) return;
+          row.status = 'aborted';
+          await store
+            .updateRun(row.run_id, {
+              status: 'aborted',
+              completed_at: new Date().toISOString(),
+              meta: { ...(row.meta ?? {}), reconciled: 'no execution was ever recorded for this run' },
+            })
+            .catch(() => {});
+          return;
+        }
+        const state = await readState(executionName, { signal: AbortSignal.timeout(10_000) });
+        if (state.state === 'running' || state.state === 'unknown') return;
+        const status =
+          state.state === 'succeeded' ? 'completed' : state.state === 'cancelled' ? 'aborted' : 'failed';
+        row.status = status;
+        await store
+          .updateRun(row.run_id, {
+            status,
+            completed_at: state.completed_at ?? new Date().toISOString(),
+            meta: {
+              ...(row.meta ?? {}),
+              reconciled: `execution ${state.state}${state.message ? `: ${state.message}` : ''}`,
+            },
+          })
+          .catch(() => {});
+      }),
+    );
+  } catch {
+    // Deliberately swallowed: see the note above. The rows are returned as read.
+  }
+  return runs;
+}
 
 const PORT = Number(process.env.PORT ?? 3000);
 const PROJECT = process.env.CONSOLE_GCP_PROJECT ?? 'dorinda-prod';
@@ -1722,7 +1806,9 @@ export function buildServer(
       limit: q.limit ? Number(q.limit) : undefined,
       status: q.status,
     });
-    return envelope(runs);
+    // A 'running' row is only ever finalised by the runner; reconcile against the execution so a
+    // run that died without publishing cannot sit in the tab as in-progress forever.
+    return envelope(await reconcileRunningRuns(store, runs as never[]));
   });
 
   app.get('/api/e2e/runs/:run_id', async (req, reply) => {
@@ -1732,6 +1818,7 @@ export function buildServer(
     const detail = await queryGetRun(store, run_id);
     if (!detail)
       return reply.code(404).send({ error: { code: 'not_found', message: `run ${run_id} not found` } });
+    if (detail.run) await reconcileRunningRuns(store, [detail.run] as never[]);
     return envelope(detail);
   });
 
