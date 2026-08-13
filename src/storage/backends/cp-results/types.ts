@@ -20,7 +20,7 @@ export interface EvalRun {
   pass_rate: number | null; // 0.0–1.0; null until at least one workflow completes
   withheld_count: number;
   rejected_count: number;
-  spend_cents: number;       // total token spend in cents (stored, not computed)
+  spend_cents: number; // total token spend in cents (stored, not computed)
   p50_duration_ms: number | null; // forge-hat duration bucket (p50)
   p99_duration_ms: number | null; // forge-hat duration bucket (p99)
   total_input_tokens: number;
@@ -49,9 +49,9 @@ export interface EvalWorkflow {
   input_tokens: number;
   output_tokens: number;
   provider: string | null;
-  lanes: string[];           // which provider(s) ran this workflow (e.g. ['openai', 'anthropic'])
-  trials_total: number;      // total trial attempts (0 if withheld before any trial ran)
-  trials_passed: number;     // passed trial count
+  lanes: string[]; // which provider(s) ran this workflow (e.g. ['openai', 'anthropic'])
+  trials_total: number; // total trial attempts (0 if withheld before any trial ran)
+  trials_passed: number; // passed trial count
   failing_bar: string | null; // key failing assertion text for the summary column
   meta: Record<string, unknown>;
   created_at: string;

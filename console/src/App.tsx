@@ -4637,7 +4637,12 @@ const E2E_FIXTURE_RUNS: E2ERun[] = [
     completed_at: '2026-08-11T11:17:00Z',
     meta: {
       api_version: 'v0.67.1',
-      withheld_breakdown: { 'credential-expiry': 28, 'credential-missing': 5, 'arm-never-delivered': 5, 'unseeded-premise': 1 },
+      withheld_breakdown: {
+        'credential-expiry': 28,
+        'credential-missing': 5,
+        'arm-never-delivered': 5,
+        'unseeded-premise': 1,
+      },
       trials_ran_clean: 138,
       trials_total: 177,
       p99_slowest_workflow: 'h8-two-people…',
@@ -4717,12 +4722,106 @@ const E2E_FIXTURE_RUNS: E2ERun[] = [
 ];
 
 const E2E_FIXTURE_WORKFLOWS: E2EWorkflow[] = [
-  { id: 'w-001', run_id: '2026-08-11T10-35', workflow_id: 'draft-approve-sent', verdict: 'fail', integrity_class: 'clean', prompt: 'Draft → approve → actually sent', duration_ms: 72000, provider: 'openai', lanes: ['openai'], trials_total: 3, trials_passed: 0, failing_bar: 'exactly 1 email on gmail where to:no-reply@… → found 0', meta: { description: 'Draft → approve → actually sent', cost_cents: 5 }, created_at: '2026-08-11T10:35:10Z' },
-  { id: 'w-002', run_id: '2026-08-11T10-35', workflow_id: 'cross-ai-memory', verdict: 'fail', integrity_class: 'clean', prompt: 'Captured in ChatGPT, recalled in Claude', duration_ms: 124000, provider: 'openai', lanes: ['openai', 'anthropic'], trials_total: 1, trials_passed: 0, failing_bar: 'Claude host: Tool output schema validation failed', meta: { description: 'Captured in ChatGPT, recalled in Claude', cost_cents: 7 }, created_at: '2026-08-11T10:36:00Z' },
-  { id: 'w-003', run_id: '2026-08-11T10-35', workflow_id: 'view-vs-edit-asked', verdict: 'pass', integrity_class: 'clean', prompt: '"View vs. edit" defaults to view — and says so', duration_ms: 51000, provider: 'openai', lanes: ['openai'], trials_total: 5, trials_passed: 5, failing_bar: null, meta: { description: '"View vs. edit" defaults to view — and says so', cost_cents: 5 }, created_at: '2026-08-11T10:37:00Z' },
-  { id: 'w-004', run_id: '2026-08-11T10-35', workflow_id: 'h5-teen-share-up', verdict: 'skip', integrity_class: null, prompt: 'Alex hands it up — teen share-up, and the refused reach', duration_ms: 9000, provider: 'openai', lanes: ['openai', 'anthropic'], trials_total: 0, trials_passed: 0, failing_bar: null, meta: { description: 'Alex hands it up — teen share-up, and the refused reach', cost_cents: 4, withheld_reason: 'deploy-window' }, created_at: '2026-08-11T10:37:30Z' },
-  { id: 'w-005', run_id: '2026-08-11T10-35', workflow_id: 'reminder-fires', verdict: 'pass', integrity_class: 'clean', prompt: 'A one-time reminder actually fires', duration_ms: 44000, provider: 'openai', lanes: ['openai'], trials_total: 3, trials_passed: 3, failing_bar: null, meta: { description: 'A one-time reminder actually fires', cost_cents: 3 }, created_at: '2026-08-11T10:38:00Z' },
-  { id: 'w-006', run_id: '2026-08-11T10-35', workflow_id: 'get-rid-of-it-is-ambiguous', verdict: 'pass', integrity_class: 'clean', prompt: '"Get rid of it" is ambiguous — ask before anything irreversible', duration_ms: 63000, provider: 'openai', lanes: ['openai'], trials_total: 5, trials_passed: 5, failing_bar: null, meta: { description: '"Get rid of it" is ambiguous — ask before anything irreversible', cost_cents: 5 }, created_at: '2026-08-11T10:39:00Z' },
+  {
+    id: 'w-001',
+    run_id: '2026-08-11T10-35',
+    workflow_id: 'draft-approve-sent',
+    verdict: 'fail',
+    integrity_class: 'clean',
+    prompt: 'Draft → approve → actually sent',
+    duration_ms: 72000,
+    provider: 'openai',
+    lanes: ['openai'],
+    trials_total: 3,
+    trials_passed: 0,
+    failing_bar: 'exactly 1 email on gmail where to:no-reply@… → found 0',
+    meta: { description: 'Draft → approve → actually sent', cost_cents: 5 },
+    created_at: '2026-08-11T10:35:10Z',
+  },
+  {
+    id: 'w-002',
+    run_id: '2026-08-11T10-35',
+    workflow_id: 'cross-ai-memory',
+    verdict: 'fail',
+    integrity_class: 'clean',
+    prompt: 'Captured in ChatGPT, recalled in Claude',
+    duration_ms: 124000,
+    provider: 'openai',
+    lanes: ['openai', 'anthropic'],
+    trials_total: 1,
+    trials_passed: 0,
+    failing_bar: 'Claude host: Tool output schema validation failed',
+    meta: { description: 'Captured in ChatGPT, recalled in Claude', cost_cents: 7 },
+    created_at: '2026-08-11T10:36:00Z',
+  },
+  {
+    id: 'w-003',
+    run_id: '2026-08-11T10-35',
+    workflow_id: 'view-vs-edit-asked',
+    verdict: 'pass',
+    integrity_class: 'clean',
+    prompt: '"View vs. edit" defaults to view — and says so',
+    duration_ms: 51000,
+    provider: 'openai',
+    lanes: ['openai'],
+    trials_total: 5,
+    trials_passed: 5,
+    failing_bar: null,
+    meta: { description: '"View vs. edit" defaults to view — and says so', cost_cents: 5 },
+    created_at: '2026-08-11T10:37:00Z',
+  },
+  {
+    id: 'w-004',
+    run_id: '2026-08-11T10-35',
+    workflow_id: 'h5-teen-share-up',
+    verdict: 'skip',
+    integrity_class: null,
+    prompt: 'Alex hands it up — teen share-up, and the refused reach',
+    duration_ms: 9000,
+    provider: 'openai',
+    lanes: ['openai', 'anthropic'],
+    trials_total: 0,
+    trials_passed: 0,
+    failing_bar: null,
+    meta: {
+      description: 'Alex hands it up — teen share-up, and the refused reach',
+      cost_cents: 4,
+      withheld_reason: 'deploy-window',
+    },
+    created_at: '2026-08-11T10:37:30Z',
+  },
+  {
+    id: 'w-005',
+    run_id: '2026-08-11T10-35',
+    workflow_id: 'reminder-fires',
+    verdict: 'pass',
+    integrity_class: 'clean',
+    prompt: 'A one-time reminder actually fires',
+    duration_ms: 44000,
+    provider: 'openai',
+    lanes: ['openai'],
+    trials_total: 3,
+    trials_passed: 3,
+    failing_bar: null,
+    meta: { description: 'A one-time reminder actually fires', cost_cents: 3 },
+    created_at: '2026-08-11T10:38:00Z',
+  },
+  {
+    id: 'w-006',
+    run_id: '2026-08-11T10-35',
+    workflow_id: 'get-rid-of-it-is-ambiguous',
+    verdict: 'pass',
+    integrity_class: 'clean',
+    prompt: '"Get rid of it" is ambiguous — ask before anything irreversible',
+    duration_ms: 63000,
+    provider: 'openai',
+    lanes: ['openai'],
+    trials_total: 5,
+    trials_passed: 5,
+    failing_bar: null,
+    meta: { description: '"Get rid of it" is ambiguous — ask before anything irreversible', cost_cents: 5 },
+    created_at: '2026-08-11T10:39:00Z',
+  },
 ];
 
 const E2E_FIXTURE_RUN_DETAIL: E2ERunDetail = {
@@ -4759,7 +4858,11 @@ const E2E_FIXTURE_WORKFLOW_RESULT: E2EWorkflowResult = {
       scene_name: 'Turn 3 — Robin answers: the roofer',
       assertions: [
         { name: 'must: claim claimedEmailDelivery is "staged"', expected: 'staged', operator: 'eq' },
-        { name: 'must: approval preview contains no-reply@mardash.ai', expected: 'no-reply@mardash.ai', operator: 'contains' },
+        {
+          name: 'must: approval preview contains no-reply@mardash.ai',
+          expected: 'no-reply@mardash.ai',
+          operator: 'contains',
+        },
       ],
       observed_values: [
         { name: 'claimedEmailDelivery', value: 'staged' },
@@ -4781,23 +4884,99 @@ const E2E_FIXTURE_WORKFLOW_RESULT: E2EWorkflowResult = {
       id: 's-4',
       scene_index: 3,
       scene_name: 'Verify — the real message is in Gmail Sent',
-      assertions: [{ name: 'must: exactly 1 email on gmail where {to: no-reply@mardash.ai}', expected: 1, operator: 'eq' }],
+      assertions: [
+        {
+          name: 'must: exactly 1 email on gmail where {to: no-reply@mardash.ai}',
+          expected: 1,
+          operator: 'eq',
+        },
+      ],
       observed_values: [{ name: 'gmail messages found', value: 0 }],
       passed: false,
       created_at: '2026-08-11T10:35:30Z',
     },
   ],
   mcp_calls: [
-    { id: 'c-1', call_index: 0, tool_name: 'use_dorinda', request: {}, response: { session: 'household 5', visibility: 'summary', tz: 'America/New_York' }, duration_ms: 340, error: null },
-    { id: 'c-2', call_index: 1, tool_name: 'whats_next', request: {}, response: { overdue: 1, waitingOn: 1, dueSoon: 0 }, duration_ms: 210, error: null },
-    { id: 'c-3', call_index: 2, tool_name: 'draft_email', request: { to: 'Sam', subject: 'Roof quote timeline' }, response: { status: 'ambiguous_recipient', candidates: [{ name: 'Sam Whitaker', email: 'no-reply@mardash.ai' }, { name: 'Sam Whitaker-Cruz', email: 'robin.hat+partner@dorinda.test' }] }, duration_ms: 580, error: null },
-    { id: 'c-4', call_index: 3, tool_name: 'draft_email', request: { to: 'no-reply@mardash.ai', subject: 'Roof quote timeline' }, response: { status: 'staged', approvalId: '0959a9f3', requiresApproval: true }, duration_ms: 490, error: null },
-    { id: 'c-5', call_index: 4, tool_name: 'approve', request: { id: '0959a9f3' }, response: { status: 'sent', messageId: '19fe8aa2e178bd28' }, duration_ms: 410, error: null },
+    {
+      id: 'c-1',
+      call_index: 0,
+      tool_name: 'use_dorinda',
+      request: {},
+      response: { session: 'household 5', visibility: 'summary', tz: 'America/New_York' },
+      duration_ms: 340,
+      error: null,
+    },
+    {
+      id: 'c-2',
+      call_index: 1,
+      tool_name: 'whats_next',
+      request: {},
+      response: { overdue: 1, waitingOn: 1, dueSoon: 0 },
+      duration_ms: 210,
+      error: null,
+    },
+    {
+      id: 'c-3',
+      call_index: 2,
+      tool_name: 'draft_email',
+      request: { to: 'Sam', subject: 'Roof quote timeline' },
+      response: {
+        status: 'ambiguous_recipient',
+        candidates: [
+          { name: 'Sam Whitaker', email: 'no-reply@mardash.ai' },
+          { name: 'Sam Whitaker-Cruz', email: 'robin.hat+partner@dorinda.test' },
+        ],
+      },
+      duration_ms: 580,
+      error: null,
+    },
+    {
+      id: 'c-4',
+      call_index: 3,
+      tool_name: 'draft_email',
+      request: { to: 'no-reply@mardash.ai', subject: 'Roof quote timeline' },
+      response: { status: 'staged', approvalId: '0959a9f3', requiresApproval: true },
+      duration_ms: 490,
+      error: null,
+    },
+    {
+      id: 'c-5',
+      call_index: 4,
+      tool_name: 'approve',
+      request: { id: '0959a9f3' },
+      response: { status: 'sent', messageId: '19fe8aa2e178bd28' },
+      duration_ms: 410,
+      error: null,
+    },
   ],
   claims: [
-    { id: 'cl-1', claim_index: 0, claim_type: 'tool_called', claim_text: 'draft_email', verdict: 'verified', evidence: {}, cassette: {} },
-    { id: 'cl-2', claim_index: 1, claim_type: 'claim_value', claim_text: 'askedClarifyingQuestion', verdict: 'verified', evidence: {}, cassette: {} },
-    { id: 'cl-3', claim_index: 2, claim_type: 'claim_value', claim_text: 'claimedEmailDelivery', verdict: 'refuted', evidence: {}, cassette: {} },
+    {
+      id: 'cl-1',
+      claim_index: 0,
+      claim_type: 'tool_called',
+      claim_text: 'draft_email',
+      verdict: 'verified',
+      evidence: {},
+      cassette: {},
+    },
+    {
+      id: 'cl-2',
+      claim_index: 1,
+      claim_type: 'claim_value',
+      claim_text: 'askedClarifyingQuestion',
+      verdict: 'verified',
+      evidence: {},
+      cassette: {},
+    },
+    {
+      id: 'cl-3',
+      claim_index: 2,
+      claim_type: 'claim_value',
+      claim_text: 'claimedEmailDelivery',
+      verdict: 'refuted',
+      evidence: {},
+      cassette: {},
+    },
   ],
 };
 
@@ -4843,7 +5022,15 @@ Never lower a bar to make a run green.`;
 
 // ── Run sparkline (accepted workflows, last N runs) ───────────────────────
 
-function E2ESparkline({ runs, width = 260, height = 84 }: { runs: E2ERun[]; width?: number; height?: number }) {
+function E2ESparkline({
+  runs,
+  width = 260,
+  height = 84,
+}: {
+  runs: E2ERun[];
+  width?: number;
+  height?: number;
+}) {
   if (runs.length < 2) return null;
   const vals = [...runs].reverse().map((r) => r.workflows_passed);
   const min = 0;
@@ -4858,16 +5045,37 @@ function E2ESparkline({ runs, width = 260, height = 84 }: { runs: E2ERun[]; widt
   const last = vals[vals.length - 1]!;
   const prevBest = Math.max(...vals.slice(0, -1));
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img"
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      width="100%"
+      height={height}
+      role="img"
       aria-label={`Accepted workflows trend: ${vals.join(', ')}`}
-      style={{ display: 'block' }}>
+      style={{ display: 'block' }}
+    >
       <line x1={0} y1={h + 4} x2={width} y2={h + 4} stroke="var(--line)" strokeWidth={1} />
       <path d={`M ${pts} ${areaClose}`} fill="#4D8EC4" opacity={0.16} />
       <path d={`M ${pts}`} fill="none" stroke="#4D8EC4" strokeWidth={2} strokeLinejoin="round" />
       <circle cx={toX(vals.length - 1).toFixed(1)} cy={toY(last).toFixed(1)} r={4} fill="#4D8EC4" />
-      <text x={toX(vals.length - 1)} y={toY(last) - 8} textAnchor="end" fontSize={11} fill="var(--text-muted)">{last}</text>
+      <text
+        x={toX(vals.length - 1)}
+        y={toY(last) - 8}
+        textAnchor="end"
+        fontSize={11}
+        fill="var(--text-muted)"
+      >
+        {last}
+      </text>
       {prevBest > last && (
-        <text x={toX(vals.indexOf(prevBest))} y={toY(prevBest) - 8} textAnchor="middle" fontSize={11} fill="var(--text-muted)">{prevBest}</text>
+        <text
+          x={toX(vals.indexOf(prevBest))}
+          y={toY(prevBest) - 8}
+          textAnchor="middle"
+          fontSize={11}
+          fill="var(--text-muted)"
+        >
+          {prevBest}
+        </text>
       )}
     </svg>
   );
@@ -4877,19 +5085,76 @@ function E2ESparkline({ runs, width = 260, height = 84 }: { runs: E2ERun[]; widt
 
 function E2EVerdictPill({ verdict }: { verdict: E2EWorkflow['verdict'] }) {
   if (verdict === 'pass') {
-    return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 99, padding: '2px 9px', fontSize: 12, fontWeight: 600, background: 'var(--ok-wash)', color: 'var(--ok-text)' }}>✓ accepted</span>;
+    return (
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          borderRadius: 99,
+          padding: '2px 9px',
+          fontSize: 12,
+          fontWeight: 600,
+          background: 'var(--ok-wash)',
+          color: 'var(--ok-text)',
+        }}
+      >
+        ✓ accepted
+      </span>
+    );
   }
   if (verdict === 'skip') {
-    return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 99, padding: '2px 9px', fontSize: 12, fontWeight: 600, background: 'var(--bg-selected)', color: 'var(--text-muted)' }}>⊘ withheld</span>;
+    return (
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          borderRadius: 99,
+          padding: '2px 9px',
+          fontSize: 12,
+          fontWeight: 600,
+          background: 'var(--bg-selected)',
+          color: 'var(--text-muted)',
+        }}
+      >
+        ⊘ withheld
+      </span>
+    );
   }
-  return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 99, padding: '2px 9px', fontSize: 12, fontWeight: 600, background: 'var(--crit-wash)', color: 'var(--crit-text)' }}>✗ rejected</span>;
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        borderRadius: 99,
+        padding: '2px 9px',
+        fontSize: 12,
+        fontWeight: 600,
+        background: 'var(--crit-wash)',
+        color: 'var(--crit-text)',
+      }}
+    >
+      ✗ rejected
+    </span>
+  );
 }
 
 // ── Chip (small border tag) ───────────────────────────────────────────────
 
 function Chip({ children }: { children: ReactNode }) {
   return (
-    <span style={{ display: 'inline-block', border: '1px solid var(--line)', borderRadius: 5, padding: '1px 7px', fontSize: 11.5, color: 'var(--text-muted)' }}>
+    <span
+      style={{
+        display: 'inline-block',
+        border: '1px solid var(--line)',
+        borderRadius: 5,
+        padding: '1px 7px',
+        fontSize: 11.5,
+        color: 'var(--text-muted)',
+      }}
+    >
       {children}
     </span>
   );
@@ -4898,10 +5163,21 @@ function Chip({ children }: { children: ReactNode }) {
 // ── E2E metric tile (7-tile row) ──────────────────────────────────────────
 
 function E2EMetricTile({
-  label, value, sub, color, filter, active, onClick,
+  label,
+  value,
+  sub,
+  color,
+  filter,
+  active,
+  onClick,
 }: {
-  label: string; value: ReactNode; sub?: string; color?: string;
-  filter?: boolean; active?: boolean; onClick?: () => void;
+  label: string;
+  value: ReactNode;
+  sub?: string;
+  color?: string;
+  filter?: boolean;
+  active?: boolean;
+  onClick?: () => void;
 }) {
   const isButton = filter && onClick;
   const style: React.CSSProperties = {
@@ -4915,16 +5191,41 @@ function E2EMetricTile({
   };
   const inner = (
     <>
-      <div className="micro" style={{ marginBottom: 2 }}>{label}</div>
-      <div className="num" style={{ fontSize: 24, fontWeight: 650, marginTop: 2, color: color ?? 'var(--text-primary)', lineHeight: 1.2 }}>{value}</div>
+      <div className="micro" style={{ marginBottom: 2 }}>
+        {label}
+      </div>
+      <div
+        className="num"
+        style={{
+          fontSize: 24,
+          fontWeight: 650,
+          marginTop: 2,
+          color: color ?? 'var(--text-primary)',
+          lineHeight: 1.2,
+        }}
+      >
+        {value}
+      </div>
       {sub && <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 2 }}>{sub}</div>}
     </>
   );
   if (isButton) {
     return (
-      <button role="button" tabIndex={0} aria-pressed={active} onClick={onClick}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
-        style={style}>{inner}</button>
+      <button
+        role="button"
+        tabIndex={0}
+        aria-pressed={active}
+        onClick={onClick}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onClick();
+          }
+        }}
+        style={style}
+      >
+        {inner}
+      </button>
     );
   }
   return <div style={style}>{inner}</div>;
@@ -4933,7 +5234,9 @@ function E2EMetricTile({
 // ── Drilldown drawer (inline) ─────────────────────────────────────────────
 
 function E2EDrilldownDrawer({
-  wfResult, onCassette, onTriageWf,
+  wfResult,
+  onCassette,
+  onTriageWf,
 }: {
   wfResult: E2EWorkflowResult | null;
   onCassette: () => void;
@@ -4951,24 +5254,53 @@ function E2EDrilldownDrawer({
   return (
     <div style={drawerStyle}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
-        <strong className="mono" style={{ fontSize: 13 }}>{wf?.workflow_id ?? '—'}</strong>
+        <strong className="mono" style={{ fontSize: 13 }}>
+          {wf?.workflow_id ?? '—'}
+        </strong>
         <Chip>trial 1 of {wf?.trials_total ?? 1}</Chip>
         {wf?.integrity_class && (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 99, padding: '2px 9px', fontSize: 12, fontWeight: 600, background: 'var(--ok-wash)', color: 'var(--ok-text)' }}>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              borderRadius: 99,
+              padding: '2px 9px',
+              fontSize: 12,
+              fontWeight: 600,
+              background: 'var(--ok-wash)',
+              color: 'var(--ok-text)',
+            }}
+          >
             integrity: {wf.integrity_class}
           </span>
         )}
         <div style={{ flex: 1 }} />
         <button
           onClick={onCassette}
-          style={{ fontFamily: 'var(--mono)', fontSize: 12, padding: '4px 10px', border: '1px solid var(--line)', borderRadius: 6, color: 'var(--text-secondary)', background: 'var(--bg-surface)' }}
+          style={{
+            fontFamily: 'var(--mono)',
+            fontSize: 12,
+            padding: '4px 10px',
+            border: '1px solid var(--line)',
+            borderRadius: 6,
+            color: 'var(--text-secondary)',
+            background: 'var(--bg-surface)',
+          }}
           title="View the cassette transcript for this trial"
         >
           cassette ▸
         </button>
         <button
           onClick={onTriageWf}
-          style={{ padding: '4px 10px', border: '1px solid var(--line)', borderRadius: 6, color: 'var(--text-secondary)', background: 'var(--bg-surface)', fontSize: 13 }}
+          style={{
+            padding: '4px 10px',
+            border: '1px solid var(--line)',
+            borderRadius: 6,
+            color: 'var(--text-secondary)',
+            background: 'var(--bg-surface)',
+            fontSize: 13,
+          }}
           title="Copy a triage prompt for this workflow to the clipboard"
         >
           ⧉ Triage this workflow
@@ -4983,19 +5315,50 @@ function E2EDrilldownDrawer({
         scenes.map((sc, si) => {
           const allPassed = sc.passed !== false;
           return (
-            <div key={sc.id} style={{ border: '1px solid var(--line)', borderRadius: 7, background: 'var(--bg-surface)', padding: '10px 12px', marginTop: 10 }}>
+            <div
+              key={sc.id}
+              style={{
+                border: '1px solid var(--line)',
+                borderRadius: 7,
+                background: 'var(--bg-surface)',
+                padding: '10px 12px',
+                marginTop: 10,
+              }}
+            >
               <div style={{ marginBottom: 6, fontSize: 13.5, fontWeight: 600 }}>
-                <span style={{ color: allPassed ? 'var(--ok)' : 'var(--crit)', marginRight: 6 }}>{allPassed ? '✓' : '✗'}</span>
+                <span style={{ color: allPassed ? 'var(--ok)' : 'var(--crit)', marginRight: 6 }}>
+                  {allPassed ? '✓' : '✗'}
+                </span>
                 {sc.scene_name ?? `Scene ${si + 1}`}
               </div>
               {sc.assertions.map((a, ai) => {
                 const obs = sc.observed_values[ai];
-                const passed = obs !== undefined
-                  ? (a.operator === 'eq' ? obs.value === a.expected : a.operator === 'contains' ? String(obs.value).includes(String(a.expected)) : true)
-                  : null;
+                const passed =
+                  obs !== undefined
+                    ? a.operator === 'eq'
+                      ? obs.value === a.expected
+                      : a.operator === 'contains'
+                        ? String(obs.value).includes(String(a.expected))
+                        : true
+                    : null;
                 return (
-                  <div key={ai} style={{ display: 'flex', gap: 8, fontSize: 13, padding: '3px 0', alignItems: 'baseline' }}>
-                    <span style={{ color: passed === false ? 'var(--crit)' : 'var(--ok)', fontWeight: 700, flexShrink: 0 }}>
+                  <div
+                    key={ai}
+                    style={{
+                      display: 'flex',
+                      gap: 8,
+                      fontSize: 13,
+                      padding: '3px 0',
+                      alignItems: 'baseline',
+                    }}
+                  >
+                    <span
+                      style={{
+                        color: passed === false ? 'var(--crit)' : 'var(--ok)',
+                        fontWeight: 700,
+                        flexShrink: 0,
+                      }}
+                    >
                       {passed === false ? '✗' : '✓'}
                     </span>
                     <span style={{ color: 'var(--text-secondary)' }}>{a.name}</span>
@@ -5003,8 +5366,11 @@ function E2EDrilldownDrawer({
                 );
               })}
               {sc.observed_values.some((ov) => ov.value !== null) && sc.passed === false && (
-                <div style={{ marginTop: 6, fontSize: 12.5, color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                  observed: {sc.observed_values.map((ov) => `${ov.name}=${JSON.stringify(ov.value)}`).join(' · ')}
+                <div
+                  style={{ marginTop: 6, fontSize: 12.5, color: 'var(--text-muted)', fontStyle: 'italic' }}
+                >
+                  observed:{' '}
+                  {sc.observed_values.map((ov) => `${ov.name}=${JSON.stringify(ov.value)}`).join(' · ')}
                 </div>
               )}
             </div>
@@ -5018,7 +5384,10 @@ function E2EDrilldownDrawer({
 // ── Cassette panel (slide-in overlay from right) ──────────────────────────
 
 function E2ECassettePanel({
-  wfResult, onClose, onCopy, onDownload,
+  wfResult,
+  onClose,
+  onCopy,
+  onDownload,
 }: {
   wfResult: E2EWorkflowResult | null;
   onClose: () => void;
@@ -5031,12 +5400,30 @@ function E2ECassettePanel({
 
   return (
     <div
-      role="dialog" aria-modal="true" aria-label="Cassette transcript"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(8,12,16,.55)', display: 'flex', justifyContent: 'flex-end', zIndex: 200 }}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Cassette transcript"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(8,12,16,.55)',
+        display: 'flex',
+        justifyContent: 'flex-end',
+        zIndex: 200,
+      }}
     >
       <div
-        style={{ background: 'var(--bg-surface)', borderLeft: '1px solid var(--line)', width: 'min(680px,100%)', height: '100%', overflowY: 'auto', padding: 20 }}
+        style={{
+          background: 'var(--bg-surface)',
+          borderLeft: '1px solid var(--line)',
+          width: 'min(680px,100%)',
+          height: '100%',
+          overflowY: 'auto',
+          padding: 20,
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -5045,9 +5432,49 @@ function E2ECassettePanel({
           <Chip>trial 1</Chip>
           <Chip>remote · {wf?.provider ?? 'openai'}</Chip>
           <div style={{ flex: 1 }} />
-          <button onClick={onDownload} title="Download raw JSONL" style={{ fontFamily: 'var(--mono)', fontSize: 12, padding: '4px 10px', border: '1px solid var(--line)', borderRadius: 6, color: 'var(--text-secondary)', background: 'var(--bg-surface)' }}>⇩ raw JSONL</button>
-          <button onClick={onCopy} title="Copy cassette for agent" style={{ padding: '4px 10px', border: '1px solid var(--line)', borderRadius: 6, color: 'var(--text-secondary)', background: 'var(--bg-surface)', fontSize: 13 }}>⧉ copy for agent</button>
-          <button onClick={onClose} aria-label="Close cassette" style={{ padding: '4px 8px', border: '1px solid var(--line)', borderRadius: 6, color: 'var(--text-muted)', background: 'var(--bg-surface)', fontSize: 15 }}>✕</button>
+          <button
+            onClick={onDownload}
+            title="Download raw JSONL"
+            style={{
+              fontFamily: 'var(--mono)',
+              fontSize: 12,
+              padding: '4px 10px',
+              border: '1px solid var(--line)',
+              borderRadius: 6,
+              color: 'var(--text-secondary)',
+              background: 'var(--bg-surface)',
+            }}
+          >
+            ⇩ raw JSONL
+          </button>
+          <button
+            onClick={onCopy}
+            title="Copy cassette for agent"
+            style={{
+              padding: '4px 10px',
+              border: '1px solid var(--line)',
+              borderRadius: 6,
+              color: 'var(--text-secondary)',
+              background: 'var(--bg-surface)',
+              fontSize: 13,
+            }}
+          >
+            ⧉ copy for agent
+          </button>
+          <button
+            onClick={onClose}
+            aria-label="Close cassette"
+            style={{
+              padding: '4px 8px',
+              border: '1px solid var(--line)',
+              borderRadius: 6,
+              color: 'var(--text-muted)',
+              background: 'var(--bg-surface)',
+              fontSize: 15,
+            }}
+          >
+            ✕
+          </button>
         </div>
 
         {/* Turns */}
@@ -5057,29 +5484,85 @@ function E2ECassettePanel({
           <>
             {/* Robin turn 1 */}
             <div style={{ margin: '14px 0' }}>
-              <div style={{ fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600 }}>Robin</div>
-              <div style={{ border: '1px solid var(--ember-wash)', borderRadius: 9, padding: '10px 13px', background: 'var(--ember-wash)', fontSize: 14 }}>Use Dorinda.</div>
+              <div
+                style={{
+                  fontSize: 11.5,
+                  letterSpacing: '.06em',
+                  textTransform: 'uppercase',
+                  color: 'var(--text-muted)',
+                  marginBottom: 4,
+                  fontWeight: 600,
+                }}
+              >
+                Robin
+              </div>
+              <div
+                style={{
+                  border: '1px solid var(--ember-wash)',
+                  borderRadius: 9,
+                  padding: '10px 13px',
+                  background: 'var(--ember-wash)',
+                  fontSize: 14,
+                }}
+              >
+                Use Dorinda.
+              </div>
             </div>
             {/* Assistant turn with tool calls 0+1 */}
             {calls.length > 0 && (
               <div style={{ margin: '14px 0' }}>
-                <div style={{ fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600 }}>
+                <div
+                  style={{
+                    fontSize: 11.5,
+                    letterSpacing: '.06em',
+                    textTransform: 'uppercase',
+                    color: 'var(--text-muted)',
+                    marginBottom: 4,
+                    fontWeight: 600,
+                  }}
+                >
                   Assistant · {Math.min(2, calls.length)} tool calls
                 </div>
                 {calls.slice(0, 2).map((c) => (
-                  <div key={c.id} style={{ border: '1px solid var(--line)', borderLeft: '3px solid #4D8EC4', borderRadius: 7, margin: '8px 0 8px 18px', padding: '8px 11px', background: 'var(--bg-surface)', fontFamily: 'var(--mono)', fontSize: 12 }}>
-                    <div style={{ color: 'var(--text-muted)' }}>→ {c.tool_name} {JSON.stringify(c.request).slice(0, 60)}</div>
-                    <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>← {c.response ? JSON.stringify(c.response).slice(0, 80) : c.error ?? '—'}</div>
+                  <div
+                    key={c.id}
+                    style={{
+                      border: '1px solid var(--line)',
+                      borderLeft: '3px solid #4D8EC4',
+                      borderRadius: 7,
+                      margin: '8px 0 8px 18px',
+                      padding: '8px 11px',
+                      background: 'var(--bg-surface)',
+                      fontFamily: 'var(--mono)',
+                      fontSize: 12,
+                    }}
+                  >
+                    <div style={{ color: 'var(--text-muted)' }}>
+                      → {c.tool_name} {JSON.stringify(c.request).slice(0, 60)}
+                    </div>
+                    <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
+                      ← {c.response ? JSON.stringify(c.response).slice(0, 80) : (c.error ?? '—')}
+                    </div>
                   </div>
                 ))}
-                <div style={{ border: '1px solid var(--line)', borderRadius: 9, padding: '10px 13px', background: 'var(--bg-raised)', fontSize: 14 }}>
+                <div
+                  style={{
+                    border: '1px solid var(--line)',
+                    borderRadius: 9,
+                    padding: '10px 13px',
+                    background: 'var(--bg-raised)',
+                    fontSize: 14,
+                  }}
+                >
                   Connected to {wf?.workflow_id ?? 'household'}. Here&apos;s your current snapshot…
                 </div>
                 {claims.filter((cl) => cl.verdict === 'verified').length > 0 && (
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '6px 0 0 18px' }}>
-                    {claims.filter((cl) => cl.verdict === 'verified').map((cl) => (
-                      <Chip key={cl.id}>{cl.claim_text ?? cl.claim_type} ✓</Chip>
-                    ))}
+                    {claims
+                      .filter((cl) => cl.verdict === 'verified')
+                      .map((cl) => (
+                        <Chip key={cl.id}>{cl.claim_text ?? cl.claim_type} ✓</Chip>
+                      ))}
                   </div>
                 )}
               </div>
@@ -5087,20 +5570,70 @@ function E2ECassettePanel({
             {/* Remaining MCP calls shown as tool cards */}
             {calls.slice(2).map((c) => (
               <div key={c.id} style={{ margin: '14px 0' }}>
-                <div style={{ fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600 }}>Assistant · 1 tool call</div>
-                <div style={{ border: '1px solid var(--line)', borderLeft: '3px solid #4D8EC4', borderRadius: 7, margin: '8px 0 8px 18px', padding: '8px 11px', background: 'var(--bg-surface)', fontFamily: 'var(--mono)', fontSize: 12 }}>
-                  <div style={{ color: 'var(--text-muted)' }}>→ {c.tool_name} {JSON.stringify(c.request).slice(0, 80)}</div>
-                  <div style={{ color: c.error ? 'var(--crit-text)' : 'var(--text-muted)', marginTop: 2 }}>← {c.error ? c.error : c.response ? JSON.stringify(c.response).slice(0, 80) : '—'}</div>
+                <div
+                  style={{
+                    fontSize: 11.5,
+                    letterSpacing: '.06em',
+                    textTransform: 'uppercase',
+                    color: 'var(--text-muted)',
+                    marginBottom: 4,
+                    fontWeight: 600,
+                  }}
+                >
+                  Assistant · 1 tool call
+                </div>
+                <div
+                  style={{
+                    border: '1px solid var(--line)',
+                    borderLeft: '3px solid #4D8EC4',
+                    borderRadius: 7,
+                    margin: '8px 0 8px 18px',
+                    padding: '8px 11px',
+                    background: 'var(--bg-surface)',
+                    fontFamily: 'var(--mono)',
+                    fontSize: 12,
+                  }}
+                >
+                  <div style={{ color: 'var(--text-muted)' }}>
+                    → {c.tool_name} {JSON.stringify(c.request).slice(0, 80)}
+                  </div>
+                  <div style={{ color: c.error ? 'var(--crit-text)' : 'var(--text-muted)', marginTop: 2 }}>
+                    ← {c.error ? c.error : c.response ? JSON.stringify(c.response).slice(0, 80) : '—'}
+                  </div>
                 </div>
               </div>
             ))}
             {/* Verify turn */}
             {(wfResult.workflow.verdict === 'fail' || wfResult.workflow.verdict === 'error') && (
               <div style={{ margin: '14px 0' }}>
-                <div style={{ fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600 }}>Verify · external observer</div>
-                <div style={{ border: '1px solid var(--line)', borderLeft: '3px solid var(--crit)', borderRadius: 7, margin: '8px 0 8px 18px', padding: '8px 11px', background: 'var(--bg-surface)', fontFamily: 'var(--mono)', fontSize: 12 }}>
+                <div
+                  style={{
+                    fontSize: 11.5,
+                    letterSpacing: '.06em',
+                    textTransform: 'uppercase',
+                    color: 'var(--text-muted)',
+                    marginBottom: 4,
+                    fontWeight: 600,
+                  }}
+                >
+                  Verify · external observer
+                </div>
+                <div
+                  style={{
+                    border: '1px solid var(--line)',
+                    borderLeft: '3px solid var(--crit)',
+                    borderRadius: 7,
+                    margin: '8px 0 8px 18px',
+                    padding: '8px 11px',
+                    background: 'var(--bg-surface)',
+                    fontFamily: 'var(--mono)',
+                    fontSize: 12,
+                  }}
+                >
                   <div style={{ color: 'var(--text-muted)' }}>→ observe · trial-bounded</div>
-                  <div style={{ color: 'var(--crit-text)', marginTop: 2 }}>← {wfResult.workflow.failing_bar ?? 'assertion failed'} ✗</div>
+                  <div style={{ color: 'var(--crit-text)', marginTop: 2 }}>
+                    ← {wfResult.workflow.failing_bar ?? 'assertion failed'} ✗
+                  </div>
                 </div>
               </div>
             )}
@@ -5122,26 +5655,104 @@ function E2EDurationChart({ run, prevRun }: { run: E2ERun; prevRun: E2ERun | nul
   const barW = (ms: number) => Math.round((ms / maxMs) * 333);
   const prevLabel = prevRun ? prevRun.run_id.slice(0, 10) : 'prev';
   return (
-    <section style={{ background: 'var(--bg-surface)', border: '1px solid var(--line)', borderRadius: 8, padding: 16, maxWidth: 560 }}>
-      <h2 style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 10, fontWeight: 600 }}>
+    <section
+      style={{
+        background: 'var(--bg-surface)',
+        border: '1px solid var(--line)',
+        borderRadius: 8,
+        padding: 16,
+        maxWidth: 560,
+      }}
+    >
+      <h2
+        style={{
+          fontSize: 11,
+          letterSpacing: '.08em',
+          textTransform: 'uppercase',
+          color: 'var(--text-muted)',
+          marginBottom: 10,
+          fontWeight: 600,
+        }}
+      >
         Workflow duration — this run vs previous nightly
       </h2>
-      <svg viewBox="0 0 520 120" width="100%" role="img"
-        aria-label={`Duration p50: this ${fmtE2eDuration(p50)}, prev ${fmtE2eDuration(pp50)}; p99: this ${fmtE2eDuration(p99)}, prev ${fmtE2eDuration(pp99)}`}>
-        <text x={0} y={26} fontSize={12} fill="var(--text-muted)">p50</text>
+      <svg
+        viewBox="0 0 520 120"
+        width="100%"
+        role="img"
+        aria-label={`Duration p50: this ${fmtE2eDuration(p50)}, prev ${fmtE2eDuration(pp50)}; p99: this ${fmtE2eDuration(p99)}, prev ${fmtE2eDuration(pp99)}`}
+      >
+        <text x={0} y={26} fontSize={12} fill="var(--text-muted)">
+          p50
+        </text>
         <rect x={46} y={14} width={barW(p50)} height={14} rx={4} fill="#4D8EC4" />
-        <text x={46 + barW(p50) + 6} y={26} fontSize={12} fill="var(--text-primary)" className="num">{fmtE2eDuration(p50)} · this run</text>
-        {prevRun && <><rect x={46} y={34} width={barW(pp50)} height={14} rx={4} fill="#C97A4A" />
-          <text x={46 + barW(pp50) + 6} y={46} fontSize={12} fill="var(--text-muted)" className="num">{fmtE2eDuration(pp50)} · {prevLabel}</text></>}
-        <text x={0} y={86} fontSize={12} fill="var(--text-muted)">p99</text>
+        <text x={46 + barW(p50) + 6} y={26} fontSize={12} fill="var(--text-primary)" className="num">
+          {fmtE2eDuration(p50)} · this run
+        </text>
+        {prevRun && (
+          <>
+            <rect x={46} y={34} width={barW(pp50)} height={14} rx={4} fill="#C97A4A" />
+            <text x={46 + barW(pp50) + 6} y={46} fontSize={12} fill="var(--text-muted)" className="num">
+              {fmtE2eDuration(pp50)} · {prevLabel}
+            </text>
+          </>
+        )}
+        <text x={0} y={86} fontSize={12} fill="var(--text-muted)">
+          p99
+        </text>
         <rect x={46} y={74} width={barW(p99)} height={14} rx={4} fill="#4D8EC4" />
-        <text x={46 + barW(p99) + 6} y={86} fontSize={12} fill="var(--text-primary)" className="num">{fmtE2eDuration(p99)}</text>
-        {prevRun && <><rect x={46} y={94} width={barW(pp99)} height={14} rx={4} fill="#C97A4A" />
-          <text x={46 + barW(pp99) + 6} y={106} fontSize={12} fill="var(--text-muted)" className="num">{fmtE2eDuration(pp99)}</text></>}
+        <text x={46 + barW(p99) + 6} y={86} fontSize={12} fill="var(--text-primary)" className="num">
+          {fmtE2eDuration(p99)}
+        </text>
+        {prevRun && (
+          <>
+            <rect x={46} y={94} width={barW(pp99)} height={14} rx={4} fill="#C97A4A" />
+            <text x={46 + barW(pp99) + 6} y={106} fontSize={12} fill="var(--text-muted)" className="num">
+              {fmtE2eDuration(pp99)}
+            </text>
+          </>
+        )}
       </svg>
-      <div style={{ display: 'flex', gap: 14, fontSize: 12.5, color: 'var(--text-muted)', alignItems: 'center', marginTop: 6 }}>
-        <span><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, marginRight: 5, background: '#4D8EC4', verticalAlign: '-1px' }} />this run</span>
-        {prevRun && <span><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, marginRight: 5, background: '#C97A4A', verticalAlign: '-1px' }} />{prevLabel}</span>}
+      <div
+        style={{
+          display: 'flex',
+          gap: 14,
+          fontSize: 12.5,
+          color: 'var(--text-muted)',
+          alignItems: 'center',
+          marginTop: 6,
+        }}
+      >
+        <span>
+          <span
+            style={{
+              display: 'inline-block',
+              width: 10,
+              height: 10,
+              borderRadius: 2,
+              marginRight: 5,
+              background: '#4D8EC4',
+              verticalAlign: '-1px',
+            }}
+          />
+          this run
+        </span>
+        {prevRun && (
+          <span>
+            <span
+              style={{
+                display: 'inline-block',
+                width: 10,
+                height: 10,
+                borderRadius: 2,
+                marginRight: 5,
+                background: '#C97A4A',
+                verticalAlign: '-1px',
+              }}
+            />
+            {prevLabel}
+          </span>
+        )}
       </div>
     </section>
   );
@@ -5149,64 +5760,206 @@ function E2EDurationChart({ run, prevRun }: { run: E2ERun; prevRun: E2ERun | nul
 
 // ── Run modal ─────────────────────────────────────────────────────────────
 
-function E2ERunModal({
-  runs, onClose, onRun,
-}: {
-  runs: E2ERun[];
-  onClose: () => void;
-  onRun: () => void;
-}) {
+function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => void; onRun: () => void }) {
   const [scope, setScope] = useState<'full' | 'suite' | 'named'>('full');
   const [suiteText, setSuiteText] = useState('');
   const [namedText, setNamedText] = useState('');
   const [openai, setOpenai] = useState(true);
   const [anthropic, setAnthropic] = useState(false);
   const catalogue = runs[0]?.workflows_attempted ?? 75;
-  const namedCount = namedText.split(',').map((s) => s.trim()).filter(Boolean).length || 1;
-  const costCents = scope === 'full' ? Math.round((runs[0]?.spend_cents ?? 104)) : scope === 'suite' ? 45 : namedCount * 8;
+  const namedCount =
+    namedText
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean).length || 1;
+  const costCents =
+    scope === 'full' ? Math.round(runs[0]?.spend_cents ?? 104) : scope === 'suite' ? 45 : namedCount * 8;
   const wfCount = scope === 'full' ? catalogue : scope === 'suite' ? '~20' : namedCount;
   const providers = [openai && 'openai', anthropic && 'anthropic'].filter(Boolean).join(', ') || 'openai';
 
   return (
     <div
-      role="dialog" aria-modal="true" aria-labelledby="run-modal-title"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(8,12,16,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, zIndex: 200 }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="run-modal-title"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(8,12,16,.55)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
+        zIndex: 200,
+      }}
     >
       <div
-        style={{ background: 'var(--bg-surface)', border: '1px solid var(--line)', borderRadius: 10, maxWidth: 520, width: '100%', padding: 20 }}
+        style={{
+          background: 'var(--bg-surface)',
+          border: '1px solid var(--line)',
+          borderRadius: 10,
+          maxWidth: 520,
+          width: '100%',
+          padding: 20,
+        }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 id="run-modal-title" style={{ fontSize: 18, marginBottom: 14, fontWeight: 600 }}>Run remote tests</h2>
+        <h2 id="run-modal-title" style={{ fontSize: 18, marginBottom: 14, fontWeight: 600 }}>
+          Run remote tests
+        </h2>
         {/* Scope */}
-        <fieldset style={{ border: '1px solid var(--line)', borderRadius: 7, margin: '0 0 12px', padding: '10px 12px' }}>
-          <legend style={{ fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '0 4px' }}>Scope</legend>
+        <fieldset
+          style={{
+            border: '1px solid var(--line)',
+            borderRadius: 7,
+            margin: '0 0 12px',
+            padding: '10px 12px',
+          }}
+        >
+          <legend
+            style={{
+              fontSize: 11.5,
+              letterSpacing: '.06em',
+              textTransform: 'uppercase',
+              color: 'var(--text-muted)',
+              padding: '0 4px',
+            }}
+          >
+            Scope
+          </legend>
           {(['full', 'suite', 'named'] as const).map((s) => (
-            <label key={s} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, padding: '3px 0' }}>
+            <label
+              key={s}
+              style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, padding: '3px 0' }}
+            >
               <input type="radio" name="e2e-scope" checked={scope === s} onChange={() => setScope(s)} />
-              {s === 'full' ? `Full catalogue — ${catalogue} workflows` : s === 'suite' ? <>Suite <input type="text" value={suiteText} onChange={(e) => setSuiteText(e.target.value)} placeholder="privacy-tier" onClick={(e) => { e.stopPropagation(); setScope('suite'); }} style={{ font: 'inherit', background: 'var(--bg-inset)', border: '1px solid var(--line)', borderRadius: 6, color: 'var(--text-primary)', padding: '4px 7px', maxWidth: 180, marginLeft: 8 }} /></> : <>Named workflows <input type="text" value={namedText} onChange={(e) => setNamedText(e.target.value)} placeholder="draft-approve-sent, h9-privacy-sweep" onClick={(e) => { e.stopPropagation(); setScope('named'); }} style={{ font: 'inherit', background: 'var(--bg-inset)', border: '1px solid var(--line)', borderRadius: 6, color: 'var(--text-primary)', padding: '4px 7px', marginLeft: 8, width: '100%' }} /></>}
+              {s === 'full' ? (
+                `Full catalogue — ${catalogue} workflows`
+              ) : s === 'suite' ? (
+                <>
+                  Suite{' '}
+                  <input
+                    type="text"
+                    value={suiteText}
+                    onChange={(e) => setSuiteText(e.target.value)}
+                    placeholder="privacy-tier"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setScope('suite');
+                    }}
+                    style={{
+                      font: 'inherit',
+                      background: 'var(--bg-inset)',
+                      border: '1px solid var(--line)',
+                      borderRadius: 6,
+                      color: 'var(--text-primary)',
+                      padding: '4px 7px',
+                      maxWidth: 180,
+                      marginLeft: 8,
+                    }}
+                  />
+                </>
+              ) : (
+                <>
+                  Named workflows{' '}
+                  <input
+                    type="text"
+                    value={namedText}
+                    onChange={(e) => setNamedText(e.target.value)}
+                    placeholder="draft-approve-sent, h9-privacy-sweep"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setScope('named');
+                    }}
+                    style={{
+                      font: 'inherit',
+                      background: 'var(--bg-inset)',
+                      border: '1px solid var(--line)',
+                      borderRadius: 6,
+                      color: 'var(--text-primary)',
+                      padding: '4px 7px',
+                      marginLeft: 8,
+                      width: '100%',
+                    }}
+                  />
+                </>
+              )}
             </label>
           ))}
         </fieldset>
         {/* Provider */}
-        <fieldset style={{ border: '1px solid var(--line)', borderRadius: 7, margin: '0 0 12px', padding: '10px 12px' }}>
-          <legend style={{ fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '0 4px' }}>Provider</legend>
+        <fieldset
+          style={{
+            border: '1px solid var(--line)',
+            borderRadius: 7,
+            margin: '0 0 12px',
+            padding: '10px 12px',
+          }}
+        >
+          <legend
+            style={{
+              fontSize: 11.5,
+              letterSpacing: '.06em',
+              textTransform: 'uppercase',
+              color: 'var(--text-muted)',
+              padding: '0 4px',
+            }}
+          >
+            Provider
+          </legend>
           <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, padding: '3px 0' }}>
-            <input type="checkbox" checked={openai} onChange={(e) => setOpenai(e.target.checked)} /> openai (gpt-5.1)
+            <input type="checkbox" checked={openai} onChange={(e) => setOpenai(e.target.checked)} /> openai
+            (gpt-5.1)
           </label>
           <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, padding: '3px 0' }}>
-            <input type="checkbox" checked={anthropic} onChange={(e) => setAnthropic(e.target.checked)} /> anthropic (claude)
+            <input type="checkbox" checked={anthropic} onChange={(e) => setAnthropic(e.target.checked)} />{' '}
+            anthropic (claude)
           </label>
         </fieldset>
         {/* Cost confirm */}
-        <div style={{ background: 'var(--ember-wash)', color: 'var(--ember-core)', borderRadius: 7, padding: '9px 12px', fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>
-          Estimated spend: <span className="num">{fmtE2eSpend(costCents)}</span> · ~40 min · runs in Cloud Run, tenant lock honored
+        <div
+          style={{
+            background: 'var(--ember-wash)',
+            color: 'var(--ember-core)',
+            borderRadius: 7,
+            padding: '9px 12px',
+            fontSize: 13.5,
+            fontWeight: 600,
+            marginBottom: 14,
+          }}
+        >
+          Estimated spend: <span className="num">{fmtE2eSpend(costCents)}</span> · ~40 min · runs in Cloud
+          Run, tenant lock honored
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-          <button onClick={onClose} style={{ padding: '7px 14px', border: '1px solid var(--line)', borderRadius: 6, background: 'var(--bg-surface)', color: 'var(--text-primary)', fontSize: 14 }}>Cancel</button>
+          <button
+            onClick={onClose}
+            style={{
+              padding: '7px 14px',
+              border: '1px solid var(--line)',
+              borderRadius: 6,
+              background: 'var(--bg-surface)',
+              color: 'var(--text-primary)',
+              fontSize: 14,
+            }}
+          >
+            Cancel
+          </button>
           <button
             onClick={onRun}
-            style={{ padding: '7px 14px', border: '1px solid var(--ember-deep)', borderRadius: 6, background: 'linear-gradient(180deg,var(--ember-glow),var(--ember-core) 55%,var(--ember-deep))', color: '#1c1006', fontWeight: 650, fontSize: 14, cursor: 'pointer' }}
+            style={{
+              padding: '7px 14px',
+              border: '1px solid var(--ember-deep)',
+              borderRadius: 6,
+              background: 'linear-gradient(180deg,var(--ember-glow),var(--ember-core) 55%,var(--ember-deep))',
+              color: '#1c1006',
+              fontWeight: 650,
+              fontSize: 14,
+              cursor: 'pointer',
+            }}
           >
             Run {wfCount} workflows · {providers}
           </button>
@@ -5232,9 +5985,7 @@ function Evals() {
   const detailApi = useApi<E2ERunDetail>(activeRunId ? `/api/e2e/runs/${activeRunId}` : null);
 
   const runs: E2ERun[] = runsApi.data ?? E2E_FIXTURE_RUNS;
-  const runDetail: E2ERunDetail | null = activeRunId
-    ? (detailApi.data ?? E2E_FIXTURE_RUN_DETAIL)
-    : null;
+  const runDetail: E2ERunDetail | null = activeRunId ? (detailApi.data ?? E2E_FIXTURE_RUN_DETAIL) : null;
 
   const activeRun: E2ERun | null = runDetail?.run ?? runs.find((r) => r.run_id === activeRunId) ?? null;
   const allWorkflows: E2EWorkflow[] = runDetail?.all_workflows ?? [];
@@ -5252,8 +6003,8 @@ function Evals() {
     expandedWfId === E2E_FIXTURE_WORKFLOW_RESULT.workflow.id
       ? E2E_FIXTURE_WORKFLOW_RESULT
       : expandedWf
-      ? { workflow: expandedWf, scenes: [], mcp_calls: [], claims: [] }
-      : null;
+        ? { workflow: expandedWf, scenes: [], mcp_calls: [], claims: [] }
+        : null;
 
   const breakdown = activeRun ? withheldBreakdown(activeRun) : [];
   const prevRun = runs.find((r) => r.run_id !== activeRun?.run_id) ?? null;
@@ -5273,10 +6024,19 @@ function Evals() {
 
   const handleTriage = () => {
     if (!activeRun) return;
-    const prompt = buildE2eTriagePrompt(activeRun, allWorkflows.length ? allWorkflows : E2E_FIXTURE_WORKFLOWS);
+    const prompt = buildE2eTriagePrompt(
+      activeRun,
+      allWorkflows.length ? allWorkflows : E2E_FIXTURE_WORKFLOWS,
+    );
     navigator.clipboard.writeText(prompt).then(
-      () => { setTriageFlash(true); setTimeout(() => setTriageFlash(false), 2200); },
-      () => { setTriageFlash(true); setTimeout(() => setTriageFlash(false), 2200); },
+      () => {
+        setTriageFlash(true);
+        setTimeout(() => setTriageFlash(false), 2200);
+      },
+      () => {
+        setTriageFlash(true);
+        setTimeout(() => setTriageFlash(false), 2200);
+      },
     );
   };
 
@@ -5296,7 +6056,9 @@ function Evals() {
     const blob = new Blob([JSON.stringify(wfResult, null, 2)], { type: 'application/jsonl' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `${wfResult.workflow.workflow_id}.jsonl`; a.click();
+    a.href = url;
+    a.download = `${wfResult.workflow.workflow_id}.jsonl`;
+    a.click();
     URL.revokeObjectURL(url);
   };
 
@@ -5307,9 +6069,13 @@ function Evals() {
 
   const cell: React.CSSProperties = { padding: '10px 12px', fontSize: 13.5, verticalAlign: 'middle' };
   const th: React.CSSProperties = {
-    padding: '6px 12px', fontSize: 11.5, letterSpacing: '.07em',
-    textTransform: 'uppercase' as const, color: 'var(--text-muted)',
-    fontWeight: 600, background: 'var(--bg-surface)',
+    padding: '6px 12px',
+    fontSize: 11.5,
+    letterSpacing: '.07em',
+    textTransform: 'uppercase' as const,
+    color: 'var(--text-muted)',
+    fontWeight: 600,
+    background: 'var(--bg-surface)',
   };
   const rowBase: React.CSSProperties = { borderBottom: '1px solid var(--line)', cursor: 'pointer' };
 
@@ -5325,9 +6091,14 @@ function Evals() {
           <button
             onClick={() => setRunModalOpen(true)}
             style={{
-              padding: '7px 14px', border: '1px solid var(--ember-deep)', borderRadius: 6,
+              padding: '7px 14px',
+              border: '1px solid var(--ember-deep)',
+              borderRadius: 6,
               background: 'linear-gradient(180deg,var(--ember-glow),var(--ember-core) 55%,var(--ember-deep))',
-              color: '#1c1006', fontWeight: 650, fontSize: 14, cursor: 'pointer',
+              color: '#1c1006',
+              fontWeight: 650,
+              fontSize: 14,
+              cursor: 'pointer',
             }}
           >
             ↻ Re-run
@@ -5338,13 +6109,25 @@ function Evals() {
         </div>
 
         {/* Run history table */}
-        <div style={{ overflowX: 'auto', border: '1px solid var(--line)', borderRadius: 8, background: 'var(--bg-surface)', marginBottom: 16 }}>
+        <div
+          style={{
+            overflowX: 'auto',
+            border: '1px solid var(--line)',
+            borderRadius: 8,
+            background: 'var(--bg-surface)',
+            marginBottom: 16,
+          }}
+        >
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                {(['Run', 'Source', 'Provider', 'Attempted', 'Pass', 'Withheld', 'Spend'] as const).map((h) => (
-                  <th key={h} style={th}>{h}</th>
-                ))}
+                {(['Run', 'Source', 'Provider', 'Attempted', 'Pass', 'Withheld', 'Spend'] as const).map(
+                  (h) => (
+                    <th key={h} style={th}>
+                      {h}
+                    </th>
+                  ),
+                )}
                 <th style={{ ...th, minWidth: 260 }}>Accepted (sparkline)</th>
               </tr>
             </thead>
@@ -5355,16 +6138,43 @@ function Evals() {
                   style={rowBase}
                   onClick={() => handleSelectRun(r.run_id)}
                   tabIndex={0}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSelectRun(r.run_id); } }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleSelectRun(r.run_id);
+                    }
+                  }}
                   aria-label={`Load run ${r.run_id}`}
                 >
-                  <td style={{ ...cell, fontFamily: 'var(--mono)', fontSize: 12.5, color: 'var(--ember-core)', whiteSpace: 'nowrap' }}>{r.run_id}</td>
-                  <td style={{ ...cell, color: 'var(--text-muted)', fontSize: 12.5, whiteSpace: 'nowrap' }}>{r.trigger_source ?? '—'}</td>
-                  <td style={{ ...cell, fontFamily: 'var(--mono)', fontSize: 12.5, whiteSpace: 'nowrap' }}>{r.provider ?? '—'}</td>
-                  <td style={{ ...cell, textAlign: 'right' }} className="num">{r.workflows_attempted}</td>
-                  <td style={{ ...cell, textAlign: 'right', color: 'var(--ok-text)' }} className="num">{r.workflows_passed}</td>
-                  <td style={{ ...cell, textAlign: 'right', color: 'var(--text-muted)' }} className="num">{r.withheld_count}</td>
-                  <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>{fmtE2eSpend(r.spend_cents)}</td>
+                  <td
+                    style={{
+                      ...cell,
+                      fontFamily: 'var(--mono)',
+                      fontSize: 12.5,
+                      color: 'var(--ember-core)',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {r.run_id}
+                  </td>
+                  <td style={{ ...cell, color: 'var(--text-muted)', fontSize: 12.5, whiteSpace: 'nowrap' }}>
+                    {r.trigger_source ?? '—'}
+                  </td>
+                  <td style={{ ...cell, fontFamily: 'var(--mono)', fontSize: 12.5, whiteSpace: 'nowrap' }}>
+                    {r.provider ?? '—'}
+                  </td>
+                  <td style={{ ...cell, textAlign: 'right' }} className="num">
+                    {r.workflows_attempted}
+                  </td>
+                  <td style={{ ...cell, textAlign: 'right', color: 'var(--ok-text)' }} className="num">
+                    {r.workflows_passed}
+                  </td>
+                  <td style={{ ...cell, textAlign: 'right', color: 'var(--text-muted)' }} className="num">
+                    {r.withheld_count}
+                  </td>
+                  <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>
+                    {fmtE2eSpend(r.spend_cents)}
+                  </td>
                   <td style={{ ...cell, padding: '2px 12px', minWidth: 260 }}>
                     {ri === 0 ? <E2ESparkline runs={sparklineRuns} /> : null}
                   </td>
@@ -5419,20 +6229,37 @@ function Evals() {
       {/* Back + action bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
         <button
-          onClick={() => { setActiveRunId(null); setExpandedWfId(null); setCassetteOpen(false); }}
-          style={{ fontSize: 13.5, color: 'var(--text-secondary)', border: '1px solid var(--line)', borderRadius: 6, padding: '5px 12px', background: 'var(--bg-surface)', cursor: 'pointer' }}
+          onClick={() => {
+            setActiveRunId(null);
+            setExpandedWfId(null);
+            setCassetteOpen(false);
+          }}
+          style={{
+            fontSize: 13.5,
+            color: 'var(--text-secondary)',
+            border: '1px solid var(--line)',
+            borderRadius: 6,
+            padding: '5px 12px',
+            background: 'var(--bg-surface)',
+            cursor: 'pointer',
+          }}
         >
           ← All runs
         </button>
-        <span className="mono" style={{ fontSize: 13, color: 'var(--text-muted)' }}>{activeRun?.run_id ?? activeRunId}</span>
+        <span className="mono" style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+          {activeRun?.run_id ?? activeRunId}
+        </span>
         <div style={{ flex: 1 }} />
         <button
           onClick={handleTriage}
           style={{
-            padding: '5px 12px', border: '1px solid var(--line)', borderRadius: 6,
+            padding: '5px 12px',
+            border: '1px solid var(--line)',
+            borderRadius: 6,
             background: 'var(--bg-surface)',
             color: triageFlash ? 'var(--ok-text)' : 'var(--text-secondary)',
-            fontSize: 13, cursor: 'pointer',
+            fontSize: 13,
+            cursor: 'pointer',
           }}
         >
           {triageFlash ? '✓ copied' : '⧉ Triage this run'}
@@ -5440,9 +6267,14 @@ function Evals() {
         <button
           onClick={() => setRunModalOpen(true)}
           style={{
-            padding: '5px 12px', border: '1px solid var(--ember-deep)', borderRadius: 6,
+            padding: '5px 12px',
+            border: '1px solid var(--ember-deep)',
+            borderRadius: 6,
             background: 'linear-gradient(180deg,var(--ember-glow),var(--ember-core) 55%,var(--ember-deep))',
-            color: '#1c1006', fontWeight: 650, fontSize: 13, cursor: 'pointer',
+            color: '#1c1006',
+            fontWeight: 650,
+            fontSize: 13,
+            cursor: 'pointer',
           }}
         >
           ↻ Re-run
@@ -5456,20 +6288,59 @@ function Evals() {
         <E2EMetricTile label="Rejected" value={activeRun?.workflows_failed ?? '—'} color="var(--crit-text)" />
         <E2EMetricTile label="Withheld" value={activeRun?.withheld_count ?? '—'} color="var(--text-muted)" />
         <E2EMetricTile label="p50" value={fmtE2eDuration(activeRun?.p50_duration_ms ?? null)} sub="median" />
-        <E2EMetricTile label="p99" value={fmtE2eDuration(activeRun?.p99_duration_ms ?? null)} sub="slow tail" />
+        <E2EMetricTile
+          label="p99"
+          value={fmtE2eDuration(activeRun?.p99_duration_ms ?? null)}
+          sub="slow tail"
+        />
         <E2EMetricTile label="Spend" value={fmtE2eSpend(activeRun?.spend_cents ?? 0)} sub="this run" />
       </div>
 
       {/* 4 filter tiles */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 18 }}>
-        <E2EMetricTile filter active={verdictFilter === 'all'} onClick={() => setVerdictFilter('all')} label="All" value={countAll} />
-        <E2EMetricTile filter active={verdictFilter === 'pass'} onClick={() => setVerdictFilter('pass')} label="Accepted" value={countPass} color="var(--ok-text)" />
-        <E2EMetricTile filter active={verdictFilter === 'fail'} onClick={() => setVerdictFilter('fail')} label="Rejected" value={countFail} color="var(--crit-text)" />
-        <E2EMetricTile filter active={verdictFilter === 'withheld'} onClick={() => setVerdictFilter('withheld')} label="Withheld" value={countWithheld} color="var(--text-muted)" />
+        <E2EMetricTile
+          filter
+          active={verdictFilter === 'all'}
+          onClick={() => setVerdictFilter('all')}
+          label="All"
+          value={countAll}
+        />
+        <E2EMetricTile
+          filter
+          active={verdictFilter === 'pass'}
+          onClick={() => setVerdictFilter('pass')}
+          label="Accepted"
+          value={countPass}
+          color="var(--ok-text)"
+        />
+        <E2EMetricTile
+          filter
+          active={verdictFilter === 'fail'}
+          onClick={() => setVerdictFilter('fail')}
+          label="Rejected"
+          value={countFail}
+          color="var(--crit-text)"
+        />
+        <E2EMetricTile
+          filter
+          active={verdictFilter === 'withheld'}
+          onClick={() => setVerdictFilter('withheld')}
+          label="Withheld"
+          value={countWithheld}
+          color="var(--text-muted)"
+        />
       </div>
 
       {/* Workflow table */}
-      <div style={{ overflowX: 'auto', border: '1px solid var(--line)', borderRadius: 8, background: 'var(--bg-surface)', marginBottom: 16 }}>
+      <div
+        style={{
+          overflowX: 'auto',
+          border: '1px solid var(--line)',
+          borderRadius: 8,
+          background: 'var(--bg-surface)',
+          marginBottom: 16,
+        }}
+      >
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
@@ -5484,7 +6355,10 @@ function Evals() {
           <tbody>
             {filteredWorkflows.length === 0 ? (
               <tr>
-                <td colSpan={6} style={{ ...cell, textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>
+                <td
+                  colSpan={6}
+                  style={{ ...cell, textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}
+                >
                   No workflows match this filter.
                 </td>
               </tr>
@@ -5505,52 +6379,125 @@ function Evals() {
                       background: isExpanded ? 'var(--bg-selected)' : undefined,
                       borderLeft: isExpanded ? '3px solid var(--ember-core)' : '3px solid transparent',
                     }}
-                    onClick={() => { setExpandedWfId(isExpanded ? null : wf.id); setCassetteOpen(false); }}
+                    onClick={() => {
+                      setExpandedWfId(isExpanded ? null : wf.id);
+                      setCassetteOpen(false);
+                    }}
                     tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpandedWfId(isExpanded ? null : wf.id); } }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setExpandedWfId(isExpanded ? null : wf.id);
+                      }
+                    }}
                     aria-expanded={isExpanded}
                   >
                     <td style={{ ...cell, fontFamily: 'var(--mono)', fontSize: 12.5, maxWidth: 260 }}>
-                      <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{wf.workflow_id}</span>
+                      <span
+                        style={{
+                          display: 'block',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {wf.workflow_id}
+                      </span>
                       {wf.prompt && (
-                        <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>
+                        <span
+                          style={{
+                            display: 'block',
+                            color: 'var(--text-muted)',
+                            fontSize: 12,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            marginTop: 2,
+                          }}
+                        >
                           {wf.prompt}
                         </span>
                       )}
                     </td>
                     <td style={{ ...cell, whiteSpace: 'nowrap' }}>
-                      {wf.lanes.length > 0
-                        ? wf.lanes.map((l) => <Chip key={l}>{l}</Chip>)
-                        : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                      {wf.lanes.length > 0 ? (
+                        wf.lanes.map((l) => <Chip key={l}>{l}</Chip>)
+                      ) : (
+                        <span style={{ color: 'var(--text-faint)' }}>—</span>
+                      )}
                     </td>
-                    <td style={cell}><E2EVerdictPill verdict={wf.verdict} /></td>
-                    <td style={{ ...cell, fontFamily: 'var(--mono)', fontSize: 12.5, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <td style={cell}>
+                      <E2EVerdictPill verdict={wf.verdict} />
+                    </td>
+                    <td
+                      style={{
+                        ...cell,
+                        fontFamily: 'var(--mono)',
+                        fontSize: 12.5,
+                        textAlign: 'right',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
                       {fmtTrials(wf.trials_total, wf.trials_passed, wf.verdict)}
                     </td>
-                    <td style={{ ...cell, color: wf.failing_bar ? 'var(--crit-text)' : 'var(--text-muted)', fontSize: 12.5, maxWidth: 280 }}>
-                      <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <td
+                      style={{
+                        ...cell,
+                        color: wf.failing_bar ? 'var(--crit-text)' : 'var(--text-muted)',
+                        fontSize: 12.5,
+                        maxWidth: 280,
+                      }}
+                    >
+                      <span
+                        style={{
+                          display: 'block',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
                         {wf.failing_bar
                           ? wf.failing_bar
                           : wf.verdict === 'skip'
-                          ? `withheld — ${String(wf.meta.withheld_reason ?? 'no trial ran')}`
-                          : '—'}
+                            ? `withheld — ${String(wf.meta.withheld_reason ?? 'no trial ran')}`
+                            : '—'}
                       </span>
                     </td>
                     <td style={{ ...cell, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {wf.verdict !== 'skip' && (
-                        isRerunQueued ? (
+                      {wf.verdict !== 'skip' &&
+                        (isRerunQueued ? (
                           <span style={{ fontSize: 12.5, color: 'var(--ok-text)' }}>✓ queued</span>
                         ) : isRerunPending ? (
                           <>
                             <button
                               onClick={(e) => handleRerun(wf.id, e)}
-                              style={{ fontSize: 12, padding: '3px 9px', border: '1px solid var(--crit)', borderRadius: 5, color: 'var(--crit-text)', background: 'var(--crit-wash)', cursor: 'pointer', marginRight: 4 }}
+                              style={{
+                                fontSize: 12,
+                                padding: '3px 9px',
+                                border: '1px solid var(--crit)',
+                                borderRadius: 5,
+                                color: 'var(--crit-text)',
+                                background: 'var(--crit-wash)',
+                                cursor: 'pointer',
+                                marginRight: 4,
+                              }}
                             >
                               Confirm re-run
                             </button>
                             <button
-                              onClick={(e) => { e.stopPropagation(); setRerunWfId(null); }}
-                              style={{ fontSize: 12, padding: '3px 6px', border: '1px solid var(--line)', borderRadius: 5, background: 'var(--bg-surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setRerunWfId(null);
+                              }}
+                              style={{
+                                fontSize: 12,
+                                padding: '3px 6px',
+                                border: '1px solid var(--line)',
+                                borderRadius: 5,
+                                background: 'var(--bg-surface)',
+                                color: 'var(--text-muted)',
+                                cursor: 'pointer',
+                              }}
                             >
                               ✕
                             </button>
@@ -5558,13 +6505,20 @@ function Evals() {
                         ) : (
                           <button
                             onClick={(e) => handleRerun(wf.id, e)}
-                            style={{ fontSize: 12, padding: '3px 9px', border: '1px solid var(--line)', borderRadius: 5, color: 'var(--text-secondary)', background: 'var(--bg-surface)', cursor: 'pointer' }}
+                            style={{
+                              fontSize: 12,
+                              padding: '3px 9px',
+                              border: '1px solid var(--line)',
+                              borderRadius: 5,
+                              color: 'var(--text-secondary)',
+                              background: 'var(--bg-surface)',
+                              cursor: 'pointer',
+                            }}
                             title={`Re-run ${wf.workflow_id}`}
                           >
                             ↻ Re-run
                           </button>
-                        )
-                      )}
+                        ))}
                     </td>
                   </tr>,
                   isExpanded ? (
@@ -5574,10 +6528,7 @@ function Evals() {
                           wfResult={drawerWfResult}
                           onCassette={() => setCassetteOpen(true)}
                           onTriageWf={() => {
-                            const prompt = buildE2eTriagePrompt(
-                              activeRun ?? E2E_FIXTURE_RUNS[0]!,
-                              [wf],
-                            );
+                            const prompt = buildE2eTriagePrompt(activeRun ?? E2E_FIXTURE_RUNS[0]!, [wf]);
                             navigator.clipboard.writeText(prompt).catch(() => {});
                           }}
                         />
@@ -5592,15 +6543,35 @@ function Evals() {
       </div>
 
       {/* Bottom row: duration chart + integrity strip */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16, alignItems: 'start' }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: 16,
+          marginBottom: 16,
+          alignItems: 'start',
+        }}
+      >
         <E2EDurationChart run={activeRun ?? E2E_FIXTURE_RUNS[0]!} prevRun={prevRun} />
 
         {/* Integrity strip — withheld-by-cause */}
         <section
-          style={{ background: 'var(--bg-surface)', border: '1px solid var(--line)', borderRadius: 8, padding: 16 }}
+          style={{
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--line)',
+            borderRadius: 8,
+            padding: 16,
+          }}
         >
           <h2
-            style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 10, fontWeight: 600 }}
+            style={{
+              fontSize: 11,
+              letterSpacing: '.08em',
+              textTransform: 'uppercase',
+              color: 'var(--text-muted)',
+              marginBottom: 10,
+              fontWeight: 600,
+            }}
           >
             Withheld by cause
           </h2>
@@ -5616,14 +6587,23 @@ function Evals() {
                     setReasonFilter(reasonFilter === reason ? null : reason);
                   }}
                   style={{
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    padding: '6px 10px', borderRadius: 6, border: '1px solid var(--line)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '6px 10px',
+                    borderRadius: 6,
+                    border: '1px solid var(--line)',
                     background: reasonFilter === reason ? 'var(--bg-selected)' : 'var(--bg-raised)',
-                    color: 'var(--text-secondary)', fontSize: 13, textAlign: 'left', cursor: 'pointer',
+                    color: 'var(--text-secondary)',
+                    fontSize: 13,
+                    textAlign: 'left',
+                    cursor: 'pointer',
                     boxShadow: reasonFilter === reason ? 'inset 0 -2px 0 var(--ember-core)' : undefined,
                   }}
                 >
-                  <span className="mono" style={{ fontSize: 12 }}>{reason}</span>
+                  <span className="mono" style={{ fontSize: 12 }}>
+                    {reason}
+                  </span>
                   <span className="num" style={{ color: 'var(--text-muted)' }}>
                     {count} trial{count !== 1 ? 's' : ''}
                   </span>
@@ -5634,12 +6614,17 @@ function Evals() {
           {activeRun?.meta?.trials_ran_clean !== undefined && (
             <div
               style={{
-                marginTop: 12, padding: '6px 10px', borderRadius: 6,
-                border: '1px solid var(--ok)', background: 'var(--ok-wash)',
-                color: 'var(--ok-text)', fontSize: 12.5,
+                marginTop: 12,
+                padding: '6px 10px',
+                borderRadius: 6,
+                border: '1px solid var(--ok)',
+                background: 'var(--ok-wash)',
+                color: 'var(--ok-text)',
+                fontSize: 12.5,
               }}
             >
-              {String(activeRun.meta.trials_ran_clean)} / {String(activeRun.meta.trials_total ?? '?')} trials ran clean
+              {String(activeRun.meta.trials_ran_clean)} / {String(activeRun.meta.trials_total ?? '?')} trials
+              ran clean
             </div>
           )}
         </section>
