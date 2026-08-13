@@ -700,6 +700,42 @@ Each released version maps to a published control-plane image tag
 ## [Unreleased]
 
 
+## [1.30.0] - 2026-08-13
+
+### Added
+
+- **C38 DeliveryCheck capability** — guards all four hops of the delivery pipeline (commit→tag, tag→image, image→deploy, release→consumer pin).
+  - **Producer check**: fails the build when `main` carries source commits not included in any release tag; names the exact commit count and artifact, states the remedy.
+  - **Release check**: fails the build when the deployed service is not running the latest release digest (tag's image not in GHCR, or `deployment.json` tracking shows a digest mismatch); names the specific image artifact and expected digest.
+  - **Consumer check**: fails the build when a consumer's pinned version lags the producer's latest release; names the specific pinned artifact and the remedying update.
+  - Every failing check exits non-zero, names the specific artifact that is behind, and states the concrete remedy — a warning-only or pass-only check was rejected.
+  - A lag is silenced **only** by an explicit `.delivery-silence.json` in the repo with a non-empty `reason` field (and optional `expires` date); there is no default silencing.
+  - Forge's own producer and release checks are wired through the capability and proven RED (main ahead of newest release / deployment off the release digest) then GREEN in 29 unit tests using fake drivers that reconstruct each behind-state.
+- **`scripts/delivery-check.ts`** — standalone CI runner (`npx tsx scripts/delivery-check.ts producer release`) that exits 1 on any unsilenced failure.
+- **`.github/workflows/delivery-check.yml`** — GitHub Actions workflow running both forge producer and release checks on every push to `main` and on a daily schedule (08:00 UTC); uses `packages:read` to resolve GHCR digests for the release check.
+- **`deployment.json`** tracking format — records the deployed digest per image; updated by the release/deploy process; read by the release check driver.
+- `DeliveryCheckRun` resource type and `DeliveryCheckCompleted` / `DeliveryCheckFailed` events added to the platform catalog.
+
+### Changed
+- Wired the `e2e-runner` Cloud Run Job with the full `.hat/env` credential set that `hat remote`
+  reads after the OAuth mint change: `DORINDA_MCP_ENDPOINT`, `DORINDA_MCP_REFRESH_TOKEN`, and
+  `DORINDA_MCP_CLIENT_ID` (all from Secret Manager) replace the former static `AUTH_SERVICE_TOKEN`
+  / `DORINDA_MCP_TOKEN`; `DORINDA_TEST_CONTROL_TOKEN` (SM) and `DORINDA_TEST_CONTROL_URL` (plain)
+  wire the test-control surface; `DORINDA_TENANT`, `E2E_PROVIDER`, and `E2E_MODEL` carry tenant
+  identity and provider/model selection. The job's SA now holds `secretAccessor` on the four new
+  secrets (`mcp-endpoint`, `mcp-refresh-token`, `mcp-client-id`, `test-control-token`) and no
+  longer holds it on the removed `service-token`. `PROVIDER_ACCOUNTS.md` records each new secret,
+  where it lives, and the exact minting procedure. Ships via push-gated CI apply.
+
+### Fixed
+
+- **The E2E Attempted tile no longer claims "100% of catalogue" under a zero.** A run that died
+  before attempting a single workflow rendered `ATTEMPTED 0` above a confident "100% of catalogue",
+  and an unknown catalogue size produced the same string — the numbers were real and the sentence
+  beside them was invented. It now reads `nothing attempted` or `catalogue size unknown`, and only
+  states a percentage when both numbers are known. The two tile formatters moved to
+  `console/src/lib/e2e-format.ts` so the claims they make are unit-tested.
+
 ## [1.28.9] - 2026-08-13
 
 ### Added
