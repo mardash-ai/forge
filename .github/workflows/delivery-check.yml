@@ -22,7 +22,7 @@ on:
 
 permissions:
   contents: read
-  packages: read  # needed for docker manifest inspect against GHCR
+  packages: read # needed for docker manifest inspect against GHCR
 
 jobs:
   delivery-check:
@@ -32,7 +32,7 @@ jobs:
       - name: Checkout (full history — git log needs tag ancestry)
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # full history so git describe + git log work correctly
+          fetch-depth: 0 # full history so git describe + git log work correctly
 
       - name: Set up Node
         uses: actions/setup-node@v4

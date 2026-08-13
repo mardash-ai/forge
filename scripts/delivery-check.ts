@@ -55,7 +55,10 @@ async function main() {
   const repoName = process.env['FORGE_PRODUCER_REPO_NAME'] ?? 'forge';
   const rawPaths = process.env['FORGE_PRODUCER_SOURCE_PATHS'];
   const sourcePaths = rawPaths
-    ? rawPaths.split(',').map((p) => p.trim()).filter(Boolean)
+    ? rawPaths
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean)
     : ['src/', 'tests/', 'package.json', 'Dockerfile'];
 
   // Resolve the control-plane image name from env or git remote.
@@ -77,15 +80,11 @@ async function main() {
   const checkFns: Array<() => Promise<CheckResult>> = [];
 
   if (checks.includes('producer')) {
-    checkFns.push(() =>
-      runProducerCheck(driver, { repoName, sourcePaths }),
-    );
+    checkFns.push(() => runProducerCheck(driver, { repoName, sourcePaths }));
   }
 
   if (checks.includes('release')) {
-    checkFns.push(() =>
-      runReleaseCheck(driver, { image: cpImage!, label: cpImageLabel }),
-    );
+    checkFns.push(() => runReleaseCheck(driver, { image: cpImage!, label: cpImageLabel }));
   }
 
   if (checks.includes('consumer')) {

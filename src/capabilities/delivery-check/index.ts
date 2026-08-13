@@ -34,9 +34,7 @@ const consumerSchema = z.object({
 
 const inputSchema = z.object({
   // Which checks to run. Defaults to all three.
-  checks: z
-    .array(z.enum(['producer', 'release', 'consumer']))
-    .default(['producer', 'release', 'consumer']),
+  checks: z.array(z.enum(['producer', 'release', 'consumer'])).default(['producer', 'release', 'consumer']),
   // -- Producer check options --
   // Human label for the git repo in messages (e.g. "forge").
   repo_name: z.string().default('forge'),
@@ -101,7 +99,8 @@ export const deliveryCheck: Capability<Input, DeliveryCheckRun> = {
     }
 
     if (input.checks.includes('release')) {
-      const image = input.image ?? `ghcr.io/${process.env['GITHUB_REPOSITORY_OWNER'] ?? 'unknown'}/forge-control-plane`;
+      const image =
+        input.image ?? `ghcr.io/${process.env['GITHUB_REPOSITORY_OWNER'] ?? 'unknown'}/forge-control-plane`;
       const label = input.image_label ?? path.basename(image);
       checksToRun.push(() => runReleaseCheck(driver, { image, label }));
     }

@@ -78,10 +78,7 @@ export function createRealDriver(repoRoot: string): DeliveryCheckDriver {
     async getUnreleasedCommits(latestTag: string, paths: string[]): Promise<string[]> {
       // git log <tag>..HEAD [-- <paths>] --oneline
       const pathArgs = paths.length > 0 ? ['--', ...paths] : [];
-      const result = await git(
-        ['log', '--oneline', `${latestTag}..HEAD`, ...pathArgs],
-        repoRoot,
-      );
+      const result = await git(['log', '--oneline', `${latestTag}..HEAD`, ...pathArgs], repoRoot);
       if (!result) return [];
       return result.split('\n').filter((l) => l.trim().length > 0);
     },

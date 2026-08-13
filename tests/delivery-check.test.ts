@@ -316,9 +316,7 @@ describe('batch runner', () => {
       },
     });
 
-    const batch = await runChecks([
-      () => runProducerCheck(driver, { repoName: 'forge', sourcePaths: [] }),
-    ]);
+    const batch = await runChecks([() => runProducerCheck(driver, { repoName: 'forge', sourcePaths: [] })]);
 
     expect(batch.ok).toBe(false);
     expect(batch.failed).toBe(1);
@@ -330,8 +328,7 @@ describe('batch runner', () => {
 
     const batch = await runChecks([
       () => runProducerCheck(driver, { repoName: 'forge', sourcePaths: [] }),
-      () =>
-        runReleaseCheck(driver, { image: IMAGE, label: 'forge-control-plane' }),
+      () => runReleaseCheck(driver, { image: IMAGE, label: 'forge-control-plane' }),
     ]);
 
     expect(batch.ok).toBe(true);
@@ -349,9 +346,7 @@ describe('batch runner', () => {
       },
     });
 
-    const batch = await runChecks([
-      () => runProducerCheck(driver, { repoName: 'forge', sourcePaths: [] }),
-    ]);
+    const batch = await runChecks([() => runProducerCheck(driver, { repoName: 'forge', sourcePaths: [] })]);
 
     // Silenced = acceptable, not a failure.
     expect(batch.ok).toBe(true);
@@ -428,9 +423,7 @@ describe('formatBatchResult', () => {
         return ['abc unreleased'];
       },
     });
-    const batch = await runChecks([
-      () => runProducerCheck(driver, { repoName: 'forge', sourcePaths: [] }),
-    ]);
+    const batch = await runChecks([() => runProducerCheck(driver, { repoName: 'forge', sourcePaths: [] })]);
     const out = formatBatchResult(batch);
     expect(out).toContain('1 FAILED');
     expect(out).toContain('Fix the failing checks');
@@ -438,9 +431,7 @@ describe('formatBatchResult', () => {
 
   it('reports all-delivered when ok:true', async () => {
     const driver = makeDriver();
-    const batch = await runChecks([
-      () => runProducerCheck(driver, { repoName: 'forge', sourcePaths: [] }),
-    ]);
+    const batch = await runChecks([() => runProducerCheck(driver, { repoName: 'forge', sourcePaths: [] })]);
     const out = formatBatchResult(batch);
     expect(out).toContain('all hops delivered');
   });

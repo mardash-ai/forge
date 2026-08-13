@@ -231,9 +231,7 @@ export async function runReleaseCheck(
     check,
     status: 'fail',
     artifact,
-    message:
-      `${label} is not running the ${latestTag} release digest. ` +
-      `The deployed image is behind.`,
+    message: `${label} is not running the ${latestTag} release digest. ` + `The deployed image is behind.`,
     remedy: `Deploy ${image}:${latestTag} (digest: ${expectedDigest}) to production.`,
     detail: `expected: ${expectedDigest}\ndeployed: ${deployedDigest}`,
   };
@@ -292,8 +290,7 @@ export async function runConsumerCheck(
     message:
       `${consumerName} is pinned to ${producerName}@${pinnedVersion} ` +
       `but the latest release is ${latestVersion}.`,
-    remedy:
-      `Update the ${producerName} pin in ${consumerName} from ${pinnedVersion} to ${latestVersion}.`,
+    remedy: `Update the ${producerName} pin in ${consumerName} from ${pinnedVersion} to ${latestVersion}.`,
   };
 }
 
@@ -339,13 +336,9 @@ export function formatBatchResult(batch: BatchCheckResult): string {
   const lines = batch.results.map(formatCheckResult);
   lines.push('');
   if (batch.ok) {
-    lines.push(
-      `delivery-check: ${batch.passed} passed, ${batch.silenced} silenced — all hops delivered.`,
-    );
+    lines.push(`delivery-check: ${batch.passed} passed, ${batch.silenced} silenced — all hops delivered.`);
   } else {
-    lines.push(
-      `delivery-check: ${batch.failed} FAILED, ${batch.passed} passed, ${batch.silenced} silenced`,
-    );
+    lines.push(`delivery-check: ${batch.failed} FAILED, ${batch.passed} passed, ${batch.silenced} silenced`);
     lines.push(`Fix the failing checks above before proceeding.`);
   }
   return lines.join('\n');

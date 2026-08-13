@@ -24,6 +24,7 @@ import {
 } from './ui/kit';
 import { ExternalGlyph, LogoMark, RAIL_ICON, StatusGlyph, SvgDefs, Wordmark } from './ui/icons';
 import { duration, relative, useApi } from './lib/api';
+import { fmtE2ePctOfCatalogue, fmtE2ePctOfRunnable } from './lib/e2e-format';
 import { fixtureForSelection } from './lib/seed-editor';
 import { FIXTURES } from './lib/fixtures';
 
@@ -5018,31 +5019,6 @@ function fmtE2eDuration(ms: number | null): string {
 
 function fmtE2eSpend(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
-}
-
-/**
- * Attempted tile sub-line — the mock's "100% of catalogue".
- *
- * Never claims a fraction it cannot compute. A run that attempted nothing is not "100% of
- * catalogue", and an unknown catalogue size is not a full one: both previously rendered the same
- * confident "100% of catalogue" under a zero, which is the fabricated-data class this tab exists
- * to avoid. Absence is reported as absence.
- */
-export function fmtE2ePctOfCatalogue(run: E2ERun | null | undefined): string {
-  if (!run) return '—';
-  const catalogue = (run.meta as { catalogue_size?: number } | undefined)?.catalogue_size;
-  const attempted = run.workflows_attempted ?? 0;
-  if (attempted <= 0) return 'nothing attempted';
-  if (!catalogue || catalogue <= 0) return 'catalogue size unknown';
-  return `${Math.round((attempted / catalogue) * 100)}% of catalogue`;
-}
-
-/** Accepted tile sub-line — the mock's "57% of runnable" (runnable excludes withheld). */
-export function fmtE2ePctOfRunnable(run: E2ERun | null | undefined): string {
-  if (!run) return '—';
-  const runnable = (run.workflows_attempted ?? 0) - (run.withheld_count ?? 0);
-  if (runnable <= 0) return 'none runnable';
-  return `${Math.round(((run.workflows_passed ?? 0) / runnable) * 100)}% of runnable`;
 }
 
 /** Format a millisecond duration as a human-readable elapsed string (e.g. "3m 45s", "1h 23m"). */
