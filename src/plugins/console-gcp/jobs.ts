@@ -45,10 +45,7 @@ export async function triggerCloudRunJob(opts: JobRunRequest): Promise<JobExecut
   const url = `${RUN_V2}/projects/${project}/locations/${region}/jobs/${job}:run`;
 
   const envEntries = Object.entries(env).map(([name, value]) => ({ name, value }));
-  const body =
-    envEntries.length > 0
-      ? { overrides: { containerOverrides: [{ env: envEntries }] } }
-      : {};
+  const body = envEntries.length > 0 ? { overrides: { containerOverrides: [{ env: envEntries }] } } : {};
 
   const op = await gcpJson<{
     name: string;

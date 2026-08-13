@@ -6509,13 +6509,22 @@ function Evals() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
-                    {(['Run', 'Status', 'Source', 'Provider', 'Attempted', 'Pass', 'Withheld', 'Spend'] as const).map(
-                      (h) => (
-                        <th key={h} style={th}>
-                          {h}
-                        </th>
-                      ),
-                    )}
+                    {(
+                      [
+                        'Run',
+                        'Status',
+                        'Source',
+                        'Provider',
+                        'Attempted',
+                        'Pass',
+                        'Withheld',
+                        'Spend',
+                      ] as const
+                    ).map((h) => (
+                      <th key={h} style={th}>
+                        {h}
+                      </th>
+                    ))}
                     <th style={{ ...th, minWidth: 260 }}>Accepted (sparkline)</th>
                   </tr>
                 </thead>

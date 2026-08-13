@@ -28,12 +28,13 @@ import { buildServer, makeSessionCookie, OIDC_SESSION_COOKIE } from '../src/cons
 vi.mock('../src/plugins/console-gcp/jobs', () => ({
   triggerCloudRunJob: vi.fn().mockResolvedValue({
     operation_name: 'projects/test-project/locations/us-east1/operations/op-123',
-    execution_name:
-      'projects/test-project/locations/us-east1/jobs/forge-e2e-runner/executions/exec-123',
+    execution_name: 'projects/test-project/locations/us-east1/jobs/forge-e2e-runner/executions/exec-123',
   }),
   buildExecutionConsoleUrl: vi
     .fn()
-    .mockReturnValue('https://console.cloud.google.com/run/jobs/details/us-east1/forge-e2e-runner/executions/exec-123?project=test-project'),
+    .mockReturnValue(
+      'https://console.cloud.google.com/run/jobs/details/us-east1/forge-e2e-runner/executions/exec-123?project=test-project',
+    ),
 }));
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
