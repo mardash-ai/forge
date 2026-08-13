@@ -23,8 +23,8 @@ on:
 
 permissions:
   contents: read
-  id-token: write  # WIF
-  packages: read   # read GHCR to resolve the control-plane image digest (t-runner-image step)
+  id-token: write # WIF
+  packages: read # read GHCR to resolve the control-plane image digest (t-runner-image step)
 
 env:
   ENV_NAME: prod-a
