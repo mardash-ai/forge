@@ -60,6 +60,50 @@ variable "platform" {
 }
 
 # ---------------------------------------------------------------------------
+# hat-remote environment variables — mirrors .hat/env (the forge-hat harness
+# reads these when `hat remote` is invoked). Values are passed to the e2e_runner
+# module, which wires them as env vars on the Cloud Run Job template.
+# ---------------------------------------------------------------------------
+
+variable "mcp_endpoint" {
+  type        = string
+  default     = "https://dorinda.ai/mcp"
+  description = <<-EOT
+    MCP server URL for the dorinda target app. Passed to e2e-runner as DORINDA_MCP_ENDPOINT
+    (stored in SM so URL can rotate without a TF re-apply). Override via TF_VAR_mcp_endpoint
+    or a .tfvars file if the endpoint differs between environments.
+  EOT
+}
+
+variable "test_control_url" {
+  type        = string
+  default     = "https://api.dorinda.ai"
+  description = "Dorinda test-control API origin. Passed to e2e-runner as DORINDA_TEST_CONTROL_URL."
+}
+
+variable "tenant" {
+  type        = string
+  default     = ""
+  description = <<-EOT
+    Test tenant identity (email or owner ID) the harness runs against.
+    Passed to e2e-runner as DORINDA_TENANT.
+    Set via TF_VAR_tenant or a .tfvars file; empty = harness falls back to its own default.
+  EOT
+}
+
+variable "e2e_provider" {
+  type        = string
+  default     = "anthropic"
+  description = "LLM provider for e2e runs (anthropic | openai). Passed to e2e-runner as E2E_PROVIDER."
+}
+
+variable "e2e_model" {
+  type        = string
+  default     = ""
+  description = "LLM model for e2e runs. Empty = provider default. Passed to e2e-runner as E2E_MODEL."
+}
+
+# ---------------------------------------------------------------------------
 # Providers
 # ---------------------------------------------------------------------------
 
@@ -113,6 +157,14 @@ module "e2e_runner" {
   # invoker_member: hardcoded to the forge-console SA — this is the only member that needs
   # job-level run.invoker; if the SA email ever changes, update here and re-apply.
   invoker_member = "serviceAccount:run-forge-console@${var.project_id}.iam.gserviceaccount.com"
+
+  # hat-remote environment — passed through to the Cloud Run Job template.
+  # These variables mirror exactly what `hat remote` reads (.hat/env contract).
+  mcp_endpoint     = var.mcp_endpoint
+  test_control_url = var.test_control_url
+  tenant           = var.tenant
+  e2e_provider     = var.e2e_provider
+  e2e_model        = var.e2e_model
 }
 
 # ---------------------------------------------------------------------------

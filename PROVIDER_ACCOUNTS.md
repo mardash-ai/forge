@@ -17,7 +17,7 @@
 | `ci-runner` | `ci-runner@dorinda-prod.iam.gserviceaccount.com` | GitHub Actions self-hosted runner (Spot MIG). Reads PAT from Secret Manager to register at the org level. | `roles/secretmanager.secretAccessor` on `github-runner-pat` |
 | `run-<service>` | `run-<service>@dorinda-prod.iam.gserviceaccount.com` | Cloud Run service SA — one per product service (dorinda-api, forge-console, etc.). Pattern from the `service` module. | `roles/secretmanager.secretAccessor` on its own secrets only |
 | `forge-deployer` | `forge-deployer@dorinda-prod.iam.gserviceaccount.com` | CI deployer for all forge-managed stacks. Authenticates via Workload Identity Federation (no key). Bound to: dorinda-api, dorinda-ci-runners, dorinda-devs, dorinda-forge-console, dorinda-metrics, dorinda-shared-infra, dorinda-site, dorinda-web, **forge** repos. | See project IAM for role list (cloudsql.admin, run.admin, secretmanager.admin, etc.) |
-| **`e2e-runner`** | `e2e-runner@dorinda-prod.iam.gserviceaccount.com` | **NEW (2026-08-11, renamed from forge-eval-runner → e2e-runner).** Cloud Run Job SA for the forge E2E harness. Reads only the e2e-runner secrets below. | `roles/secretmanager.secretAccessor` on `e2e-runner-*` secrets; `roles/cloudsql.client` on project (for private-IP Cloud SQL connections) |
+| **`e2e-runner`** | `e2e-runner@dorinda-prod.iam.gserviceaccount.com` | **NEW (2026-08-11, renamed from forge-eval-runner → e2e-runner).** Cloud Run Job SA for the forge E2E harness. Reads only its own secrets. **Updated 2026-08-13**: `e2e-runner-service-token` IAM removed; `e2e-runner-mcp-endpoint`, `e2e-runner-mcp-refresh-token`, `e2e-runner-mcp-client-id`, `e2e-runner-test-control-token` IAM added. | `roles/secretmanager.secretAccessor` on each `e2e-runner-*` secret (resource-scoped, not project-scoped); `roles/cloudsql.client` on project (for private-IP Cloud SQL connections) |
 
 ---
 
@@ -44,7 +44,7 @@
 | Name | Kind | Image | SA | Purpose |
 |---|---|---|---|---|
 | `<product-services>` | Service | ghcr.io/mardash-ai/... (product images, digest-pinned) | `run-<service>` | Product services (dorinda-api, forge-console, etc.) — managed by the `service` module |
-| **`e2e-runner`** | **Job** | `ghcr.io/mardash-ai/forge-control-plane:<version>` (digest-pinned at release) | `e2e-runner` | **NEW (2026-08-11, renamed from forge-eval-runner → e2e-runner).** Cloud Run **Job** for E2E harness runs. Triggered per E2E suite; not a long-running service. max_retries = 0 (E2E is not idempotent). VPC egress = PRIVATE_RANGES_ONLY (Cloud SQL private IP via VPC; Anthropic/OpenAI/target-app calls go direct). Image is digest-pinned by the infra CI `t-runner-image` step; Terraform manages the image field (no `ignore_changes`). Container: `command=[tsx, src/cli/index.ts]`, `args=[eval]`; invocation provides suite/app/mcp-url via `--args`. |
+| **`e2e-runner`** | **Job** | `us-east1-docker.pkg.dev/dorinda-prod/forge-hat/app:<digest>` (digest-pinned by forge-hat publish-image workflow) | `e2e-runner` | **NEW (2026-08-11, renamed from forge-eval-runner → e2e-runner).** Cloud Run **Job** for E2E harness runs. Triggered per E2E suite; not a long-running service. max_retries = 0 (E2E is not idempotent). VPC egress = PRIVATE_RANGES_ONLY (Cloud SQL private IP via VPC; LLM API calls go direct). No command/args override — image entrypoint and CMD are authoritative. Env: FORGE_DB_URL, FORGE_CP_RESULTS_BACKEND=postgres, ANTHROPIC_API_KEY, OPENAI_API_KEY (all from secrets); DORINDA_MCP_ENDPOINT, DORINDA_MCP_REFRESH_TOKEN, DORINDA_MCP_CLIENT_ID, DORINDA_TEST_CONTROL_TOKEN (from secrets); DORINDA_TEST_CONTROL_URL, DORINDA_TENANT, E2E_PROVIDER, E2E_MODEL (plain env vars). `lifecycle { ignore_changes = [image] }` — forge-hat's publish-image workflow owns the image field. |
 
 ### IAM on the e2e-runner job
 
@@ -57,16 +57,22 @@ This binding is managed in `terraform/modules/e2e-runner` (`google_cloud_run_v2_
 ### Triggering the E2E runner job
 
 ```sh
+# Invoke with default provider/model from the template (E2E_PROVIDER=anthropic):
+gcloud run jobs execute e2e-runner \
+  --region us-east1 \
+  --project dorinda-prod
+
+# Override provider or model at invocation time (Cloud Run v2 container env override):
 gcloud run jobs execute e2e-runner \
   --region us-east1 \
   --project dorinda-prod \
-  --args "eval,<suite-file>,--app,<app-name>,--mcp-url,<mcp-url>"
+  --update-env-vars E2E_PROVIDER=openai,E2E_MODEL=gpt-4o
 ```
 
-The job template defines the container and secrets; suite-specific args are passed at invocation
-time via `--args`. The `--args` value **replaces** the template `args` (not appended), so always
-include `eval` as the first argument. Job logs are available in Cloud Logging under the
-`cloud_run_job` resource.
+The job entrypoint and command are owned by the forge-hat image (no `command`/`args` override in
+the template). Credentials (`DORINDA_MCP_ENDPOINT`, `DORINDA_MCP_REFRESH_TOKEN`,
+`DORINDA_MCP_CLIENT_ID`, `DORINDA_TEST_CONTROL_TOKEN`) are injected from Secret Manager at
+execution time. Job logs are available in Cloud Logging under the `cloud_run_job` resource.
 
 ---
 
@@ -96,13 +102,21 @@ complete list.
 
 ### forge E2E runner — **NEW (2026-08-11, renamed forge-eval-runner → e2e-runner)**
 
-| Secret ID | Seeded by | Value | Purpose |
-|---|---|---|---|
-| `e2e-runner-db-password` | **TF-seeded** (random_password) | 32-char hex password for the `app` user on `e2e-results` Cloud SQL | Stored for break-glass / rotation reference. Not read directly by the job (the job reads `e2e-runner-db-url`). |
-| `e2e-runner-db-url` | **TF-seeded** (composed from instance private IP + password) | `postgresql://app:<pw>@<private-ip>:5432/cp_results` | `FORGE_DB_URL` — the cp-results Postgres connection string. Wired into the Cloud Run Job template. |
-| `e2e-runner-anthropic-key` | Operator (OOB) | Anthropic API key | `ANTHROPIC_API_KEY` — E2E runs Claude as both the agent-under-test and the LLM judge. Obtain from `console.anthropic.com`. |
-| `e2e-runner-openai-key` | Operator (OOB) | OpenAI API key | `OPENAI_API_KEY` — E2E runs GPT as the second agent-under-test. Obtain from `platform.openai.com`. |
-| `e2e-runner-service-token` | Operator (OOB) | Random 32-byte hex token | `AUTH_SERVICE_TOKEN` — the E2E runner mints MCP access tokens for the target app via `POST /oauth/admin/token`. Must match the `AUTH_SERVICE_TOKEN` configured in the target app's forge data-plane. |
+> **Credential contract change (2026-08-13).** `AUTH_SERVICE_TOKEN` / `e2e-runner-service-token`
+> is replaced by three durable MCP credentials (`mcp-endpoint`, `mcp-refresh-token`,
+> `mcp-client-id`) and a test-control token (`test-control-token`). `hat remote` now mints
+> short-lived MCP access tokens via the OAuth refresh-token flow instead of a static admin token.
+
+| Secret ID | Seeded by | Value | Env var | Purpose |
+|---|---|---|---|---|
+| `e2e-runner-db-password` | **TF-seeded** (random_password) | 32-char hex password for the `app` user on `e2e-results` Cloud SQL | *(not wired directly)* | Stored for break-glass / rotation reference. |
+| `e2e-runner-db-url` | **TF-seeded** (composed from instance private IP + password) | `postgresql://app:<pw>@<private-ip>:5432/cp_results` | `FORGE_DB_URL` | cp-results Postgres connection string. |
+| `e2e-runner-anthropic-key` | Operator (OOB) | Anthropic API key (`sk-ant-…`) | `ANTHROPIC_API_KEY` | E2E runs Claude as agent-under-test and LLM judge. Obtain from `console.anthropic.com`. |
+| `e2e-runner-openai-key` | Operator (OOB) | OpenAI API key (`sk-…`) | `OPENAI_API_KEY` | E2E runs GPT as the second agent-under-test. Obtain from `platform.openai.com`. |
+| `e2e-runner-mcp-endpoint` | Operator (OOB) | MCP server URL (e.g. `https://dorinda.ai/mcp`) | `DORINDA_MCP_ENDPOINT` | Target MCP server URL. Stored in SM so the URL can change without a TF re-apply. Minted by: `printf '%s' 'https://dorinda.ai/mcp' \| gcloud secrets versions add …` |
+| `e2e-runner-mcp-refresh-token` | **OAuth authorization_code flow (OOB)** | OAuth refresh token issued by dorinda MCP server | `DORINDA_MCP_REFRESH_TOKEN` | Durable credential the harness uses to mint fresh short-lived MCP access tokens. **Minted by**: (1) run `hat register --app dorinda` to complete DCR + authorization_code flow as a human; (2) store the resulting `refresh_token` in this secret. See forge-hat runbook. |
+| `e2e-runner-mcp-client-id` | **DCR on dorinda MCP server (OOB)** | Client ID assigned during Dynamic Client Registration (e.g. `mcpc_…`) | `DORINDA_MCP_CLIENT_ID` | OAuth client identifier paired with the refresh token above. **Minted by** the same `hat register` flow as `mcp-refresh-token`; store the `client_id` from the DCR response. |
+| `e2e-runner-test-control-token` | Operator (OOB) | Dorinda test-control surface token (`x-dorinda-test-token` header) | `DORINDA_TEST_CONTROL_TOKEN` | Authenticates `hat remote` to `POST /api/test/tenants` and related test-tenant endpoints. **Minted by**: generate or copy the token that dorinda's test-control surface expects, then `printf '%s' '<token>' \| gcloud secrets versions add …` |
 
 #### Setting out-of-band secrets after first apply
 
@@ -115,8 +129,21 @@ printf '%s' 'sk-ant-...' | gcloud secrets versions add e2e-runner-anthropic-key 
 printf '%s' 'sk-...' | gcloud secrets versions add e2e-runner-openai-key \
   --project dorinda-prod --data-file=-
 
-# Service token (must match the target app's AUTH_SERVICE_TOKEN)
-printf '%s' "$(openssl rand -hex 32)" | gcloud secrets versions add e2e-runner-service-token \
+# MCP endpoint URL
+printf '%s' 'https://dorinda.ai/mcp' | gcloud secrets versions add e2e-runner-mcp-endpoint \
+  --project dorinda-prod --data-file=-
+
+# MCP refresh token — obtained by running `hat register --app dorinda` and completing the OAuth
+# authorization_code flow; copy the refresh_token from the output.
+printf '%s' '<refresh_token>' | gcloud secrets versions add e2e-runner-mcp-refresh-token \
+  --project dorinda-prod --data-file=-
+
+# MCP client ID — the client_id from the same `hat register` DCR response.
+printf '%s' 'mcpc_...' | gcloud secrets versions add e2e-runner-mcp-client-id \
+  --project dorinda-prod --data-file=-
+
+# Test-control token — must match what dorinda's /api/test/tenant/* routes expect.
+printf '%s' '<test-control-token>' | gcloud secrets versions add e2e-runner-test-control-token \
   --project dorinda-prod --data-file=-
 ```
 

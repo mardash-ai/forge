@@ -103,6 +103,51 @@ variable "job_timeout" {
 }
 
 # ---------------------------------------------------------------------------
+# hat-remote environment — mirrors exactly what the forge-hat binary reads
+# when `hat remote` is invoked (the .hat/env contract).
+# ---------------------------------------------------------------------------
+
+variable "mcp_endpoint" {
+  type        = string
+  description = <<-EOT
+    MCP server URL for the target app (e.g. https://dorinda.ai/mcp).
+    Stored in Secret Manager (e2e-runner-mcp-endpoint) so the URL can be
+    rotated without a TF re-apply — wired as DORINDA_MCP_ENDPOINT.
+    Secret value is set out-of-band; this variable seeds the initial SM secret.
+  EOT
+}
+
+variable "test_control_url" {
+  type        = string
+  description = <<-EOT
+    Dorinda test-control API origin (e.g. https://api.dorinda.ai).
+    Wired as DORINDA_TEST_CONTROL_URL — plain env var (not a credential, just a URL).
+  EOT
+}
+
+variable "tenant" {
+  type        = string
+  default     = ""
+  description = <<-EOT
+    Test tenant identity (email address or owner ID) the harness runs against.
+    Wired as DORINDA_TENANT — plain env var; override at invocation time if tests
+    span multiple tenants. Empty string ⇒ harness picks a default from its own config.
+  EOT
+}
+
+variable "e2e_provider" {
+  type        = string
+  default     = "anthropic"
+  description = "LLM provider for e2e runs (anthropic | openai). Wired as E2E_PROVIDER. Override at invocation time."
+}
+
+variable "e2e_model" {
+  type        = string
+  default     = ""
+  description = "LLM model for e2e runs. Wired as E2E_MODEL. Empty = provider's default model."
+}
+
+# ---------------------------------------------------------------------------
 # Cloud SQL: dedicated E2E / cp-results Postgres instance
 # ---------------------------------------------------------------------------
 # DEDICATED instance — NOT a database on dorinda-prod's application Cloud SQL.
@@ -207,7 +252,7 @@ resource "google_secret_manager_secret_version" "db_url" {
   secret_data = "postgresql://${google_sql_user.app.name}:${random_password.db.result}@${google_sql_database_instance.e2e_pg.private_ip_address}:5432/${google_sql_database.cp_results.name}"
 }
 
-# API key and service token containers: values supplied out-of-band (never in TF state).
+# API key containers: values supplied out-of-band (never in TF state).
 # Operator: `gcloud secrets versions add <secret_id> --data-file=-`
 
 resource "google_secret_manager_secret" "anthropic_key" {
@@ -226,14 +271,61 @@ resource "google_secret_manager_secret" "openai_key" {
   }
 }
 
-resource "google_secret_manager_secret" "service_token" {
+# ---------------------------------------------------------------------------
+# hat-remote durable credential containers (replace AUTH_SERVICE_TOKEN)
+#
+# The mint change (t1) switches from a static DORINDA_MCP_TOKEN to an OAuth
+# refresh-token flow. Three SM secrets carry the durable credential set:
+#   • e2e-runner-mcp-endpoint     → DORINDA_MCP_ENDPOINT
+#   • e2e-runner-mcp-refresh-token → DORINDA_MCP_REFRESH_TOKEN
+#   • e2e-runner-mcp-client-id     → DORINDA_MCP_CLIENT_ID
+#
+# A fourth secret carries the test-control surface credential:
+#   • e2e-runner-test-control-token → DORINDA_TEST_CONTROL_TOKEN
+#
+# How to mint each value is documented in PROVIDER_ACCOUNTS.md.
+# ---------------------------------------------------------------------------
+
+resource "google_secret_manager_secret" "mcp_endpoint" {
   project   = var.project_id
-  secret_id = "${var.name}-service-token"
+  secret_id = "${var.name}-mcp-endpoint"
   replication {
     auto {}
   }
-  # AUTH_SERVICE_TOKEN for minting MCP access tokens against the target app's forge instance.
-  # Same token the app's data-plane uses for service-to-service auth (C10 §P34).
+  # DORINDA_MCP_ENDPOINT — the MCP server URL (e.g. https://dorinda.ai/mcp).
+  # Stored in SM so the URL can be updated without a TF re-apply.
+}
+
+resource "google_secret_manager_secret" "mcp_refresh_token" {
+  project   = var.project_id
+  secret_id = "${var.name}-mcp-refresh-token"
+  replication {
+    auto {}
+  }
+  # DORINDA_MCP_REFRESH_TOKEN — OAuth refresh token for the hat harness's MCP client.
+  # Minted by completing an authorization_code flow on the dorinda MCP server and storing
+  # the resulting refresh_token. See PROVIDER_ACCOUNTS.md for the exact minting procedure.
+}
+
+resource "google_secret_manager_secret" "mcp_client_id" {
+  project   = var.project_id
+  secret_id = "${var.name}-mcp-client-id"
+  replication {
+    auto {}
+  }
+  # DORINDA_MCP_CLIENT_ID — the OAuth client ID assigned to the hat harness by DCR on
+  # the dorinda MCP server. See PROVIDER_ACCOUNTS.md for the minting procedure.
+}
+
+resource "google_secret_manager_secret" "test_control_token" {
+  project   = var.project_id
+  secret_id = "${var.name}-test-control-token"
+  replication {
+    auto {}
+  }
+  # DORINDA_TEST_CONTROL_TOKEN — auth token for the dorinda test-control surface
+  # (POST /api/test/tenants, DELETE /api/test/tenants/:id, etc.).
+  # See PROVIDER_ACCOUNTS.md for the minting procedure.
 }
 
 # Placeholder versions for OOB secrets — Cloud Run v2 requires ALL referenced secrets to have
@@ -265,11 +357,44 @@ resource "google_secret_manager_secret_version" "openai_key" {
   }
 }
 
-resource "google_secret_manager_secret_version" "service_token" {
-  secret      = google_secret_manager_secret.service_token.id
-  secret_data = "PLACEHOLDER_REPLACE_WITH_REAL_SERVICE_TOKEN"
+resource "google_secret_manager_secret_version" "mcp_endpoint" {
+  secret      = google_secret_manager_secret.mcp_endpoint.id
+  secret_data = "PLACEHOLDER_REPLACE_WITH_MCP_ENDPOINT_URL"
 
   lifecycle {
+    # Operator sets the real MCP server URL:
+    #   printf '%s' 'https://dorinda.ai/mcp' | gcloud secrets versions add e2e-runner-mcp-endpoint \
+    #     --project dorinda-prod --data-file=-
+    ignore_changes = [secret_data]
+  }
+}
+
+resource "google_secret_manager_secret_version" "mcp_refresh_token" {
+  secret      = google_secret_manager_secret.mcp_refresh_token.id
+  secret_data = "PLACEHOLDER_REPLACE_WITH_MCP_REFRESH_TOKEN"
+
+  lifecycle {
+    # See PROVIDER_ACCOUNTS.md for the OAuth minting procedure.
+    ignore_changes = [secret_data]
+  }
+}
+
+resource "google_secret_manager_secret_version" "mcp_client_id" {
+  secret      = google_secret_manager_secret.mcp_client_id.id
+  secret_data = "PLACEHOLDER_REPLACE_WITH_MCP_CLIENT_ID"
+
+  lifecycle {
+    # See PROVIDER_ACCOUNTS.md for the DCR minting procedure.
+    ignore_changes = [secret_data]
+  }
+}
+
+resource "google_secret_manager_secret_version" "test_control_token" {
+  secret      = google_secret_manager_secret.test_control_token.id
+  secret_data = "PLACEHOLDER_REPLACE_WITH_TEST_CONTROL_TOKEN"
+
+  lifecycle {
+    # See PROVIDER_ACCOUNTS.md for the minting procedure.
     ignore_changes = [secret_data]
   }
 }
@@ -312,9 +437,31 @@ resource "google_secret_manager_secret_iam_member" "runner_openai_key" {
   member    = "serviceAccount:${google_service_account.runner.email}"
 }
 
-resource "google_secret_manager_secret_iam_member" "runner_service_token" {
+# hat-remote durable credentials — least-privilege secretAccessor on each secret only.
+resource "google_secret_manager_secret_iam_member" "runner_mcp_endpoint" {
   project   = var.project_id
-  secret_id = google_secret_manager_secret.service_token.secret_id
+  secret_id = google_secret_manager_secret.mcp_endpoint.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runner.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "runner_mcp_refresh_token" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.mcp_refresh_token.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runner.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "runner_mcp_client_id" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.mcp_client_id.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runner.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "runner_test_control_token" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.test_control_token.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.runner.email}"
 }
@@ -379,7 +526,10 @@ resource "google_cloud_run_v2_job" "runner" {
     google_secret_manager_secret_version.db_url,
     google_secret_manager_secret_version.anthropic_key,
     google_secret_manager_secret_version.openai_key,
-    google_secret_manager_secret_version.service_token,
+    google_secret_manager_secret_version.mcp_endpoint,
+    google_secret_manager_secret_version.mcp_refresh_token,
+    google_secret_manager_secret_version.mcp_client_id,
+    google_secret_manager_secret_version.test_control_token,
   ]
 
   template {
@@ -456,14 +606,84 @@ resource "google_cloud_run_v2_job" "runner" {
           }
         }
 
+        # -------------------------------------------------------------------------
+        # hat-remote credential set — mirrors .hat/env exactly (no extras, no less).
+        #
+        # MCP durable credentials (replaces AUTH_SERVICE_TOKEN / DORINDA_MCP_TOKEN):
+        #   DORINDA_MCP_ENDPOINT      — MCP server URL; in SM so URL changes need no re-apply.
+        #   DORINDA_MCP_REFRESH_TOKEN — OAuth refresh token; hat mints short-lived access tokens.
+        #   DORINDA_MCP_CLIENT_ID     — DCR-assigned client ID paired with the refresh token.
+        #
+        # Test-control surface:
+        #   DORINDA_TEST_CONTROL_URL   — origin for POST/DELETE /api/test/tenants/*.
+        #   DORINDA_TEST_CONTROL_TOKEN — auth token for that surface (x-dorinda-test-token header).
+        #
+        # Tenant identity:
+        #   DORINDA_TENANT — email / owner ID the harness runs against.
+        #
+        # Provider / model selection:
+        #   E2E_PROVIDER — which LLM provider (anthropic | openai). Override at invocation time.
+        #   E2E_MODEL    — which model. Empty = provider default. Override at invocation time.
+        # -------------------------------------------------------------------------
+
         env {
-          name = "AUTH_SERVICE_TOKEN"
+          name = "DORINDA_MCP_ENDPOINT"
           value_source {
             secret_key_ref {
-              secret  = google_secret_manager_secret.service_token.secret_id
+              secret  = google_secret_manager_secret.mcp_endpoint.secret_id
               version = "latest"
             }
           }
+        }
+
+        env {
+          name = "DORINDA_MCP_REFRESH_TOKEN"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.mcp_refresh_token.secret_id
+              version = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "DORINDA_MCP_CLIENT_ID"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.mcp_client_id.secret_id
+              version = "latest"
+            }
+          }
+        }
+
+        env {
+          name  = "DORINDA_TEST_CONTROL_URL"
+          value = var.test_control_url
+        }
+
+        env {
+          name = "DORINDA_TEST_CONTROL_TOKEN"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.test_control_token.secret_id
+              version = "latest"
+            }
+          }
+        }
+
+        env {
+          name  = "DORINDA_TENANT"
+          value = var.tenant
+        }
+
+        env {
+          name  = "E2E_PROVIDER"
+          value = var.e2e_provider
+        }
+
+        env {
+          name  = "E2E_MODEL"
+          value = var.e2e_model
         }
       }
     }
