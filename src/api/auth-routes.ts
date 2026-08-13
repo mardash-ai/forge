@@ -76,6 +76,7 @@ import {
 //   POST /auth/2fa/resend      { challenge }                       -> re-email a login-challenge code
 //   POST /auth/admin/seed-owner  { app?, email, password? }        -> owner migration hook (§8)
 //   POST /auth/admin/identity  { app?, email, password?, name? }   -> create an identity, verified, NOT an owner (SERVICE token; 409 if it exists)
+//   PATCH /auth/admin/identity/:userId  { name? }                  -> update identity fields (SERVICE token; 404 if absent) [HAT-F-061]
 //   POST /auth/admin/identity/:userId/password  { password }      -> set/replace a password (SERVICE token)
 //   DELETE /auth/admin/identity/:userId                            -> delete identity + creds (SERVICE token; idempotent)
 //
@@ -1618,6 +1619,57 @@ export function registerAuthRoutes(
       email_verified: true,
       is_owner: false,
       has_password: Boolean(user.password_hash),
+    });
+  });
+
+  // ---- administrative identity PATCH (update name) ------------------------------------------------
+  //
+  // Update mutable profile fields on an existing identity. SERVICE-token gated, authenticated by the
+  // exact same mechanism as /auth/admin/identity DELETE and /oauth/admin/token (hasValidServiceToken /
+  // x-forge-service-token). Introduced in HAT-F-061 so dorinda-api's admin platform-name seed can update
+  // the member's platform name without a 404.
+  //
+  //   PATCH /auth/admin/identity/:userId  { app?, name? }
+  //   → 200 { user_id, name }    on success
+  //   → 401                      missing/invalid service token
+  //   → 404                      unknown app or unknown userId
+  //   → 422                      no updatable field supplied in the body
+  app.patch('/auth/admin/identity/:userId', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.code(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_.id))) return reply.code(401).send(needServiceToken);
+    const { userId } = req.params as { userId: string };
+    const b = body(req);
+
+    // Validate the user exists before patching — the caller is not creating an identity here.
+    const user = await authStore.getUser(app_.id, userId);
+    if (!user)
+      return reply.code(404).send({
+        error: { code: 'not_found', message: 'unknown identity', retry: 'change-input' },
+      });
+
+    // Build the patch from the accepted name field(s). `name` is the platform display name the
+    // dorinda-api seed already sends. No other fields are mutable through this endpoint (use the
+    // dedicated password-set or delete endpoints for those operations).
+    const patch: Record<string, unknown> = {};
+    if (typeof b.name === 'string') {
+      patch.name = b.name.trim() || undefined;
+    }
+
+    if (Object.keys(patch).length === 0) {
+      return reply.code(422).send({
+        error: {
+          code: 'invalid_input',
+          message: 'at least one updatable field (e.g. `name`) must be supplied',
+          retry: 'change-input',
+        },
+      });
+    }
+
+    const updated = await authStore.updateUser(app_.id, userId, patch);
+    return reply.code(200).send({
+      user_id: userId,
+      name: updated?.name ?? null,
     });
   });
 

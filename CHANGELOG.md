@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.26.7] - 2026-08-13
+
+### Added
+
+- **auth: PATCH /auth/admin/identity/:userId — admin-authenticated identity name update (HAT-F-061).**
+  New route on the C10/C23 auth service that updates mutable profile fields (currently `name`) on an
+  existing identity. Gated by the exact same `x-forge-service-token` / Bearer mechanism as
+  `/auth/admin/identity` DELETE and `/oauth/admin/token` — no new auth surface. The dorinda-api admin
+  seed now returns success instead of 404 when updating a member's platform name. Built red-first
+  (tests assert 404 on pre-change behavior), with admin-auth negative cases (401 on missing/wrong
+  token) and zero-drift docs (C10 catalog + route comment updated). The `name` field is trimmed;
+  supplying no updatable field returns 422.
+
 ## [1.26.6] - 2026-08-11
 
 ### Fixed
