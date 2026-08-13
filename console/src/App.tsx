@@ -4547,6 +4547,7 @@ interface E2ERun {
   status: string;
   started_at: string;
   completed_at: string | null;
+  updated_at?: string;
   meta: Record<string, unknown>;
   created_at: string;
 }
@@ -4615,6 +4616,30 @@ interface E2EClaim {
 // ── Fixtures (matching the 2026-08-11 reference run from the mock) ─────────
 
 const E2E_FIXTURE_RUNS: E2ERun[] = [
+  {
+    run_id: '2026-08-13T09-15',
+    tenant_id: 'dorinda-prod',
+    canonical_url: null,
+    provider: 'openai',
+    trigger_source: 'manual · in-progress',
+    workflows_attempted: 75,
+    workflows_passed: 31,
+    workflows_failed: 8,
+    pass_rate: null,
+    withheld_count: 5,
+    rejected_count: 8,
+    spend_cents: 62,
+    p50_duration_ms: null,
+    p99_duration_ms: null,
+    total_input_tokens: 1400000,
+    total_output_tokens: 0,
+    status: 'running',
+    started_at: '2026-08-13T09:15:00Z',
+    completed_at: null,
+    updated_at: '2026-08-13T09:31:00Z',
+    meta: { api_version: 'v1.28.6', catalogue_size: 75 },
+    created_at: '2026-08-13T09:15:00Z',
+  },
   {
     run_id: '2026-08-11T10-35',
     tenant_id: 'dorinda-prod',
@@ -5010,6 +5035,104 @@ function fmtE2ePctOfRunnable(run: E2ERun | null | undefined): string {
   const runnable = (run.workflows_attempted ?? 0) - (run.withheld_count ?? 0);
   if (runnable <= 0) return 'none runnable';
   return `${Math.round(((run.workflows_passed ?? 0) / runnable) * 100)}% of runnable`;
+}
+
+/** Format a millisecond duration as a human-readable elapsed string (e.g. "3m 45s", "1h 23m"). */
+function fmtElapsedMs(ms: number): string {
+  const totalSecs = Math.floor(Math.max(0, ms) / 1000);
+  const mins = Math.floor(totalSecs / 60);
+  const secs = totalSecs % 60;
+  if (mins < 60) return `${mins}m ${secs}s`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return `${hours}h ${remMins}m`;
+}
+
+/**
+ * Counter-driven progress bar for a run-history row whose status is 'running'.
+ *
+ * Rules:
+ * - The bar fill is derived exclusively from (passed+failed+withheld) / workflows_attempted.
+ *   No animation, no interpolation, no time-based completion estimate.
+ * - When workflows_attempted is 0 the bar is NOT drawn; the row shows an indeterminate
+ *   "running · started N ago" label instead.
+ * - When updated_at has not changed for >2 min the bar turns muted and labels the stall time,
+ *   so a stuck run reads as stuck rather than quietly busy.
+ */
+function RunProgressBar({ run }: { run: E2ERun }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 5_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const intended = run.workflows_attempted ?? 0;
+  const completed = (run.workflows_passed ?? 0) + (run.workflows_failed ?? 0) + (run.withheld_count ?? 0);
+  const hasCounter = intended > 0;
+  const pct = hasCounter ? Math.min(100, (completed / intended) * 100) : null;
+
+  const startedMs = run.started_at ? new Date(run.started_at).getTime() : null;
+  const elapsedStr = startedMs !== null ? fmtElapsedMs(now - startedMs) : null;
+
+  const updatedMs = run.updated_at ? new Date(run.updated_at).getTime() : null;
+  const msSinceUpdate = updatedMs !== null ? now - updatedMs : null;
+  // A run is considered stalled when updated_at has not advanced for more than 2 minutes.
+  const isStalled = msSinceUpdate !== null && msSinceUpdate > 2 * 60_000;
+
+  if (!hasCounter) {
+    // No counter data yet — show an indeterminate running label.
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>⏺ running</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          started {elapsedStr ?? '—'} ago
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minWidth: 160 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+        {/* Bar fill is purely counter-driven — transition: none prevents animation */}
+        <div
+          role="progressbar"
+          aria-valuenow={Math.round(pct!)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          style={{
+            flex: 1,
+            height: 5,
+            background: 'var(--line)',
+            borderRadius: 3,
+            overflow: 'hidden',
+            minWidth: 60,
+          }}
+        >
+          <div
+            style={{
+              height: '100%',
+              width: `${pct}%`,
+              background: isStalled ? 'var(--text-muted)' : 'var(--accent)',
+              borderRadius: 3,
+              transition: 'none',
+            }}
+          />
+        </div>
+        <span style={{ fontSize: 11.5, fontFamily: 'var(--mono)', whiteSpace: 'nowrap' }}>
+          {completed} / {intended}
+        </span>
+      </div>
+      <span style={{ fontSize: 10.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+        {isStalled && msSinceUpdate !== null
+          ? `stalled · updated ${fmtElapsedMs(msSinceUpdate)} ago`
+          : elapsedStr !== null
+            ? `${elapsedStr} elapsed`
+            : null}
+      </span>
+    </div>
+  );
 }
 
 /** The Spend tile's sub-line, matching the reference mock's "2.9M in · 84% cached". */
@@ -6187,13 +6310,14 @@ function Evals() {
   const runsApi = useApi<E2ERun[]>('/api/e2e/runs');
   const detailApi = useApi<E2ERunDetail>(activeRunId ? `/api/e2e/runs/${activeRunId}` : null);
 
-  // Live-update: while any run is in-progress, reload the list every 15 s so the run transitions
-  // to its terminal state (success/failure) without a manual refresh.
+  // Live-update: while any run is in-progress, reload the list every 5 s so progress-bar counters
+  // advance and the run transitions to its terminal state without a manual refresh.
+  // Polling stops automatically when nothing is running (effect cleanup clears the interval).
   const runs0 = runsApi.data;
   useEffect(() => {
     const hasRunning = (runs0 ?? []).some((r) => r.status === 'running');
     if (!hasRunning) return;
-    const id = setInterval(() => runsApi.reload(), 15_000);
+    const id = setInterval(() => runsApi.reload(), 5_000);
     return () => clearInterval(id);
   }, [runs0]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -6601,15 +6725,7 @@ function Evals() {
                       </td>
                       <td style={{ ...cell, whiteSpace: 'nowrap' }}>
                         {r.status === 'running' ? (
-                          <span
-                            style={{
-                              fontSize: 12,
-                              color: 'var(--accent)',
-                              fontWeight: 600,
-                            }}
-                          >
-                            ⏺ running…
-                          </span>
+                          <RunProgressBar run={r} />
                         ) : r.status === 'failed' ? (
                           <span style={{ fontSize: 12, color: 'var(--crit-text)', fontWeight: 600 }}>
                             ✗ failed
