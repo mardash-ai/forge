@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.26.12] - 2026-08-13
+
+### Fixed
+
+- **console/E2E Tests tab: label parity with the approved mock.** Four elements rendered with
+  wording that differed from `console/design/e2e-console-reference.html`, caught in a
+  side-by-side review: the run-level triage button read "⧉ Triage this run" where the mock
+  (and Mark's original request) says **"⧉ Triage with Claude"**; the duration tiles read
+  "p50"/"p99" instead of **"p50 duration"/"p99 duration"**; and the run-history table shipped
+  with no visible **"Run history"** heading. All four now match the mock exactly.
+- **The approved reference mock is protected from formatters.** `console/design/` is added to
+  `.prettierignore` and carries a README stating the file is evidence of what was approved and
+  must never be edited or reformatted — a previous release had prettier-formatted it, which
+  destroys its value as the acceptance criterion it exists to be. Restored to its approved bytes.
+
 ## [1.26.10] - 2026-08-13
 
 ### Added
