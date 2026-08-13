@@ -1,0 +1,77 @@
+name: Delivery Check
+
+# Guards every hop in the forge delivery pipeline:
+#   commit→tag  (producer): main has unreleased source commits → FAIL
+#   tag→image   (release hop 1): release image not published in GHCR → FAIL
+#   image→run   (release hop 2): deployed image is not on the release digest → FAIL
+#
+# Runs on every push to main (catches regressions immediately) and on a daily schedule
+# (catches drift that accumulates without a push — e.g. a deploy that's overdue).
+#
+# Every failing check exits 1, names the specific artifact that is behind, and states
+# the exact remedy. A lag is silenced ONLY by a .delivery-silence.json file in the repo
+# with a non-empty reason field. There is no default silencing.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Daily at 08:00 UTC — catches drift that accumulates without a push.
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read  # needed for docker manifest inspect against GHCR
+
+jobs:
+  delivery-check:
+    name: Delivery pipeline check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history — git log needs tag ancestry)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history so git describe + git log work correctly
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      # Log in to GHCR so docker manifest inspect can resolve digests for private images.
+      # Uses the built-in GITHUB_TOKEN (packages:read is sufficient).
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Producer check ────────────────────────────────────────────────────────
+      # Fails if main has source commits not included in any release tag.
+      # Remedy: publish a new release (bump version → tag → push image).
+      - name: Producer check — main must be current with latest release
+        run: npx tsx scripts/delivery-check.ts producer
+        env:
+          FORGE_PRODUCER_REPO_NAME: forge
+          FORGE_PRODUCER_SOURCE_PATHS: src/,tests/,package.json,Dockerfile,.github/workflows/
+
+      # ── Release check ─────────────────────────────────────────────────────────
+      # Fails if:
+      #   - The latest vX.Y.Z tag's image is not published in GHCR (hop: tag→image).
+      #   - The deployed control-plane is not running the latest release digest (hop: image→run).
+      #     The deployed digest is tracked in deployment.json and updated by the release process.
+      #     If FORGE_DEPLOYED_DIGEST is set (e.g. injected by the deploy automation), it takes
+      #     precedence over deployment.json.
+      - name: Release check — deployed control-plane must be on the latest release digest
+        run: npx tsx scripts/delivery-check.ts release
+        env:
+          FORGE_CP_IMAGE: ghcr.io/${{ github.repository_owner }}/forge-control-plane
+          FORGE_CP_IMAGE_LABEL: forge-control-plane
+          # FORGE_DEPLOYED_DIGEST: ${{ secrets.FORGE_DEPLOYED_DIGEST }}
+          # Uncomment the line above and set the secret once the deploy automation
+          # is wired to update it after each successful deploy.

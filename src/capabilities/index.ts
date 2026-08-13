@@ -22,6 +22,7 @@ import { sendMessage } from './send-message/index';
 import { setupObservability } from './setup-observability/index';
 import { provisionMonitoring } from './provision-monitoring/index';
 import { evalCapability } from './eval/index';
+import { deliveryCheck } from './delivery-check/index';
 
 // The full set of Capabilities the platform exposes. Order here is the order
 // they appear in discovery output.
@@ -49,4 +50,5 @@ export const capabilities: Capability<any, any>[] = [
   setupObservability,
   provisionMonitoring,
   evalCapability,
+  deliveryCheck,
 ];

@@ -5020,17 +5020,25 @@ function fmtE2eSpend(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
-/** Attempted tile sub-line — the mock's "100% of catalogue". */
-function fmtE2ePctOfCatalogue(run: E2ERun | null | undefined): string {
+/**
+ * Attempted tile sub-line — the mock's "100% of catalogue".
+ *
+ * Never claims a fraction it cannot compute. A run that attempted nothing is not "100% of
+ * catalogue", and an unknown catalogue size is not a full one: both previously rendered the same
+ * confident "100% of catalogue" under a zero, which is the fabricated-data class this tab exists
+ * to avoid. Absence is reported as absence.
+ */
+export function fmtE2ePctOfCatalogue(run: E2ERun | null | undefined): string {
   if (!run) return '—';
   const catalogue = (run.meta as { catalogue_size?: number } | undefined)?.catalogue_size;
   const attempted = run.workflows_attempted ?? 0;
-  if (!catalogue || catalogue <= 0) return '100% of catalogue';
+  if (attempted <= 0) return 'nothing attempted';
+  if (!catalogue || catalogue <= 0) return 'catalogue size unknown';
   return `${Math.round((attempted / catalogue) * 100)}% of catalogue`;
 }
 
 /** Accepted tile sub-line — the mock's "57% of runnable" (runnable excludes withheld). */
-function fmtE2ePctOfRunnable(run: E2ERun | null | undefined): string {
+export function fmtE2ePctOfRunnable(run: E2ERun | null | undefined): string {
   if (!run) return '—';
   const runnable = (run.workflows_attempted ?? 0) - (run.withheld_count ?? 0);
   if (runnable <= 0) return 'none runnable';

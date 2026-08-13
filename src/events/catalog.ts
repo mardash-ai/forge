@@ -77,6 +77,11 @@ export const EVENT_TYPES = [
   // C30 — an eval suite finished running against an app's MCP surface; carries the per-model
   // pass/fail summary + the Langfuse dataset-run name (never any tenant data).
   'EvalRunCompleted',
+  // Delivery checks — facts about the state of the delivery pipeline.
+  // Carries the checks requested + the ok/failed/silenced counts + per-check outcomes.
+  // Never carries secrets, digests of unreleased content, or per-user data.
+  'DeliveryCheckCompleted',
+  'DeliveryCheckFailed',
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];

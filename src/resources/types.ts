@@ -25,6 +25,7 @@ export const RESOURCE_TYPES = [
   'ObservabilityStack',
   'MonitoringStack',
   'EvalRun',
+  'DeliveryCheckRun',
 ] as const;
 
 export type ResourceType = (typeof RESOURCE_TYPES)[number];
@@ -443,6 +444,35 @@ export interface EvalCaseResult {
   cost_usd: number;
 }
 
+// A DeliveryCheckRun — the durable record of one `forge delivery-check` execution.
+// Records each per-check outcome (artifact, message, remedy) so the full picture
+// is queryable after the fact. 'ok' is the CI gate: false means at least one check
+// failed (non-zero exit in the CLI). Silenced checks are explicitly declared in-repo
+// with a reason; a check that scrolled past without a failure is NOT silenced.
+export interface DeliveryCheckRun extends BaseResource {
+  type: 'DeliveryCheckRun';
+  // Which checks were requested.
+  checks_requested: string[];
+  // The overall gate: true iff no check failed (silenced counts as acceptable).
+  ok: boolean;
+  passed: number;
+  failed: number;
+  silenced: number;
+  // Per-check outcomes, in run order.
+  results: DeliveryCheckResult[];
+  duration_ms: number;
+}
+
+export interface DeliveryCheckResult {
+  check: 'producer' | 'release' | 'consumer';
+  status: 'pass' | 'fail' | 'silenced';
+  artifact: string;
+  message: string;
+  remedy?: string;
+  silence_reason?: string;
+  detail?: string;
+}
+
 export type AnyResource =
   | Application
   | Environment
@@ -465,4 +495,5 @@ export type AnyResource =
   | EmailDelivery
   | ObservabilityStack
   | MonitoringStack
-  | EvalRun;
+  | EvalRun
+  | DeliveryCheckRun;
