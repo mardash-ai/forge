@@ -781,14 +781,18 @@ export function registerMcpRoutes(
     // Bare (non-CallToolResult-shaped) payloads are auto-wrapped as before — no regression for
     // existing tools that return plain objects or strings.
     const isCallToolResult =
-      typeof payload === 'object' && payload !== null && Array.isArray((payload as Record<string, unknown>)['content']);
+      typeof payload === 'object' &&
+      payload !== null &&
+      Array.isArray((payload as Record<string, unknown>)['content']);
 
     if (isCallToolResult) {
       const ctResult = payload as { content: unknown[]; structuredContent?: unknown; isError?: boolean };
       return reply.status(200).send(
         rpcResult(id, {
           content: ctResult.content,
-          ...(ctResult.structuredContent !== undefined ? { structuredContent: ctResult.structuredContent } : {}),
+          ...(ctResult.structuredContent !== undefined
+            ? { structuredContent: ctResult.structuredContent }
+            : {}),
           ...(ctResult.isError ? { isError: true } : {}),
           _meta: { traceparent: traceparent(span) },
         }),
