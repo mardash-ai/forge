@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.26.9] - 2026-08-13
+
+### Fixed
+
+- **C23 MCP host: stop double-wrapping CallToolResult-shaped handler responses.** When an app
+  handler returns a `CallToolResult`-shaped object (has a `content` array), the platform now emits
+  `content`, `structuredContent`, and `isError` verbatim instead of re-wrapping the entire response.
+  Before this fix, `structuredContent` on the wire was the outer CallToolResult object (containing
+  `content`/`structuredContent` at the top level) rather than the handler's intended payload — schema
+  validation against the registered `output_schema` would always fail. Bare (non-CallToolResult-shaped)
+  payloads continue to be auto-wrapped as before (no regression). Regression test added (red-first).
+- **C23 MCP host: `serverInfo.version` now reports the published platform version.** Previously
+  hardcoded to `1.0.0` (the sidecar fallback), so MCP clients (Claude, ChatGPT) always saw 1.0.0
+  regardless of the actual deployed forge version. Now reads from `package.json`.
+
 ## [1.26.7] - 2026-08-13
 
 ### Added
