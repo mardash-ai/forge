@@ -1,3 +1,8 @@
+# NOTE (2026-08-13): this module's changes apply ONLY on a push that touches infra/**,
+# forge.infra.json, or terraform/modules/e2e-runner/**. A manual `workflow_dispatch` of infra.yml
+# runs PLAN, not apply (the apply step is gated on event_name == 'push'), so dispatching it to
+# "apply a fix" reports success and changes nothing — which is how the wrong entrypoint survived
+# three separate attempts to remove it.
 # forge module: e2e-runner — dedicated Cloud SQL + Cloud Run Job for the forge E2E harness.
 #
 # SEPARATION INVARIANT: this Cloud SQL instance is DEDICATED to the e2e/cp-results backend.
