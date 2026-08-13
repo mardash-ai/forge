@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
+import pkgJson from '../package.json';
 import { store } from '../src/storage/store';
 import { getBackends } from '../src/storage/backends';
 import {
@@ -105,6 +106,16 @@ beforeEach(async () => {
   stub.post('/api/mcp/tools/boom', async (_req, reply) => {
     calls.push('boom');
     return reply.status(500).send({ error: 'kaboom' });
+  });
+  // A handler that returns a CallToolResult-shaped object (has a `content` array).
+  // Used to verify the platform passes content + structuredContent through verbatim
+  // instead of double-wrapping the whole handler response.
+  stub.post('/api/mcp/tools/structured_reply', async () => {
+    calls.push('structured_reply');
+    return {
+      content: [{ type: 'text', text: 'structured result' }],
+      structuredContent: { result: 'hello-structured', count: 3 },
+    };
   });
   await stub.listen({ port: 0, host: '127.0.0.1' });
   const port = (stub.server.address() as AddressInfo).port;
@@ -1435,6 +1446,101 @@ describe('Structured logs + OTLP metrics + _meta.traceparent', () => {
       } as object,
     });
     expect(res.json().result._meta?.traceparent).toMatch(new RegExp(`^00-${edgeTrace}-`));
+  });
+});
+
+// ── C23 regression: CallToolResult pass-through (no double-wrapping) ───────────────────────────
+//
+// When an app handler returns a CallToolResult-shaped object (has a `content` array), the platform
+// must pass content, structuredContent, and isError through VERBATIM — not re-wrap the entire
+// handler response as another `content` text block. Before this fix, the wire `structuredContent`
+// was the OUTER CallToolResult object (containing `content`, `structuredContent`, and `isError` keys
+// at the top level), which did NOT match the tool's registered output_schema and confused clients
+// that expected the schema's shape in structuredContent.
+//
+// The regression test is intentionally RED before the fix and GREEN after: without the fix,
+// result.structuredContent would be `{ content: [...], structuredContent: {...} }` instead of
+// `{ result: 'hello-structured', count: 3 }`, causing the schema-validation assertions to fail.
+describe('C23 — CallToolResult pass-through (regression: no double-wrapping)', () => {
+  it('[regression] a schema-bearing tool whose handler returns a CallToolResult-shaped object has its structuredContent passed through verbatim — NOT re-wrapped', async () => {
+    // Register with an output_schema: {result: string, count: number}
+    await registerTool({
+      name: 'schema_tool',
+      description: 'A tool with a registered output_schema',
+      scope: 'notes:read',
+      family: 'read',
+      handler_path: '/api/mcp/tools/structured_reply',
+      output_schema: {
+        type: 'object',
+        properties: { result: { type: 'string' }, count: { type: 'number' } },
+        required: ['result', 'count'],
+      },
+    });
+    const bearer = await mintAccess(['notes:read']);
+    const res = await rpc('tools/call', { name: 'schema_tool', arguments: {} }, bearer);
+    expect(res.statusCode).toBe(200);
+    const result = res.json().result;
+
+    // structuredContent must be the handler's OWN structuredContent — validated against the
+    // registered output_schema. Before the fix, this was the outer CallToolResult wrapper object
+    // (e.g. { content: [...], structuredContent: {...} }) which fails schema validation.
+    expect(result.structuredContent).toEqual({ result: 'hello-structured', count: 3 });
+    const sc = result.structuredContent as Record<string, unknown>;
+    // These assertions are the schema-validation: required fields must exist at the TOP LEVEL.
+    expect(typeof sc['result']).toBe('string'); // present in output_schema
+    expect(typeof sc['count']).toBe('number'); // present in output_schema
+    // The outer wrapper keys must NOT appear in structuredContent (double-wrapping smoke test).
+    expect('content' in sc).toBe(false);
+    expect('structuredContent' in sc).toBe(false);
+
+    // content must be the handler's content — not a JSON.stringify of the whole handler response.
+    expect(result.content).toEqual([{ type: 'text', text: 'structured result' }]);
+    const contentText = (result.content as Array<{ type: string; text: string }>)[0]!.text;
+    // Before the fix, contentText was a JSON dump of the entire handler response (containing "content"
+    // and "structuredContent" keys) — not the handler's intended text.
+    expect(contentText).not.toContain('"content"');
+    expect(contentText).not.toContain('"structuredContent"');
+    expect(contentText).toBe('structured result');
+
+    expect(calls).toContain('structured_reply');
+  });
+
+  it('[regression] bare (non-CallToolResult-shaped) handler payloads are still auto-wrapped — no regression for existing tools', async () => {
+    // get_note returns { note: 'hello', echoed: {...} } — no `content` array → bare payload path.
+    await registerTool();
+    const bearer = await mintAccess(['notes:read']);
+    const res = await rpc('tools/call', { name: 'get_note', arguments: { id: 'n42' } }, bearer);
+    const result = res.json().result;
+
+    // Bare payload: structuredContent = the handler's full response object
+    expect(result.structuredContent).toMatchObject({ note: 'hello', echoed: { id: 'n42' } });
+    // content = auto-generated text wrapping the JSON-stringified bare payload
+    expect((result.content as Array<{ type: string; text: string }>)[0]!.type).toBe('text');
+    expect(JSON.parse((result.content as Array<{ type: string; text: string }>)[0]!.text)).toMatchObject({
+      note: 'hello',
+    });
+    expect(result.isError).toBeUndefined();
+  });
+});
+
+// ── C23 regression: serverInfo.version must report the published version (not 1.0.0) ──────────
+//
+// The MCP initialize response's serverInfo.version was hardcoded to '1.0.0' — the sidecar's
+// fallback — so MCP clients (Claude, ChatGPT) always saw version 1.0.0 regardless of the actual
+// deployed forge version. Fixed to read from the platform's own package.json.
+describe('C23 — serverInfo.version reports the published platform version', () => {
+  it('initialize returns the actual package version in serverInfo.version — not the 1.0.0 fallback', async () => {
+    const bearer = await mintAccess([]);
+    const init = await rpc('initialize', { protocolVersion: '2025-06-18' }, bearer);
+    expect(init.statusCode).toBe(200);
+    const { serverInfo } = init.json().result as { serverInfo: { name: string; version: string } };
+
+    // The name still identifies as forge-mcp:<appName>
+    expect(serverInfo.name).toBe('forge-mcp:demo');
+
+    // Version must be the actual package.json version, not the hardcoded 1.0.0 fallback.
+    expect(serverInfo.version).not.toBe('1.0.0');
+    expect(serverInfo.version).toBe(pkgJson.version);
   });
 });
 

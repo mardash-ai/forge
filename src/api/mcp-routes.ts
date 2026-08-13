@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import pkgJson from '../../package.json';
 import { store } from '../storage/store';
 import { getBackends } from '../storage/backends';
 import type { AppEvent } from '../events/app-events';
@@ -51,7 +52,9 @@ import {
 //   GET  /mcp/consents ?owner=  +  DELETE /mcp/consents/:client_id ?owner=  -> user connector management
 
 const MCP_PROTOCOL_VERSION = '2025-06-18';
-const MCP_SERVER_VERSION = '1.0.0';
+// Report the actual platform version (from package.json) so MCP clients (Claude, ChatGPT) see
+// the deployed forge version rather than the sidecar's hardcoded 1.0.0 fallback.
+const MCP_SERVER_VERSION = pkgJson.version;
 const TOOL_CALL_TIMEOUT_MS = 30_000;
 const TOOL_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const FAMILIES: ToolFamily[] = ['read', 'write', 'action'];
@@ -766,10 +769,33 @@ export function registerMcpRoutes(
       ...(errorClass ? { error_class: errorClass } : {}),
     });
 
-    // Wrap the app's JSON into an MCP tool result. A structured object rides `structuredContent`; a
-    // human-readable rendering rides `content` text. A non-2xx handler → an MCP tool error (isError).
-    // `_meta.traceparent` stamps the W3C correlation id onto the result so a CHAT-VISIBLE failure is
-    // directly searchable in traces: the user sees the failure; the id links it to the backend trace.
+    // Assemble the MCP tool result.  `_meta.traceparent` stamps the W3C correlation id so a
+    // CHAT-VISIBLE failure is directly searchable in traces.
+    //
+    // CALLRESULT PASS-THROUGH: when the app handler already returns a CallToolResult-shaped object
+    // (presence of a `content` array), emit content, structuredContent, and isError VERBATIM.
+    // Re-wrapping such a response would double-nest it — the wire `structuredContent` would be the
+    // OUTER CallToolResult object (containing `content`/`structuredContent`/`isError` keys at the
+    // top level) rather than the handler's intended payload, breaking schema-bearing tools.
+    //
+    // Bare (non-CallToolResult-shaped) payloads are auto-wrapped as before — no regression for
+    // existing tools that return plain objects or strings.
+    const isCallToolResult =
+      typeof payload === 'object' && payload !== null && Array.isArray((payload as Record<string, unknown>)['content']);
+
+    if (isCallToolResult) {
+      const ctResult = payload as { content: unknown[]; structuredContent?: unknown; isError?: boolean };
+      return reply.status(200).send(
+        rpcResult(id, {
+          content: ctResult.content,
+          ...(ctResult.structuredContent !== undefined ? { structuredContent: ctResult.structuredContent } : {}),
+          ...(ctResult.isError ? { isError: true } : {}),
+          _meta: { traceparent: traceparent(span) },
+        }),
+      );
+    }
+
+    // Bare payload — auto-wrap into a valid CallToolResult. A non-2xx handler → isError: true.
     const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
     return reply.status(200).send(
       rpcResult(id, {
