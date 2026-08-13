@@ -44,7 +44,15 @@
 | Name | Kind | Image | SA | Purpose |
 |---|---|---|---|---|
 | `<product-services>` | Service | ghcr.io/mardash-ai/... (product images, digest-pinned) | `run-<service>` | Product services (dorinda-api, forge-console, etc.) — managed by the `service` module |
-| **`e2e-runner`** | **Job** | `ghcr.io/mardash-ai/forge-control-plane:<version>` (digest-pinned at release) | `e2e-runner` | **NEW (2026-08-11, renamed from forge-eval-runner → e2e-runner).** Cloud Run **Job** for E2E harness runs. Triggered per E2E suite; not a long-running service. max_retries = 0 (E2E is not idempotent). VPC egress = PRIVATE_RANGES_ONLY (Cloud SQL private IP via VPC; Anthropic/OpenAI/target-app calls go direct). |
+| **`e2e-runner`** | **Job** | `ghcr.io/mardash-ai/forge-control-plane:<version>` (digest-pinned at release) | `e2e-runner` | **NEW (2026-08-11, renamed from forge-eval-runner → e2e-runner).** Cloud Run **Job** for E2E harness runs. Triggered per E2E suite; not a long-running service. max_retries = 0 (E2E is not idempotent). VPC egress = PRIVATE_RANGES_ONLY (Cloud SQL private IP via VPC; Anthropic/OpenAI/target-app calls go direct). Image is digest-pinned by the infra CI `t-runner-image` step; Terraform manages the image field (no `ignore_changes`). Container: `command=[tsx, src/cli/index.ts]`, `args=[eval]`; invocation provides suite/app/mcp-url via `--args`. |
+
+### IAM on the e2e-runner job
+
+| Principal | Role | Scope | Purpose |
+|---|---|---|---|
+| `run-forge-console@dorinda-prod.iam.gserviceaccount.com` | `roles/run.invoker` | **Job resource only** (not project) | Forge console triggers the e2e-runner job via the Cloud Run API. Bound at the job level — cannot start any other Cloud Run resource. |
+
+This binding is managed in `terraform/modules/e2e-runner` (`google_cloud_run_v2_job_iam_member.console_invoker`).
 
 ### Triggering the E2E runner job
 
@@ -56,7 +64,9 @@ gcloud run jobs execute e2e-runner \
 ```
 
 The job template defines the container and secrets; suite-specific args are passed at invocation
-time via `--args`. Job logs are available in Cloud Logging under the `cloud_run_job` resource.
+time via `--args`. The `--args` value **replaces** the template `args` (not appended), so always
+include `eval` as the first argument. Job logs are available in Cloud Logging under the
+`cloud_run_job` resource.
 
 ---
 

@@ -35,6 +35,15 @@ variable "project_id" { type = string }
 variable "region" { type = string }
 variable "env_name" { type = string }
 
+# runner_image: set by the infra CI t-runner-image step (TF_VAR_runner_image env var).
+# Passed through to the e2e-runner module as var.image so the Cloud Run Job is always
+# pinned to the exact digest of ghcr.io/<owner>/forge-control-plane:latest at plan time.
+# The placeholder default is only reached in a fully off-CI manual run.
+variable "runner_image" {
+  type    = string
+  default = "us-docker.pkg.dev/cloudrun/container/hello"
+}
+
 # platform contract — written by forge infra CLI as contract.auto.tfvars.json after reading
 # the foundation stack's published contract. Declared here to satisfy terraform variable
 # resolution; values are not consumed directly (data sources resolve VPC/subnet instead).
@@ -91,6 +100,12 @@ module "e2e_runner" {
   name              = "e2e-runner"
   sql_instance_name = "e2e-results"
   tier              = "db-f1-micro"
+  # image: resolved by the infra CI t-runner-image step (TF_VAR_runner_image → var.runner_image).
+  # Digest-pinned to the current ghcr.io/<owner>/forge-control-plane:latest on every plan/apply.
+  image = var.runner_image
+  # invoker_member: hardcoded to the forge-console SA — this is the only member that needs
+  # job-level run.invoker; if the SA email ever changes, update here and re-apply.
+  invoker_member = "serviceAccount:run-forge-console@${var.project_id}.iam.gserviceaccount.com"
 }
 
 # ---------------------------------------------------------------------------

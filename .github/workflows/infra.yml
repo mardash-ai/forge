@@ -23,7 +23,8 @@ on:
 
 permissions:
   contents: read
-  id-token: write # WIF
+  id-token: write  # WIF
+  packages: read   # read GHCR to resolve the control-plane image digest (t-runner-image step)
 
 env:
   ENV_NAME: prod-a
@@ -51,15 +52,45 @@ jobs:
       - name: Install forge CLI deps
         run: npm ci --omit=optional
 
+      - name: Resolve runner image digest (t-runner-image)
+        # Reads the Docker-Content-Digest of ghcr.io/<owner>/forge-control-plane:latest from GHCR
+        # via the OCI Distribution v2 API. The resulting digest-pinned reference is injected as
+        # TF_VAR_runner_image so every plan/apply declares the exact current GHCR image — no drift
+        # between the declared image and the actual :latest. GITHUB_TOKEN (packages: read) grants
+        # pull access to GHCR without a separate PAT.
+        id: t-runner-image
+        run: |
+          token=$(printf '%s' "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" | base64 -w0)
+          bearer=$(curl -fsSL \
+            -H "Authorization: Basic ${token}" \
+            "https://ghcr.io/token?scope=repository:${{ github.repository_owner }}/forge-control-plane:pull&service=ghcr.io" \
+            | jq -r .token)
+          digest=$(curl -fsSI \
+            -H "Authorization: Bearer ${bearer}" \
+            -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" \
+            "https://ghcr.io/v2/${{ github.repository_owner }}/forge-control-plane/manifests/latest" \
+            | grep -i '^docker-content-digest:' | tr -d '\r' | awk '{print $2}')
+          if [[ -z "${digest}" ]]; then
+            echo "::error::t-runner-image: could not resolve GHCR digest for forge-control-plane:latest"
+            exit 1
+          fi
+          image="ghcr.io/${{ github.repository_owner }}/forge-control-plane@${digest}"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "t-runner-image: ${image}"
+
       - name: Lint (fmt + validate — before any provider call)
         run: node node_modules/.bin/tsx src/infra/cli.ts lint
 
       - name: Plan (PRs and drift schedule)
         if: github.event_name != 'push'
+        env:
+          TF_VAR_runner_image: ${{ steps.t-runner-image.outputs.image }}
         run: node node_modules/.bin/tsx src/infra/cli.ts plan --env "$ENV_NAME"
 
       - name: Apply + read-back (merges to main only)
         if: github.event_name == 'push'
+        env:
+          TF_VAR_runner_image: ${{ steps.t-runner-image.outputs.image }}
         run: node node_modules/.bin/tsx src/infra/cli.ts apply --env "$ENV_NAME"
 
       - name: Verify — gcloud readback (post-apply gate)
@@ -68,4 +99,6 @@ jobs:
 
       - name: Drift gate (schedule only) — exits 2 on drift
         if: github.event_name == 'schedule'
+        env:
+          TF_VAR_runner_image: ${{ steps.t-runner-image.outputs.image }}
         run: node node_modules/.bin/tsx src/infra/cli.ts status --env "$ENV_NAME"

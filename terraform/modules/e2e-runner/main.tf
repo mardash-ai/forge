@@ -58,9 +58,20 @@ variable "image" {
   default     = "us-docker.pkg.dev/cloudrun/container/hello"
   description = <<-EOT
     Full image reference for the E2E runner (forge control-plane image, digest-pinned in CI).
-    Defaults to a public placeholder so the first apply creates the job resource before any
-    release CI run has pushed the real image — the same placeholder-first pattern the service
-    module uses. The release workflow updates the image out-of-band; TF ignores_changes on it.
+    In practice always overridden by the infra CI: the workflow resolves the current GHCR digest
+    of ghcr.io/<owner>/forge-control-plane:latest and passes it as TF_VAR_runner_image (wired
+    through infra/main.tf → var.runner_image → this var). The default placeholder is only
+    reached on a completely out-of-band local apply where the CI step cannot run.
+  EOT
+}
+
+variable "invoker_member" {
+  type        = string
+  default     = "serviceAccount:run-forge-console@dorinda-prod.iam.gserviceaccount.com"
+  description = <<-EOT
+    IAM member granted roles/run.invoker on this job resource ONLY (job-level, not project-level).
+    The console SA needs this to trigger the job via the Cloud Run API; no other job is affected.
+    Default: run-forge-console in dorinda-prod — override when adopting in a different project.
   EOT
 }
 
@@ -373,6 +384,14 @@ resource "google_cloud_run_v2_job" "runner" {
       containers {
         image = var.image
 
+        # Run the forge eval CLI, not the long-running API server (the Dockerfile CMD default).
+        # command maps to Docker ENTRYPOINT; args maps to CMD and is REPLACED by --args at
+        # invocation time (gcloud run jobs execute --args "eval,<suite>,--app,<app>,...").
+        # Full default execution: tsx src/cli/index.ts eval
+        # The suite file, --app, and --mcp-url are provided by the invoker at execution time.
+        command = ["./node_modules/.bin/tsx", "src/cli/index.ts"]
+        args    = ["eval"]
+
         # cp-results backend: use FORGE_DB_URL (the single connection-string secret).
         env {
           name = "FORGE_DB_URL"
@@ -423,11 +442,27 @@ resource "google_cloud_run_v2_job" "runner" {
     }
   }
 
-  lifecycle {
-    # The release workflow updates the image digest out-of-band (forge release-image or CI).
-    # Without this, every plan that sees the CI-stamped digest would propose a replacement.
-    ignore_changes = [template[0].template[0].containers[0].image]
-  }
+}
+# image lifecycle note: no ignore_changes on the image field. The infra CI (infra.yml) resolves
+# the current GHCR digest in the t-runner-image step and passes it as TF_VAR_runner_image on every
+# plan/apply. Because the step always reads the live GHCR :latest digest, the declared value
+# converges with the running job's image — no spurious diffs. Release CI (publish-image.yml) pushes
+# a new :latest after every tagged release; the next infra run picks it up via the same digest lookup.
+
+# ---------------------------------------------------------------------------
+# IAM: console invoker — job-level only, not project-level
+# ---------------------------------------------------------------------------
+# The forge console SA needs roles/run.invoker on THIS job so it can call
+# POST /apis/run.googleapis.com/v1/namespaces/{project}/jobs/{name}:run.
+# Binding is on the job resource — not the project — so the console can start
+# only the e2e-runner job, not any other Cloud Run resource in dorinda-prod.
+
+resource "google_cloud_run_v2_job_iam_member" "console_invoker" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_job.runner.name
+  role     = "roles/run.invoker"
+  member   = var.invoker_member
 }
 
 # ---------------------------------------------------------------------------

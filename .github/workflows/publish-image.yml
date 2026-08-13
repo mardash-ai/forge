@@ -50,12 +50,19 @@ jobs:
 
   publish:
     needs: [test]
-    # Native arm64 runner (no QEMU). The only runtime target is the arm64 box (Apple Silicon Mac mini);
-    # emulating the arm64 leg on an x86 runner took ~3-6 min + double the Actions minutes. Native ≈1 min.
+    # Multi-arch build: linux/arm64 (Apple Silicon Mac mini / runtime host) + linux/amd64
+    # (Google Cloud Run us-east1, x86 execution environment). The arm64 runner builds arm64
+    # natively; amd64 is cross-compiled via QEMU (adds ~3-5 min). The resulting OCI index
+    # manifest covers both platforms — Cloud Run pulls the amd64 layer, the Mac mini pulls arm64.
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up QEMU (for linux/amd64 cross-build on arm64 runner)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
@@ -83,7 +90,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/arm64
+          platforms: linux/arm64,linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
