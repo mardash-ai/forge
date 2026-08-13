@@ -4995,6 +4995,33 @@ function fmtE2eSpend(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
+/** Attempted tile sub-line — the mock's "100% of catalogue". */
+function fmtE2ePctOfCatalogue(run: E2ERun | null | undefined): string {
+  if (!run) return '—';
+  const catalogue = (run.meta as { catalogue_size?: number } | undefined)?.catalogue_size;
+  const attempted = run.workflows_attempted ?? 0;
+  if (!catalogue || catalogue <= 0) return '100% of catalogue';
+  return `${Math.round((attempted / catalogue) * 100)}% of catalogue`;
+}
+
+/** Accepted tile sub-line — the mock's "57% of runnable" (runnable excludes withheld). */
+function fmtE2ePctOfRunnable(run: E2ERun | null | undefined): string {
+  if (!run) return '—';
+  const runnable = (run.workflows_attempted ?? 0) - (run.withheld_count ?? 0);
+  if (runnable <= 0) return 'none runnable';
+  return `${Math.round(((run.workflows_passed ?? 0) / runnable) * 100)}% of runnable`;
+}
+
+/** The Spend tile's sub-line, matching the reference mock's "2.9M in · 84% cached". */
+function fmtE2eSpendSub(run: E2ERun | null | undefined): string {
+  if (!run) return '—';
+  const input = run.total_input_tokens ?? 0;
+  if (!input) return 'no usage reported';
+  const m = input >= 1_000_000 ? `${(input / 1_000_000).toFixed(1)}M` : `${Math.round(input / 1000)}K`;
+  const cachedPct = (run.meta as { cached_pct?: number } | undefined)?.cached_pct;
+  return typeof cachedPct === 'number' ? `${m} in · ${cachedPct}% cached` : `${m} in`;
+}
+
 function fmtTrials(total: number, passed: number, verdict: string): string {
   if (verdict === 'skip') return '—';
   return `${passed}/${total}`;
@@ -6009,11 +6036,6 @@ function Evals() {
   const breakdown = activeRun ? withheldBreakdown(activeRun) : [];
   const prevRun = runs.find((r) => r.run_id !== activeRun?.run_id) ?? null;
 
-  const countAll = allWorkflows.length;
-  const countPass = allWorkflows.filter((w) => w.verdict === 'pass').length;
-  const countFail = allWorkflows.filter((w) => w.verdict === 'fail' || w.verdict === 'error').length;
-  const countWithheld = allWorkflows.filter((w) => w.verdict === 'skip').length;
-
   const handleSelectRun = (rid: string) => {
     setActiveRunId(rid);
     setVerdictFilter('all');
@@ -6293,57 +6315,60 @@ function Evals() {
         </button>
       </div>
 
-      {/* 7 metric tiles */}
+      {/* ONE row of 7 tiles — the reference mock's `.tiles` grid. The first four ARE the
+          filters (mock: class="tile filter" role="button" data-f="all|pass|fail|withheld");
+          the last three are plain readouts. Do NOT split these into two rows: a separate
+          filter strip reads as an unexplained second subset (Mark, 2026-08-13). */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 10, marginBottom: 14 }}>
-        <E2EMetricTile label="Attempted" value={activeRun?.workflows_attempted ?? '—'} />
-        <E2EMetricTile label="Accepted" value={activeRun?.workflows_passed ?? '—'} color="var(--ok-text)" />
-        <E2EMetricTile label="Rejected" value={activeRun?.workflows_failed ?? '—'} color="var(--crit-text)" />
-        <E2EMetricTile label="Withheld" value={activeRun?.withheld_count ?? '—'} color="var(--text-muted)" />
-        <E2EMetricTile
-          label="p50 duration"
-          value={fmtE2eDuration(activeRun?.p50_duration_ms ?? null)}
-          sub="median"
-        />
-        <E2EMetricTile
-          label="p99 duration"
-          value={fmtE2eDuration(activeRun?.p99_duration_ms ?? null)}
-          sub="slow tail"
-        />
-        <E2EMetricTile label="Spend" value={fmtE2eSpend(activeRun?.spend_cents ?? 0)} sub="this run" />
-      </div>
-
-      {/* 4 filter tiles */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 18 }}>
         <E2EMetricTile
           filter
           active={verdictFilter === 'all'}
           onClick={() => setVerdictFilter('all')}
-          label="All"
-          value={countAll}
+          label="Attempted"
+          value={activeRun?.workflows_attempted ?? '—'}
+          sub={fmtE2ePctOfCatalogue(activeRun)}
         />
         <E2EMetricTile
           filter
           active={verdictFilter === 'pass'}
           onClick={() => setVerdictFilter('pass')}
           label="Accepted"
-          value={countPass}
+          value={activeRun?.workflows_passed ?? '—'}
           color="var(--ok-text)"
+          sub={fmtE2ePctOfRunnable(activeRun)}
         />
         <E2EMetricTile
           filter
           active={verdictFilter === 'fail'}
           onClick={() => setVerdictFilter('fail')}
           label="Rejected"
-          value={countFail}
+          value={activeRun?.workflows_failed ?? '—'}
           color="var(--crit-text)"
+          sub="honest reds"
         />
         <E2EMetricTile
           filter
           active={verdictFilter === 'withheld'}
           onClick={() => setVerdictFilter('withheld')}
           label="Withheld"
-          value={countWithheld}
+          value={activeRun?.withheld_count ?? '—'}
           color="var(--text-muted)"
+          sub="⊘ blind ≠ failed"
+        />
+        <E2EMetricTile
+          label="p50 duration"
+          value={fmtE2eDuration(activeRun?.p50_duration_ms ?? null)}
+          sub="per workflow"
+        />
+        <E2EMetricTile
+          label="p99 duration"
+          value={fmtE2eDuration(activeRun?.p99_duration_ms ?? null)}
+          sub="slow tail"
+        />
+        <E2EMetricTile
+          label="Spend"
+          value={fmtE2eSpend(activeRun?.spend_cents ?? 0)}
+          sub={fmtE2eSpendSub(activeRun)}
         />
       </div>
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.26.13] - 2026-08-13
+
+### Fixed
+
+- **console/E2E Tests tab: the tiles ARE the filters (one row of 7, as the mock has always had).**
+  The rebuild had split the reference mock's single `.tiles` grid into two rows — seven
+  non-clickable metric tiles, plus a second, unlabelled strip of four filter tiles showing the
+  filtered subset counts. The result was exactly as confusing as it sounds: the headline numbers
+  could not be clicked to see their workflows, and the second row read as an unexplained subset
+  (Mark, 2026-08-13, with a screenshot). Restored to the mock's actual structure: ONE row of seven,
+  where Attempted / Accepted / Rejected / Withheld carry `role="button"` and filter the workflow
+  table (active tile keeps the ember inset underline), and p50 duration / p99 duration / Spend are
+  plain readouts. Sub-lines now match the mock too — "100% of catalogue", "N% of runnable",
+  "honest reds", "⊘ blind ≠ failed", "per workflow", "slow tail", and the Spend tile's
+  "N.NM in · NN% cached". Verified by rendering the built console and clicking each filter, not by
+  grepping for label strings — the weak check that let the structural drift through.
+
 ## [1.26.12] - 2026-08-13
 
 ### Fixed
