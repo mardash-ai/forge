@@ -5085,9 +5085,7 @@ function RunProgressBar({ run }: { run: E2ERun }) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>⏺ running</span>
-        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-          started {elapsedStr ?? '—'} ago
-        </span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>started {elapsedStr ?? '—'} ago</span>
       </div>
     );
   }

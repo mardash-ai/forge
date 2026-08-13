@@ -1082,7 +1082,10 @@ describe('reconcileRunningRuns', () => {
     const patches: Array<Record<string, unknown>> = [];
     const store = { updateRun: async (_id: string, p: Record<string, unknown>) => void patches.push(p) };
     const rows = [rowRunning()];
-    await reconcileRunningRuns(store, rows as never[], async () => ({ state: 'failed', completed_at: '2026-08-13T20:00:00Z' }));
+    await reconcileRunningRuns(store, rows as never[], async () => ({
+      state: 'failed',
+      completed_at: '2026-08-13T20:00:00Z',
+    }));
     expect(rows[0]!.status).toBe('failed');
     expect(patches[0]!['status']).toBe('failed');
     expect(patches[0]!['completed_at']).toBe('2026-08-13T20:00:00Z');
