@@ -5996,25 +5996,49 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
   );
 }
 
+/**
+ * Every view in this tab is addressable, so a screenshot can be replaced by a link:
+ *   ?s=evals&run=<run_id>&f=<verdict filter>&wf=<expanded workflow>&cause=<withheld reason>
+ * Mark, 2026-08-13: "give it a permalink … I can go into a single run, share the link with you
+ * and tell you everything that's wrong." Sharing a URL must reproduce exactly what the sender saw.
+ */
+type E2eVerdictFilter = 'all' | 'pass' | 'fail' | 'withheld';
+
+function e2eParam(name: string): string | null {
+  const v = new URLSearchParams(location.search).get(name);
+  return v && v.trim() ? v : null;
+}
+
 function Evals() {
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const [verdictFilter, setVerdictFilter] = useState<'all' | 'pass' | 'fail' | 'withheld'>('all');
-  const [reasonFilter, setReasonFilter] = useState<string | null>(null);
-  const [expandedWfId, setExpandedWfId] = useState<string | null>(null);
+  const [activeRunId, setActiveRunId] = useState<string | null>(() => e2eParam('run'));
+  const [verdictFilter, setVerdictFilter] = useState<E2eVerdictFilter>(() => {
+    const f = e2eParam('f');
+    return f === 'pass' || f === 'fail' || f === 'withheld' ? f : 'all';
+  });
+  const [reasonFilter, setReasonFilter] = useState<string | null>(() => e2eParam('cause'));
+  const [expandedWfId, setExpandedWfId] = useState<string | null>(() => e2eParam('wf'));
   const [cassetteOpen, setCassetteOpen] = useState(false);
   const [runModalOpen, setRunModalOpen] = useState(false);
   const [rerunWfId, setRerunWfId] = useState<string | null>(null);
   const [rerunFlash, setRerunFlash] = useState<string | null>(null);
   const [triageFlash, setTriageFlash] = useState(false);
+  const [linkFlash, setLinkFlash] = useState(false);
 
   // API data (graceful degradation: 501/null → fixture)
   const runsApi = useApi<E2ERun[]>('/api/e2e/runs');
   const detailApi = useApi<E2ERunDetail>(activeRunId ? `/api/e2e/runs/${activeRunId}` : null);
 
   const runs: E2ERun[] = runsApi.data ?? E2E_FIXTURE_RUNS;
-  const runDetail: E2ERunDetail | null = activeRunId ? (detailApi.data ?? E2E_FIXTURE_RUN_DETAIL) : null;
+  // The fixture detail describes ONE run. Never let it stand in for a different run: a page that
+  // shows run B's workflows under run A's name is worse than showing nothing, and a permalink makes
+  // that mismatch shareable. Fall back to the fixture only when it IS the requested run.
+  const detailForActive: E2ERunDetail | null =
+    detailApi.data ??
+    (activeRunId && E2E_FIXTURE_RUN_DETAIL.run.run_id === activeRunId ? E2E_FIXTURE_RUN_DETAIL : null);
+  const runDetail: E2ERunDetail | null = activeRunId ? detailForActive : null;
 
-  const activeRun: E2ERun | null = runDetail?.run ?? runs.find((r) => r.run_id === activeRunId) ?? null;
+  // The summary row always comes from the run the URL names.
+  const activeRun: E2ERun | null = runs.find((r) => r.run_id === activeRunId) ?? runDetail?.run ?? null;
   const allWorkflows: E2EWorkflow[] = runDetail?.all_workflows ?? [];
 
   const filteredWorkflows: E2EWorkflow[] = allWorkflows.filter((w) => {
@@ -6035,6 +6059,29 @@ function Evals() {
 
   const breakdown = activeRun ? withheldBreakdown(activeRun) : [];
   const prevRun = runs.find((r) => r.run_id !== activeRun?.run_id) ?? null;
+
+  // Keep the address bar in step with the view, so any state Mark is looking at can be sent as a
+  // link. replaceState (not push) — the console's existing idiom for view params; back still exits
+  // the tab rather than replaying every filter click.
+  useEffect(() => {
+    const u = new URL(location.href);
+    const set = (k: string, v: string | null) => (v ? u.searchParams.set(k, v) : u.searchParams.delete(k));
+    set('run', activeRunId);
+    set('f', verdictFilter === 'all' ? null : verdictFilter);
+    set('wf', expandedWfId);
+    set('cause', reasonFilter);
+    history.replaceState(null, '', u);
+  }, [activeRunId, verdictFilter, expandedWfId, reasonFilter]);
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(location.href).then(
+      () => {
+        setLinkFlash(true);
+        setTimeout(() => setLinkFlash(false), 1600);
+      },
+      () => setLinkFlash(false),
+    );
+  };
 
   const handleSelectRun = (rid: string) => {
     setActiveRunId(rid);
@@ -6283,6 +6330,21 @@ function Evals() {
         <span className="mono" style={{ fontSize: 13, color: 'var(--text-muted)' }}>
           {activeRun?.run_id ?? activeRunId}
         </span>
+        <button
+          onClick={handleCopyLink}
+          title="Copy a link to exactly this view — run, filter, expanded workflow and all"
+          style={{
+            padding: '5px 10px',
+            border: '1px solid var(--line)',
+            borderRadius: 6,
+            background: 'var(--bg-surface)',
+            color: linkFlash ? 'var(--ok-text)' : 'var(--text-muted)',
+            fontSize: 12.5,
+            cursor: 'pointer',
+          }}
+        >
+          {linkFlash ? '✓ link copied' : '🔗 Copy link'}
+        </button>
         <div style={{ flex: 1 }} />
         <button
           onClick={handleTriage}

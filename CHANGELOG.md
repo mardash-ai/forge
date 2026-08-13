@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.26.14] - 2026-08-13
+
+### Added
+
+- **console/E2E Tests: every view is a permalink.** Selecting a run, filtering by verdict,
+  expanding a workflow or picking a withheld cause is now reflected in the address bar
+  (`?s=evals&run=<id>&f=<verdict>&wf=<workflow>&cause=<reason>`), and opening such a URL cold
+  restores exactly that view. A **🔗 Copy link** button sits beside the run id. Mark, 2026-08-13:
+  "give it a permalink … I can go into a single run, share the link with you and tell you
+  everything that's wrong" — feedback on a shared URL beats feedback on a screenshot.
+
+### Fixed
+
+- **A run detail page can no longer show another run's data under its name.** When the API was
+  unavailable the fixture detail was served for *any* requested run id, so `?run=A` could render
+  run B's workflows beneath run A's title — a mismatch that a permalink would have made shareable
+  and permanent. The summary tiles now always come from the run the URL names, the fixture detail
+  is used only when it IS that run, and an absent detail renders an honest empty state.
+
 ## [1.26.13] - 2026-08-13
 
 ### Fixed
