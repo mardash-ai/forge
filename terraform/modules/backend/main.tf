@@ -28,7 +28,7 @@ variable "cloud_run_service" {
  */
 variable "restricted_paths" {
   type = object({
-    paths      = optional(list(string), [])
+    paths       = optional(list(string), [])
     allow_cidrs = optional(list(string), [])
   })
   default = { paths = [], allow_cidrs = [] }

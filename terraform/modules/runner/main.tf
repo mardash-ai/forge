@@ -63,8 +63,8 @@ variable "health_check_port" {
 }
 
 variable "idle_threshold_minutes" {
-  type    = number
-  default = 15
+  type        = number
+  default     = 15
   description = <<-EOT
     Number of minutes without ANY _diag/*.log update before the runner is
     considered idle-stuck and the health probe returns 503.
@@ -84,8 +84,8 @@ variable "idle_threshold_minutes" {
 }
 
 variable "autohealing_initial_delay_sec" {
-  type    = number
-  default = 300
+  type        = number
+  default     = 300
   description = <<-EOT
     Seconds the MIG waits after instance creation before starting health checks.
     Must cover: OS boot + toolchain install (apt docker/node) + runner binary

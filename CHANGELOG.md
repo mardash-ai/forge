@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.28.1] - 2026-08-13
+
+### Fixed
+
+- **The e2e-runner job was being pointed at the wrong image, and Terraform kept putting it back.**
+  infra CI resolved `ghcr.io/<owner>/forge-control-plane:latest` and injected it as
+  `TF_VAR_runner_image`, so every apply set the E2E runner to forge'''s CONTROL PLANE image — the
+  wrong program (the runner is forge-hat, the acceptance harness) and one Cloud Run cannot pull at
+  all (GHCR needs auth). The job sat `Ready=False / ContainerImageUnauthorized` and every console
+  "Run tests" click answered `FAILED_PRECONDITION`.
+  Three parts to the fix: the digest-resolution step is removed from infra CI; `runner_image`
+  defaults to forge-hat'''s Artifact Registry image and now supplies only the FIRST value; and the
+  job resource finally carries the `ignore_changes` on its image that the module'''s own comment
+  had claimed for months but never implemented — so forge-hat'''s publisher, which rolls the job by
+  digest and verifies the read-back, owns the live value without Terraform reverting it.
+
 ## [1.28.2] - 2026-08-13
 
 ### Fixed

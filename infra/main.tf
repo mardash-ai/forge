@@ -35,13 +35,20 @@ variable "project_id" { type = string }
 variable "region" { type = string }
 variable "env_name" { type = string }
 
-# runner_image: set by the infra CI t-runner-image step (TF_VAR_runner_image env var).
-# Passed through to the e2e-runner module as var.image so the Cloud Run Job is always
-# pinned to the exact digest of ghcr.io/<owner>/forge-control-plane:latest at plan time.
-# The placeholder default is only reached in a fully off-CI manual run.
+# runner_image — the E2E runner's container.
+#
+# ⛔ This is forge-hat (the acceptance harness), NOT forge's control plane. It was previously wired
+# to `ghcr.io/<owner>/forge-control-plane:latest`, which is the wrong program AND unpullable by
+# Cloud Run (GHCR needs auth; the job went Ready=False with ContainerImageUnauthorized and every
+# "Run tests" click failed with FAILED_PRECONDITION, 2026-08-13).
+#
+# The live value is owned by forge-hat's publish-image workflow, which rolls the job by digest on
+# every release and verifies the read-back; the module carries ignore_changes on the image so
+# Terraform does not revert it. This variable therefore only supplies the FIRST value, before any
+# forge-hat release has run.
 variable "runner_image" {
   type    = string
-  default = "us-docker.pkg.dev/cloudrun/container/hello"
+  default = "us-east1-docker.pkg.dev/dorinda-prod/forge-hat/app:latest"
 }
 
 # platform contract — written by forge infra CLI as contract.auto.tfvars.json after reading
@@ -100,8 +107,8 @@ module "e2e_runner" {
   name              = "e2e-runner"
   sql_instance_name = "e2e-results"
   tier              = "db-f1-micro"
-  # image: resolved by the infra CI t-runner-image step (TF_VAR_runner_image → var.runner_image).
-  # Digest-pinned to the current ghcr.io/<owner>/forge-control-plane:latest on every plan/apply.
+  # image: first value only — forge-hat's publish-image workflow owns it thereafter (rolled by
+  # digest, read back, and protected from revert by the module's ignore_changes).
   image = var.runner_image
   # invoker_member: hardcoded to the forge-console SA — this is the only member that needs
   # job-level run.invoker; if the SA email ever changes, update here and re-apply.

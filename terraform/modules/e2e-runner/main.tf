@@ -82,8 +82,8 @@ variable "tier" {
 }
 
 variable "disk_gb" {
-  type    = number
-  default = 10
+  type        = number
+  default     = 10
   description = <<-EOT
     Initial disk size in GB. disk_autoresize grows it on demand. Starting small because
     Cloud SQL disks cannot shrink — a 10 GB floor is right for this load; the app database
@@ -339,6 +339,19 @@ resource "google_cloud_run_v2_job" "runner" {
   project  = var.project_id
   location = var.region
   name     = var.name
+
+  # The image is owned by forge-hat's publish-image workflow, which rolls this job by digest on
+  # every release and reads the value back. Terraform must not fight it.
+  #
+  # This block was DOCUMENTED above ("the release workflow updates the image out-of-band; TF
+  # ignores_changes on it") but never actually written, so every apply reverted the published
+  # runner image — and, worse, replaced it with `ghcr.io/<owner>/forge-control-plane`, an image
+  # Cloud Run cannot pull (ContainerImageUnauthorized) and the wrong program besides: the E2E
+  # runner is forge-hat, the acceptance harness, not forge's control plane. The job sat Ready=False
+  # and every click of "Run tests" answered FAILED_PRECONDITION (2026-08-13).
+  lifecycle {
+    ignore_changes = [template[0].template[0].containers[0].image]
+  }
 
   labels = {
     managed-by = "terraform"

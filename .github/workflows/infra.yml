@@ -24,7 +24,7 @@ on:
 permissions:
   contents: read
   id-token: write # WIF
-  packages: read # read GHCR to resolve the control-plane image digest (t-runner-image step)
+  # (no packages: read — the GHCR digest resolution it existed for was removed 2026-08-13)
 
 env:
   ENV_NAME: prod-a
@@ -52,31 +52,16 @@ jobs:
       - name: Install forge CLI deps
         run: npm ci --omit=optional
 
-      - name: Resolve runner image digest (t-runner-image)
-        # Reads the Docker-Content-Digest of ghcr.io/<owner>/forge-control-plane:latest from GHCR
-        # via the OCI Distribution v2 API. The resulting digest-pinned reference is injected as
-        # TF_VAR_runner_image so every plan/apply declares the exact current GHCR image — no drift
-        # between the declared image and the actual :latest. GITHUB_TOKEN (packages: read) grants
-        # pull access to GHCR without a separate PAT.
-        id: t-runner-image
-        run: |
-          token=$(printf '%s' "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" | base64 -w0)
-          bearer=$(curl -fsSL \
-            -H "Authorization: Basic ${token}" \
-            "https://ghcr.io/token?scope=repository:${{ github.repository_owner }}/forge-control-plane:pull&service=ghcr.io" \
-            | jq -r .token)
-          digest=$(curl -fsSI \
-            -H "Authorization: Bearer ${bearer}" \
-            -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" \
-            "https://ghcr.io/v2/${{ github.repository_owner }}/forge-control-plane/manifests/latest" \
-            | grep -i '^docker-content-digest:' | tr -d '\r' | awk '{print $2}')
-          if [[ -z "${digest}" ]]; then
-            echo "::error::t-runner-image: could not resolve GHCR digest for forge-control-plane:latest"
-            exit 1
-          fi
-          image="ghcr.io/${{ github.repository_owner }}/forge-control-plane@${digest}"
-          echo "image=${image}" >> "$GITHUB_OUTPUT"
-          echo "t-runner-image: ${image}"
+      # ⛔ REMOVED 2026-08-13: this step resolved ghcr.io/<owner>/forge-control-plane:latest and
+      # injected it as TF_VAR_runner_image, so every apply pointed the e2e-runner job at forge's
+      # CONTROL PLANE image — the wrong program (the E2E runner is forge-hat, the acceptance
+      # harness) and one Cloud Run cannot even pull (GHCR requires auth). The job went Ready=False
+      # with ContainerImageUnauthorized and every "Run tests" click returned FAILED_PRECONDITION.
+      #
+      # The runner image is owned by forge-hat's publish-image workflow: it builds, pushes to
+      # Artifact Registry, rolls this job by digest and verifies the read-back. The module carries
+      # ignore_changes on the image so Terraform no longer reverts it. Nothing needs to be resolved
+      # here.
 
       - name: Lint (fmt + validate — before any provider call)
         run: node node_modules/.bin/tsx src/infra/cli.ts lint
@@ -84,13 +69,11 @@ jobs:
       - name: Plan (PRs and drift schedule)
         if: github.event_name != 'push'
         env:
-          TF_VAR_runner_image: ${{ steps.t-runner-image.outputs.image }}
         run: node node_modules/.bin/tsx src/infra/cli.ts plan --env "$ENV_NAME"
 
       - name: Apply + read-back (merges to main only)
         if: github.event_name == 'push'
         env:
-          TF_VAR_runner_image: ${{ steps.t-runner-image.outputs.image }}
         run: node node_modules/.bin/tsx src/infra/cli.ts apply --env "$ENV_NAME"
 
       - name: Verify — gcloud readback (post-apply gate)
@@ -100,5 +83,4 @@ jobs:
       - name: Drift gate (schedule only) — exits 2 on drift
         if: github.event_name == 'schedule'
         env:
-          TF_VAR_runner_image: ${{ steps.t-runner-image.outputs.image }}
         run: node node_modules/.bin/tsx src/infra/cli.ts status --env "$ENV_NAME"
