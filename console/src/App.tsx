@@ -5796,15 +5796,40 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
   const [confirmed, setConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const catalogue = runs[0]?.workflows_attempted ?? 75;
+  // How many workflows a run covers is a property of the CATALOGUE, not of run history. Deriving
+  // it from the previous run is wrong twice: it is 0 before anything has ever published, and stale
+  // after the catalogue changes. With an empty store this modal read "Full catalogue — 0 workflows
+  // · Estimated spend $0.00" and asked the operator to confirm running "0 workflows" — for a job
+  // whose default command runs the full suite at roughly $1 (Mark, 2026-08-13). A cost estimate
+  // that is wrong toward zero is the dangerous direction.
+  //
+  // Note `?? ` does not help here: `0 ?? 75` is 0. Absence and zero must both read as UNKNOWN, and
+  // unknown must be shown as unknown — never as a number the operator can act on.
+  const lastAttempted = runs[0]?.workflows_attempted;
+  const lastSpendCents = runs[0]?.spend_cents;
+  const catalogue: number | null =
+    typeof lastAttempted === 'number' && lastAttempted > 0 ? lastAttempted : null;
+  const fullSpendCents: number | null =
+    typeof lastSpendCents === 'number' && lastSpendCents > 0 ? Math.round(lastSpendCents) : null;
+
   const namedCount =
     namedText
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean).length || 1;
-  const costCents =
-    scope === 'full' ? Math.round(runs[0]?.spend_cents ?? 104) : scope === 'suite' ? 45 : namedCount * 8;
-  const wfCount = scope === 'full' ? catalogue : scope === 'suite' ? '~20' : namedCount;
+
+  // null = we genuinely do not know yet; the UI must say so rather than print a figure.
+  const costCents: number | null =
+    scope === 'full' ? fullSpendCents : scope === 'suite' ? 45 : namedCount * 8;
+  const wfCount: string =
+    scope === 'full'
+      ? catalogue !== null
+        ? String(catalogue)
+        : 'the full catalogue'
+      : scope === 'suite'
+        ? '~20'
+        : String(namedCount);
+  const estimateKnown = costCents !== null;
   const providers = [openai && 'openai', anthropic && 'anthropic'].filter(Boolean).join(', ') || 'openai';
 
   const handleSubmit = async () => {
@@ -5985,8 +6010,18 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
             marginBottom: 10,
           }}
         >
-          Estimated spend: <span className="num">{fmtE2eSpend(costCents)}</span> · ~40 min · runs in Cloud
-          Run, tenant lock honored
+          {estimateKnown ? (
+            <>
+              Estimated spend: <span className="num">{fmtE2eSpend(costCents!)}</span> · ~40 min · runs in
+              Cloud Run, tenant lock honored
+            </>
+          ) : (
+            <>
+              Estimated spend: <span className="num">not known yet</span> — no run has published to the store,
+              so there is nothing to estimate from. The full catalogue has historically cost around $1 and
+              taken ~40 min. Runs in Cloud Run, tenant lock honored.
+            </>
+          )}
         </div>
         {/* Explicit cost-confirm — required before the endpoint is called */}
         <label
@@ -6008,9 +6043,19 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
             style={{ marginTop: 2, flexShrink: 0 }}
           />
           <span>
-            I confirm: spend approximately{' '}
-            <strong style={{ color: 'var(--text-primary)' }}>{fmtE2eSpend(costCents)}</strong> and run{' '}
-            <strong style={{ color: 'var(--text-primary)' }}>{wfCount}</strong> workflows in Cloud Run
+            {estimateKnown ? (
+              <>
+                I confirm: spend approximately{' '}
+                <strong style={{ color: 'var(--text-primary)' }}>{fmtE2eSpend(costCents!)}</strong> and run{' '}
+                <strong style={{ color: 'var(--text-primary)' }}>{wfCount}</strong> in Cloud Run
+              </>
+            ) : (
+              <>
+                I confirm: run <strong style={{ color: 'var(--text-primary)' }}>{wfCount}</strong> in Cloud
+                Run at an <strong style={{ color: 'var(--text-primary)' }}>unknown cost</strong> — this spends
+                real provider credit and holds the tenant lock for the duration
+              </>
+            )}
           </span>
         </label>
         {submitError && (
@@ -6062,7 +6107,7 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
               cursor: confirmed && !submitting ? 'pointer' : 'not-allowed',
             }}
           >
-            {submitting ? 'Starting…' : `Run ${wfCount} workflows · ${providers}`}
+            {submitting ? 'Starting…' : `Run ${wfCount} · ${providers}`}
           </button>
         </div>
       </div>

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.28.4] - 2026-08-13
+
+### Fixed
+
+- **The run modal offered a $0.00 estimate for a run that costs about a dollar.** It derived the
+  workflow count and cost from the PREVIOUS run (`runs[0].workflows_attempted`), so with an empty
+  store it read "Full catalogue — 0 workflows · Estimated spend: $0.00" and asked the operator to
+  confirm running "0 workflows" — while the job'''s default command runs the full suite. (`?? ` does
+  not rescue this: `0 ?? 75` is 0.) How many workflows a run covers is a property of the catalogue,
+  not of run history: it is unknown before anything publishes and stale after the catalogue changes.
+  Absence and zero now both read as UNKNOWN, and unknown is displayed as unknown — the modal says
+  the estimate is not yet available, names the historical ~$1/~40 min for context, and the confirm
+  checkbox states plainly that this spends real credit at an unknown cost and holds the tenant lock.
+  A cost estimate that errs toward zero is the dangerous direction.
+
 ## [1.28.3] - 2026-08-13
 
 ### Fixed
