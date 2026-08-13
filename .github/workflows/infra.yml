@@ -68,12 +68,10 @@ jobs:
 
       - name: Plan (PRs and drift schedule)
         if: github.event_name != 'push'
-        env:
         run: node node_modules/.bin/tsx src/infra/cli.ts plan --env "$ENV_NAME"
 
       - name: Apply + read-back (merges to main only)
         if: github.event_name == 'push'
-        env:
         run: node node_modules/.bin/tsx src/infra/cli.ts apply --env "$ENV_NAME"
 
       - name: Verify — gcloud readback (post-apply gate)
@@ -82,5 +80,4 @@ jobs:
 
       - name: Drift gate (schedule only) — exits 2 on drift
         if: github.event_name == 'schedule'
-        env:
         run: node node_modules/.bin/tsx src/infra/cli.ts status --env "$ENV_NAME"
