@@ -13,8 +13,21 @@
   "verify": [
     {
       "kind": "command",
-      "run": "gcloud sql instances describe e2e-results --project=dorinda-prod --format=yaml | grep -q 'state: RUNNABLE' && gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=yaml | grep -q 'name: e2e-runner'",
-      "cwd": "."
+      "run": "gcloud sql instances describe e2e-results --project=dorinda-prod --format=yaml | grep -q 'state: RUNNABLE'",
+      "cwd": ".",
+      "note": "the E2E results store is up"
+    },
+    {
+      "kind": "command",
+      "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '[.status.conditions[]? | select(.type==\"Ready\") | .status] | first == \"True\"' > /dev/null",
+      "cwd": ".",
+      "note": "the E2E runner job is Ready=True \u2014 not merely present"
+    },
+    {
+      "kind": "command",
+      "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '.spec.template.spec.template.spec.containers[0].image | startswith(\"us-east1-docker.pkg.dev/dorinda-prod/forge-hat/\")' > /dev/null",
+      "cwd": ".",
+      "note": "the E2E runner runs the forge-hat image from Artifact Registry, not GHCR or a placeholder"
     }
   ]
 }

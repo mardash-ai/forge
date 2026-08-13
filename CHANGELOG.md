@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.28.3] - 2026-08-13
+
+### Fixed
+
+- **Verify now checks the E2E runner is HEALTHY, not merely present.** The old block was
+  `grep -q 'name: e2e-runner'`, which passes on a job that cannot start. The job sat
+  `Ready=False / ContainerImageUnauthorized` for hours while this verify stayed green, and it took
+  an operator clicking "Run tests" to discover it. Three blocks now: the results store is RUNNABLE,
+  the job'''s **Ready condition is True**, and its image **comes from forge-hat in Artifact
+  Registry** (so a future re-wiring to GHCR or a placeholder fails the release rather than a click).
+  Both new assertions were confirmed to fail against the broken job before being committed.
+
 ## [1.28.1] - 2026-08-13
 
 ### Fixed
