@@ -182,7 +182,10 @@ describe('PATCH /auth/admin/identity/:userId — admin-auth (HAT-F-061)', () => 
     const res = await server.inject({
       method: 'PATCH',
       url: `/auth/admin/identity/${userId}`,
-      headers: { 'x-forge-service-token': 'wrong-token', 'content-type': 'application/x-www-form-urlencoded' },
+      headers: {
+        'x-forge-service-token': 'wrong-token',
+        'content-type': 'application/x-www-form-urlencoded',
+      },
       payload: form({ name: 'Attacker' }),
     });
     expect(res.statusCode).toBe(401);
