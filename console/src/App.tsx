@@ -6299,6 +6299,9 @@ function Evals() {
   const [rerunFlash, setRerunFlash] = useState<string | null>(null);
   const [triageFlash, setTriageFlash] = useState(false);
   const [linkFlash, setLinkFlash] = useState(false);
+  const [deleteConfirmRunId, setDeleteConfirmRunId] = useState<string | null>(null);
+  const [deleteInFlight, setDeleteInFlight] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // API data — NO silent fixture fallback. The three store states are:
   //   connected     → runsApi.data !== null
@@ -6488,6 +6491,26 @@ function Evals() {
   const handleCopyCassette = () => {
     if (!wfResult) return;
     navigator.clipboard.writeText(JSON.stringify(wfResult, null, 2)).catch(() => {});
+  };
+
+  const handleDeleteRun = async (runId: string) => {
+    setDeleteInFlight(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`/api/e2e/runs/${encodeURIComponent(runId)}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+        throw new Error(body?.error?.message ?? `Delete failed (${res.status})`);
+      }
+      setDeleteConfirmRunId(null);
+      // If we were viewing this run's detail, go back to the list.
+      if (activeRunId === runId) setActiveRunId(null);
+      runsApi.reload();
+    } catch (e) {
+      setDeleteError((e as Error).message);
+    } finally {
+      setDeleteInFlight(false);
+    }
   };
 
   const cell: React.CSSProperties = { padding: '10px 12px', fontSize: 13.5, verticalAlign: 'middle' };
@@ -6693,6 +6716,7 @@ function Evals() {
                       </th>
                     ))}
                     <th style={{ ...th, minWidth: 260 }}>Accepted (sparkline)</th>
+                    <th style={{ ...th, width: 48 }}></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -6773,6 +6797,36 @@ function Evals() {
                       <td style={{ ...cell, padding: '2px 12px', minWidth: 260 }}>
                         {ri === 0 ? <E2ESparkline runs={sparklineRuns} /> : null}
                       </td>
+                      <td
+                        style={{ ...cell, padding: '4px 8px', width: 48, textAlign: 'center' }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          title={
+                            r.status === 'running'
+                              ? 'Cannot delete a running run — stop or let it finish first'
+                              : `Delete run ${r.run_id}`
+                          }
+                          disabled={r.status === 'running'}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteConfirmRunId(r.run_id);
+                            setDeleteError(null);
+                          }}
+                          style={{
+                            padding: '3px 7px',
+                            border: '1px solid var(--line)',
+                            borderRadius: 5,
+                            background: 'transparent',
+                            color: r.status === 'running' ? 'var(--text-muted)' : 'var(--fail-text)',
+                            fontSize: 13,
+                            cursor: r.status === 'running' ? 'not-allowed' : 'pointer',
+                            opacity: r.status === 'running' ? 0.4 : 0.7,
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -6780,6 +6834,119 @@ function Evals() {
             </div>
           </>
         )}
+
+        {/* Delete confirmation dialog */}
+        {deleteConfirmRunId &&
+          (() => {
+            const confirmRun = runs.find((r) => r.run_id === deleteConfirmRunId);
+            return (
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-label="Confirm run deletion"
+                style={{
+                  position: 'fixed',
+                  inset: 0,
+                  background: 'rgba(0,0,0,.55)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 1000,
+                }}
+              >
+                <div
+                  style={{
+                    background: 'var(--bg-surface)',
+                    border: '1px solid var(--line)',
+                    borderRadius: 10,
+                    padding: '24px 28px',
+                    maxWidth: 480,
+                    width: '90vw',
+                    boxShadow: '0 8px 40px rgba(0,0,0,.5)',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 12, color: 'var(--fail-text)' }}>
+                    Delete run?
+                  </div>
+                  <div style={{ fontSize: 14, color: 'var(--ink)', marginBottom: 8 }}>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 13, color: 'var(--ember-core)' }}>
+                      {deleteConfirmRunId}
+                    </span>
+                    {confirmRun && (
+                      <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>
+                        started {confirmRun.started_at.slice(0, 19).replace('T', ' ')} UTC
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      color: 'var(--warn)',
+                      background: 'var(--warn-bg)',
+                      border: '1px solid var(--warn)',
+                      borderRadius: 6,
+                      padding: '8px 12px',
+                      marginBottom: 18,
+                    }}
+                  >
+                    This is irreversible. The run and all its per-workflow records, scenes, MCP calls, and
+                    claims will be permanently removed.
+                  </div>
+                  {deleteError && (
+                    <div
+                      style={{
+                        fontSize: 13,
+                        color: 'var(--fail-text)',
+                        background: 'var(--fail-bg)',
+                        borderRadius: 6,
+                        padding: '7px 12px',
+                        marginBottom: 14,
+                      }}
+                    >
+                      {deleteError}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                    <button
+                      onClick={() => {
+                        setDeleteConfirmRunId(null);
+                        setDeleteError(null);
+                      }}
+                      disabled={deleteInFlight}
+                      style={{
+                        padding: '7px 16px',
+                        border: '1px solid var(--line)',
+                        borderRadius: 6,
+                        background: 'var(--bg-surface)',
+                        color: 'var(--text-secondary)',
+                        fontSize: 14,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => void handleDeleteRun(deleteConfirmRunId)}
+                      disabled={deleteInFlight}
+                      style={{
+                        padding: '7px 16px',
+                        border: '1px solid var(--fail)',
+                        borderRadius: 6,
+                        background: 'var(--fail)',
+                        color: '#fff',
+                        fontWeight: 650,
+                        fontSize: 14,
+                        cursor: deleteInFlight ? 'not-allowed' : 'pointer',
+                        opacity: deleteInFlight ? 0.6 : 1,
+                      }}
+                    >
+                      {deleteInFlight ? 'Deleting…' : 'Delete permanently'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
         {runModalOpen && (
           <E2ERunModal
@@ -6799,6 +6966,8 @@ function Evals() {
   // In the run-detail view, we might reach here via a URL permalink even when
   // the store is not connected. The banner + empty state is still shown; no
   // metric tiles or workflow rows are rendered.
+  const runWasDeleted = !detailApi.loading && detailApi.httpStatus === 404 && !!activeRunId;
+
   const detailState: E2eStoreState = detailApi.loading
     ? 'loading'
     : detailApi.data !== null
@@ -6913,6 +7082,36 @@ function Evals() {
 
       {/* Store-state banner (run-detail view) */}
       {storeStateBanner}
+
+      {/* Deleted-run banner — shown when a permalink resolves to a 404 (run was deleted) */}
+      {runWasDeleted && !storeStateBanner && (
+        <div
+          role="alert"
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 12,
+            padding: '14px 18px',
+            marginBottom: 20,
+            border: '1px solid var(--line)',
+            borderLeft: '4px solid var(--text-muted)',
+            borderRadius: 8,
+            background: 'var(--bg-surface)',
+            color: 'var(--text-muted)',
+            fontSize: 14,
+          }}
+        >
+          <span style={{ fontSize: 20, lineHeight: 1 }}>⊘</span>
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>This run was deleted</div>
+            <div style={{ lineHeight: 1.5 }}>
+              Run <span style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>{activeRunId}</span> no longer
+              exists — it was permanently removed by an operator. All per-workflow records were deleted with
+              it.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ONE row of 7 tiles — the reference mock's `.tiles` grid. The first four ARE the
           filters (mock: class="tile filter" role="button" data-f="all|pass|fail|withheld");

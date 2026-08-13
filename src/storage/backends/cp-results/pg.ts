@@ -510,6 +510,13 @@ export class PgCpResultsBackend implements CpResultsBackend {
    * forge-console read API and MCP tools that serve the OPERATOR view across the entire estate.
    * Optional tenant / status filters narrow the result; limit is capped at 100.
    */
+  async deleteRun(runId: string): Promise<boolean> {
+    // ON DELETE CASCADE handles forge_cp_eval_workflows → forge_cp_eval_scenes /
+    // forge_cp_eval_mcp_calls / forge_cp_eval_claims in one statement.
+    const r = await this.pool.query('DELETE FROM forge_cp_eval_runs WHERE run_id = $1', [runId]);
+    return (r.rowCount ?? 0) > 0;
+  }
+
   async listAllRuns(opts: { tenant?: string; status?: string; limit?: number } = {}): Promise<EvalRun[]> {
     const conditions: string[] = [];
     const params: unknown[] = [];

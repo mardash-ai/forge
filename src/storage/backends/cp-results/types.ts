@@ -234,6 +234,16 @@ export interface CpResultsBackend {
   /** List runs for a tenant, newest-first. */
   listRuns(tenantId: string, limit?: number): Promise<EvalRun[]>;
 
+  /**
+   * Delete a run and ALL child records (workflows, scenes, MCP calls, claims) atomically.
+   *
+   * Child tables carry ON DELETE CASCADE FKs so a single DELETE on forge_cp_eval_runs is the
+   * whole transaction. Returns true when the run existed and was deleted; false when it was not
+   * found. The caller is responsible for refusing a run whose status is 'running' BEFORE calling
+   * this — the store deletes without checking state.
+   */
+  deleteRun(runId: string): Promise<boolean>;
+
   // --- Per-workflow drilldown ---------------------------------------------
 
   /** Insert a workflow row. Idempotent on id (ON CONFLICT DO NOTHING). */

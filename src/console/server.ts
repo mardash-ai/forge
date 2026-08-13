@@ -530,6 +530,10 @@ export const WRITE_ROUTES = [
   // ── E2E trigger. Starts a Cloud Run job execution and creates an EvalRun record.
   // Audited with the authenticated operator's email as actor.
   '/api/e2e/runs',
+  // ── E2E run delete. Removes a run + all child records (cascade). Refuses running runs.
+  // Same authorization as the trigger: OIDC session only (automation token is read-only).
+  // Audit row is written BEFORE the delete attempt.
+  '/api/e2e/runs/:run_id',
   // ── The Data section. Every one of these changes a real account or a real tenant's data, so
   // every one of them is audited BY CONSTRUCTION: this list is what the guard test checks a
   // mutating route against, and an unlisted POST/DELETE fails the build rather than shipping.
@@ -1987,6 +1991,56 @@ export function buildServer(
       execution_name: execution.execution_name,
       trigger_source: triggerSource,
     });
+  });
+
+  // ── E2E run delete — DELETE /api/e2e/runs/:run_id ─────────────────────────────────────────────
+  //
+  // Permanently removes a run row and ALL child records (per-workflow drilldown, scenes, MCP calls,
+  // claims) in one atomic DELETE. Child tables carry ON DELETE CASCADE FKs so no orphan rows can
+  // survive to pollute aggregate metrics. The same CONSOLE_CP_DB_URL pool path as POST
+  // /api/e2e/runs — no new IAM required.
+  //
+  // Authorization: same operator set as POST (OIDC session). The automation bearer token is
+  // refused by the onRequest hook because it is read-only; that is sufficient — we do not need an
+  // additional check here because the hook already returns 403 before the handler runs.
+  //
+  // A run whose status is 'running' is refused (409). Stop or let the run finish first.
+  // An audit row is written BEFORE the delete attempt (consistent with every other audited route).
+
+  app.delete('/api/e2e/runs/:run_id', async (req, reply) => {
+    const store = await evalStoreGetter();
+    if (!store) return reply.code(501).send(NOT_CONFIGURED);
+
+    const { run_id } = req.params as { run_id: string };
+
+    // Read the current state before touching anything.
+    const existing = await store.getRun(run_id);
+    if (!existing) {
+      return reply.code(404).send({ error: { code: 'not_found', message: `run ${run_id} not found` } });
+    }
+
+    // Refuse deletion of a live run — the runner is actively writing to it. Stop or await completion.
+    if (existing.status === 'running') {
+      return reply.code(409).send({
+        error: {
+          code: 'run_is_active',
+          message: `run ${run_id} is currently running — stop or let it finish before deleting`,
+        },
+      });
+    }
+
+    const actor = actorOf(req);
+
+    // Audit BEFORE the attempt (consistent with every audited write on this surface).
+    // The delete cascades to all child tables; no secondary cleanup is needed.
+    const deleted = await audited(actor, 'e2e.run.delete', run_id, () => store.deleteRun(run_id));
+
+    if (!deleted) {
+      // Race: another request deleted it between our getRun check and here — still a success.
+      return reply.code(404).send({ error: { code: 'not_found', message: `run ${run_id} not found` } });
+    }
+
+    return reply.code(200).send({ deleted: true, run_id });
   });
 
   // ── Console MCP server ────────────────────────────────────────────────────────────────────────

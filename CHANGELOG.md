@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.28.8] - 2026-08-13
+
+### Added
+- `DELETE /api/e2e/runs/:run_id` endpoint: removes a run and all child records (per-workflow drilldown, scenes, MCP calls, claims) atomically via `ON DELETE CASCADE`; refuses `running` runs with 409; audits the operator identity and timestamp before the attempt; no new IAM (same `CONSOLE_CP_DB_URL` pool as `POST /api/e2e/runs`).
+- Per-row delete control on the E2E run-history list: shows a confirmation dialog naming the run ID and start time before deletion; list refreshes automatically after a successful delete.
+- Permalink to a deleted run renders an explicit "This run was deleted" banner instead of a loading spinner or empty shell.
+- E2E help page (`docs/content/e2e.html`) documenting run triggering, result reading, integrity classes, the delete operation (including that it is irreversible), and the MCP triage protocol.
+- MCP `initialize` triage instructions updated to note that run deletion is an operator-only action.
+
 ## [1.28.7] - 2026-08-13
 
 ### Added

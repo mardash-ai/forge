@@ -168,7 +168,9 @@ GUARDRAILS (non-negotiable):
   a one-off failure is noise until confirmed across multiple runs.
 - canonical_url is the stable reference for each run. Always include it in reports
   and escalations so engineers can navigate to the run without re-running the query.
-- This surface is READ-ONLY. No tool here modifies the eval store or triggers runs.`;
+- This surface is READ-ONLY. No tool here modifies the eval store or triggers runs.
+  Run deletion is an operator action only — available via the console UI or
+  DELETE /api/e2e/runs/:run_id with an authenticated OIDC session. Irreversible.`;
 
 /** Canonical MCP tool definitions for the console e2e surface. */
 export const E2E_MCP_TOOLS = [
