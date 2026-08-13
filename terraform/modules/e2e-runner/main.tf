@@ -357,6 +357,21 @@ resource "google_secret_manager_secret_version" "openai_key" {
   }
 }
 
+# ── Placeholder versions: terraform owns the CONTAINER, an operator owns the VALUE ────────────────
+#
+# Each secret below is created with a placeholder version and `ignore_changes = [secret_data]`, so
+# terraform never holds a real credential and never fights the operator over its value.
+#
+# ⚠️ The placeholder is the LATEST version until someone adds a real one. The job resolves these by
+# `latest`, so between the apply and the operator's `versions add` the runner starts and then
+# authenticates with the literal string "PLACEHOLDER_…". That surfaces as a confusing rejection from
+# Dorinda rather than an honest missing-credential error — the run looks like a product failure when
+# it is an unfinished setup. Adding the real versions is part of the apply, not a follow-up.
+#
+# ⛔ Do NOT pre-create these secrets by hand ahead of the code. On 2026-08-13 they were created
+# early to "unblock" this wiring, and the apply died on `409 already exists` for three of them,
+# leaving a partial apply in which the job had no MCP env at all — so every console run kept exiting
+# 2 within twenty-five seconds. Let terraform create the containers, then add versions on top.
 resource "google_secret_manager_secret_version" "mcp_endpoint" {
   secret      = google_secret_manager_secret.mcp_endpoint.id
   secret_data = "PLACEHOLDER_REPLACE_WITH_MCP_ENDPOINT_URL"
