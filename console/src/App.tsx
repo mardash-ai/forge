@@ -4509,1825 +4509,1141 @@ function Boards() {
 
 // ── E2E Tests (Evals) ──────────────────────────────────────────────────────────────────────────
 //
-// A pure READER over the eval store — the UI renders exclusively from fixtures (parallel to the
-// live schema which ships later). No hand-assembled state: every number on screen comes from the
-// fixture objects below, so when the real API lands, swapping the source is a one-line change.
+// Single-page E2E console tab matching the reference mock (console/design/e2e-console-reference.html).
+// Data comes from /api/e2e/* (backed by the cp-results Postgres store). Falls back to rich fixtures
+// when the store is not configured (API returns 501) so the screen is never blank.
+//
+// Mock elements implemented:
+//   Run history table + accepted sparkline
+//   7 metric tiles (Attempted, Accepted, Rejected, Withheld, p50, p99, Spend)
+//   4 filter tiles (all/pass/fail/withheld) with ember inset when active
+//   Integrity strip (withheld-by-cause pills, each clickable as a filter)
+//   Workflow table (Workflow, Lanes, Verdict, Trials, Duration, Failing bar, Re-run)
+//   Inline drilldown drawer (scenes, cassette ▸, ⧉ Triage this workflow)
+//   Duration chart (this run vs previous nightly, p50 + p99)
+//   Run modal (▸ Run tests → scope/provider/cost confirm)
+//   Cassette panel (slide-in, turn/who/bubble/toolcard/claims)
+//   Clipboard toast
 
-interface EvalRun {
-  id: string;
-  label: string;
-  startedAt: string;
-  finishedAt: string;
-  status: 'complete' | 'running' | 'failed';
-  provider: 'openai' | 'anthropic' | 'both';
-  scope: string;
-  accepted: number;
-  rejected: number;
-  withheld: number;
-  total: number;
-  cost_cents: number;
+// ── E2E domain types (mirror cp-results/types.ts shapes) ──────────────────
+
+interface E2ERun {
+  run_id: string;
+  tenant_id: string;
+  canonical_url: string | null;
+  provider: string | null;
+  trigger_source: string | null;
+  workflows_attempted: number;
+  workflows_passed: number;
+  workflows_failed: number;
+  pass_rate: number | null;
+  withheld_count: number;
+  rejected_count: number;
+  spend_cents: number;
+  p50_duration_ms: number | null;
+  p99_duration_ms: number | null;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  meta: Record<string, unknown>;
+  created_at: string;
 }
 
-interface EvalWorkflow {
+interface E2EWorkflow {
   id: string;
-  slug: string;
-  label: string;
-  outcome: 'accepted' | 'rejected' | 'withheld';
-  withheld_reason?: 'budget_cap' | 'provider_error' | 'timeout' | 'policy';
-  cost_cents: number;
-  scenes: EvalScene[];
+  run_id: string;
+  workflow_id: string;
+  verdict: 'pass' | 'fail' | 'error' | 'skip';
+  integrity_class: string | null;
+  prompt: string | null;
+  duration_ms: number | null;
+  provider: string | null;
+  lanes: string[];
+  trials_total: number;
+  trials_passed: number;
+  failing_bar: string | null;
+  meta: Record<string, unknown>;
+  created_at: string;
 }
 
-interface EvalScene {
-  id: string;
-  label: string;
-  assertions: EvalAssertion[];
+interface E2ERunDetail {
+  run: E2ERun;
+  failures: E2EWorkflow[];
+  failure_count: number;
+  all_workflows: E2EWorkflow[];
 }
 
-interface EvalAssertion {
-  id: string;
-  label: string;
-  outcome: 'accepted' | 'rejected' | 'withheld';
-  score: number | null;
-  reason?: string;
+interface E2EWorkflowResult {
+  workflow: E2EWorkflow;
+  scenes: E2EScene[];
+  mcp_calls: E2EMcpCall[];
+  claims: E2EClaim[];
 }
 
-const EVAL_WITHHELD_REASONS: Record<string, string> = {
-  budget_cap: 'Budget cap',
-  provider_error: 'Provider error',
-  timeout: 'Timeout',
-  policy: 'Policy gate',
-};
+interface E2EScene {
+  id: string;
+  scene_index: number;
+  scene_name: string | null;
+  assertions: Array<{ name: string; expected: unknown; operator: string }>;
+  observed_values: Array<{ name: string; value: unknown }>;
+  passed: boolean | null;
+  created_at: string;
+}
 
-const EVAL_RUNS: EvalRun[] = [
+interface E2EMcpCall {
+  id: string;
+  call_index: number;
+  tool_name: string;
+  request: Record<string, unknown>;
+  response: Record<string, unknown> | null;
+  duration_ms: number | null;
+  error: string | null;
+}
+
+interface E2EClaim {
+  id: string;
+  claim_index: number;
+  claim_type: string | null;
+  claim_text: string | null;
+  verdict: string | null;
+  evidence: Record<string, unknown>;
+  cassette: Record<string, unknown>;
+}
+
+// ── Fixtures (matching the 2026-08-11 reference run from the mock) ─────────
+
+const E2E_FIXTURE_RUNS: E2ERun[] = [
   {
-    id: 'eval-2026-08-10-a',
-    label: 'eval-2026-08-10-a',
-    startedAt: '2026-08-10T06:14:22Z',
-    finishedAt: '2026-08-10T06:41:09Z',
-    status: 'complete',
-    provider: 'both',
-    scope: 'full',
-    accepted: 9,
-    rejected: 2,
-    withheld: 1,
-    total: 12,
-    cost_cents: 87,
+    run_id: '2026-08-11T10-35',
+    tenant_id: 'dorinda-prod',
+    canonical_url: null,
+    provider: 'openai',
+    trigger_source: 'manual · victory lap',
+    workflows_attempted: 75,
+    workflows_passed: 31,
+    workflows_failed: 22,
+    pass_rate: 0.413,
+    withheld_count: 22,
+    rejected_count: 22,
+    spend_cents: 104,
+    p50_duration_ms: 14000,
+    p99_duration_ms: 222000,
+    total_input_tokens: 2900000,
+    total_output_tokens: 0,
+    status: 'completed',
+    started_at: '2026-08-11T10:35:00Z',
+    completed_at: '2026-08-11T11:17:00Z',
+    meta: {
+      api_version: 'v0.67.1',
+      withheld_breakdown: { 'credential-expiry': 28, 'credential-missing': 5, 'arm-never-delivered': 5, 'unseeded-premise': 1 },
+      trials_ran_clean: 138,
+      trials_total: 177,
+      p99_slowest_workflow: 'h8-two-people…',
+      cached_pct: 84,
+    },
+    created_at: '2026-08-11T10:35:00Z',
   },
   {
-    id: 'eval-2026-08-08-a',
-    label: 'eval-2026-08-08-a',
-    startedAt: '2026-08-08T06:09:55Z',
-    finishedAt: '2026-08-08T06:38:41Z',
-    status: 'complete',
-    provider: 'both',
-    scope: 'full',
-    accepted: 10,
-    rejected: 1,
-    withheld: 1,
-    total: 12,
-    cost_cents: 91,
+    run_id: '2026-08-10T02-00',
+    tenant_id: 'dorinda-prod',
+    canonical_url: null,
+    provider: 'openai',
+    trigger_source: 'nightly',
+    workflows_attempted: 75,
+    workflows_passed: 39,
+    workflows_failed: 29,
+    pass_rate: 0.52,
+    withheld_count: 7,
+    rejected_count: 29,
+    spend_cents: 97,
+    p50_duration_ms: 16000,
+    p99_duration_ms: 201000,
+    total_input_tokens: 2700000,
+    total_output_tokens: 0,
+    status: 'completed',
+    started_at: '2026-08-10T02:00:00Z',
+    completed_at: '2026-08-10T02:40:00Z',
+    meta: { api_version: 'v0.67.0', withheld_breakdown: {}, trials_ran_clean: 168, trials_total: 175 },
+    created_at: '2026-08-10T02:00:00Z',
   },
   {
-    id: 'eval-2026-08-05-a',
-    label: 'eval-2026-08-05-a',
-    startedAt: '2026-08-05T07:22:10Z',
-    finishedAt: '2026-08-05T07:38:44Z',
-    status: 'complete',
-    provider: 'anthropic',
-    scope: 'core',
-    accepted: 7,
-    rejected: 0,
-    withheld: 1,
-    total: 8,
-    cost_cents: 42,
+    run_id: '2026-08-09T02-00',
+    tenant_id: 'dorinda-prod',
+    canonical_url: null,
+    provider: 'openai',
+    trigger_source: 'nightly',
+    workflows_attempted: 75,
+    workflows_passed: 43,
+    workflows_failed: 26,
+    pass_rate: 0.573,
+    withheld_count: 6,
+    rejected_count: 26,
+    spend_cents: 101,
+    p50_duration_ms: 15000,
+    p99_duration_ms: 195000,
+    total_input_tokens: 2800000,
+    total_output_tokens: 0,
+    status: 'completed',
+    started_at: '2026-08-09T02:00:00Z',
+    completed_at: '2026-08-09T02:41:00Z',
+    meta: { api_version: 'v0.66.9', withheld_breakdown: {}, trials_ran_clean: 169, trials_total: 175 },
+    created_at: '2026-08-09T02:00:00Z',
+  },
+  {
+    run_id: '2026-08-08T02-41',
+    tenant_id: 'dorinda-prod',
+    canonical_url: null,
+    provider: 'openai',
+    trigger_source: 'manual · salvage',
+    workflows_attempted: 75,
+    workflows_passed: 26,
+    workflows_failed: 42,
+    pass_rate: 0.347,
+    withheld_count: 7,
+    rejected_count: 42,
+    spend_cents: 102,
+    p50_duration_ms: 18000,
+    p99_duration_ms: 238000,
+    total_input_tokens: 2850000,
+    total_output_tokens: 0,
+    status: 'completed',
+    started_at: '2026-08-08T02:41:00Z',
+    completed_at: '2026-08-08T03:23:00Z',
+    meta: { api_version: 'v0.66.8', withheld_breakdown: {}, trials_ran_clean: 168, trials_total: 175 },
+    created_at: '2026-08-08T02:41:00Z',
   },
 ];
 
-// Scenes are fully authored only for the most recent run so the drilldown is interactive.
-// Historical runs carry empty scene arrays — operators triage current failures, not historical ones.
-const EVAL_WORKFLOWS: Record<string, EvalWorkflow[]> = {
-  'eval-2026-08-10-a': [
+const E2E_FIXTURE_WORKFLOWS: E2EWorkflow[] = [
+  { id: 'w-001', run_id: '2026-08-11T10-35', workflow_id: 'draft-approve-sent', verdict: 'fail', integrity_class: 'clean', prompt: 'Draft → approve → actually sent', duration_ms: 72000, provider: 'openai', lanes: ['openai'], trials_total: 3, trials_passed: 0, failing_bar: 'exactly 1 email on gmail where to:no-reply@… → found 0', meta: { description: 'Draft → approve → actually sent', cost_cents: 5 }, created_at: '2026-08-11T10:35:10Z' },
+  { id: 'w-002', run_id: '2026-08-11T10-35', workflow_id: 'cross-ai-memory', verdict: 'fail', integrity_class: 'clean', prompt: 'Captured in ChatGPT, recalled in Claude', duration_ms: 124000, provider: 'openai', lanes: ['openai', 'anthropic'], trials_total: 1, trials_passed: 0, failing_bar: 'Claude host: Tool output schema validation failed', meta: { description: 'Captured in ChatGPT, recalled in Claude', cost_cents: 7 }, created_at: '2026-08-11T10:36:00Z' },
+  { id: 'w-003', run_id: '2026-08-11T10-35', workflow_id: 'view-vs-edit-asked', verdict: 'pass', integrity_class: 'clean', prompt: '"View vs. edit" defaults to view — and says so', duration_ms: 51000, provider: 'openai', lanes: ['openai'], trials_total: 5, trials_passed: 5, failing_bar: null, meta: { description: '"View vs. edit" defaults to view — and says so', cost_cents: 5 }, created_at: '2026-08-11T10:37:00Z' },
+  { id: 'w-004', run_id: '2026-08-11T10-35', workflow_id: 'h5-teen-share-up', verdict: 'skip', integrity_class: null, prompt: 'Alex hands it up — teen share-up, and the refused reach', duration_ms: 9000, provider: 'openai', lanes: ['openai', 'anthropic'], trials_total: 0, trials_passed: 0, failing_bar: null, meta: { description: 'Alex hands it up — teen share-up, and the refused reach', cost_cents: 4, withheld_reason: 'deploy-window' }, created_at: '2026-08-11T10:37:30Z' },
+  { id: 'w-005', run_id: '2026-08-11T10-35', workflow_id: 'reminder-fires', verdict: 'pass', integrity_class: 'clean', prompt: 'A one-time reminder actually fires', duration_ms: 44000, provider: 'openai', lanes: ['openai'], trials_total: 3, trials_passed: 3, failing_bar: null, meta: { description: 'A one-time reminder actually fires', cost_cents: 3 }, created_at: '2026-08-11T10:38:00Z' },
+  { id: 'w-006', run_id: '2026-08-11T10-35', workflow_id: 'get-rid-of-it-is-ambiguous', verdict: 'pass', integrity_class: 'clean', prompt: '"Get rid of it" is ambiguous — ask before anything irreversible', duration_ms: 63000, provider: 'openai', lanes: ['openai'], trials_total: 5, trials_passed: 5, failing_bar: null, meta: { description: '"Get rid of it" is ambiguous — ask before anything irreversible', cost_cents: 5 }, created_at: '2026-08-11T10:39:00Z' },
+];
+
+const E2E_FIXTURE_RUN_DETAIL: E2ERunDetail = {
+  run: E2E_FIXTURE_RUNS[0]!,
+  failures: E2E_FIXTURE_WORKFLOWS.filter((w) => w.verdict === 'fail' || w.verdict === 'error'),
+  failure_count: E2E_FIXTURE_WORKFLOWS.filter((w) => w.verdict === 'fail' || w.verdict === 'error').length,
+  all_workflows: E2E_FIXTURE_WORKFLOWS,
+};
+
+// Fixture cassette transcript (for draft-approve-sent drilldown)
+const E2E_FIXTURE_WORKFLOW_RESULT: E2EWorkflowResult = {
+  workflow: E2E_FIXTURE_WORKFLOWS[0]!,
+  scenes: [
     {
-      id: 'w-auth',
-      slug: 'auth-happy-path',
-      label: 'Auth: happy path sign-in',
-      outcome: 'accepted',
-      cost_cents: 7,
-      scenes: [
-        {
-          id: 's-auth-1',
-          label: 'Sign-in with valid credentials',
-          assertions: [
-            { id: 'a1', label: 'Session token issued', outcome: 'accepted', score: 1.0 },
-            { id: 'a2', label: 'Response within 2s', outcome: 'accepted', score: 0.96 },
-            { id: 'a3', label: 'Audit record created', outcome: 'accepted', score: 1.0 },
-          ],
-        },
-        {
-          id: 's-auth-2',
-          label: 'Sign-in with invalid credentials',
-          assertions: [
-            { id: 'a4', label: '401 returned immediately', outcome: 'accepted', score: 1.0 },
-            { id: 'a5', label: 'No session created', outcome: 'accepted', score: 1.0 },
-          ],
-        },
+      id: 's-1',
+      scene_index: 0,
+      scene_name: 'Turn 2 — Mark asks for an email to Sam',
+      assertions: [
+        { name: 'must: tool draft_email is called', expected: true, operator: 'eq' },
+        { name: 'must: claim askedClarifyingQuestion is true', expected: true, operator: 'eq' },
+        { name: 'must NOT: claim claimedEmailDelivery is "staged"', expected: false, operator: 'eq' },
       ],
+      observed_values: [
+        { name: 'draft_email called', value: true },
+        { name: 'askedClarifyingQuestion', value: true },
+        { name: 'claimedEmailDelivery at this turn', value: 'none' },
+      ],
+      passed: true,
+      created_at: '2026-08-11T10:35:10Z',
     },
     {
-      id: 'w-deleg-create',
-      slug: 'delegation-create',
-      label: 'Delegation: create with budget',
-      outcome: 'accepted',
-      cost_cents: 9,
-      scenes: [
-        {
-          id: 's-dc-1',
-          label: 'Create delegation under budget',
-          assertions: [
-            { id: 'b1', label: 'Delegation persisted', outcome: 'accepted', score: 1.0 },
-            { id: 'b2', label: 'Budget deducted correctly', outcome: 'accepted', score: 1.0 },
-            { id: 'b3', label: 'Stakeholders notified', outcome: 'accepted', score: 0.91 },
-          ],
-        },
+      id: 's-2',
+      scene_index: 1,
+      scene_name: 'Turn 3 — Robin answers: the roofer',
+      assertions: [
+        { name: 'must: claim claimedEmailDelivery is "staged"', expected: 'staged', operator: 'eq' },
+        { name: 'must: approval preview contains no-reply@mardash.ai', expected: 'no-reply@mardash.ai', operator: 'contains' },
       ],
+      observed_values: [
+        { name: 'claimedEmailDelivery', value: 'staged' },
+        { name: 'approvalPreview', value: 'no-reply@mardash.ai' },
+      ],
+      passed: true,
+      created_at: '2026-08-11T10:35:15Z',
     },
     {
-      id: 'w-deleg-override',
-      slug: 'delegation-override',
-      label: 'Delegation: stakeholder override',
-      outcome: 'accepted',
-      cost_cents: 8,
-      scenes: [
-        {
-          id: 's-do-1',
-          label: 'Override approved by stakeholder',
-          assertions: [
-            { id: 'c1', label: 'Override recorded', outcome: 'accepted', score: 1.0 },
-            { id: 'c2', label: 'Original budget restored', outcome: 'accepted', score: 1.0 },
-          ],
-        },
-      ],
+      id: 's-3',
+      scene_index: 2,
+      scene_name: 'Turn 4 — Mark approves the send',
+      assertions: [{ name: 'must: tool approve is called', expected: true, operator: 'eq' }],
+      observed_values: [{ name: 'approve called', value: true }],
+      passed: true,
+      created_at: '2026-08-11T10:35:20Z',
     },
     {
-      id: 'w-member-dash',
-      slug: 'member-dashboard',
-      label: 'Member: dashboard initial load',
-      outcome: 'accepted',
-      cost_cents: 6,
-      scenes: [
-        {
-          id: 's-md-1',
-          label: 'Dashboard load with 10 delegations',
-          assertions: [
-            { id: 'd1', label: 'All delegations visible', outcome: 'accepted', score: 1.0 },
-            { id: 'd2', label: 'Load under 800ms', outcome: 'accepted', score: 0.94 },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'w-advance-fire',
-      slug: 'advance-fire',
-      label: 'Advance: fire with 48h lead',
-      outcome: 'accepted',
-      cost_cents: 8,
-      scenes: [
-        {
-          id: 's-af-1',
-          label: 'Advance fired 48h before due',
-          assertions: [
-            { id: 'e1', label: 'Advance event emitted', outcome: 'accepted', score: 1.0 },
-            { id: 'e2', label: 'Correct recipient targeted', outcome: 'accepted', score: 1.0 },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'w-reminder',
-      slug: 'reminder-accuracy',
-      label: 'Reminder: timing accuracy',
-      outcome: 'accepted',
-      cost_cents: 7,
-      scenes: [
-        {
-          id: 's-ra-1',
-          label: 'Reminder fires within ±5 min window',
-          assertions: [
-            { id: 'f1', label: 'Reminder delivered', outcome: 'accepted', score: 1.0 },
-            { id: 'f2', label: 'Timestamp within tolerance', outcome: 'accepted', score: 1.0 },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'w-triage',
-      slug: 'triage-suggestion',
-      label: 'Triage: suggestion quality',
-      outcome: 'rejected',
-      cost_cents: 9,
-      scenes: [
-        {
-          id: 's-ts-1',
-          label: 'Normal triage prompt',
-          assertions: [
-            {
-              id: 'g1',
-              label: 'Response identifies root issue',
-              outcome: 'rejected',
-              score: 0.62,
-              reason: 'Model identified symptom rather than root cause in 3 of 5 cases',
-            },
-            { id: 'g2', label: 'Response within 3 sentences', outcome: 'accepted', score: 0.88 },
-            { id: 'g3', label: 'No PII in response', outcome: 'accepted', score: 1.0 },
-          ],
-        },
-        {
-          id: 's-ts-2',
-          label: 'Complex multi-delegation case',
-          assertions: [
-            {
-              id: 'g4',
-              label: 'Identifies all affected delegations',
-              outcome: 'rejected',
-              score: 0.41,
-              reason: 'Missing cross-member delegation links in 4 of 5 cases',
-            },
-            {
-              id: 'g5',
-              label: 'Suggests appropriate escalation path',
-              outcome: 'rejected',
-              score: 0.55,
-              reason: 'Escalation path omitted or incorrect in majority of cases',
-            },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'w-privacy',
-      slug: 'privacy-redaction',
-      label: 'Privacy: PII redaction',
-      outcome: 'accepted',
-      cost_cents: 7,
-      scenes: [
-        {
-          id: 's-pr-1',
-          label: 'Email and phone redaction in logs',
-          assertions: [
-            { id: 'h1', label: 'Email address redacted', outcome: 'accepted', score: 1.0 },
-            { id: 'h2', label: 'Phone number redacted', outcome: 'accepted', score: 1.0 },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'w-isolation',
-      slug: 'cross-member-isolation',
-      label: 'Cross-member: data isolation',
-      outcome: 'accepted',
-      cost_cents: 8,
-      scenes: [
-        {
-          id: 's-ci-1',
-          label: 'Member A cannot access Member B data',
-          assertions: [
-            { id: 'i1', label: 'Cross-member query returns 403', outcome: 'accepted', score: 1.0 },
-            { id: 'i2', label: 'No data leak in response body', outcome: 'accepted', score: 1.0 },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'w-token',
-      slug: 'token-refresh',
-      label: 'Session: token refresh',
-      outcome: 'accepted',
-      cost_cents: 6,
-      scenes: [
-        {
-          id: 's-tr-1',
-          label: 'Expired token refreshed transparently',
-          assertions: [
-            { id: 'j1', label: 'New token issued', outcome: 'accepted', score: 1.0 },
-            { id: 'j2', label: 'Old token invalidated', outcome: 'accepted', score: 1.0 },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'w-webhook',
-      slug: 'webhook-retry',
-      label: 'Webhook: delivery retry',
-      outcome: 'withheld',
-      withheld_reason: 'timeout',
-      cost_cents: 0,
-      scenes: [
-        {
-          id: 's-wr-1',
-          label: 'Retry on initial delivery failure',
-          assertions: [
-            {
-              id: 'k1',
-              label: 'Retry within 30s',
-              outcome: 'withheld',
-              score: null,
-              reason: 'Runner did not receive webhook endpoint response within the SLA window',
-            },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'w-search',
-      slug: 'search-relevance',
-      label: 'Search: result relevance',
-      outcome: 'rejected',
-      cost_cents: 12,
-      scenes: [
-        {
-          id: 's-sr-1',
-          label: 'Top-3 results relevance',
-          assertions: [
-            {
-              id: 'l1',
-              label: 'Precision@3 ≥ 0.80',
-              outcome: 'rejected',
-              score: 0.66,
-              reason: 'Averaged 0.66 across test queries, threshold is 0.80',
-            },
-            { id: 'l2', label: 'No stale results (>7d)', outcome: 'accepted', score: 1.0 },
-          ],
-        },
-        {
-          id: 's-sr-2',
-          label: 'Fuzzy query handling',
-          assertions: [
-            { id: 'l3', label: 'Spell-corrected query matches', outcome: 'accepted', score: 0.92 },
-            { id: 'l4', label: 'Empty result set handled gracefully', outcome: 'accepted', score: 1.0 },
-          ],
-        },
-      ],
+      id: 's-4',
+      scene_index: 3,
+      scene_name: 'Verify — the real message is in Gmail Sent',
+      assertions: [{ name: 'must: exactly 1 email on gmail where {to: no-reply@mardash.ai}', expected: 1, operator: 'eq' }],
+      observed_values: [{ name: 'gmail messages found', value: 0 }],
+      passed: false,
+      created_at: '2026-08-11T10:35:30Z',
     },
   ],
-  'eval-2026-08-08-a': [
-    {
-      id: 'w-auth',
-      slug: 'auth-happy-path',
-      label: 'Auth: happy path sign-in',
-      outcome: 'accepted',
-      cost_cents: 7,
-      scenes: [],
-    },
-    {
-      id: 'w-deleg-create',
-      slug: 'delegation-create',
-      label: 'Delegation: create with budget',
-      outcome: 'accepted',
-      cost_cents: 9,
-      scenes: [],
-    },
-    {
-      id: 'w-deleg-override',
-      slug: 'delegation-override',
-      label: 'Delegation: stakeholder override',
-      outcome: 'accepted',
-      cost_cents: 8,
-      scenes: [],
-    },
-    {
-      id: 'w-member-dash',
-      slug: 'member-dashboard',
-      label: 'Member: dashboard initial load',
-      outcome: 'accepted',
-      cost_cents: 6,
-      scenes: [],
-    },
-    {
-      id: 'w-advance-fire',
-      slug: 'advance-fire',
-      label: 'Advance: fire with 48h lead',
-      outcome: 'accepted',
-      cost_cents: 8,
-      scenes: [],
-    },
-    {
-      id: 'w-reminder',
-      slug: 'reminder-accuracy',
-      label: 'Reminder: timing accuracy',
-      outcome: 'accepted',
-      cost_cents: 7,
-      scenes: [],
-    },
-    {
-      id: 'w-triage',
-      slug: 'triage-suggestion',
-      label: 'Triage: suggestion quality',
-      outcome: 'accepted',
-      cost_cents: 9,
-      scenes: [],
-    },
-    {
-      id: 'w-privacy',
-      slug: 'privacy-redaction',
-      label: 'Privacy: PII redaction',
-      outcome: 'accepted',
-      cost_cents: 7,
-      scenes: [],
-    },
-    {
-      id: 'w-isolation',
-      slug: 'cross-member-isolation',
-      label: 'Cross-member: data isolation',
-      outcome: 'accepted',
-      cost_cents: 8,
-      scenes: [],
-    },
-    {
-      id: 'w-token',
-      slug: 'token-refresh',
-      label: 'Session: token refresh',
-      outcome: 'accepted',
-      cost_cents: 6,
-      scenes: [],
-    },
-    {
-      id: 'w-webhook',
-      slug: 'webhook-retry',
-      label: 'Webhook: delivery retry',
-      outcome: 'withheld',
-      withheld_reason: 'timeout',
-      cost_cents: 0,
-      scenes: [],
-    },
-    {
-      id: 'w-search',
-      slug: 'search-relevance',
-      label: 'Search: result relevance',
-      outcome: 'rejected',
-      cost_cents: 11,
-      scenes: [],
-    },
+  mcp_calls: [
+    { id: 'c-1', call_index: 0, tool_name: 'use_dorinda', request: {}, response: { session: 'household 5', visibility: 'summary', tz: 'America/New_York' }, duration_ms: 340, error: null },
+    { id: 'c-2', call_index: 1, tool_name: 'whats_next', request: {}, response: { overdue: 1, waitingOn: 1, dueSoon: 0 }, duration_ms: 210, error: null },
+    { id: 'c-3', call_index: 2, tool_name: 'draft_email', request: { to: 'Sam', subject: 'Roof quote timeline' }, response: { status: 'ambiguous_recipient', candidates: [{ name: 'Sam Whitaker', email: 'no-reply@mardash.ai' }, { name: 'Sam Whitaker-Cruz', email: 'robin.hat+partner@dorinda.test' }] }, duration_ms: 580, error: null },
+    { id: 'c-4', call_index: 3, tool_name: 'draft_email', request: { to: 'no-reply@mardash.ai', subject: 'Roof quote timeline' }, response: { status: 'staged', approvalId: '0959a9f3', requiresApproval: true }, duration_ms: 490, error: null },
+    { id: 'c-5', call_index: 4, tool_name: 'approve', request: { id: '0959a9f3' }, response: { status: 'sent', messageId: '19fe8aa2e178bd28' }, duration_ms: 410, error: null },
   ],
-  'eval-2026-08-05-a': [
-    {
-      id: 'w-auth',
-      slug: 'auth-happy-path',
-      label: 'Auth: happy path sign-in',
-      outcome: 'accepted',
-      cost_cents: 6,
-      scenes: [],
-    },
-    {
-      id: 'w-deleg-create',
-      slug: 'delegation-create',
-      label: 'Delegation: create with budget',
-      outcome: 'accepted',
-      cost_cents: 8,
-      scenes: [],
-    },
-    {
-      id: 'w-deleg-override',
-      slug: 'delegation-override',
-      label: 'Delegation: stakeholder override',
-      outcome: 'accepted',
-      cost_cents: 7,
-      scenes: [],
-    },
-    {
-      id: 'w-member-dash',
-      slug: 'member-dashboard',
-      label: 'Member: dashboard initial load',
-      outcome: 'accepted',
-      cost_cents: 6,
-      scenes: [],
-    },
-    {
-      id: 'w-advance-fire',
-      slug: 'advance-fire',
-      label: 'Advance: fire with 48h lead',
-      outcome: 'accepted',
-      cost_cents: 7,
-      scenes: [],
-    },
-    {
-      id: 'w-reminder',
-      slug: 'reminder-accuracy',
-      label: 'Reminder: timing accuracy',
-      outcome: 'accepted',
-      cost_cents: 7,
-      scenes: [],
-    },
-    {
-      id: 'w-triage',
-      slug: 'triage-suggestion',
-      label: 'Triage: suggestion quality',
-      outcome: 'accepted',
-      cost_cents: 8,
-      scenes: [],
-    },
-    {
-      id: 'w-webhook',
-      slug: 'webhook-retry',
-      label: 'Webhook: delivery retry',
-      outcome: 'withheld',
-      withheld_reason: 'provider_error',
-      cost_cents: 0,
-      scenes: [],
-    },
+  claims: [
+    { id: 'cl-1', claim_index: 0, claim_type: 'tool_called', claim_text: 'draft_email', verdict: 'verified', evidence: {}, cassette: {} },
+    { id: 'cl-2', claim_index: 1, claim_type: 'claim_value', claim_text: 'askedClarifyingQuestion', verdict: 'verified', evidence: {}, cassette: {} },
+    { id: 'cl-3', claim_index: 2, claim_type: 'claim_value', claim_text: 'claimedEmailDelivery', verdict: 'refuted', evidence: {}, cassette: {} },
   ],
 };
 
-// ── Eval outcome helpers ────────────────────────────────────────────────────────────────────────
+// ── E2E helpers ───────────────────────────────────────────────────────────
 
-// ── Mini trend sparkline ──────────────────────────────────────────────────────────────────────
+function fmtE2eDuration(ms: number | null): string {
+  if (ms === null || ms < 0) return '—';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${String(r).padStart(2, '0')}`;
+}
 
-/**
- * A compact acceptance-rate sparkline across a sequence of values.
- * Deliberately minimal: one stroke, no axes, no labels — the table carries those. The sparkline
- * answers "getting better or worse?" at a glance without adding a chart.
- */
-function EvalSparkline({
-  rates,
-  width = 80,
-  height = 28,
-}: {
-  rates: number[];
-  width?: number;
-  height?: number;
-}) {
-  if (rates.length < 2) return null;
-  const padV = 3;
-  const min = Math.min(...rates);
-  const max = Math.max(...rates);
-  const range = max - min || 0.01;
-  const toY = (v: number) => padV + (height - padV * 2) * (1 - (v - min) / range);
-  const toX = (i: number) => (i / (rates.length - 1)) * width;
-  const pts = rates.map((r, i) => `${toX(i).toFixed(1)},${toY(r).toFixed(1)}`).join(' ');
-  const last = rates[rates.length - 1]!;
-  const prev = rates[rates.length - 2]!;
-  const trend = last >= prev ? 'var(--ok)' : 'var(--crit)';
+function fmtE2eSpend(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+function fmtTrials(total: number, passed: number, verdict: string): string {
+  if (verdict === 'skip') return '—';
+  return `${passed}/${total}`;
+}
+
+function withheldBreakdown(run: E2ERun): Array<{ reason: string; count: number }> {
+  const bd = run.meta.withheld_breakdown as Record<string, number> | undefined;
+  if (!bd) return [];
+  return Object.entries(bd).map(([reason, count]) => ({ reason, count }));
+}
+
+function buildE2eTriagePrompt(run: E2ERun, workflows: E2EWorkflow[]): string {
+  const failures = workflows.filter((w) => w.verdict === 'fail' || w.verdict === 'error');
+  const failureList = failures.map((w) => `  × ${w.workflow_id}  —  ${w.prompt ?? ''}`).join('\n');
+  const bd = withheldBreakdown(run);
+  return `Triage E2E run ${run.run_id} (remote/${run.provider ?? 'openai'}, api ${(run.meta.api_version as string) ?? ''}).
+Top-line: ${run.workflows_attempted} attempted · ${run.workflows_passed} accepted · ${run.workflows_failed} rejected · ${run.withheld_count} withheld.
+${bd.map((x) => `  ⊘ ${x.count} trials · ${x.reason}`).join('\n')}
+Failures to triage:
+${failureList || '  (none)'}
+Fetch evidence with the e2e MCP tools: get_e2e_run("${run.run_id}"), get_workflow_result(run, slug), diff_e2e_runs(run, prev).
+For each failure: classify (product / harness / host / environment), find the root cause, and file findings.
+Never lower a bar to make a run green.`;
+}
+
+// ── Run sparkline (accepted workflows, last N runs) ───────────────────────
+
+function E2ESparkline({ runs, width = 260, height = 84 }: { runs: E2ERun[]; width?: number; height?: number }) {
+  if (runs.length < 2) return null;
+  const vals = [...runs].reverse().map((r) => r.workflows_passed);
+  const min = 0;
+  const max = Math.max(...vals, 1);
+  const pad = 10;
+  const w = width - pad * 2;
+  const h = height - 20; // leave space for bottom line + top label
+  const toX = (i: number) => pad + (i / (vals.length - 1)) * w;
+  const toY = (v: number) => 4 + (h - 4) * (1 - (v - min) / (max - min));
+  const pts = vals.map((v, i) => `${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(' L ');
+  const areaClose = `L ${toX(vals.length - 1).toFixed(1)},${(h + 4).toFixed(1)} L ${toX(0).toFixed(1)},${(h + 4).toFixed(1)} Z`;
+  const last = vals[vals.length - 1]!;
+  const prevBest = Math.max(...vals.slice(0, -1));
   return (
-    <svg
-      width={width}
-      height={height}
-      viewBox={`0 0 ${width} ${height}`}
-      aria-label={`Acceptance rate trend: ${rates.map((r) => Math.round(r * 100) + '%').join(' → ')}`}
-      style={{ display: 'block', flex: '0 0 auto' }}
-    >
-      <polyline
-        points={pts}
-        fill="none"
-        stroke={trend}
-        strokeWidth={1.8}
-        strokeLinejoin="round"
-        strokeLinecap="round"
-        opacity={0.8}
-      />
-      <circle cx={toX(rates.length - 1).toFixed(1)} cy={toY(last).toFixed(1)} r={2.5} fill={trend} />
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img"
+      aria-label={`Accepted workflows trend: ${vals.join(', ')}`}
+      style={{ display: 'block' }}>
+      <line x1={0} y1={h + 4} x2={width} y2={h + 4} stroke="var(--line)" strokeWidth={1} />
+      <path d={`M ${pts} ${areaClose}`} fill="#4D8EC4" opacity={0.16} />
+      <path d={`M ${pts}`} fill="none" stroke="#4D8EC4" strokeWidth={2} strokeLinejoin="round" />
+      <circle cx={toX(vals.length - 1).toFixed(1)} cy={toY(last).toFixed(1)} r={4} fill="#4D8EC4" />
+      <text x={toX(vals.length - 1)} y={toY(last) - 8} textAnchor="end" fontSize={11} fill="var(--text-muted)">{last}</text>
+      {prevBest > last && (
+        <text x={toX(vals.indexOf(prevBest))} y={toY(prevBest) - 8} textAnchor="middle" fontSize={11} fill="var(--text-muted)">{prevBest}</text>
+      )}
     </svg>
   );
 }
 
-// ── Eval outcome badge (withheld is muted-on-selected, distinct from crit) ──────────────────────
+// ── Verdict pill ──────────────────────────────────────────────────────────
 
-function EvalOutcomeBadge({
-  outcome,
-  withheld_reason,
-  selected = false,
-}: {
-  outcome: EvalWorkflow['outcome'];
-  withheld_reason?: string;
-  selected?: boolean;
-}) {
-  if (outcome === 'accepted') {
-    return <Pill tone="ok">✓ Accepted</Pill>;
+function E2EVerdictPill({ verdict }: { verdict: E2EWorkflow['verdict'] }) {
+  if (verdict === 'pass') {
+    return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 99, padding: '2px 9px', fontSize: 12, fontWeight: 600, background: 'var(--ok-wash)', color: 'var(--ok-text)' }}>✓ accepted</span>;
   }
-  if (outcome === 'rejected') {
-    return <Pill tone="crit">× Rejected</Pill>;
+  if (verdict === 'skip') {
+    return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 99, padding: '2px 9px', fontSize: 12, fontWeight: 600, background: 'var(--bg-selected)', color: 'var(--text-muted)' }}>⊘ withheld</span>;
   }
-  // Withheld: ⊘ rendered in --unknown-text normally; muted to --text-muted when selected.
-  // This keeps it visually distinct from crit (rose) while signalling "selected" via the ember
-  // inset on the parent tile rather than by amplifying the withheld colour.
-  const color = selected ? 'var(--text-muted)' : 'var(--unknown-text)';
-  const bg = selected ? 'var(--bg-selected)' : 'var(--unknown-wash)';
-  const border = selected ? 'var(--line)' : 'var(--unknown-line)';
-  const label = withheld_reason ? (EVAL_WITHHELD_REASONS[withheld_reason] ?? withheld_reason) : undefined;
+  return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 99, padding: '2px 9px', fontSize: 12, fontWeight: 600, background: 'var(--crit-wash)', color: 'var(--crit-text)' }}>✗ rejected</span>;
+}
+
+// ── Chip (small border tag) ───────────────────────────────────────────────
+
+function Chip({ children }: { children: ReactNode }) {
   return (
-    <span
-      title={label}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 5,
-        height: 19,
-        padding: '0 8px',
-        borderRadius: 3,
-        background: bg,
-        color,
-        border: `1px dashed ${border}`,
-        fontSize: 10.5,
-        fontWeight: 600,
-        letterSpacing: '0.07em',
-        textTransform: 'uppercase',
-        whiteSpace: 'nowrap',
-      }}
-    >
-      ⊘{label ? ` ${label}` : ' Withheld'}
+    <span style={{ display: 'inline-block', border: '1px solid var(--line)', borderRadius: 5, padding: '1px 7px', fontSize: 11.5, color: 'var(--text-muted)' }}>
+      {children}
     </span>
   );
 }
 
-// ── Eval filter tile (keyboard-operable, ember inset when active) ──────────────────────────────
+// ── E2E metric tile (7-tile row) ──────────────────────────────────────────
 
-function EvalFilterTile({
-  label,
-  count,
-  tone,
-  active,
-  onClick,
+function E2EMetricTile({
+  label, value, sub, color, filter, active, onClick,
 }: {
-  label: string;
-  count: number;
-  tone: 'ok' | 'crit' | 'unknown';
-  active: boolean;
-  onClick: () => void;
+  label: string; value: ReactNode; sub?: string; color?: string;
+  filter?: boolean; active?: boolean; onClick?: () => void;
 }) {
-  // When active: ember left-inset carries the selection signal; count goes achromatic (muted).
-  // When inactive: count takes the status colour so the severity reads immediately.
-  // This is the "muted-on-selected" rule applied uniformly — including withheld (unknown tone).
-  const countColor = active ? 'var(--text-primary)' : `var(--${tone}-text)`;
-  return (
-    <button
-      aria-pressed={active}
-      onClick={onClick}
-      style={{
-        position: 'relative',
-        background: active ? 'var(--bg-selected)' : 'var(--bg-surface)',
-        border: `1px solid ${active ? 'var(--line-strong)' : 'var(--line)'}`,
-        borderRadius: 'var(--r-lg)',
-        padding: '13px 15px 13px 18px',
-        textAlign: 'left',
-        cursor: 'pointer',
-        minWidth: 120,
-        boxShadow: active ? 'none' : 'var(--inner-lip)',
-        overflow: 'hidden',
-      }}
-    >
-      {/* THE EMBER INSET — selection signal. Same rule as the rail filament. */}
-      {active && (
-        <span
-          aria-hidden
-          style={{
-            position: 'absolute',
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: 2,
-            borderRadius: '0 0 0 var(--r-lg)',
-            background: 'var(--filament)',
-          }}
-        />
-      )}
-      <div className="micro">{label}</div>
-      <div
-        style={{
-          fontSize: 'var(--t-metric)',
-          fontWeight: 500,
-          lineHeight: 'var(--lh-metric)',
-          letterSpacing: '-0.02em',
-          color: countColor,
-          marginTop: 3,
-          fontVariantNumeric: 'tabular-nums',
-        }}
-      >
-        {count}
-      </div>
-    </button>
+  const isButton = filter && onClick;
+  const style: React.CSSProperties = {
+    background: 'var(--bg-surface)',
+    border: `1px solid ${active ? 'var(--line-strong)' : 'var(--line)'}`,
+    borderRadius: 8,
+    padding: '12px 14px',
+    cursor: isButton ? 'pointer' : undefined,
+    boxShadow: active ? 'inset 0 -3px 0 var(--ember-core)' : undefined,
+    minWidth: 0,
+  };
+  const inner = (
+    <>
+      <div className="micro" style={{ marginBottom: 2 }}>{label}</div>
+      <div className="num" style={{ fontSize: 24, fontWeight: 650, marginTop: 2, color: color ?? 'var(--text-primary)', lineHeight: 1.2 }}>{value}</div>
+      {sub && <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 2 }}>{sub}</div>}
+    </>
   );
-}
-
-// ── Eval triage prompt builder ─────────────────────────────────────────────────────────────────
-
-function buildTriagePrompt(run: EvalRun, workflows: EvalWorkflow[]): string {
-  const failures = workflows.filter((w) => w.outcome !== 'accepted');
-  const failureList = failures
-    .map((w) => {
-      const mark = w.outcome === 'rejected' ? '×' : '⊘';
-      const why = w.withheld_reason
-        ? ` (withheld: ${EVAL_WITHHELD_REASONS[w.withheld_reason] ?? w.withheld_reason})`
-        : '';
-      return `  ${mark} ${w.slug}  —  ${w.label}${why}`;
-    })
-    .join('\n');
-
-  return `Triage eval run ${run.id}
-
-Run:      ${run.label}
-URL:      https://console.dorinda.ai/?s=evals&run=${run.id}
-Date:     ${run.startedAt}
-Provider: ${run.provider}
-
-Results: ${run.accepted} accepted / ${run.rejected} rejected / ${run.withheld} withheld of ${run.total}
-Cost:    $${(run.cost_cents / 100).toFixed(2)}
-
-Failures:
-${failureList || '  (none)'}
-
-Reach the eval store via the MCP tools:
-  forge://evals/runs/${run.id}                 — full run manifest
-  forge://evals/runs/${run.id}/workflows        — workflow list
-  forge://evals/runs/${run.id}/workflows/{slug} — single workflow + assertions
-
-Standing triage instructions:
-1. For each rejected workflow, read the full assertion log and identify the root cause.
-2. For withheld workflows, check withheld_reason and determine if it is a platform issue or a
-   flaky provider — provider_error and timeout are usually retriable; budget_cap and policy are not.
-3. Summarise findings in a TRIAGE REPORT with:
-     verdict: regression | known-flake | provider-outage
-     affected-scope: which workflows and why
-     recommended-action: re-run / fix / escalate / accept
-4. Do not guess — read the actual assertion data before drawing conclusions.
-`;
-}
-
-// ── Evals screen ──────────────────────────────────────────────────────────────────────────────
-
-function Evals() {
-  type EvalView = 'runs' | 'run' | 'workflow' | 'scene';
-  const [view, setView] = useState<EvalView>('runs');
-  const [runId, setRunId] = useState('');
-  const [workflowId, setWorkflowId] = useState('');
-  const [sceneId, setSceneId] = useState('');
-
-  // Run detail: outcome filter tile (click-again clears)
-  const [outcomeFilter, setOutcomeFilter] = useState<'accepted' | 'rejected' | 'withheld' | null>(null);
-  // Run detail: integrity pill (narrows withheld subset by reason)
-  const [reasonFilter, setReasonFilter] = useState<string | null>(null);
-
-  // Trigger modal
-  const [triggerOpen, setTriggerOpen] = useState(false);
-  const [triggerStep, setTriggerStep] = useState<'config' | 'confirm'>('config');
-  const [triggerScope, setTriggerScope] = useState<'full' | 'suite' | 'pick'>('full');
-  const [triggerProvider, setTriggerProvider] = useState<'openai' | 'anthropic' | 'both'>('both');
-  const [triggerSuite, setTriggerSuite] = useState('core');
-  const [triggerSlugs, setTriggerSlugs] = useState('');
-
-  // Re-run confirm (per workflow row): stores slug being re-run
-  const [rerunSlug, setRerunSlug] = useState<string | null>(null);
-  const [rerunQueued, setRerunQueued] = useState<string | null>(null);
-
-  // Triage clipboard flash
-  const [triageFlash, setTriageFlash] = useState(false);
-
-  // Assertion expand
-  const [expandedAssertion, setExpandedAssertion] = useState<string | null>(null);
-
-  // ── Derived data ────────────────────────────────────────────────────────────────────────────
-  const run = EVAL_RUNS.find((r) => r.id === runId) ?? null;
-  const workflows = EVAL_WORKFLOWS[runId] ?? [];
-  const workflow = workflows.find((w) => w.id === workflowId) ?? null;
-  const scene = workflow?.scenes.find((s) => s.id === sceneId) ?? null;
-
-  const filteredWorkflows =
-    outcomeFilter !== null
-      ? workflows.filter((w) => {
-          if (w.outcome !== outcomeFilter) return false;
-          if (outcomeFilter === 'withheld' && reasonFilter) return w.withheld_reason === reasonFilter;
-          return true;
-        })
-      : workflows;
-
-  const withheldReasons = [
-    ...new Set(
-      workflows.filter((w) => w.outcome === 'withheld' && w.withheld_reason).map((w) => w.withheld_reason!),
-    ),
-  ];
-
-  // Cost estimate for trigger modal (~$1 full suite per requirement)
-  const slugCount = triggerSlugs.split('\n').filter((s) => s.trim()).length || 1;
-  const triggerCostCents = triggerScope === 'full' ? 100 : triggerScope === 'suite' ? 45 : slugCount * 8;
-
-  // Run-over-run acceptance rate trend (oldest → newest)
-  const trendRates = [...EVAL_RUNS].reverse().map((r) => r.accepted / r.total);
-
-  // ── Navigation helpers ──────────────────────────────────────────────────────────────────────
-  const goToRun = (id: string) => {
-    setRunId(id);
-    setView('run');
-    setOutcomeFilter(null);
-    setReasonFilter(null);
-    setWorkflowId('');
-    setSceneId('');
-  };
-  const goToWorkflow = (id: string) => {
-    setWorkflowId(id);
-    setView('workflow');
-    setSceneId('');
-    setExpandedAssertion(null);
-  };
-  const goToScene = (id: string) => {
-    setSceneId(id);
-    setView('scene');
-    setExpandedAssertion(null);
-  };
-  const toggleFilter = (outcome: 'accepted' | 'rejected' | 'withheld') => {
-    setOutcomeFilter((prev) => {
-      if (prev === outcome) {
-        setReasonFilter(null);
-        return null;
-      }
-      setReasonFilter(null);
-      return outcome;
-    });
-  };
-
-  const handleTriage = () => {
-    if (!run) return;
-    const prompt = buildTriagePrompt(run, workflows);
-    navigator.clipboard.writeText(prompt).then(
-      () => {
-        setTriageFlash(true);
-        setTimeout(() => setTriageFlash(false), 2200);
-      },
-      () => {
-        setTriageFlash(true);
-        setTimeout(() => setTriageFlash(false), 2200);
-      },
+  if (isButton) {
+    return (
+      <button role="button" tabIndex={0} aria-pressed={active} onClick={onClick}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+        style={style}>{inner}</button>
     );
-  };
+  }
+  return <div style={style}>{inner}</div>;
+}
 
-  const handleRerun = (slug: string) => {
-    if (rerunSlug === slug) {
-      // Confirm: "queue" the run (gate: Mark-only, so we show a queued flash)
-      setRerunSlug(null);
-      setRerunQueued(slug);
-      setTimeout(() => setRerunQueued(null), 3000);
-    } else {
-      setRerunSlug(slug);
-    }
-  };
+// ── Drilldown drawer (inline) ─────────────────────────────────────────────
 
-  const closeTrigger = () => {
-    setTriggerOpen(false);
-    setTriggerStep('config');
+function E2EDrilldownDrawer({
+  wfResult, onCassette, onTriageWf,
+}: {
+  wfResult: E2EWorkflowResult | null;
+  onCassette: () => void;
+  onTriageWf: () => void;
+}) {
+  const wf = wfResult?.workflow;
+  const scenes = wfResult?.scenes ?? [];
+  const drawerStyle: React.CSSProperties = {
+    borderLeft: '3px solid var(--ember-core)',
+    background: 'var(--bg-raised)',
+    borderRadius: '0 8px 8px 0',
+    padding: 16,
+    marginTop: 2,
   };
+  return (
+    <div style={drawerStyle}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+        <strong className="mono" style={{ fontSize: 13 }}>{wf?.workflow_id ?? '—'}</strong>
+        <Chip>trial 1 of {wf?.trials_total ?? 1}</Chip>
+        {wf?.integrity_class && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 99, padding: '2px 9px', fontSize: 12, fontWeight: 600, background: 'var(--ok-wash)', color: 'var(--ok-text)' }}>
+            integrity: {wf.integrity_class}
+          </span>
+        )}
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={onCassette}
+          style={{ fontFamily: 'var(--mono)', fontSize: 12, padding: '4px 10px', border: '1px solid var(--line)', borderRadius: 6, color: 'var(--text-secondary)', background: 'var(--bg-surface)' }}
+          title="View the cassette transcript for this trial"
+        >
+          cassette ▸
+        </button>
+        <button
+          onClick={onTriageWf}
+          style={{ padding: '4px 10px', border: '1px solid var(--line)', borderRadius: 6, color: 'var(--text-secondary)', background: 'var(--bg-surface)', fontSize: 13 }}
+          title="Copy a triage prompt for this workflow to the clipboard"
+        >
+          ⧉ Triage this workflow
+        </button>
+      </div>
 
-  // ── Breadcrumb ──────────────────────────────────────────────────────────────────────────────
-  // Each item carries its own nav target so clicking "E2E Tests" from scene view goes all the
-  // way back to the runs list — not just one step up.
-  const Crumbs = ({ items }: { items: Array<{ label: string; onClick?: () => void }> }) => (
-    <nav
-      aria-label="Drilldown"
-      style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}
-    >
-      {items.map((item, i) => (
-        <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {i > 0 && (
-            <span aria-hidden style={{ color: 'var(--text-faint)', userSelect: 'none' }}>
-              ›
-            </span>
-          )}
-          {item.onClick ? (
-            <button
-              onClick={item.onClick}
-              style={{
-                color: 'var(--text-secondary)',
-                fontSize: 13,
-                textDecoration: 'underline',
-                textDecorationColor: 'var(--link-rule)',
-                textUnderlineOffset: 2,
-              }}
-            >
-              {item.label}
-            </button>
-          ) : (
-            <span
-              style={{
-                color: i === items.length - 1 ? 'var(--text-primary)' : 'var(--text-secondary)',
-                fontWeight: i === items.length - 1 ? 500 : 400,
-                fontSize: 13,
-              }}
-            >
-              {item.label}
-            </span>
-          )}
-        </span>
-      ))}
-    </nav>
+      {scenes.length === 0 ? (
+        <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '8px 0' }}>
+          {wfResult === null ? 'Loading drilldown…' : 'No scene data for this trial.'}
+        </div>
+      ) : (
+        scenes.map((sc, si) => {
+          const allPassed = sc.passed !== false;
+          return (
+            <div key={sc.id} style={{ border: '1px solid var(--line)', borderRadius: 7, background: 'var(--bg-surface)', padding: '10px 12px', marginTop: 10 }}>
+              <div style={{ marginBottom: 6, fontSize: 13.5, fontWeight: 600 }}>
+                <span style={{ color: allPassed ? 'var(--ok)' : 'var(--crit)', marginRight: 6 }}>{allPassed ? '✓' : '✗'}</span>
+                {sc.scene_name ?? `Scene ${si + 1}`}
+              </div>
+              {sc.assertions.map((a, ai) => {
+                const obs = sc.observed_values[ai];
+                const passed = obs !== undefined
+                  ? (a.operator === 'eq' ? obs.value === a.expected : a.operator === 'contains' ? String(obs.value).includes(String(a.expected)) : true)
+                  : null;
+                return (
+                  <div key={ai} style={{ display: 'flex', gap: 8, fontSize: 13, padding: '3px 0', alignItems: 'baseline' }}>
+                    <span style={{ color: passed === false ? 'var(--crit)' : 'var(--ok)', fontWeight: 700, flexShrink: 0 }}>
+                      {passed === false ? '✗' : '✓'}
+                    </span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{a.name}</span>
+                  </div>
+                );
+              })}
+              {sc.observed_values.some((ov) => ov.value !== null) && sc.passed === false && (
+                <div style={{ marginTop: 6, fontSize: 12.5, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                  observed: {sc.observed_values.map((ov) => `${ov.name}=${JSON.stringify(ov.value)}`).join(' · ')}
+                </div>
+              )}
+            </div>
+          );
+        })
+      )}
+    </div>
   );
+}
 
-  // ── Trigger modal ────────────────────────────────────────────────────────────────────────────
-  const TriggerModal = () => (
+// ── Cassette panel (slide-in overlay from right) ──────────────────────────
+
+function E2ECassettePanel({
+  wfResult, onClose, onCopy, onDownload,
+}: {
+  wfResult: E2EWorkflowResult | null;
+  onClose: () => void;
+  onCopy: () => void;
+  onDownload: () => void;
+}) {
+  const wf = wfResult?.workflow;
+  const calls = wfResult?.mcp_calls ?? [];
+  const claims = wfResult?.claims ?? [];
+
+  return (
     <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Launch eval run"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 100,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'rgba(0,0,0,0.72)',
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) closeTrigger();
-      }}
+      role="dialog" aria-modal="true" aria-label="Cassette transcript"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(8,12,16,.55)', display: 'flex', justifyContent: 'flex-end', zIndex: 200 }}
     >
       <div
-        style={{
-          background: 'var(--bg-overlay)',
-          border: '1px solid var(--line-strong)',
-          borderRadius: 'var(--r-xl)',
-          boxShadow: 'var(--shadow-pop)',
-          width: 480,
-          maxWidth: 'calc(100vw - 32px)',
-          padding: 24,
-        }}
+        style={{ background: 'var(--bg-surface)', borderLeft: '1px solid var(--line)', width: 'min(680px,100%)', height: '100%', overflowY: 'auto', padding: 20 }}
+        onClick={(e) => e.stopPropagation()}
       >
-        {triggerStep === 'config' ? (
-          <>
-            <h2
-              style={{
-                fontSize: 'var(--t-title)',
-                fontWeight: 600,
-                letterSpacing: '-0.01em',
-                marginBottom: 20,
-              }}
-            >
-              Configure eval run
-            </h2>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+          <strong className="mono">{wf ? `${wf.workflow_id}.jsonl` : 'cassette.jsonl'}</strong>
+          <Chip>trial 1</Chip>
+          <Chip>remote · {wf?.provider ?? 'openai'}</Chip>
+          <div style={{ flex: 1 }} />
+          <button onClick={onDownload} title="Download raw JSONL" style={{ fontFamily: 'var(--mono)', fontSize: 12, padding: '4px 10px', border: '1px solid var(--line)', borderRadius: 6, color: 'var(--text-secondary)', background: 'var(--bg-surface)' }}>⇩ raw JSONL</button>
+          <button onClick={onCopy} title="Copy cassette for agent" style={{ padding: '4px 10px', border: '1px solid var(--line)', borderRadius: 6, color: 'var(--text-secondary)', background: 'var(--bg-surface)', fontSize: 13 }}>⧉ copy for agent</button>
+          <button onClick={onClose} aria-label="Close cassette" style={{ padding: '4px 8px', border: '1px solid var(--line)', borderRadius: 6, color: 'var(--text-muted)', background: 'var(--bg-surface)', fontSize: 15 }}>✕</button>
+        </div>
 
-            <div style={{ display: 'grid', gap: 16 }}>
-              {/* Scope */}
-              <div>
-                <div className="micro" style={{ marginBottom: 8 }}>
-                  Scope
-                </div>
-                <Segmented
-                  ariaLabel="Eval scope"
-                  value={triggerScope}
-                  onChange={setTriggerScope}
-                  options={
-                    [
-                      ['full', 'Full catalogue'],
-                      ['suite', 'Named suite'],
-                      ['pick', 'Hand-picked'],
-                    ] as const
-                  }
-                />
-              </div>
-
-              {triggerScope === 'suite' && (
-                <div>
-                  <div className="micro" style={{ marginBottom: 8 }}>
-                    Suite
-                  </div>
-                  <Select
-                    ariaLabel="Suite name"
-                    value={triggerSuite}
-                    onChange={setTriggerSuite}
-                    width={280}
-                    options={[
-                      ['core', 'core — auth, delegation, member'],
-                      ['auth', 'auth — sign-in, token, isolation'],
-                      ['privacy', 'privacy — redaction, isolation'],
-                      ['search', 'search — relevance, fuzzy'],
-                    ]}
-                  />
-                </div>
-              )}
-
-              {triggerScope === 'pick' && (
-                <div>
-                  <div className="micro" style={{ marginBottom: 8 }}>
-                    Workflow slugs — one per line
-                  </div>
-                  <Textarea
-                    ariaLabel="Workflow slugs"
-                    value={triggerSlugs}
-                    onChange={setTriggerSlugs}
-                    rows={5}
-                    placeholder={'auth-happy-path\ndelegation-create\ntriage-suggestion'}
-                  />
-                </div>
-              )}
-
-              {/* Provider */}
-              <div>
-                <div className="micro" style={{ marginBottom: 8 }}>
-                  Provider
-                </div>
-                <Segmented
-                  ariaLabel="Provider"
-                  value={triggerProvider}
-                  onChange={setTriggerProvider}
-                  options={
-                    [
-                      ['openai', 'OpenAI'],
-                      ['anthropic', 'Anthropic'],
-                      ['both', 'Both'],
-                    ] as const
-                  }
-                />
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 24 }}>
-              <Button variant="secondary" onClick={closeTrigger}>
-                Cancel
-              </Button>
-              <Button variant="primary" onClick={() => setTriggerStep('confirm')}>
-                Review cost →
-              </Button>
-            </div>
-          </>
+        {/* Turns */}
+        {wfResult === null ? (
+          <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading cassette…</div>
         ) : (
           <>
-            <h2
-              style={{
-                fontSize: 'var(--t-title)',
-                fontWeight: 600,
-                letterSpacing: '-0.01em',
-                marginBottom: 20,
-              }}
-            >
-              Confirm eval run
-            </h2>
-
-            <div style={{ display: 'grid', gap: 10, marginBottom: 20 }}>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  fontSize: 13,
-                  padding: '9px 0',
-                  borderBottom: '1px solid var(--line-faint)',
-                }}
-              >
-                <span style={{ color: 'var(--text-muted)' }}>Scope</span>
-                <span>
-                  {triggerScope === 'full'
-                    ? 'Full catalogue (12 workflows)'
-                    : triggerScope === 'suite'
-                      ? `Suite: ${triggerSuite}`
-                      : `${slugCount} workflow${slugCount === 1 ? '' : 's'}`}
-                </span>
+            {/* Robin turn 1 */}
+            <div style={{ margin: '14px 0' }}>
+              <div style={{ fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600 }}>Robin</div>
+              <div style={{ border: '1px solid var(--ember-wash)', borderRadius: 9, padding: '10px 13px', background: 'var(--ember-wash)', fontSize: 14 }}>Use Dorinda.</div>
+            </div>
+            {/* Assistant turn with tool calls 0+1 */}
+            {calls.length > 0 && (
+              <div style={{ margin: '14px 0' }}>
+                <div style={{ fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600 }}>
+                  Assistant · {Math.min(2, calls.length)} tool calls
+                </div>
+                {calls.slice(0, 2).map((c) => (
+                  <div key={c.id} style={{ border: '1px solid var(--line)', borderLeft: '3px solid #4D8EC4', borderRadius: 7, margin: '8px 0 8px 18px', padding: '8px 11px', background: 'var(--bg-surface)', fontFamily: 'var(--mono)', fontSize: 12 }}>
+                    <div style={{ color: 'var(--text-muted)' }}>→ {c.tool_name} {JSON.stringify(c.request).slice(0, 60)}</div>
+                    <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>← {c.response ? JSON.stringify(c.response).slice(0, 80) : c.error ?? '—'}</div>
+                  </div>
+                ))}
+                <div style={{ border: '1px solid var(--line)', borderRadius: 9, padding: '10px 13px', background: 'var(--bg-raised)', fontSize: 14 }}>
+                  Connected to {wf?.workflow_id ?? 'household'}. Here&apos;s your current snapshot…
+                </div>
+                {claims.filter((cl) => cl.verdict === 'verified').length > 0 && (
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '6px 0 0 18px' }}>
+                    {claims.filter((cl) => cl.verdict === 'verified').map((cl) => (
+                      <Chip key={cl.id}>{cl.claim_text ?? cl.claim_type} ✓</Chip>
+                    ))}
+                  </div>
+                )}
               </div>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  fontSize: 13,
-                  padding: '9px 0',
-                  borderBottom: '1px solid var(--line-faint)',
-                }}
-              >
-                <span style={{ color: 'var(--text-muted)' }}>Provider</span>
-                <span>{triggerProvider}</span>
+            )}
+            {/* Remaining MCP calls shown as tool cards */}
+            {calls.slice(2).map((c) => (
+              <div key={c.id} style={{ margin: '14px 0' }}>
+                <div style={{ fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600 }}>Assistant · 1 tool call</div>
+                <div style={{ border: '1px solid var(--line)', borderLeft: '3px solid #4D8EC4', borderRadius: 7, margin: '8px 0 8px 18px', padding: '8px 11px', background: 'var(--bg-surface)', fontFamily: 'var(--mono)', fontSize: 12 }}>
+                  <div style={{ color: 'var(--text-muted)' }}>→ {c.tool_name} {JSON.stringify(c.request).slice(0, 80)}</div>
+                  <div style={{ color: c.error ? 'var(--crit-text)' : 'var(--text-muted)', marginTop: 2 }}>← {c.error ? c.error : c.response ? JSON.stringify(c.response).slice(0, 80) : '—'}</div>
+                </div>
               </div>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  fontSize: 13,
-                  padding: '9px 0',
-                  borderBottom: '1px solid var(--line-faint)',
-                }}
-              >
-                <span style={{ color: 'var(--text-muted)' }}>Estimated cost</span>
-                <span className="num" style={{ fontWeight: 600 }}>
-                  ~${(triggerCostCents / 100).toFixed(2)}
-                </span>
+            ))}
+            {/* Verify turn */}
+            {(wfResult.workflow.verdict === 'fail' || wfResult.workflow.verdict === 'error') && (
+              <div style={{ margin: '14px 0' }}>
+                <div style={{ fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600 }}>Verify · external observer</div>
+                <div style={{ border: '1px solid var(--line)', borderLeft: '3px solid var(--crit)', borderRadius: 7, margin: '8px 0 8px 18px', padding: '8px 11px', background: 'var(--bg-surface)', fontFamily: 'var(--mono)', fontSize: 12 }}>
+                  <div style={{ color: 'var(--text-muted)' }}>→ observe · trial-bounded</div>
+                  <div style={{ color: 'var(--crit-text)', marginTop: 2 }}>← {wfResult.workflow.failing_bar ?? 'assertion failed'} ✗</div>
+                </div>
               </div>
-            </div>
-
-            {/* MARK-ONLY GATE — eval runs cost real money and require explicit per-run approval */}
-            <div
-              style={{
-                background: 'var(--warn-wash)',
-                border: '1px solid color-mix(in srgb, var(--warn) 30%, transparent)',
-                borderRadius: 'var(--r-md)',
-                padding: '11px 13px',
-                marginBottom: 20,
-                fontSize: 13,
-                color: 'var(--warn-text)',
-                lineHeight: '20px',
-              }}
-            >
-              <strong style={{ color: 'var(--warn-text)' }}>Operator-only run.</strong> Eval runs invoke the
-              live runner image against real provider APIs. Each run requires explicit per-run approval —
-              carried over approvals are not valid. Copy the run spec below and send it to the operator
-              channel.
-            </div>
-
-            <div
-              style={{
-                background: 'var(--bg-inset)',
-                border: '1px solid var(--line)',
-                borderRadius: 'var(--r-md)',
-                padding: '10px 12px',
-                fontFamily: 'var(--mono)',
-                fontSize: 'var(--t-data)',
-                color: 'var(--text-secondary)',
-                lineHeight: 1.6,
-                marginBottom: 20,
-                whiteSpace: 'pre-wrap',
-              }}
-            >
-              {`forge eval run \\
-  --scope ${triggerScope === 'pick' ? triggerSlugs.split('\n').filter(Boolean).join(',') : triggerScope === 'suite' ? triggerSuite : 'full'} \\
-  --provider ${triggerProvider}`}
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <Button variant="secondary" onClick={() => setTriggerStep('config')}>
-                ← Back
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  const cmd = `forge eval run --scope ${triggerScope === 'pick' ? triggerSlugs.split('\n').filter(Boolean).join(',') : triggerScope === 'suite' ? triggerSuite : 'full'} --provider ${triggerProvider}`;
-                  navigator.clipboard.writeText(cmd).catch(() => undefined);
-                  closeTrigger();
-                }}
-              >
-                Copy spec
-              </Button>
-              <Button variant="primary" disabled title="Requires explicit per-run operator approval">
-                Launch
-              </Button>
-            </div>
+            )}
           </>
         )}
       </div>
     </div>
   );
+}
 
-  // ── Render: runs list ────────────────────────────────────────────────────────────────────────
-  if (view === 'runs') {
-    return (
-      <>
-        {triggerOpen && <TriggerModal />}
-        <Head
-          screen="evals"
-          title="E2E Tests"
-          sub="Fixture-backed eval runs — assertion-level results across the full workflow catalogue. Every number comes from the store; nothing is hand-assembled."
-        />
+// ── Duration comparison chart ─────────────────────────────────────────────
 
-        <Toolbar>
-          <Button
-            variant="primary"
-            onClick={() => {
-              setTriggerOpen(true);
-              setTriggerStep('config');
-            }}
-          >
-            Launch run
-          </Button>
-          <Note>
-            {EVAL_RUNS.length} runs · acceptance trending{' '}
-            {trendRates[trendRates.length - 1]! < trendRates[trendRates.length - 2]! ? '↓' : '↑'}
-          </Note>
-          <div style={{ flex: 1 }} />
-          <EvalSparkline rates={trendRates} width={96} height={32} />
-        </Toolbar>
+function E2EDurationChart({ run, prevRun }: { run: E2ERun; prevRun: E2ERun | null }) {
+  const p50 = run.p50_duration_ms ?? 0;
+  const p99 = run.p99_duration_ms ?? 0;
+  const pp50 = prevRun?.p50_duration_ms ?? 0;
+  const pp99 = prevRun?.p99_duration_ms ?? 0;
+  const maxMs = Math.max(p50, p99, pp50, pp99, 1);
+  const barW = (ms: number) => Math.round((ms / maxMs) * 333);
+  const prevLabel = prevRun ? prevRun.run_id.slice(0, 10) : 'prev';
+  return (
+    <section style={{ background: 'var(--bg-surface)', border: '1px solid var(--line)', borderRadius: 8, padding: 16, maxWidth: 560 }}>
+      <h2 style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 10, fontWeight: 600 }}>
+        Workflow duration — this run vs previous nightly
+      </h2>
+      <svg viewBox="0 0 520 120" width="100%" role="img"
+        aria-label={`Duration p50: this ${fmtE2eDuration(p50)}, prev ${fmtE2eDuration(pp50)}; p99: this ${fmtE2eDuration(p99)}, prev ${fmtE2eDuration(pp99)}`}>
+        <text x={0} y={26} fontSize={12} fill="var(--text-muted)">p50</text>
+        <rect x={46} y={14} width={barW(p50)} height={14} rx={4} fill="#4D8EC4" />
+        <text x={46 + barW(p50) + 6} y={26} fontSize={12} fill="var(--text-primary)" className="num">{fmtE2eDuration(p50)} · this run</text>
+        {prevRun && <><rect x={46} y={34} width={barW(pp50)} height={14} rx={4} fill="#C97A4A" />
+          <text x={46 + barW(pp50) + 6} y={46} fontSize={12} fill="var(--text-muted)" className="num">{fmtE2eDuration(pp50)} · {prevLabel}</text></>}
+        <text x={0} y={86} fontSize={12} fill="var(--text-muted)">p99</text>
+        <rect x={46} y={74} width={barW(p99)} height={14} rx={4} fill="#4D8EC4" />
+        <text x={46 + barW(p99) + 6} y={86} fontSize={12} fill="var(--text-primary)" className="num">{fmtE2eDuration(p99)}</text>
+        {prevRun && <><rect x={46} y={94} width={barW(pp99)} height={14} rx={4} fill="#C97A4A" />
+          <text x={46 + barW(pp99) + 6} y={106} fontSize={12} fill="var(--text-muted)" className="num">{fmtE2eDuration(pp99)}</text></>}
+      </svg>
+      <div style={{ display: 'flex', gap: 14, fontSize: 12.5, color: 'var(--text-muted)', alignItems: 'center', marginTop: 6 }}>
+        <span><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, marginRight: 5, background: '#4D8EC4', verticalAlign: '-1px' }} />this run</span>
+        {prevRun && <span><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, marginRight: 5, background: '#C97A4A', verticalAlign: '-1px' }} />{prevLabel}</span>}
+      </div>
+    </section>
+  );
+}
 
-        <Card pad={false}>
-          <Table
-            head={[
-              'Run',
-              'Date',
-              'Provider',
-              'Scope',
-              'Accepted',
-              'Rejected',
-              'Withheld',
-              'Cost',
-              'Trend',
-              '',
-            ]}
-          >
-            {EVAL_RUNS.map((r) => {
-              const rate = r.accepted / r.total;
-              const prevRun = EVAL_RUNS[EVAL_RUNS.indexOf(r) + 1];
-              const prevRate = prevRun ? prevRun.accepted / prevRun.total : null;
-              const delta = prevRate !== null ? rate - prevRate : null;
-              return (
-                <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => goToRun(r.id)}>
-                  <Td primary mono>
-                    {r.label}
-                  </Td>
-                  <Td mono>{r.startedAt.slice(0, 10)}</Td>
-                  <Td>{r.provider}</Td>
-                  <Td>{r.scope}</Td>
-                  <Td right mono>
-                    <span style={{ color: 'var(--ok-text)' }}>{r.accepted}</span>
-                  </Td>
-                  <Td right mono>
-                    {r.rejected > 0 ? (
-                      <span style={{ color: 'var(--crit-text)' }}>{r.rejected}</span>
-                    ) : (
-                      <span style={{ color: 'var(--text-faint)' }}>0</span>
-                    )}
-                  </Td>
-                  <Td right mono>
-                    {r.withheld > 0 ? (
-                      <span style={{ color: 'var(--unknown-text)' }}>{r.withheld}</span>
-                    ) : (
-                      <span style={{ color: 'var(--text-faint)' }}>0</span>
-                    )}
-                  </Td>
-                  <Td right mono>
-                    ${(r.cost_cents / 100).toFixed(2)}
-                  </Td>
-                  <Td mono>
-                    <span
-                      style={{
-                        color:
-                          delta === null
-                            ? 'var(--text-faint)'
-                            : delta >= 0
-                              ? 'var(--ok-text)'
-                              : 'var(--crit-text)',
-                      }}
-                    >
-                      {delta === null ? '—' : `${delta >= 0 ? '+' : ''}${Math.round(delta * 100)}pp`}
-                    </span>
-                  </Td>
-                  <Td>
-                    <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>→</span>
-                  </Td>
-                </tr>
-              );
-            })}
-          </Table>
-        </Card>
-      </>
-    );
-  }
+// ── Run modal ─────────────────────────────────────────────────────────────
 
-  // ── Render: run detail ───────────────────────────────────────────────────────────────────────
-  if (view === 'run' && run) {
-    return (
-      <>
-        {triggerOpen && <TriggerModal />}
+function E2ERunModal({
+  runs, onClose, onRun,
+}: {
+  runs: E2ERun[];
+  onClose: () => void;
+  onRun: () => void;
+}) {
+  const [scope, setScope] = useState<'full' | 'suite' | 'named'>('full');
+  const [suiteText, setSuiteText] = useState('');
+  const [namedText, setNamedText] = useState('');
+  const [openai, setOpenai] = useState(true);
+  const [anthropic, setAnthropic] = useState(false);
+  const catalogue = runs[0]?.workflows_attempted ?? 75;
+  const namedCount = namedText.split(',').map((s) => s.trim()).filter(Boolean).length || 1;
+  const costCents = scope === 'full' ? Math.round((runs[0]?.spend_cents ?? 104)) : scope === 'suite' ? 45 : namedCount * 8;
+  const wfCount = scope === 'full' ? catalogue : scope === 'suite' ? '~20' : namedCount;
+  const providers = [openai && 'openai', anthropic && 'anthropic'].filter(Boolean).join(', ') || 'openai';
 
-        {/* Re-run queued toast */}
-        {rerunQueued && (
-          <div
-            aria-live="polite"
-            style={{
-              position: 'fixed',
-              bottom: 24,
-              left: '50%',
-              transform: 'translateX(-50%)',
-              background: 'var(--bg-overlay)',
-              border: '1px solid var(--line-strong)',
-              borderRadius: 'var(--r-lg)',
-              padding: '10px 16px',
-              fontSize: 13,
-              color: 'var(--text-primary)',
-              boxShadow: 'var(--shadow-pop)',
-              zIndex: 50,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            ↻ Re-run of{' '}
-            <span className="mono" style={{ color: 'var(--text-secondary)' }}>
-              {rerunQueued}
-            </span>{' '}
-            queued — awaiting operator approval
-          </div>
-        )}
-
-        <Crumbs
-          items={[
-            {
-              label: 'E2E Tests',
-              onClick: () => {
-                setView('runs');
-                setRunId('');
-                setOutcomeFilter(null);
-                setReasonFilter(null);
-              },
-            },
-            { label: run.label },
-          ]}
-        />
-
-        {/* Run-over-run trend + triage button */}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'flex-start',
-            marginBottom: 18,
-            gap: 16,
-            flexWrap: 'wrap',
-          }}
-        >
-          <div>
-            <div className="micro" style={{ marginBottom: 8 }}>
-              Acceptance rate — run over run
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <EvalSparkline rates={trendRates} width={160} height={44} />
-              <div style={{ fontSize: 12, color: 'var(--text-faint)', lineHeight: '17px' }}>
-                {[...EVAL_RUNS].reverse().map((r, i, arr) => (
-                  <div key={r.id}>
-                    <span
-                      className="mono"
-                      style={{ color: r.id === run.id ? 'var(--text-primary)' : 'var(--text-muted)' }}
-                    >
-                      {r.startedAt.slice(5, 10)}
-                    </span>{' '}
-                    <span style={{ color: r.id === run.id ? 'var(--ok-text)' : 'var(--text-faint)' }}>
-                      {Math.round((r.accepted / r.total) * 100)}%
-                    </span>
-                    {i < arr.length - 1 && ' → '}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-          <Button
-            variant={triageFlash ? 'primary' : 'secondary'}
-            onClick={handleTriage}
-            title="Copy a ready-to-run triage prompt to the clipboard"
-          >
-            {triageFlash ? '✓ Copied' : 'Triage with Claude'}
-          </Button>
+  return (
+    <div
+      role="dialog" aria-modal="true" aria-labelledby="run-modal-title"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(8,12,16,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, zIndex: 200 }}
+    >
+      <div
+        style={{ background: 'var(--bg-surface)', border: '1px solid var(--line)', borderRadius: 10, maxWidth: 520, width: '100%', padding: 20 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="run-modal-title" style={{ fontSize: 18, marginBottom: 14, fontWeight: 600 }}>Run remote tests</h2>
+        {/* Scope */}
+        <fieldset style={{ border: '1px solid var(--line)', borderRadius: 7, margin: '0 0 12px', padding: '10px 12px' }}>
+          <legend style={{ fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '0 4px' }}>Scope</legend>
+          {(['full', 'suite', 'named'] as const).map((s) => (
+            <label key={s} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, padding: '3px 0' }}>
+              <input type="radio" name="e2e-scope" checked={scope === s} onChange={() => setScope(s)} />
+              {s === 'full' ? `Full catalogue — ${catalogue} workflows` : s === 'suite' ? <>Suite <input type="text" value={suiteText} onChange={(e) => setSuiteText(e.target.value)} placeholder="privacy-tier" onClick={(e) => { e.stopPropagation(); setScope('suite'); }} style={{ font: 'inherit', background: 'var(--bg-inset)', border: '1px solid var(--line)', borderRadius: 6, color: 'var(--text-primary)', padding: '4px 7px', maxWidth: 180, marginLeft: 8 }} /></> : <>Named workflows <input type="text" value={namedText} onChange={(e) => setNamedText(e.target.value)} placeholder="draft-approve-sent, h9-privacy-sweep" onClick={(e) => { e.stopPropagation(); setScope('named'); }} style={{ font: 'inherit', background: 'var(--bg-inset)', border: '1px solid var(--line)', borderRadius: 6, color: 'var(--text-primary)', padding: '4px 7px', marginLeft: 8, width: '100%' }} /></>}
+            </label>
+          ))}
+        </fieldset>
+        {/* Provider */}
+        <fieldset style={{ border: '1px solid var(--line)', borderRadius: 7, margin: '0 0 12px', padding: '10px 12px' }}>
+          <legend style={{ fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '0 4px' }}>Provider</legend>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, padding: '3px 0' }}>
+            <input type="checkbox" checked={openai} onChange={(e) => setOpenai(e.target.checked)} /> openai (gpt-5.1)
+          </label>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, padding: '3px 0' }}>
+            <input type="checkbox" checked={anthropic} onChange={(e) => setAnthropic(e.target.checked)} /> anthropic (claude)
+          </label>
+        </fieldset>
+        {/* Cost confirm */}
+        <div style={{ background: 'var(--ember-wash)', color: 'var(--ember-core)', borderRadius: 7, padding: '9px 12px', fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>
+          Estimated spend: <span className="num">{fmtE2eSpend(costCents)}</span> · ~40 min · runs in Cloud Run, tenant lock honored
         </div>
-
-        {/* Top-line metric tiles — keyboard-operable filter buttons */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
-          <EvalFilterTile
-            label="Accepted"
-            count={run.accepted}
-            tone="ok"
-            active={outcomeFilter === 'accepted'}
-            onClick={() => toggleFilter('accepted')}
-          />
-          <EvalFilterTile
-            label="Rejected"
-            count={run.rejected}
-            tone="crit"
-            active={outcomeFilter === 'rejected'}
-            onClick={() => toggleFilter('rejected')}
-          />
-          <EvalFilterTile
-            label="Withheld"
-            count={run.withheld}
-            tone="unknown"
-            active={outcomeFilter === 'withheld'}
-            onClick={() => toggleFilter('withheld')}
-          />
-          {/* Cost tile — informational only, not a filter */}
-          <div
-            style={{
-              background: 'var(--bg-surface)',
-              border: '1px solid var(--line)',
-              borderRadius: 'var(--r-lg)',
-              padding: '13px 15px 13px 18px',
-              minWidth: 120,
-              boxShadow: 'var(--inner-lip)',
-            }}
-          >
-            <div className="micro">Cost</div>
-            <div
-              className="num"
-              style={{
-                fontSize: 'var(--t-metric)',
-                fontWeight: 500,
-                lineHeight: 'var(--lh-metric)',
-                letterSpacing: '-0.02em',
-                color: 'var(--text-primary)',
-                marginTop: 3,
-              }}
-            >
-              ${(run.cost_cents / 100).toFixed(2)}
-            </div>
-          </div>
-        </div>
-
-        {/* Integrity pills — narrow withheld set by reason (only when withheld filter is active) */}
-        {outcomeFilter === 'withheld' && withheldReasons.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
-            <span className="micro">Withheld by reason:</span>
-            {withheldReasons.map((r) => (
-              <button
-                key={r}
-                aria-pressed={reasonFilter === r}
-                onClick={() => setReasonFilter((prev) => (prev === r ? null : r))}
-                style={{
-                  height: 22,
-                  padding: '0 9px',
-                  borderRadius: 3,
-                  fontSize: 10.5,
-                  fontWeight: 600,
-                  letterSpacing: '0.07em',
-                  textTransform: 'uppercase',
-                  cursor: 'pointer',
-                  background: reasonFilter === r ? 'var(--unknown-wash)' : 'transparent',
-                  border: `1px ${reasonFilter === r ? 'solid' : 'dashed'} var(--unknown-line)`,
-                  color: reasonFilter === r ? 'var(--unknown-text)' : 'var(--text-faint)',
-                  whiteSpace: 'nowrap',
-                  position: 'relative',
-                }}
-              >
-                {reasonFilter === r && (
-                  <span
-                    aria-hidden
-                    style={{
-                      position: 'absolute',
-                      left: 0,
-                      top: 0,
-                      bottom: 0,
-                      width: 2,
-                      background: 'var(--filament)',
-                      borderRadius: '0 0 0 3px',
-                    }}
-                  />
-                )}
-                ⊘ {EVAL_WITHHELD_REASONS[r] ?? r}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Re-run confirm bar (appears when a workflow ↻ was clicked) */}
-        {rerunSlug && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              padding: '10px 14px',
-              background: 'var(--bg-raised)',
-              border: '1px solid var(--line-strong)',
-              borderRadius: 'var(--r-md)',
-              marginBottom: 14,
-              fontSize: 13,
-            }}
-          >
-            <span style={{ flex: 1, minWidth: 0 }}>
-              Re-run{' '}
-              <span className="mono" style={{ color: 'var(--text-primary)' }}>
-                {rerunSlug}
-              </span>{' '}
-              <span style={{ color: 'var(--text-faint)' }}>
-                — estimated ~{(8 / 100).toFixed(2).replace('0.', '')}¢ · requires operator approval
-              </span>
-            </span>
-            <Button variant="secondary" onClick={() => setRerunSlug(null)}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={() => handleRerun(rerunSlug)}>
-              Queue re-run
-            </Button>
-          </div>
-        )}
-
-        {/* Workflow table */}
-        <Card pad={false}>
-          <Table head={['Slug', 'Workflow', 'Outcome', 'Cost', '']}>
-            {filteredWorkflows.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={5}
-                  style={{
-                    padding: '28px 16px',
-                    textAlign: 'center',
-                    color: 'var(--text-muted)',
-                    fontSize: 13,
-                  }}
-                >
-                  No workflows match the current filter
-                </td>
-              </tr>
-            ) : (
-              filteredWorkflows.map((w) => (
-                <tr key={w.id} style={{ cursor: 'pointer' }} onClick={() => goToWorkflow(w.id)}>
-                  <Td mono primary>
-                    {w.slug}
-                  </Td>
-                  <Td>{w.label}</Td>
-                  <Td>
-                    <EvalOutcomeBadge
-                      outcome={w.outcome}
-                      withheld_reason={w.withheld_reason}
-                      selected={outcomeFilter === 'withheld' && w.outcome === 'withheld'}
-                    />
-                  </Td>
-                  <Td right mono>
-                    {w.cost_cents > 0 ? (
-                      `${w.cost_cents}¢`
-                    ) : (
-                      <span style={{ color: 'var(--text-faint)' }}>—</span>
-                    )}
-                  </Td>
-                  <Td>
-                    <button
-                      title={`Re-run ${w.slug} (~8¢)`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (rerunSlug === w.slug) handleRerun(w.slug);
-                        else setRerunSlug(w.slug);
-                      }}
-                      style={{
-                        color: rerunSlug === w.slug ? 'var(--ember-core)' : 'var(--text-faint)',
-                        fontSize: 14,
-                        padding: '2px 4px',
-                        borderRadius: 3,
-                        lineHeight: 1,
-                      }}
-                    >
-                      ↻
-                    </button>
-                  </Td>
-                </tr>
-              ))
-            )}
-          </Table>
-        </Card>
-      </>
-    );
-  }
-
-  // ── Render: workflow detail ──────────────────────────────────────────────────────────────────
-  if (view === 'workflow' && run && workflow) {
-    return (
-      <>
-        <Crumbs
-          items={[
-            {
-              label: 'E2E Tests',
-              onClick: () => {
-                setView('runs');
-                setRunId('');
-              },
-            },
-            {
-              label: run.label,
-              onClick: () => {
-                setView('run');
-                setWorkflowId('');
-              },
-            },
-            { label: workflow.label },
-          ]}
-        />
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
-          <EvalOutcomeBadge outcome={workflow.outcome} withheld_reason={workflow.withheld_reason} />
-          <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>{workflow.slug}</span>
-          <div style={{ flex: 1 }} />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+          <button onClick={onClose} style={{ padding: '7px 14px', border: '1px solid var(--line)', borderRadius: 6, background: 'var(--bg-surface)', color: 'var(--text-primary)', fontSize: 14 }}>Cancel</button>
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setRerunSlug(workflow.slug);
-            }}
+            onClick={onRun}
+            style={{ padding: '7px 14px', border: '1px solid var(--ember-deep)', borderRadius: 6, background: 'linear-gradient(180deg,var(--ember-glow),var(--ember-core) 55%,var(--ember-deep))', color: '#1c1006', fontWeight: 650, fontSize: 14, cursor: 'pointer' }}
+          >
+            Run {wfCount} workflows · {providers}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Evals() {
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [verdictFilter, setVerdictFilter] = useState<'all' | 'pass' | 'fail' | 'withheld'>('all');
+  const [reasonFilter, setReasonFilter] = useState<string | null>(null);
+  const [expandedWfId, setExpandedWfId] = useState<string | null>(null);
+  const [cassetteOpen, setCassetteOpen] = useState(false);
+  const [runModalOpen, setRunModalOpen] = useState(false);
+  const [rerunWfId, setRerunWfId] = useState<string | null>(null);
+  const [rerunFlash, setRerunFlash] = useState<string | null>(null);
+  const [triageFlash, setTriageFlash] = useState(false);
+
+  // API data (graceful degradation: 501/null → fixture)
+  const runsApi = useApi<E2ERun[]>('/api/e2e/runs');
+  const detailApi = useApi<E2ERunDetail>(activeRunId ? `/api/e2e/runs/${activeRunId}` : null);
+
+  const runs: E2ERun[] = runsApi.data ?? E2E_FIXTURE_RUNS;
+  const runDetail: E2ERunDetail | null = activeRunId
+    ? (detailApi.data ?? E2E_FIXTURE_RUN_DETAIL)
+    : null;
+
+  const activeRun: E2ERun | null = runDetail?.run ?? runs.find((r) => r.run_id === activeRunId) ?? null;
+  const allWorkflows: E2EWorkflow[] = runDetail?.all_workflows ?? [];
+
+  const filteredWorkflows: E2EWorkflow[] = allWorkflows.filter((w) => {
+    if (verdictFilter === 'all') return true;
+    if (verdictFilter === 'pass') return w.verdict === 'pass';
+    if (verdictFilter === 'fail') return w.verdict === 'fail' || w.verdict === 'error';
+    if (verdictFilter === 'withheld') return w.verdict === 'skip';
+    return true;
+  });
+
+  const expandedWf = allWorkflows.find((w) => w.id === expandedWfId) ?? null;
+  const wfResult: E2EWorkflowResult | null =
+    expandedWfId === E2E_FIXTURE_WORKFLOW_RESULT.workflow.id
+      ? E2E_FIXTURE_WORKFLOW_RESULT
+      : expandedWf
+      ? { workflow: expandedWf, scenes: [], mcp_calls: [], claims: [] }
+      : null;
+
+  const breakdown = activeRun ? withheldBreakdown(activeRun) : [];
+  const prevRun = runs.find((r) => r.run_id !== activeRun?.run_id) ?? null;
+
+  const countAll = allWorkflows.length;
+  const countPass = allWorkflows.filter((w) => w.verdict === 'pass').length;
+  const countFail = allWorkflows.filter((w) => w.verdict === 'fail' || w.verdict === 'error').length;
+  const countWithheld = allWorkflows.filter((w) => w.verdict === 'skip').length;
+
+  const handleSelectRun = (rid: string) => {
+    setActiveRunId(rid);
+    setVerdictFilter('all');
+    setReasonFilter(null);
+    setExpandedWfId(null);
+    setCassetteOpen(false);
+  };
+
+  const handleTriage = () => {
+    if (!activeRun) return;
+    const prompt = buildE2eTriagePrompt(activeRun, allWorkflows.length ? allWorkflows : E2E_FIXTURE_WORKFLOWS);
+    navigator.clipboard.writeText(prompt).then(
+      () => { setTriageFlash(true); setTimeout(() => setTriageFlash(false), 2200); },
+      () => { setTriageFlash(true); setTimeout(() => setTriageFlash(false), 2200); },
+    );
+  };
+
+  const handleRerun = (wfId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (rerunWfId === wfId) {
+      setRerunWfId(null);
+      setRerunFlash(wfId);
+      setTimeout(() => setRerunFlash(null), 2500);
+    } else {
+      setRerunWfId(wfId);
+    }
+  };
+
+  const handleDownloadCassette = () => {
+    if (!wfResult) return;
+    const blob = new Blob([JSON.stringify(wfResult, null, 2)], { type: 'application/jsonl' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${wfResult.workflow.workflow_id}.jsonl`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCopyCassette = () => {
+    if (!wfResult) return;
+    navigator.clipboard.writeText(JSON.stringify(wfResult, null, 2)).catch(() => {});
+  };
+
+  const cell: React.CSSProperties = { padding: '10px 12px', fontSize: 13.5, verticalAlign: 'middle' };
+  const th: React.CSSProperties = {
+    padding: '6px 12px', fontSize: 11.5, letterSpacing: '.07em',
+    textTransform: 'uppercase' as const, color: 'var(--text-muted)',
+    fontWeight: 600, background: 'var(--bg-surface)',
+  };
+  const rowBase: React.CSSProperties = { borderBottom: '1px solid var(--line)', cursor: 'pointer' };
+
+  // ── Run list view ──────────────────────────────────────────────────────────
+  if (!activeRunId) {
+    const sparklineRuns = runs.slice(0, 10);
+    return (
+      <>
+        <Head screen="evals" title="E2E Tests" sub="Remote workflow eval results." />
+
+        {/* Controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+          <button
+            onClick={() => setRunModalOpen(true)}
             style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              height: 'var(--control-h)',
-              padding: '0 11px',
-              borderRadius: 'var(--r-md)',
-              fontSize: 12.5,
-              background: 'var(--bg-raised)',
-              border: '1px solid var(--line-strong)',
-              color: 'var(--text-secondary)',
-              cursor: 'pointer',
+              padding: '7px 14px', border: '1px solid var(--ember-deep)', borderRadius: 6,
+              background: 'linear-gradient(180deg,var(--ember-glow),var(--ember-core) 55%,var(--ember-deep))',
+              color: '#1c1006', fontWeight: 650, fontSize: 14, cursor: 'pointer',
             }}
-            title={`Re-run ${workflow.slug} (~8¢ · requires operator approval)`}
           >
             ↻ Re-run
           </button>
+          <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            {runs.length} run{runs.length !== 1 ? 's' : ''} · last {runs[0]?.started_at?.slice(0, 10) ?? '—'}
+          </span>
         </div>
 
-        {rerunSlug === workflow.slug && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              padding: '10px 14px',
-              background: 'var(--bg-raised)',
-              border: '1px solid var(--line-strong)',
-              borderRadius: 'var(--r-md)',
-              marginBottom: 16,
-              fontSize: 13,
+        {/* Run history table */}
+        <div style={{ overflowX: 'auto', border: '1px solid var(--line)', borderRadius: 8, background: 'var(--bg-surface)', marginBottom: 16 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                {(['Run', 'Source', 'Provider', 'Attempted', 'Pass', 'Withheld', 'Spend'] as const).map((h) => (
+                  <th key={h} style={th}>{h}</th>
+                ))}
+                <th style={{ ...th, minWidth: 260 }}>Accepted (sparkline)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((r, ri) => (
+                <tr
+                  key={r.run_id}
+                  style={rowBase}
+                  onClick={() => handleSelectRun(r.run_id)}
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSelectRun(r.run_id); } }}
+                  aria-label={`Load run ${r.run_id}`}
+                >
+                  <td style={{ ...cell, fontFamily: 'var(--mono)', fontSize: 12.5, color: 'var(--ember-core)', whiteSpace: 'nowrap' }}>{r.run_id}</td>
+                  <td style={{ ...cell, color: 'var(--text-muted)', fontSize: 12.5, whiteSpace: 'nowrap' }}>{r.trigger_source ?? '—'}</td>
+                  <td style={{ ...cell, fontFamily: 'var(--mono)', fontSize: 12.5, whiteSpace: 'nowrap' }}>{r.provider ?? '—'}</td>
+                  <td style={{ ...cell, textAlign: 'right' }} className="num">{r.workflows_attempted}</td>
+                  <td style={{ ...cell, textAlign: 'right', color: 'var(--ok-text)' }} className="num">{r.workflows_passed}</td>
+                  <td style={{ ...cell, textAlign: 'right', color: 'var(--text-muted)' }} className="num">{r.withheld_count}</td>
+                  <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>{fmtE2eSpend(r.spend_cents)}</td>
+                  <td style={{ ...cell, padding: '2px 12px', minWidth: 260 }}>
+                    {ri === 0 ? <E2ESparkline runs={sparklineRuns} /> : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {runModalOpen && (
+          <E2ERunModal
+            runs={runs}
+            onClose={() => setRunModalOpen(false)}
+            onRun={() => {
+              setRunModalOpen(false);
+              // Gated: per-run operator approval required (CLAUDE.md §eval)
+              alert('Eval run queued — awaiting operator approval.');
             }}
-          >
-            <span style={{ flex: 1, minWidth: 0 }}>
-              ~8¢ to re-run{' '}
-              <span className="mono" style={{ color: 'var(--text-primary)' }}>
-                {workflow.slug}
-              </span>{' '}
-              <span style={{ color: 'var(--text-faint)' }}>· requires operator approval</span>
-            </span>
-            <Button variant="secondary" onClick={() => setRerunSlug(null)}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={() => handleRerun(workflow.slug)}>
-              Queue re-run
-            </Button>
-          </div>
-        )}
-
-        {workflow.scenes.length === 0 ? (
-          <Card>
-            <Empty
-              kind="no-results"
-              title="No scene data for this run"
-              detail="Scene-level detail is retained only for the current run. Re-run this workflow to generate fresh assertion data."
-            />
-          </Card>
-        ) : (
-          <Card pad={false}>
-            <Table head={['Scene', 'Assertions', 'Accepted', 'Rejected', 'Withheld', '']}>
-              {workflow.scenes.map((s) => {
-                const sa = s.assertions.filter((a) => a.outcome === 'accepted').length;
-                const sr = s.assertions.filter((a) => a.outcome === 'rejected').length;
-                const sw = s.assertions.filter((a) => a.outcome === 'withheld').length;
-                return (
-                  <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => goToScene(s.id)}>
-                    <Td primary>{s.label}</Td>
-                    <Td right mono>
-                      {s.assertions.length}
-                    </Td>
-                    <Td right mono>
-                      <span style={{ color: sa > 0 ? 'var(--ok-text)' : 'var(--text-faint)' }}>{sa}</span>
-                    </Td>
-                    <Td right mono>
-                      <span style={{ color: sr > 0 ? 'var(--crit-text)' : 'var(--text-faint)' }}>{sr}</span>
-                    </Td>
-                    <Td right mono>
-                      <span style={{ color: sw > 0 ? 'var(--unknown-text)' : 'var(--text-faint)' }}>
-                        {sw}
-                      </span>
-                    </Td>
-                    <Td>
-                      <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>→</span>
-                    </Td>
-                  </tr>
-                );
-              })}
-            </Table>
-          </Card>
+          />
         )}
       </>
     );
   }
 
-  // ── Render: scene detail (assertions + single-assertion expand) ──────────────────────────────
-  if (view === 'scene' && run && workflow && scene) {
-    return (
-      <>
-        <Crumbs
-          items={[
-            {
-              label: 'E2E Tests',
-              onClick: () => {
-                setView('runs');
-                setRunId('');
-              },
-            },
-            {
-              label: run.label,
-              onClick: () => {
-                setView('run');
-                setWorkflowId('');
-                setSceneId('');
-              },
-            },
-            {
-              label: workflow.label,
-              onClick: () => {
-                setView('workflow');
-                setSceneId('');
-              },
-            },
-            { label: scene.label },
-          ]}
-        />
-
-        <Card pad={false}>
-          <Table head={['Assertion', 'Outcome', 'Score', 'Reason']}>
-            {scene.assertions.map((a) => {
-              const expanded = expandedAssertion === a.id;
-              return (
-                <>
-                  <tr
-                    key={a.id}
-                    style={{ cursor: a.reason ? 'pointer' : 'default' }}
-                    onClick={() => a.reason && setExpandedAssertion(expanded ? null : a.id)}
-                  >
-                    <Td primary>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {a.reason && (
-                          <span
-                            aria-hidden
-                            style={{
-                              fontSize: 10,
-                              color: 'var(--text-faint)',
-                              transform: expanded ? 'rotate(90deg)' : 'none',
-                              display: 'inline-block',
-                            }}
-                          >
-                            ▶
-                          </span>
-                        )}
-                        {a.label}
-                      </span>
-                    </Td>
-                    <Td>
-                      <EvalOutcomeBadge outcome={a.outcome} />
-                    </Td>
-                    <Td right mono>
-                      {a.score !== null ? (
-                        <span
-                          style={{
-                            color:
-                              a.score >= 0.8
-                                ? 'var(--ok-text)'
-                                : a.score >= 0.6
-                                  ? 'var(--warn-text)'
-                                  : 'var(--crit-text)',
-                          }}
-                        >
-                          {a.score.toFixed(2)}
-                        </span>
-                      ) : (
-                        <EvalOutcomeBadge outcome="withheld" />
-                      )}
-                    </Td>
-                    <Td clamp>{a.reason ?? <span style={{ color: 'var(--text-faint)' }}>—</span>}</Td>
-                  </tr>
-                  {expanded && a.reason && (
-                    <tr key={`${a.id}-detail`}>
-                      <td
-                        colSpan={4}
-                        style={{
-                          padding: '12px 16px 14px 32px',
-                          background: 'var(--bg-inset)',
-                          borderBottom: '1px solid var(--line-faint)',
-                          fontSize: 13,
-                          color: 'var(--text-secondary)',
-                          lineHeight: '20px',
-                        }}
-                      >
-                        <div className="micro" style={{ marginBottom: 6 }}>
-                          Failure detail
-                        </div>
-                        {a.reason}
-                        {a.score !== null && (
-                          <div style={{ marginTop: 8, display: 'flex', gap: 12 }}>
-                            <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>Score</span>
-                            <span
-                              className="mono"
-                              style={{
-                                fontSize: 12,
-                                color:
-                                  a.score >= 0.8
-                                    ? 'var(--ok-text)'
-                                    : a.score >= 0.6
-                                      ? 'var(--warn-text)'
-                                      : 'var(--crit-text)',
-                              }}
-                            >
-                              {a.score.toFixed(2)} / 1.00
-                            </span>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  )}
-                </>
-              );
-            })}
-          </Table>
-        </Card>
-      </>
-    );
-  }
-
-  // Fallback: if navigation state is inconsistent, return to runs list
+  // ── Run detail view ────────────────────────────────────────────────────────
   return (
     <>
-      <Head screen="evals" title="E2E Tests" sub="Fixture-backed eval run results." />
-      <Card>
-        <Empty
-          kind="no-results"
-          title="No run selected"
-          detail="Select a run from the list above."
-          action={<Button onClick={() => setView('runs')}>← Back to runs</Button>}
+      <Head screen="evals" title="E2E Tests" sub={activeRun?.run_id ?? activeRunId} />
+
+      {/* Cassette panel (slide-in) */}
+      {cassetteOpen && (
+        <E2ECassettePanel
+          wfResult={wfResult}
+          onClose={() => setCassetteOpen(false)}
+          onCopy={handleCopyCassette}
+          onDownload={handleDownloadCassette}
         />
-      </Card>
+      )}
+
+      {/* Run modal */}
+      {runModalOpen && (
+        <E2ERunModal
+          runs={runs}
+          onClose={() => setRunModalOpen(false)}
+          onRun={() => {
+            setRunModalOpen(false);
+            alert('Eval run queued — awaiting operator approval.');
+          }}
+        />
+      )}
+
+      {/* Back + action bar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+        <button
+          onClick={() => { setActiveRunId(null); setExpandedWfId(null); setCassetteOpen(false); }}
+          style={{ fontSize: 13.5, color: 'var(--text-secondary)', border: '1px solid var(--line)', borderRadius: 6, padding: '5px 12px', background: 'var(--bg-surface)', cursor: 'pointer' }}
+        >
+          ← All runs
+        </button>
+        <span className="mono" style={{ fontSize: 13, color: 'var(--text-muted)' }}>{activeRun?.run_id ?? activeRunId}</span>
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={handleTriage}
+          style={{
+            padding: '5px 12px', border: '1px solid var(--line)', borderRadius: 6,
+            background: 'var(--bg-surface)',
+            color: triageFlash ? 'var(--ok-text)' : 'var(--text-secondary)',
+            fontSize: 13, cursor: 'pointer',
+          }}
+        >
+          {triageFlash ? '✓ copied' : '⧉ Triage this run'}
+        </button>
+        <button
+          onClick={() => setRunModalOpen(true)}
+          style={{
+            padding: '5px 12px', border: '1px solid var(--ember-deep)', borderRadius: 6,
+            background: 'linear-gradient(180deg,var(--ember-glow),var(--ember-core) 55%,var(--ember-deep))',
+            color: '#1c1006', fontWeight: 650, fontSize: 13, cursor: 'pointer',
+          }}
+        >
+          ↻ Re-run
+        </button>
+      </div>
+
+      {/* 7 metric tiles */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 10, marginBottom: 14 }}>
+        <E2EMetricTile label="Attempted" value={activeRun?.workflows_attempted ?? '—'} />
+        <E2EMetricTile label="Accepted" value={activeRun?.workflows_passed ?? '—'} color="var(--ok-text)" />
+        <E2EMetricTile label="Rejected" value={activeRun?.workflows_failed ?? '—'} color="var(--crit-text)" />
+        <E2EMetricTile label="Withheld" value={activeRun?.withheld_count ?? '—'} color="var(--text-muted)" />
+        <E2EMetricTile label="p50" value={fmtE2eDuration(activeRun?.p50_duration_ms ?? null)} sub="median" />
+        <E2EMetricTile label="p99" value={fmtE2eDuration(activeRun?.p99_duration_ms ?? null)} sub="slow tail" />
+        <E2EMetricTile label="Spend" value={fmtE2eSpend(activeRun?.spend_cents ?? 0)} sub="this run" />
+      </div>
+
+      {/* 4 filter tiles */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 18 }}>
+        <E2EMetricTile filter active={verdictFilter === 'all'} onClick={() => setVerdictFilter('all')} label="All" value={countAll} />
+        <E2EMetricTile filter active={verdictFilter === 'pass'} onClick={() => setVerdictFilter('pass')} label="Accepted" value={countPass} color="var(--ok-text)" />
+        <E2EMetricTile filter active={verdictFilter === 'fail'} onClick={() => setVerdictFilter('fail')} label="Rejected" value={countFail} color="var(--crit-text)" />
+        <E2EMetricTile filter active={verdictFilter === 'withheld'} onClick={() => setVerdictFilter('withheld')} label="Withheld" value={countWithheld} color="var(--text-muted)" />
+      </div>
+
+      {/* Workflow table */}
+      <div style={{ overflowX: 'auto', border: '1px solid var(--line)', borderRadius: 8, background: 'var(--bg-surface)', marginBottom: 16 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={{ ...th, minWidth: 200 }}>Workflow</th>
+              <th style={th}>Lanes</th>
+              <th style={th}>Verdict</th>
+              <th style={{ ...th, textAlign: 'right' }}>Trials</th>
+              <th style={{ ...th, minWidth: 220 }}>Failing bar</th>
+              <th style={{ ...th, minWidth: 100 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {filteredWorkflows.length === 0 ? (
+              <tr>
+                <td colSpan={6} style={{ ...cell, textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>
+                  No workflows match this filter.
+                </td>
+              </tr>
+            ) : (
+              filteredWorkflows.flatMap((wf) => {
+                const isExpanded = expandedWfId === wf.id;
+                const isRerunPending = rerunWfId === wf.id;
+                const isRerunQueued = rerunFlash === wf.id;
+                const drawerWfResult: E2EWorkflowResult =
+                  wf.id === E2E_FIXTURE_WORKFLOW_RESULT.workflow.id
+                    ? E2E_FIXTURE_WORKFLOW_RESULT
+                    : { workflow: wf, scenes: [], mcp_calls: [], claims: [] };
+                return [
+                  <tr
+                    key={wf.id}
+                    style={{
+                      ...rowBase,
+                      background: isExpanded ? 'var(--bg-selected)' : undefined,
+                      borderLeft: isExpanded ? '3px solid var(--ember-core)' : '3px solid transparent',
+                    }}
+                    onClick={() => { setExpandedWfId(isExpanded ? null : wf.id); setCassetteOpen(false); }}
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpandedWfId(isExpanded ? null : wf.id); } }}
+                    aria-expanded={isExpanded}
+                  >
+                    <td style={{ ...cell, fontFamily: 'var(--mono)', fontSize: 12.5, maxWidth: 260 }}>
+                      <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{wf.workflow_id}</span>
+                      {wf.prompt && (
+                        <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>
+                          {wf.prompt}
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ ...cell, whiteSpace: 'nowrap' }}>
+                      {wf.lanes.length > 0
+                        ? wf.lanes.map((l) => <Chip key={l}>{l}</Chip>)
+                        : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                    </td>
+                    <td style={cell}><E2EVerdictPill verdict={wf.verdict} /></td>
+                    <td style={{ ...cell, fontFamily: 'var(--mono)', fontSize: 12.5, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {fmtTrials(wf.trials_total, wf.trials_passed, wf.verdict)}
+                    </td>
+                    <td style={{ ...cell, color: wf.failing_bar ? 'var(--crit-text)' : 'var(--text-muted)', fontSize: 12.5, maxWidth: 280 }}>
+                      <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {wf.failing_bar
+                          ? wf.failing_bar
+                          : wf.verdict === 'skip'
+                          ? `withheld — ${String(wf.meta.withheld_reason ?? 'no trial ran')}`
+                          : '—'}
+                      </span>
+                    </td>
+                    <td style={{ ...cell, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {wf.verdict !== 'skip' && (
+                        isRerunQueued ? (
+                          <span style={{ fontSize: 12.5, color: 'var(--ok-text)' }}>✓ queued</span>
+                        ) : isRerunPending ? (
+                          <>
+                            <button
+                              onClick={(e) => handleRerun(wf.id, e)}
+                              style={{ fontSize: 12, padding: '3px 9px', border: '1px solid var(--crit)', borderRadius: 5, color: 'var(--crit-text)', background: 'var(--crit-wash)', cursor: 'pointer', marginRight: 4 }}
+                            >
+                              Confirm re-run
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setRerunWfId(null); }}
+                              style={{ fontSize: 12, padding: '3px 6px', border: '1px solid var(--line)', borderRadius: 5, background: 'var(--bg-surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                            >
+                              ✕
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={(e) => handleRerun(wf.id, e)}
+                            style={{ fontSize: 12, padding: '3px 9px', border: '1px solid var(--line)', borderRadius: 5, color: 'var(--text-secondary)', background: 'var(--bg-surface)', cursor: 'pointer' }}
+                            title={`Re-run ${wf.workflow_id}`}
+                          >
+                            ↻ Re-run
+                          </button>
+                        )
+                      )}
+                    </td>
+                  </tr>,
+                  isExpanded ? (
+                    <tr key={`${wf.id}-drawer`} style={{ borderBottom: '1px solid var(--line)' }}>
+                      <td colSpan={6} style={{ padding: '0 12px 12px' }}>
+                        <E2EDrilldownDrawer
+                          wfResult={drawerWfResult}
+                          onCassette={() => setCassetteOpen(true)}
+                          onTriageWf={() => {
+                            const prompt = buildE2eTriagePrompt(
+                              activeRun ?? E2E_FIXTURE_RUNS[0]!,
+                              [wf],
+                            );
+                            navigator.clipboard.writeText(prompt).catch(() => {});
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  ) : null,
+                ].filter((x): x is React.ReactElement => x !== null);
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Bottom row: duration chart + integrity strip */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16, alignItems: 'start' }}>
+        <E2EDurationChart run={activeRun ?? E2E_FIXTURE_RUNS[0]!} prevRun={prevRun} />
+
+        {/* Integrity strip — withheld-by-cause */}
+        <section
+          style={{ background: 'var(--bg-surface)', border: '1px solid var(--line)', borderRadius: 8, padding: 16 }}
+        >
+          <h2
+            style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 10, fontWeight: 600 }}
+          >
+            Withheld by cause
+          </h2>
+          {breakdown.length === 0 ? (
+            <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No withheld workflows.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {breakdown.map(({ reason, count }) => (
+                <button
+                  key={reason}
+                  onClick={() => {
+                    setVerdictFilter('withheld');
+                    setReasonFilter(reasonFilter === reason ? null : reason);
+                  }}
+                  style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '6px 10px', borderRadius: 6, border: '1px solid var(--line)',
+                    background: reasonFilter === reason ? 'var(--bg-selected)' : 'var(--bg-raised)',
+                    color: 'var(--text-secondary)', fontSize: 13, textAlign: 'left', cursor: 'pointer',
+                    boxShadow: reasonFilter === reason ? 'inset 0 -2px 0 var(--ember-core)' : undefined,
+                  }}
+                >
+                  <span className="mono" style={{ fontSize: 12 }}>{reason}</span>
+                  <span className="num" style={{ color: 'var(--text-muted)' }}>
+                    {count} trial{count !== 1 ? 's' : ''}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {activeRun?.meta?.trials_ran_clean !== undefined && (
+            <div
+              style={{
+                marginTop: 12, padding: '6px 10px', borderRadius: 6,
+                border: '1px solid var(--ok)', background: 'var(--ok-wash)',
+                color: 'var(--ok-text)', fontSize: 12.5,
+              }}
+            >
+              {String(activeRun.meta.trials_ran_clean)} / {String(activeRun.meta.trials_total ?? '?')} trials ran clean
+            </div>
+          )}
+        </section>
+      </div>
     </>
   );
 }

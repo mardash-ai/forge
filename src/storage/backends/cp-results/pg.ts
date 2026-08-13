@@ -180,6 +180,20 @@ export async function ensureCpResultsSchema(pool: Pool): Promise<void> {
       since     timestamptz NOT NULL DEFAULT now(),
       heartbeat timestamptz NOT NULL DEFAULT now()
     );
+
+    -- -----------------------------------------------------------------------
+    -- Additive migrations: add new columns to existing tables if missing.
+    -- These run every startup — IF NOT EXISTS / IF NOT COLUMN EXISTS guards
+    -- against re-running on fresh databases that already have the columns.
+    -- -----------------------------------------------------------------------
+    ALTER TABLE forge_cp_eval_workflows
+      ADD COLUMN IF NOT EXISTS lanes         text[]  NOT NULL DEFAULT '{}',
+      ADD COLUMN IF NOT EXISTS trials_total  int     NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS trials_passed int     NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS failing_bar   text;
+
+    ALTER TABLE forge_cp_eval_runs
+      ADD COLUMN IF NOT EXISTS spend_cents bigint NOT NULL DEFAULT 0;
   `);
 }
 
@@ -199,6 +213,7 @@ interface RunRow {
   pass_rate: string | null;
   withheld_count: number | string;
   rejected_count: number | string;
+  spend_cents: string | null;
   p50_duration_ms: string | null;
   p99_duration_ms: string | null;
   total_input_tokens: string | null;
@@ -234,6 +249,7 @@ function rowToRun(r: RunRow): EvalRun {
     pass_rate: r.pass_rate != null ? Number(r.pass_rate) : null,
     withheld_count: Number(r.withheld_count),
     rejected_count: Number(r.rejected_count),
+    spend_cents: r.spend_cents != null ? Number(r.spend_cents) : 0,
     p50_duration_ms: r.p50_duration_ms != null ? Number(r.p50_duration_ms) : null,
     p99_duration_ms: r.p99_duration_ms != null ? Number(r.p99_duration_ms) : null,
     total_input_tokens: toBigInt(r.total_input_tokens),
@@ -261,6 +277,10 @@ interface WorkflowRow {
   input_tokens: string | null;
   output_tokens: string | null;
   provider: string | null;
+  lanes: string[] | null;
+  trials_total: number | string | null;
+  trials_passed: number | string | null;
+  failing_bar: string | null;
   meta: unknown;
   created_at: Date | string;
   updated_at: Date | string;
@@ -281,6 +301,10 @@ function rowToWorkflow(r: WorkflowRow): EvalWorkflow {
     input_tokens: toBigInt(r.input_tokens),
     output_tokens: toBigInt(r.output_tokens),
     provider: r.provider,
+    lanes: Array.isArray(r.lanes) ? r.lanes : [],
+    trials_total: r.trials_total != null ? Number(r.trials_total) : 0,
+    trials_passed: r.trials_passed != null ? Number(r.trials_passed) : 0,
+    failing_bar: r.failing_bar ?? null,
     meta: (r.meta as Record<string, unknown>) ?? {},
     created_at: toIso(r.created_at)!,
     updated_at: toIso(r.updated_at)!,
@@ -446,6 +470,7 @@ export class PgCpResultsBackend implements CpResultsBackend {
     addSet('pass_rate', update.pass_rate);
     addSet('withheld_count', update.withheld_count);
     addSet('rejected_count', update.rejected_count);
+    addSet('spend_cents', update.spend_cents);
     addSet('p50_duration_ms', update.p50_duration_ms);
     addSet('p99_duration_ms', update.p99_duration_ms);
     addSet('total_input_tokens', update.total_input_tokens);
@@ -514,8 +539,8 @@ export class PgCpResultsBackend implements CpResultsBackend {
       `INSERT INTO forge_cp_eval_workflows
          (id, run_id, workflow_id, tenant_id, verdict, integrity_class, prompt,
           duration_ms, started_at, completed_at, input_tokens, output_tokens,
-          provider, meta, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz,$10::timestamptz,$11,$12,$13,$14::jsonb,$15::timestamptz,$16::timestamptz)
+          provider, meta, lanes, trials_total, trials_passed, failing_bar, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz,$10::timestamptz,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19::timestamptz,$20::timestamptz)
        ON CONFLICT (id) DO NOTHING
        RETURNING *`,
       [
@@ -533,6 +558,10 @@ export class PgCpResultsBackend implements CpResultsBackend {
         input.output_tokens ?? 0,
         input.provider ?? null,
         JSON.stringify(input.meta ?? {}),
+        input.lanes ?? [],
+        input.trials_total ?? 0,
+        input.trials_passed ?? 0,
+        input.failing_bar ?? null,
         now,
         now,
       ],

@@ -29,6 +29,8 @@ export interface RunDetail {
   /** Workflows where verdict is 'fail' or 'error', ordered by created_at. */
   failures: EvalWorkflow[];
   failure_count: number;
+  /** All workflows in the run (ordered by creation), including passes and skips. */
+  all_workflows: EvalWorkflow[];
 }
 
 /** Full per-workflow drilldown — assertions, scenes, prompts, tool calls, claims, integrity. */
@@ -67,7 +69,7 @@ export async function queryGetRun(store: PgCpResultsBackend, runId: string): Pro
   if (!run) return null;
   const allWorkflows = await store.listWorkflows(runId);
   const failures = allWorkflows.filter((w) => w.verdict === 'fail' || w.verdict === 'error');
-  return { run, failures, failure_count: failures.length };
+  return { run, failures, failure_count: failures.length, all_workflows: allWorkflows };
 }
 
 export async function queryGetWorkflow(

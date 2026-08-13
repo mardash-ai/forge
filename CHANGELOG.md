@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.26.10] - 2026-08-13
+
+### Added
+
+- **console/E2E Tests tab: full reference-mock fidelity.** Rebuilt `console/src/App.tsx`
+  E2E Tests screen to exactly match the checked-in reference mock
+  (`console/design/e2e-console-reference.html`). Every tile, column, button, filter, and
+  panel in the mock is now present and functional: 7 metric tiles (Attempted, Accepted,
+  Rejected, Withheld, p50, p99, Spend), 4 verdict filter tiles with ember inset-underline
+  on active, run-history table with SVG sparkline, workflow table with Lanes / Verdict /
+  Trials / Failing-bar columns plus ↻ Re-run confirm affordance, inline drilldown drawer
+  with scene assertions + tool cards + cassette ▸ / ⧉ Triage buttons, cassette slide-in
+  panel with turns / tool cards / claims, duration comparison chart (this run vs previous
+  nightly, chart-a=#4D8EC4 / chart-b=#C97A4A), withheld-by-cause integrity strip with
+  clickable cause pills, and a Run modal with scope / provider / cost-confirm. Graceful
+  degradation to fixture data when the API returns 501 (no DB configured). Fixture data
+  matches the 2026-08-11 reference run: 75 attempted · 31 accepted · 22 rejected ·
+  21 withheld · p50=14 s · p99=3:42 · spend=$1.04.
+- **cp-results backend: spend_cents, lanes, trials, failing_bar fields.** Extended
+  `EvalRun` with `spend_cents` and `EvalWorkflow` with `lanes / trials_total /
+  trials_passed / failing_bar`. Added additive `ALTER TABLE IF NOT EXISTS` migrations
+  in `ensureCpResultsSchema` (safe on cold-start against an existing DB). Updated
+  `WorkflowRow` / `RunRow` mappers, `insertWorkflow` (20 columns), and `updateRun`.
+- **e2e-api: RunDetail includes all_workflows.** `queryGetRun` now returns
+  `all_workflows: EvalWorkflow[]` (all workflows, not just failures) so the console
+  workflow table can show accepted / withheld rows alongside rejections.
+
+
+
 ## [1.26.9] - 2026-08-13
 
 ### Fixed
