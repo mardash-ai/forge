@@ -6109,6 +6109,18 @@ function Evals() {
         </div>
 
         {/* Run history table */}
+        <h2
+          style={{
+            fontSize: 11,
+            letterSpacing: '.08em',
+            textTransform: 'uppercase',
+            color: 'var(--text-muted)',
+            marginBottom: 10,
+            fontWeight: 600,
+          }}
+        >
+          Run history
+        </h2>
         <div
           style={{
             overflowX: 'auto',
@@ -6262,7 +6274,7 @@ function Evals() {
             cursor: 'pointer',
           }}
         >
-          {triageFlash ? '✓ copied' : '⧉ Triage this run'}
+          {triageFlash ? '✓ copied' : '⧉ Triage with Claude'}
         </button>
         <button
           onClick={() => setRunModalOpen(true)}
@@ -6287,9 +6299,13 @@ function Evals() {
         <E2EMetricTile label="Accepted" value={activeRun?.workflows_passed ?? '—'} color="var(--ok-text)" />
         <E2EMetricTile label="Rejected" value={activeRun?.workflows_failed ?? '—'} color="var(--crit-text)" />
         <E2EMetricTile label="Withheld" value={activeRun?.withheld_count ?? '—'} color="var(--text-muted)" />
-        <E2EMetricTile label="p50" value={fmtE2eDuration(activeRun?.p50_duration_ms ?? null)} sub="median" />
         <E2EMetricTile
-          label="p99"
+          label="p50 duration"
+          value={fmtE2eDuration(activeRun?.p50_duration_ms ?? null)}
+          sub="median"
+        />
+        <E2EMetricTile
+          label="p99 duration"
           value={fmtE2eDuration(activeRun?.p99_duration_ms ?? null)}
           sub="slow tail"
         />

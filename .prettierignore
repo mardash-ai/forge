@@ -15,3 +15,6 @@ tests/fixtures/
 # Markdown is hand-authored prose with deliberate line breaks and hand-aligned tables. Reflowing it
 # destroys the shape the author chose and gains nothing.
 *.md
+
+# The approved E2E mock is evidence, not source — never reformat it
+console/design/
