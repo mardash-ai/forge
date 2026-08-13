@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.26.17] - 2026-08-13
+
+### Fixed
+
+- **The E2E "Run tests" button no longer claims to do something it cannot do.** Clicking it fired a
+  browser `alert('Eval run queued — awaiting operator approval.')` and queued nothing: there is no
+  POST route under `/api/e2e`, the `e2e-runner` Cloud Run job still points at Google's hello-world
+  placeholder image, and forge-hat's runner image has never been built. Mark clicked it and was told
+  a run was queued that did not exist. Until the trigger path is real the modal's run button is
+  **disabled with the reason stated**, and both `onRun` handlers simply close the modal — a control
+  must never assert an action it did not take. The real chain (runner image → job → `POST
+  /api/e2e/runs` with a cost confirm → live run state in the tab) is tracked in the orchestrator
+  goal `the-run-button-actually-runs-tests.md`.
+
 ## [1.26.16] - 2026-08-13
 
 ### Fixed

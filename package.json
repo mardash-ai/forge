@@ -1,6 +1,6 @@
 {
   "name": "forge",
-  "version": "1.26.16",
+  "version": "1.26.17",
   "private": true,
   "type": "module",
   "description": "Forge — the AI-native software creation platform for Builders. Docker-first, API-first.",

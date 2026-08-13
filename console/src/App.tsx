@@ -5975,17 +5975,22 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
           >
             Cancel
           </button>
+          {/* Until POST /api/e2e/runs exists there is NOTHING to call: this button used to fire a
+              browser alert claiming "Eval run queued" while queueing nothing (Mark clicked it,
+              2026-08-13). A control must never claim an action it did not take — so it refuses,
+              visibly, with the reason, until the trigger path is real. */}
           <button
-            onClick={onRun}
+            disabled
+            title="The console cannot start runs yet — the trigger endpoint and runner image are not built"
             style={{
               padding: '7px 14px',
-              border: '1px solid var(--ember-deep)',
+              border: '1px dashed var(--line)',
               borderRadius: 6,
-              background: 'linear-gradient(180deg,var(--ember-glow),var(--ember-core) 55%,var(--ember-deep))',
-              color: '#1c1006',
-              fontWeight: 650,
+              background: 'var(--bg-surface)',
+              color: 'var(--text-muted)',
+              fontWeight: 600,
               fontSize: 14,
-              cursor: 'pointer',
+              cursor: 'not-allowed',
             }}
           >
             Run {wfCount} workflows · {providers}
@@ -6490,11 +6495,9 @@ function Evals() {
           <E2ERunModal
             runs={runs}
             onClose={() => setRunModalOpen(false)}
-            onRun={() => {
-              setRunModalOpen(false);
-              // Gated: per-run operator approval required (CLAUDE.md §eval)
-              alert('Eval run queued — awaiting operator approval.');
-            }}
+            // No trigger path exists yet; the modal's run button is disabled, so this is
+            // unreachable. It closes the modal and does NOT claim anything happened.
+            onRun={() => setRunModalOpen(false)}
           />
         )}
       </>
@@ -6540,10 +6543,7 @@ function Evals() {
         <E2ERunModal
           runs={runs}
           onClose={() => setRunModalOpen(false)}
-          onRun={() => {
-            setRunModalOpen(false);
-            alert('Eval run queued — awaiting operator approval.');
-          }}
+          onRun={() => setRunModalOpen(false)}
         />
       )}
 
