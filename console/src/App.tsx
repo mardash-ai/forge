@@ -5793,6 +5793,9 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
   const [namedText, setNamedText] = useState('');
   const [openai, setOpenai] = useState(true);
   const [anthropic, setAnthropic] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const catalogue = runs[0]?.workflows_attempted ?? 75;
   const namedCount =
     namedText
@@ -5803,6 +5806,30 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
     scope === 'full' ? Math.round(runs[0]?.spend_cents ?? 104) : scope === 'suite' ? 45 : namedCount * 8;
   const wfCount = scope === 'full' ? catalogue : scope === 'suite' ? '~20' : namedCount;
   const providers = [openai && 'openai', anthropic && 'anthropic'].filter(Boolean).join(', ') || 'openai';
+
+  const handleSubmit = async () => {
+    if (!confirmed || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const reqBody: Record<string, unknown> = {
+        reason: `manual · ${providers}`,
+        provider: providers,
+      };
+      if (scope === 'suite' && suiteText.trim()) reqBody.suite = suiteText.trim();
+      if (scope === 'named' && namedText.trim()) {
+        reqBody.workflows = namedText
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+      await mutate<{ run_id: string; state: string }>('/api/e2e/runs', reqBody);
+      onRun();
+    } catch (e) {
+      setSubmitError(e instanceof Error ? e.message : 'failed to start run');
+      setSubmitting(false);
+    }
+  };
 
   return (
     <div
@@ -5946,7 +5973,7 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
             anthropic (claude)
           </label>
         </fieldset>
-        {/* Cost confirm */}
+        {/* Cost summary */}
         <div
           style={{
             background: 'var(--ember-wash)',
@@ -5955,15 +5982,56 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
             padding: '9px 12px',
             fontSize: 13.5,
             fontWeight: 600,
-            marginBottom: 14,
+            marginBottom: 10,
           }}
         >
           Estimated spend: <span className="num">{fmtE2eSpend(costCents)}</span> · ~40 min · runs in Cloud
           Run, tenant lock honored
         </div>
+        {/* Explicit cost-confirm — required before the endpoint is called */}
+        <label
+          style={{
+            display: 'flex',
+            gap: 8,
+            alignItems: 'flex-start',
+            fontSize: 13,
+            color: 'var(--text-muted)',
+            marginBottom: 10,
+            cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={confirmed}
+            onChange={(e) => setConfirmed(e.target.checked)}
+            disabled={submitting}
+            style={{ marginTop: 2, flexShrink: 0 }}
+          />
+          <span>
+            I confirm: spend approximately{' '}
+            <strong style={{ color: 'var(--text-primary)' }}>{fmtE2eSpend(costCents)}</strong> and run{' '}
+            <strong style={{ color: 'var(--text-primary)' }}>{wfCount}</strong> workflows in Cloud Run
+          </span>
+        </label>
+        {submitError && (
+          <div
+            style={{
+              color: 'var(--crit-text)',
+              fontSize: 12.5,
+              marginBottom: 8,
+              padding: '6px 10px',
+              background: 'var(--crit-wash)',
+              borderRadius: 5,
+              wordBreak: 'break-word',
+            }}
+          >
+            {submitError}
+          </div>
+        )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
           <button
             onClick={onClose}
+            disabled={submitting}
             style={{
               padding: '7px 14px',
               border: '1px solid var(--line)',
@@ -5971,29 +6039,30 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
               background: 'var(--bg-surface)',
               color: 'var(--text-primary)',
               fontSize: 14,
+              opacity: submitting ? 0.6 : 1,
+              cursor: submitting ? 'not-allowed' : 'pointer',
             }}
           >
             Cancel
           </button>
-          {/* Until POST /api/e2e/runs exists there is NOTHING to call: this button used to fire a
-              browser alert claiming "Eval run queued" while queueing nothing (Mark clicked it,
-              2026-08-13). A control must never claim an action it did not take — so it refuses,
-              visibly, with the reason, until the trigger path is real. */}
           <button
-            disabled
-            title="The console cannot start runs yet — the trigger endpoint and runner image are not built"
+            disabled={!confirmed || submitting}
+            onClick={() => void handleSubmit()}
             style={{
               padding: '7px 14px',
-              border: '1px dashed var(--line)',
+              border: `1px solid ${confirmed && !submitting ? 'var(--ember-deep)' : 'var(--line)'}`,
               borderRadius: 6,
-              background: 'var(--bg-surface)',
-              color: 'var(--text-muted)',
+              background:
+                confirmed && !submitting
+                  ? 'linear-gradient(180deg,var(--ember-glow),var(--ember-core) 55%,var(--ember-deep))'
+                  : 'var(--bg-surface)',
+              color: confirmed && !submitting ? '#1c1006' : 'var(--text-muted)',
               fontWeight: 600,
               fontSize: 14,
-              cursor: 'not-allowed',
+              cursor: confirmed && !submitting ? 'pointer' : 'not-allowed',
             }}
           >
-            Run {wfCount} workflows · {providers}
+            {submitting ? 'Starting…' : `Run ${wfCount} workflows · ${providers}`}
           </button>
         </div>
       </div>
@@ -6072,6 +6141,24 @@ function Evals() {
   // In dev mode, fixtures are available behind a visible SAMPLE DATA marker.
   const runsApi = useApi<E2ERun[]>('/api/e2e/runs');
   const detailApi = useApi<E2ERunDetail>(activeRunId ? `/api/e2e/runs/${activeRunId}` : null);
+
+  // Live-update: while any run is in-progress, reload the list every 15 s so the run transitions
+  // to its terminal state (success/failure) without a manual refresh.
+  const runs0 = runsApi.data;
+  useEffect(() => {
+    const hasRunning = (runs0 ?? []).some((r) => r.status === 'running');
+    if (!hasRunning) return;
+    const id = setInterval(() => runsApi.reload(), 15_000);
+    return () => clearInterval(id);
+  }, [runs0]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Also refresh the detail view while the active run is in-progress.
+  const detailRun = detailApi.data?.run;
+  useEffect(() => {
+    if (detailRun?.status !== 'running') return;
+    const id = setInterval(() => detailApi.reload(), 15_000);
+    return () => clearInterval(id);
+  }, [detailRun?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const runsState: E2eStoreState = runsApi.loading
     ? 'loading'
@@ -6422,7 +6509,7 @@ function Evals() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
-                    {(['Run', 'Source', 'Provider', 'Attempted', 'Pass', 'Withheld', 'Spend'] as const).map(
+                    {(['Run', 'Status', 'Source', 'Provider', 'Attempted', 'Pass', 'Withheld', 'Spend'] as const).map(
                       (h) => (
                         <th key={h} style={th}>
                           {h}
@@ -6457,6 +6544,41 @@ function Evals() {
                         }}
                       >
                         {r.run_id}
+                      </td>
+                      <td style={{ ...cell, whiteSpace: 'nowrap' }}>
+                        {r.status === 'running' ? (
+                          <span
+                            style={{
+                              fontSize: 12,
+                              color: 'var(--accent)',
+                              fontWeight: 600,
+                            }}
+                          >
+                            ⏺ running…
+                          </span>
+                        ) : r.status === 'failed' ? (
+                          <span style={{ fontSize: 12, color: 'var(--crit-text)', fontWeight: 600 }}>
+                            ✗ failed
+                            {(r.meta as { execution_url?: string }).execution_url ? (
+                              <>
+                                {' · '}
+                                <a
+                                  href={(r.meta as { execution_url: string }).execution_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  style={{ color: 'inherit', textDecoration: 'underline' }}
+                                >
+                                  Cloud Run ↗
+                                </a>
+                              </>
+                            ) : null}
+                          </span>
+                        ) : r.status === 'aborted' ? (
+                          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>
+                            ⊘ aborted
+                          </span>
+                        ) : null}
                       </td>
                       <td
                         style={{ ...cell, color: 'var(--text-muted)', fontSize: 12.5, whiteSpace: 'nowrap' }}
@@ -6495,9 +6617,10 @@ function Evals() {
           <E2ERunModal
             runs={runs}
             onClose={() => setRunModalOpen(false)}
-            // No trigger path exists yet; the modal's run button is disabled, so this is
-            // unreachable. It closes the modal and does NOT claim anything happened.
-            onRun={() => setRunModalOpen(false)}
+            onRun={() => {
+              setRunModalOpen(false);
+              runsApi.reload();
+            }}
           />
         )}
       </>
@@ -6543,7 +6666,10 @@ function Evals() {
         <E2ERunModal
           runs={runs}
           onClose={() => setRunModalOpen(false)}
-          onRun={() => setRunModalOpen(false)}
+          onRun={() => {
+            setRunModalOpen(false);
+            runsApi.reload();
+          }}
         />
       )}
 

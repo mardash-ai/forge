@@ -23,6 +23,19 @@ import {
 } from '../src/console/e2e-api';
 import { buildServer, makeSessionCookie, OIDC_SESSION_COOKIE } from '../src/console/server';
 
+// Mock the GCP jobs module so POST /api/e2e/runs tests never hit the real Cloud Run API.
+// vi.mock is hoisted, so this runs before any import in this file.
+vi.mock('../src/plugins/console-gcp/jobs', () => ({
+  triggerCloudRunJob: vi.fn().mockResolvedValue({
+    operation_name: 'projects/test-project/locations/us-east1/operations/op-123',
+    execution_name:
+      'projects/test-project/locations/us-east1/jobs/forge-e2e-runner/executions/exec-123',
+  }),
+  buildExecutionConsoleUrl: vi
+    .fn()
+    .mockReturnValue('https://console.cloud.google.com/run/jobs/details/us-east1/forge-e2e-runner/executions/exec-123?project=test-project'),
+}));
+
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 // SESSION_SECRET must match CONSOLE_SESSION_SECRET set in withOidcEnv below.
 const SESSION_SECRET = 'test-session-secret-long-enough';
@@ -829,6 +842,218 @@ describe('console server — GET /mcp (SSE stream)', () => {
       closers.push(app);
       const res = await app.inject({ method: 'GET', url: '/mcp' });
       expect(res.statusCode).toBe(401);
+    });
+  });
+});
+
+// ── POST /api/e2e/runs — e2e trigger ─────────────────────────────────────────
+
+describe('POST /api/e2e/runs — e2e trigger', () => {
+  /** Helper: set CONSOLE_E2E_JOB and restore on cleanup. */
+  function withE2eJob(jobName: string, fn: () => Promise<void>): Promise<void> {
+    const saved = process.env.CONSOLE_E2E_JOB;
+    process.env.CONSOLE_E2E_JOB = jobName;
+    return fn().finally(() => {
+      if (saved === undefined) delete process.env.CONSOLE_E2E_JOB;
+      else process.env.CONSOLE_E2E_JOB = saved;
+    });
+  }
+
+  it('returns 401 without auth', async () => {
+    await withOidcEnv(async () => {
+      const app = buildServer(undefined, undefined, async () => null);
+      closers.push(app);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/e2e/runs',
+        payload: { reason: 'manual test' },
+      });
+      expect(res.statusCode).toBe(401);
+    });
+  });
+
+  it('returns 403 for automation token (read-only by construction)', async () => {
+    await withAutomationEnv(async () => {
+      const app = buildServer(undefined, undefined, async () => null);
+      closers.push(app);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/e2e/runs',
+        headers: { authorization: `Bearer ${AUTOMATION_TOKEN}` },
+        payload: { reason: 'manual test' },
+      });
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.body) as { error: { code: string } };
+      expect(body.error.code).toBe('forbidden');
+    });
+  });
+
+  it('returns 422 when reason is missing', async () => {
+    await withOidcEnv(async () => {
+      const secret = SESSION_SECRET;
+      const cookie = makeSessionCookie('mark@mardash.ai', secret);
+      const app = buildServer(undefined, undefined, async () => null);
+      closers.push(app);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/e2e/runs',
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+        payload: {},
+      });
+      expect(res.statusCode).toBe(422);
+      const body = JSON.parse(res.body) as { error: { code: string } };
+      expect(body.error.code).toBe('reason_required');
+    });
+  });
+
+  it('returns 422 when reason is too short', async () => {
+    await withOidcEnv(async () => {
+      const cookie = makeSessionCookie('mark@mardash.ai', SESSION_SECRET);
+      const app = buildServer(undefined, undefined, async () => null);
+      closers.push(app);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/e2e/runs',
+        headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+        payload: { reason: 'ab' },
+      });
+      expect(res.statusCode).toBe(422);
+    });
+  });
+
+  it('returns 501 when CONSOLE_E2E_JOB is not configured', async () => {
+    await withOidcEnv(async () => {
+      // Ensure the env var is absent
+      const saved = process.env.CONSOLE_E2E_JOB;
+      delete process.env.CONSOLE_E2E_JOB;
+      try {
+        const cookie = makeSessionCookie('mark@mardash.ai', SESSION_SECRET);
+        const app = buildServer(undefined, undefined, async () => null);
+        closers.push(app);
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/e2e/runs',
+          headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+          payload: { reason: 'manual test' },
+        });
+        expect(res.statusCode).toBe(501);
+        const body = JSON.parse(res.body) as { error: { code: string } };
+        expect(body.error.code).toBe('not_configured');
+      } finally {
+        if (saved !== undefined) process.env.CONSOLE_E2E_JOB = saved;
+      }
+    });
+  });
+
+  it('returns 200 with run_id + state when job is configured and GCP accepts', async () => {
+    await withOidcEnv(async () => {
+      await withE2eJob('forge-e2e-runner', async () => {
+        const cookie = makeSessionCookie('mark@mardash.ai', SESSION_SECRET);
+        const store = makeMockStore({
+          upsertRun: vi.fn().mockResolvedValue(makeRun()),
+          updateRun: vi.fn().mockResolvedValue(makeRun()),
+        });
+        const app = buildServer(undefined, undefined, async () => store);
+        closers.push(app);
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/e2e/runs',
+          headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+          payload: { reason: 'manual test run' },
+        });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body) as { data: { run_id: string; state: string } };
+        expect(body.data.run_id).toMatch(/^run-/);
+        expect(body.data.state).toBe('running');
+        // Store pre-create was called
+        expect(store.upsertRun as ReturnType<typeof vi.fn>).toHaveBeenCalledOnce();
+        // Meta update with execution name was called
+        expect(store.updateRun as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+          expect.stringMatching(/^run-/),
+          expect.objectContaining({ meta: expect.objectContaining({ execution_name: expect.any(String) }) }),
+        );
+      });
+    });
+  });
+
+  it('returns 200 without store pre-create when store is not configured', async () => {
+    await withOidcEnv(async () => {
+      await withE2eJob('forge-e2e-runner', async () => {
+        const cookie = makeSessionCookie('mark@mardash.ai', SESSION_SECRET);
+        const app = buildServer(undefined, undefined, async () => null);
+        closers.push(app);
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/e2e/runs',
+          headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+          payload: { reason: 'no-store run', suite: 'privacy-tier', provider: 'openai' },
+        });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body) as { data: { run_id: string; state: string } };
+        expect(body.data.run_id).toMatch(/^run-/);
+        expect(body.data.state).toBe('running');
+      });
+    });
+  });
+
+  it('returns 502 when Cloud Run trigger fails and marks the pre-created run as failed', async () => {
+    // Override the mock to throw for this test only
+    const { triggerCloudRunJob: mockTrigger } = await import('../src/plugins/console-gcp/jobs');
+    const savedImpl = (mockTrigger as ReturnType<typeof vi.fn>).getMockImplementation();
+    (mockTrigger as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('GCP 403 jobs.run: permission denied'),
+    );
+    await withOidcEnv(async () => {
+      await withE2eJob('forge-e2e-runner', async () => {
+        const cookie = makeSessionCookie('mark@mardash.ai', SESSION_SECRET);
+        const store = makeMockStore({
+          upsertRun: vi.fn().mockResolvedValue(makeRun()),
+          updateRun: vi.fn().mockResolvedValue(makeRun()),
+        });
+        const app = buildServer(undefined, undefined, async () => store);
+        closers.push(app);
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/e2e/runs',
+          headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+          payload: { reason: 'test run that fails' },
+        });
+        expect(res.statusCode).toBe(502);
+        const body = JSON.parse(res.body) as { error: { code: string } };
+        expect(body.error.code).toBe('trigger_failed');
+        // The pre-created run is marked failed so the tab does not show a ghost 'running' row.
+        expect(store.updateRun as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+          expect.stringMatching(/^run-/),
+          expect.objectContaining({ status: 'failed' }),
+        );
+      });
+    });
+    if (savedImpl) (mockTrigger as ReturnType<typeof vi.fn>).mockImplementation(savedImpl);
+  });
+
+  it('passes suite and workflow overrides to the job env', async () => {
+    const { triggerCloudRunJob: mockTrigger } = await import('../src/plugins/console-gcp/jobs');
+    await withOidcEnv(async () => {
+      await withE2eJob('forge-e2e-runner', async () => {
+        const cookie = makeSessionCookie('mark@mardash.ai', SESSION_SECRET);
+        const app = buildServer(undefined, undefined, async () => null);
+        closers.push(app);
+        await app.inject({
+          method: 'POST',
+          url: '/api/e2e/runs',
+          headers: { cookie: `${OIDC_SESSION_COOKIE}=${cookie}` },
+          payload: {
+            reason: 'scoped named-workflow run',
+            workflows: ['draft-approve-sent', 'h9-privacy-sweep'],
+            provider: 'openai',
+          },
+        });
+        const lastCall = (mockTrigger as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as {
+          env: Record<string, string>;
+        };
+        expect(lastCall?.env['E2E_WORKFLOWS']).toBe('draft-approve-sent,h9-privacy-sweep');
+        expect(lastCall?.env['E2E_PROVIDER']).toBe('openai');
+      });
     });
   });
 });

@@ -62,6 +62,7 @@ import {
   type CostProvider,
   type DriftProvider,
 } from '../plugins/console-gcp/ops';
+import { triggerCloudRunJob, buildExecutionConsoleUrl } from '../plugins/console-gcp/jobs';
 import { createGitHubPipelinesProvider } from '../plugins/console-github/pipelines';
 import { createDorindaTenantProvider, TenantAppError } from '../plugins/console-dorinda/tenants';
 import type { TenantProvider } from './providers/tenants';
@@ -442,6 +443,9 @@ export const WRITE_ROUTES = [
   // "every mutating route must be declared" guard passes; the route comment + the readonly-exemption
   // in the auth middleware distinguish it from the audited write operations below.
   '/mcp',
+  // ── E2E trigger. Starts a Cloud Run job execution and creates an EvalRun record.
+  // Audited with the authenticated operator's email as actor.
+  '/api/e2e/runs',
   // ── The Data section. Every one of these changes a real account or a real tenant's data, so
   // every one of them is audited BY CONSTRUCTION: this list is what the guard test checks a
   // mutating route against, and an unlisted POST/DELETE fails the build rather than shipping.
@@ -1772,6 +1776,130 @@ export function buildServer(
         error: { code: 'not_found', message: 'one or both run_ids not found' },
       });
     return envelope(diff);
+  });
+
+  // ── E2E trigger — POST /api/e2e/runs ─────────────────────────────────────────────────────────
+  //
+  // Starts a Cloud Run job execution as the console's Workload Identity and pre-creates an EvalRun
+  // record in the cp-results store so the run appears immediately in the Evals tab. The endpoint
+  // is authenticated exactly like every other console write path; the automation token is refused
+  // (read-only by construction). A reason is required — the audit row must mean something.
+  //
+  // Required env: CONSOLE_E2E_JOB (Cloud Run Job short name, e.g. "forge-e2e-runner").
+  //
+  // Body: { reason (required), suite?, workflows? (string[]), provider? }
+
+  app.post('/api/e2e/runs', async (req, reply) => {
+    const body = req.body as {
+      suite?: string;
+      workflows?: string[];
+      provider?: string;
+      reason?: string;
+    };
+
+    // Require a reason — the audit row must mean something.
+    if (!body?.reason || body.reason.trim().length < 3) {
+      return reply.code(422).send({
+        error: { code: 'reason_required', message: 'a reason is required to start an eval run' },
+      });
+    }
+
+    // The job name must be configured — fail closed rather than silently doing nothing.
+    const jobName = process.env.CONSOLE_E2E_JOB ?? '';
+    if (!jobName) {
+      return reply.code(501).send({
+        error: {
+          code: 'not_configured',
+          message: 'CONSOLE_E2E_JOB is not configured — cannot start a run',
+        },
+      });
+    }
+
+    const actor = actorOf(req);
+    // Generate a stable, human-readable run ID that sorts chronologically.
+    const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+    const suffix = randomBytes(3).toString('hex');
+    const runId = `run-${ts}-${suffix}`;
+    const triggerSource = `manual · ${actor}`;
+
+    // Environment variable overrides for the job task at invocation time.
+    const jobEnv: Record<string, string> = {
+      E2E_RUN_ID: runId,
+      E2E_TRIGGERED_BY: actor,
+      E2E_REASON: body.reason.trim(),
+    };
+    if (body.suite) jobEnv['E2E_SUITE'] = body.suite;
+    if (body.workflows?.length) jobEnv['E2E_WORKFLOWS'] = body.workflows.join(',');
+    if (body.provider) jobEnv['E2E_PROVIDER'] = body.provider;
+
+    // Pre-create the run so it appears immediately in the tab (status: 'running').
+    // A store pre-create failure is not fatal — the job writes its own record on completion.
+    const store = await evalStoreGetter();
+    if (store) {
+      await store
+        .upsertRun({
+          run_id: runId,
+          tenant_id: process.env.CONSOLE_E2E_TENANT ?? 'dorinda-prod',
+          trigger_source: triggerSource,
+          meta: {
+            reason: body.reason.trim(),
+            ...(body.suite ? { suite: body.suite } : {}),
+            ...(body.workflows?.length ? { workflows: body.workflows } : {}),
+            ...(body.provider ? { provider: body.provider } : {}),
+          },
+        })
+        .catch(() => {
+          /* non-fatal — job writes its own record */
+        });
+    }
+
+    // Trigger the Cloud Run Job. Audit the attempt before the call so a crash mid-request is
+    // recorded, not lost.
+    let execution: { operation_name: string; execution_name: string | null };
+    try {
+      execution = await audited(actor, 'e2e.run.trigger', runId, () =>
+        triggerCloudRunJob({
+          project: PROJECT,
+          region: REGION,
+          job: jobName,
+          env: jobEnv,
+          signal: AbortSignal.timeout(30_000),
+        }),
+      );
+    } catch (e) {
+      // Trigger failed: mark the pre-created run as failed so it does not hang as 'running'.
+      if (store) {
+        await store
+          .updateRun(runId, { status: 'failed', completed_at: new Date().toISOString() })
+          .catch(() => {});
+      }
+      return reply.code(502).send({
+        error: {
+          code: 'trigger_failed',
+          message: `Cloud Run job trigger failed: ${(e as Error).message}`,
+        },
+      });
+    }
+
+    // Store the execution name and GCP Console URL in meta so the UI can link to it.
+    if (store && execution.execution_name) {
+      const executionUrl = buildExecutionConsoleUrl(execution.execution_name, PROJECT);
+      await store
+        .updateRun(runId, {
+          meta: {
+            execution_name: execution.execution_name,
+            ...(executionUrl ? { execution_url: executionUrl } : {}),
+          },
+        })
+        .catch(() => {});
+    }
+
+    return envelope({
+      run_id: runId,
+      state: 'running' as const,
+      execution_name: execution.execution_name,
+      trigger_source: triggerSource,
+    });
   });
 
   // ── Console MCP server ────────────────────────────────────────────────────────────────────────
