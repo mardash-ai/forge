@@ -15,6 +15,23 @@ export interface Envelope<T> {
   note?: string;
 }
 
+/**
+ * Typed API error that carries the HTTP status and server-supplied error code.
+ * Callers (e.g. the E2E tab) use `httpStatus === 501` to distinguish "store not
+ * configured" from a genuine network/server error — those two states require
+ * different banners and NEITHER falls back to compiled-in fixture data.
+ */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code?: string,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<Envelope<T>> {
   const res = await fetch(path, {
     ...init,
@@ -24,13 +41,13 @@ export async function api<T>(path: string, init?: RequestInit): Promise<Envelope
     // The session expired, was revoked, or never existed. The SPA cannot render ANY screen
     // without data, so the only honest move is the login page — not a wall of fetch errors.
     window.location.href = '/login';
-    throw new Error('session expired — redirecting to sign-in');
+    throw new ApiError('session expired — redirecting to sign-in', 401);
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}) as Record<string, unknown>);
-    const err = (body as { error?: { message?: string } }).error;
+    const err = (body as { error?: { message?: string; code?: string } }).error;
     // Name the system and the status. "Something went wrong" sends you nowhere.
-    throw new Error(err?.message ?? `${res.status} ${path}`);
+    throw new ApiError(err?.message ?? `${res.status} ${path}`, res.status, err?.code);
   }
   return (await res.json()) as Envelope<T>;
 }
@@ -45,6 +62,10 @@ export interface Query<T> {
   /** A caveat about the result itself (e.g. "these lines cover less time than you asked for"). */
   note: string | null;
   reload: () => void;
+  /** HTTP status of the failed request, or null when succeeded / not yet fetched. */
+  httpStatus: number | null;
+  /** Server-supplied error code (e.g. 'not_configured'), when present. */
+  errorCode: string | null;
 }
 
 export function useApi<T>(path: string | null, deps: unknown[] = []): Query<T> {
@@ -55,6 +76,8 @@ export function useApi<T>(path: string | null, deps: unknown[] = []): Query<T> {
   const [asOf, setAsOf] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+  const [httpStatus, setHttpStatus] = useState<number | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   // Guards against a slow earlier request resolving after a newer one and overwriting it.
   const latest = useRef(0);
 
@@ -65,6 +88,8 @@ export function useApi<T>(path: string | null, deps: unknown[] = []): Query<T> {
     const id = ++latest.current;
     setLoading(true);
     setError(null);
+    setHttpStatus(null);
+    setErrorCode(null);
     api<T>(path)
       .then((env) => {
         if (id !== latest.current) return;
@@ -73,9 +98,17 @@ export function useApi<T>(path: string | null, deps: unknown[] = []): Query<T> {
         setAsOf(env.freshness?.as_of ?? null);
         setNote(env.note ?? null);
       })
-      .catch((e: Error) => {
+      .catch((e: unknown) => {
         if (id !== latest.current) return;
-        setError(e.message);
+        if (e instanceof ApiError) {
+          setError(e.message);
+          setHttpStatus(e.status);
+          setErrorCode(e.code ?? null);
+        } else {
+          setError(e instanceof Error ? e.message : 'unknown error');
+          setHttpStatus(null);
+          setErrorCode(null);
+        }
       })
       .finally(() => {
         if (id === latest.current) setLoading(false);
@@ -83,7 +116,7 @@ export function useApi<T>(path: string | null, deps: unknown[] = []): Query<T> {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, nonce, ...deps]);
 
-  return { data, error, loading, sources, asOf, note, reload };
+  return { data, error, loading, sources, asOf, note, reload, httpStatus, errorCode };
 }
 
 export function relative(iso: string | undefined | null): string {

@@ -5998,11 +5998,43 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
 
 /**
  * Every view in this tab is addressable, so a screenshot can be replaced by a link:
- *   ?s=evals&run=<run_id>&f=<verdict filter>&wf=<expanded workflow>&cause=<withheld reason>
+ *   ?s=evals&run=<run_id>&f=<verdict>&wf=<expanded workflow>&cause=<withheld reason>
+ *   &lane=<lane>&ic=<integrity class>&tier=<tier>
  * Mark, 2026-08-13: "give it a permalink … I can go into a single run, share the link with you
  * and tell you everything that's wrong." Sharing a URL must reproduce exactly what the sender saw.
  */
 type E2eVerdictFilter = 'all' | 'pass' | 'fail' | 'withheld';
+
+/**
+ * Three truthful store states — every one maps to a distinct visual treatment.
+ * 'connected'     → real data; tiles, metric rows, workflow table are all shown.
+ * 'not-configured' → server returned 501 (CONSOLE_CP_DB_URL unset). Show a
+ *                    prominent banner + empty state. No numbers, no fixture rows.
+ * 'error'         → network failure or unexpected server error. Show a different
+ *                    prominent banner + empty state.
+ *
+ * Fixture data is ONLY rendered in dev mode, behind a visible SAMPLE DATA marker.
+ * It is never substituted silently for a 501 or error response.
+ */
+type E2eStoreState = 'loading' | 'connected' | 'not-configured' | 'error';
+
+const E2E_WF_PAGE_SIZE = 25;
+
+/** Effective integrity class for a workflow — 'clean' for ran-clean, withheld reason for skips. */
+function getEffectiveIC(wf: E2EWorkflow): string {
+  if (wf.verdict === 'skip') {
+    return (wf.meta as { withheld_reason?: string }).withheld_reason ?? 'withheld';
+  }
+  return wf.integrity_class ?? 'unknown';
+}
+
+/** Extract tier from meta.tier or from a leading segment in workflow_id (e.g. "h5-foo" → "h5"). */
+function getWorkflowTier(wf: E2EWorkflow): string | null {
+  const tier = (wf.meta as { tier?: string }).tier;
+  if (tier) return tier;
+  const m = wf.workflow_id.match(/^([a-z]+\d+)-/);
+  return m ? m[1] ?? null : null;
+}
 
 function e2eParam(name: string): string | null {
   const v = new URLSearchParams(location.search).get(name);
@@ -6016,7 +6048,11 @@ function Evals() {
     return f === 'pass' || f === 'fail' || f === 'withheld' ? f : 'all';
   });
   const [reasonFilter, setReasonFilter] = useState<string | null>(() => e2eParam('cause'));
+  const [laneFilter, setLaneFilter] = useState<string | null>(() => e2eParam('lane'));
+  const [icFilter, setIcFilter] = useState<string | null>(() => e2eParam('ic'));
+  const [tierFilter, setTierFilter] = useState<string | null>(() => e2eParam('tier'));
   const [expandedWfId, setExpandedWfId] = useState<string | null>(() => e2eParam('wf'));
+  const [wfPage, setWfPage] = useState(0);
   const [cassetteOpen, setCassetteOpen] = useState(false);
   const [runModalOpen, setRunModalOpen] = useState(false);
   const [rerunWfId, setRerunWfId] = useState<string | null>(null);
@@ -6024,34 +6060,82 @@ function Evals() {
   const [triageFlash, setTriageFlash] = useState(false);
   const [linkFlash, setLinkFlash] = useState(false);
 
-  // API data (graceful degradation: 501/null → fixture)
+  // API data — NO silent fixture fallback. The three store states are:
+  //   connected     → runsApi.data !== null
+  //   not-configured → runsApi.httpStatus === 501
+  //   error          → runsApi.error && runsApi.httpStatus !== 501
+  // In dev mode, fixtures are available behind a visible SAMPLE DATA marker.
   const runsApi = useApi<E2ERun[]>('/api/e2e/runs');
   const detailApi = useApi<E2ERunDetail>(activeRunId ? `/api/e2e/runs/${activeRunId}` : null);
 
-  const runs: E2ERun[] = runsApi.data ?? E2E_FIXTURE_RUNS;
-  // The fixture detail describes ONE run. Never let it stand in for a different run: a page that
-  // shows run B's workflows under run A's name is worse than showing nothing, and a permalink makes
-  // that mismatch shareable. Fall back to the fixture only when it IS the requested run.
-  const detailForActive: E2ERunDetail | null =
-    detailApi.data ??
-    (activeRunId && E2E_FIXTURE_RUN_DETAIL.run.run_id === activeRunId ? E2E_FIXTURE_RUN_DETAIL : null);
-  const runDetail: E2ERunDetail | null = activeRunId ? detailForActive : null;
+  const runsState: E2eStoreState = runsApi.loading
+    ? 'loading'
+    : runsApi.data !== null
+      ? 'connected'
+      : runsApi.httpStatus === 501
+        ? 'not-configured'
+        : runsApi.error
+          ? 'error'
+          : 'loading';
+
+  // Dev-only fixture fallback — only active in development mode, and only when no real data.
+  // In production this is always false, so fixture numbers never reach a real operator.
+  const IS_DEV = import.meta.env.DEV;
+  const usingFixture = IS_DEV && runsState !== 'connected';
+
+  const runs: E2ERun[] = runsApi.data ?? (usingFixture ? E2E_FIXTURE_RUNS : []);
+
+  // The fixture detail describes ONE specific run. Only substitute it when it matches the
+  // requested run — never let fixture B's workflows appear under run A's name.
+  const fixtureDetailForRun =
+    usingFixture && activeRunId && E2E_FIXTURE_RUN_DETAIL.run.run_id === activeRunId
+      ? E2E_FIXTURE_RUN_DETAIL
+      : null;
+  const runDetail: E2ERunDetail | null = activeRunId ? (detailApi.data ?? fixtureDetailForRun) : null;
 
   // The summary row always comes from the run the URL names.
   const activeRun: E2ERun | null = runs.find((r) => r.run_id === activeRunId) ?? runDetail?.run ?? null;
   const allWorkflows: E2EWorkflow[] = runDetail?.all_workflows ?? [];
 
+  // Derive the available filter values from the current run's workflows.
+  const allLanes = [...new Set(allWorkflows.flatMap((w) => w.lanes))].sort();
+  const allICs = [...new Set(allWorkflows.map((w) => getEffectiveIC(w)))].sort();
+  const allTiers = [...new Set(allWorkflows.map((w) => getWorkflowTier(w)).filter((t): t is string => t !== null))].sort();
+
   const filteredWorkflows: E2EWorkflow[] = allWorkflows.filter((w) => {
-    if (verdictFilter === 'all') return true;
-    if (verdictFilter === 'pass') return w.verdict === 'pass';
-    if (verdictFilter === 'fail') return w.verdict === 'fail' || w.verdict === 'error';
-    if (verdictFilter === 'withheld') return w.verdict === 'skip';
+    if (verdictFilter !== 'all') {
+      if (verdictFilter === 'pass' && w.verdict !== 'pass') return false;
+      if (verdictFilter === 'fail' && w.verdict !== 'fail' && w.verdict !== 'error') return false;
+      if (verdictFilter === 'withheld' && w.verdict !== 'skip') return false;
+    }
+    if (reasonFilter && (w.meta as { withheld_reason?: string }).withheld_reason !== reasonFilter) return false;
+    if (laneFilter && !w.lanes.includes(laneFilter)) return false;
+    if (icFilter && getEffectiveIC(w) !== icFilter) return false;
+    if (tierFilter && getWorkflowTier(w) !== tierFilter) return false;
     return true;
   });
 
+  // Pagination — keep the expanded row always visible regardless of current page.
+  const expandedIdx = expandedWfId ? filteredWorkflows.findIndex((w) => w.id === expandedWfId) : -1;
+  const expandedPage = expandedIdx >= 0 ? Math.floor(expandedIdx / E2E_WF_PAGE_SIZE) : -1;
+  // If the expanded workflow is on a different page, jump there silently.
+  const effectivePage = expandedPage >= 0 && expandedPage !== wfPage ? expandedPage : wfPage;
+  const totalPages = Math.max(1, Math.ceil(filteredWorkflows.length / E2E_WF_PAGE_SIZE));
+  const pagedWorkflows = filteredWorkflows.slice(effectivePage * E2E_WF_PAGE_SIZE, (effectivePage + 1) * E2E_WF_PAGE_SIZE);
+
+  const hasActiveFilters = verdictFilter !== 'all' || !!reasonFilter || !!laneFilter || !!icFilter || !!tierFilter;
+  const clearFilters = () => {
+    setVerdictFilter('all');
+    setReasonFilter(null);
+    setLaneFilter(null);
+    setIcFilter(null);
+    setTierFilter(null);
+    setWfPage(0);
+  };
+
   const expandedWf = allWorkflows.find((w) => w.id === expandedWfId) ?? null;
   const wfResult: E2EWorkflowResult | null =
-    expandedWfId === E2E_FIXTURE_WORKFLOW_RESULT.workflow.id
+    usingFixture && expandedWfId === E2E_FIXTURE_WORKFLOW_RESULT.workflow.id
       ? E2E_FIXTURE_WORKFLOW_RESULT
       : expandedWf
         ? { workflow: expandedWf, scenes: [], mcp_calls: [], claims: [] }
@@ -6070,8 +6154,11 @@ function Evals() {
     set('f', verdictFilter === 'all' ? null : verdictFilter);
     set('wf', expandedWfId);
     set('cause', reasonFilter);
+    set('lane', laneFilter);
+    set('ic', icFilter);
+    set('tier', tierFilter);
     history.replaceState(null, '', u);
-  }, [activeRunId, verdictFilter, expandedWfId, reasonFilter]);
+  }, [activeRunId, verdictFilter, expandedWfId, reasonFilter, laneFilter, icFilter, tierFilter]);
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(location.href).then(
@@ -6087,16 +6174,17 @@ function Evals() {
     setActiveRunId(rid);
     setVerdictFilter('all');
     setReasonFilter(null);
+    setLaneFilter(null);
+    setIcFilter(null);
+    setTierFilter(null);
     setExpandedWfId(null);
     setCassetteOpen(false);
+    setWfPage(0);
   };
 
   const handleTriage = () => {
     if (!activeRun) return;
-    const prompt = buildE2eTriagePrompt(
-      activeRun,
-      allWorkflows.length ? allWorkflows : E2E_FIXTURE_WORKFLOWS,
-    );
+    const prompt = buildE2eTriagePrompt(activeRun, allWorkflows);
     navigator.clipboard.writeText(prompt).then(
       () => {
         setTriageFlash(true);
@@ -6148,6 +6236,89 @@ function Evals() {
   };
   const rowBase: React.CSSProperties = { borderBottom: '1px solid var(--line)', cursor: 'pointer' };
 
+  // ── Store-state banner (shown in both run-list and run-detail views) ──────
+  const storeStateBanner =
+    runsState === 'not-configured' ? (
+      <div
+        role="alert"
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 12,
+          padding: '14px 18px',
+          marginBottom: 20,
+          border: '1px solid var(--warn)',
+          borderLeft: '4px solid var(--warn)',
+          borderRadius: 8,
+          background: 'var(--warn-bg)',
+          color: 'var(--ink)',
+          fontSize: 14,
+        }}
+      >
+        <span style={{ fontSize: 20, lineHeight: 1 }}>⊘</span>
+        <div>
+          <div style={{ fontWeight: 700, marginBottom: 4, color: 'var(--warn)' }}>
+            E2E results store not connected
+          </div>
+          <div style={{ color: 'var(--ink)', lineHeight: 1.5 }}>
+            <code style={{ fontFamily: 'var(--mono)', fontSize: 13, background: 'rgba(0,0,0,.25)', borderRadius: 3, padding: '1px 5px' }}>CONSOLE_CP_DB_URL</code>{' '}
+            is unset on this control plane — no run data is being collected or shown.
+            Set the variable and restart the console to connect.
+          </div>
+        </div>
+      </div>
+    ) : runsState === 'error' ? (
+      <div
+        role="alert"
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 12,
+          padding: '14px 18px',
+          marginBottom: 20,
+          border: '1px solid var(--fail)',
+          borderLeft: '4px solid var(--fail)',
+          borderRadius: 8,
+          background: 'var(--fail-bg)',
+          color: 'var(--ink)',
+          fontSize: 14,
+        }}
+      >
+        <span style={{ fontSize: 20, lineHeight: 1 }}>✕</span>
+        <div>
+          <div style={{ fontWeight: 700, marginBottom: 4, color: 'var(--fail-text)' }}>
+            E2E results store unreachable
+          </div>
+          <div style={{ color: 'var(--ink)', lineHeight: 1.5 }}>
+            {runsApi.error ?? 'Unknown error'} — check that the console container can reach the database and that{' '}
+            <code style={{ fontFamily: 'var(--mono)', fontSize: 13, background: 'rgba(0,0,0,.25)', borderRadius: 3, padding: '1px 5px' }}>CONSOLE_CP_DB_URL</code>{' '}
+            is set correctly. Reload to retry.
+          </div>
+        </div>
+      </div>
+    ) : usingFixture ? (
+      <div
+        role="status"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '9px 16px',
+          marginBottom: 20,
+          border: '1px solid var(--accent)',
+          borderRadius: 8,
+          background: 'var(--accent-bg)',
+          color: 'var(--accent)',
+          fontSize: 13,
+          fontWeight: 600,
+          letterSpacing: '.03em',
+        }}
+      >
+        <span>⚠</span>
+        <span>SAMPLE DATA — development mode only. Not connected to a real store. These numbers are compiled-in fixtures.</span>
+      </div>
+    ) : null;
+
   // ── Run list view ──────────────────────────────────────────────────────────
   if (!activeRunId) {
     const sparklineRuns = runs.slice(0, 10);
@@ -6155,29 +6326,39 @@ function Evals() {
       <>
         <Head screen="evals" title="E2E Tests" sub="Remote workflow eval results." />
 
-        {/* Controls */}
+        {storeStateBanner}
+
+        {/* Controls — only show Run button when connected (or dev fixture) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-          <button
-            onClick={() => setRunModalOpen(true)}
-            style={{
-              padding: '7px 14px',
-              border: '1px solid var(--ember-deep)',
-              borderRadius: 6,
-              background: 'linear-gradient(180deg,var(--ember-glow),var(--ember-core) 55%,var(--ember-deep))',
-              color: '#1c1006',
-              fontWeight: 650,
-              fontSize: 14,
-              cursor: 'pointer',
-            }}
-          >
-            ↻ Re-run
-          </button>
-          <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-            {runs.length} run{runs.length !== 1 ? 's' : ''} · last {runs[0]?.started_at?.slice(0, 10) ?? '—'}
-          </span>
+          {(runsState === 'connected' || usingFixture) && (
+            <button
+              onClick={() => setRunModalOpen(true)}
+              style={{
+                padding: '7px 14px',
+                border: '1px solid var(--ember-deep)',
+                borderRadius: 6,
+                background: 'linear-gradient(180deg,var(--ember-glow),var(--ember-core) 55%,var(--ember-deep))',
+                color: '#1c1006',
+                fontWeight: 650,
+                fontSize: 14,
+                cursor: 'pointer',
+              }}
+            >
+              ↻ Re-run
+            </button>
+          )}
+          {runsState === 'connected' && (
+            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+              {runs.length} run{runs.length !== 1 ? 's' : ''} · last {runs[0]?.started_at?.slice(0, 10) ?? '—'}
+            </span>
+          )}
+          {runsState === 'loading' && (
+            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading…</span>
+          )}
         </div>
 
-        {/* Run history table */}
+        {/* Run history table — only rendered when the store is connected (or dev fixture) */}
+        {(runsState === 'connected' || usingFixture) && <>
         <h2
           style={{
             fontSize: 11,
@@ -6264,6 +6445,7 @@ function Evals() {
             </tbody>
           </table>
         </div>
+        </>}
 
         {runModalOpen && (
           <E2ERunModal
@@ -6281,6 +6463,25 @@ function Evals() {
   }
 
   // ── Run detail view ────────────────────────────────────────────────────────
+  // In the run-detail view, we might reach here via a URL permalink even when
+  // the store is not connected. The banner + empty state is still shown; no
+  // metric tiles or workflow rows are rendered.
+  const detailState: E2eStoreState = detailApi.loading
+    ? 'loading'
+    : detailApi.data !== null
+      ? 'connected'
+      : detailApi.httpStatus === 501
+        ? 'not-configured'
+        : detailApi.error && !usingFixture
+          ? 'error'
+          : usingFixture && fixtureDetailForRun
+            ? 'connected'
+            : detailApi.error
+              ? 'error'
+              : 'loading';
+
+  const showRunDetail = detailState === 'connected' || (usingFixture && !!fixtureDetailForRun);
+
   return (
     <>
       <Head screen="evals" title="E2E Tests" sub={activeRun?.run_id ?? activeRunId} />
@@ -6377,15 +6578,20 @@ function Evals() {
         </button>
       </div>
 
+      {/* Store-state banner (run-detail view) */}
+      {storeStateBanner}
+
       {/* ONE row of 7 tiles — the reference mock's `.tiles` grid. The first four ARE the
           filters (mock: class="tile filter" role="button" data-f="all|pass|fail|withheld");
           the last three are plain readouts. Do NOT split these into two rows: a separate
-          filter strip reads as an unexplained second subset (Mark, 2026-08-13). */}
+          filter strip reads as an unexplained second subset (Mark, 2026-08-13).
+          ONLY rendered when connected — never show fixture numbers to a production viewer. */}
+      {showRunDetail && (
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 10, marginBottom: 14 }}>
         <E2EMetricTile
           filter
           active={verdictFilter === 'all'}
-          onClick={() => setVerdictFilter('all')}
+          onClick={() => { setVerdictFilter('all'); setWfPage(0); }}
           label="Attempted"
           value={activeRun?.workflows_attempted ?? '—'}
           sub={fmtE2ePctOfCatalogue(activeRun)}
@@ -6393,7 +6599,7 @@ function Evals() {
         <E2EMetricTile
           filter
           active={verdictFilter === 'pass'}
-          onClick={() => setVerdictFilter('pass')}
+          onClick={() => { setVerdictFilter('pass'); setWfPage(0); }}
           label="Accepted"
           value={activeRun?.workflows_passed ?? '—'}
           color="var(--ok-text)"
@@ -6402,7 +6608,7 @@ function Evals() {
         <E2EMetricTile
           filter
           active={verdictFilter === 'fail'}
-          onClick={() => setVerdictFilter('fail')}
+          onClick={() => { setVerdictFilter('fail'); setWfPage(0); }}
           label="Rejected"
           value={activeRun?.workflows_failed ?? '—'}
           color="var(--crit-text)"
@@ -6411,7 +6617,7 @@ function Evals() {
         <E2EMetricTile
           filter
           active={verdictFilter === 'withheld'}
-          onClick={() => setVerdictFilter('withheld')}
+          onClick={() => { setVerdictFilter('withheld'); setWfPage(0); }}
           label="Withheld"
           value={activeRun?.withheld_count ?? '—'}
           color="var(--text-muted)"
@@ -6433,9 +6639,179 @@ function Evals() {
           sub={fmtE2eSpendSub(activeRun)}
         />
       </div>
+      )}
 
-      {/* Workflow table */}
-      <div
+      {/* ── Filter bar: lane / integrity-class / tier + clear-all ────────────
+          Only shown when connected; all filters composable and URL-encoded. */}
+      {showRunDetail && (allLanes.length > 0 || allICs.length > 0 || allTiers.length > 0) && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            flexWrap: 'wrap',
+            marginBottom: 12,
+            padding: '8px 12px',
+            border: '1px solid var(--line)',
+            borderRadius: 8,
+            background: 'var(--bg-surface)',
+          }}
+        >
+          <span style={{ fontSize: 11, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+            Filter
+          </span>
+
+          {/* Lane filter */}
+          {allLanes.length > 0 && (
+            <select
+              value={laneFilter ?? ''}
+              onChange={(e) => { setLaneFilter(e.target.value || null); setWfPage(0); }}
+              style={{
+                font: 'inherit',
+                fontSize: 13,
+                background: laneFilter ? 'var(--accent-bg)' : 'var(--bg-raised)',
+                border: `1px solid ${laneFilter ? 'var(--accent)' : 'var(--line)'}`,
+                borderRadius: 6,
+                color: laneFilter ? 'var(--accent)' : 'var(--ink)',
+                padding: '4px 8px',
+                cursor: 'pointer',
+              }}
+              aria-label="Filter by lane"
+            >
+              <option value="">All lanes</option>
+              {allLanes.map((l) => <option key={l} value={l}>{l}</option>)}
+            </select>
+          )}
+
+          {/* Integrity class filter */}
+          {allICs.length > 0 && (
+            <select
+              value={icFilter ?? ''}
+              onChange={(e) => { setIcFilter(e.target.value || null); setWfPage(0); }}
+              style={{
+                font: 'inherit',
+                fontSize: 13,
+                background: icFilter ? 'var(--accent-bg)' : 'var(--bg-raised)',
+                border: `1px solid ${icFilter ? 'var(--accent)' : 'var(--line)'}`,
+                borderRadius: 6,
+                color: icFilter ? 'var(--accent)' : 'var(--ink)',
+                padding: '4px 8px',
+                cursor: 'pointer',
+              }}
+              aria-label="Filter by integrity class"
+            >
+              <option value="">All integrity classes</option>
+              {allICs.map((ic) => <option key={ic} value={ic}>{ic}</option>)}
+            </select>
+          )}
+
+          {/* Tier filter */}
+          {allTiers.length > 0 && (
+            <select
+              value={tierFilter ?? ''}
+              onChange={(e) => { setTierFilter(e.target.value || null); setWfPage(0); }}
+              style={{
+                font: 'inherit',
+                fontSize: 13,
+                background: tierFilter ? 'var(--accent-bg)' : 'var(--bg-raised)',
+                border: `1px solid ${tierFilter ? 'var(--accent)' : 'var(--line)'}`,
+                borderRadius: 6,
+                color: tierFilter ? 'var(--accent)' : 'var(--ink)',
+                padding: '4px 8px',
+                cursor: 'pointer',
+              }}
+              aria-label="Filter by tier"
+            >
+              <option value="">All tiers</option>
+              {allTiers.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          )}
+
+          <div style={{ flex: 1 }} />
+
+          {/* Clear all filters — single obvious action */}
+          {hasActiveFilters && (
+            <button
+              onClick={clearFilters}
+              style={{
+                font: 'inherit',
+                fontSize: 12.5,
+                padding: '4px 12px',
+                border: '1px solid var(--line)',
+                borderRadius: 6,
+                background: 'var(--bg-raised)',
+                color: 'var(--text-muted)',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              ✕ Clear filters
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Showing N of M caption + pagination controls */}
+      {showRunDetail && allWorkflows.length > 0 && (() => {
+        const attempted = activeRun?.workflows_attempted ?? allWorkflows.length;
+        const storeHas = allWorkflows.length;
+        const showingN = filteredWorkflows.length;
+        const captionExtra = storeHas < attempted
+          ? ` — the store holds detail for ${storeHas}`
+          : '';
+        const filterNote = hasActiveFilters && showingN < storeHas
+          ? ` · ${storeHas - showingN} hidden by filters`
+          : '';
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+            <span style={{ fontSize: 12.5, color: 'var(--text-faint)' }}>
+              Showing {showingN} of {attempted}{captionExtra}{filterNote}
+            </span>
+            {totalPages > 1 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button
+                  onClick={() => setWfPage((p) => Math.max(0, p - 1))}
+                  disabled={effectivePage === 0}
+                  style={{
+                    font: 'inherit',
+                    fontSize: 12,
+                    padding: '3px 8px',
+                    border: '1px solid var(--line)',
+                    borderRadius: 5,
+                    background: 'var(--bg-raised)',
+                    color: effectivePage === 0 ? 'var(--text-faint)' : 'var(--ink)',
+                    cursor: effectivePage === 0 ? 'default' : 'pointer',
+                  }}
+                >
+                  ‹ Prev
+                </button>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  Page {effectivePage + 1} / {totalPages}
+                </span>
+                <button
+                  onClick={() => setWfPage((p) => Math.min(totalPages - 1, p + 1))}
+                  disabled={effectivePage >= totalPages - 1}
+                  style={{
+                    font: 'inherit',
+                    fontSize: 12,
+                    padding: '3px 8px',
+                    border: '1px solid var(--line)',
+                    borderRadius: 5,
+                    background: 'var(--bg-raised)',
+                    color: effectivePage >= totalPages - 1 ? 'var(--text-faint)' : 'var(--ink)',
+                    cursor: effectivePage >= totalPages - 1 ? 'default' : 'pointer',
+                  }}
+                >
+                  Next ›
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Workflow table — only rendered when store is connected (real or dev fixture) */}
+      {showRunDetail && <div
         style={{
           overflowX: 'auto',
           border: '1px solid var(--line)',
@@ -6456,22 +6832,22 @@ function Evals() {
             </tr>
           </thead>
           <tbody>
-            {filteredWorkflows.length === 0 ? (
+            {pagedWorkflows.length === 0 ? (
               <tr>
                 <td
                   colSpan={6}
                   style={{ ...cell, textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}
                 >
-                  No workflows match this filter.
+                  {hasActiveFilters ? 'No workflows match the active filters.' : 'No workflows in this run.'}
                 </td>
               </tr>
             ) : (
-              filteredWorkflows.flatMap((wf) => {
+              pagedWorkflows.flatMap((wf) => {
                 const isExpanded = expandedWfId === wf.id;
                 const isRerunPending = rerunWfId === wf.id;
                 const isRerunQueued = rerunFlash === wf.id;
                 const drawerWfResult: E2EWorkflowResult =
-                  wf.id === E2E_FIXTURE_WORKFLOW_RESULT.workflow.id
+                  usingFixture && wf.id === E2E_FIXTURE_WORKFLOW_RESULT.workflow.id
                     ? E2E_FIXTURE_WORKFLOW_RESULT
                     : { workflow: wf, scenes: [], mcp_calls: [], claims: [] };
                 return [
@@ -6631,7 +7007,8 @@ function Evals() {
                           wfResult={drawerWfResult}
                           onCassette={() => setCassetteOpen(true)}
                           onTriageWf={() => {
-                            const prompt = buildE2eTriagePrompt(activeRun ?? E2E_FIXTURE_RUNS[0]!, [wf]);
+                            if (!activeRun) return;
+                            const prompt = buildE2eTriagePrompt(activeRun, [wf]);
                             navigator.clipboard.writeText(prompt).catch(() => {});
                           }}
                         />
@@ -6643,9 +7020,10 @@ function Evals() {
             )}
           </tbody>
         </table>
-      </div>
+      </div>}
 
-      {/* Bottom row: duration chart + integrity strip */}
+      {/* Bottom row: duration chart + integrity strip — only when connected */}
+      {showRunDetail && <>
       <div
         style={{
           display: 'grid',
@@ -6655,7 +7033,7 @@ function Evals() {
           alignItems: 'start',
         }}
       >
-        <E2EDurationChart run={activeRun ?? E2E_FIXTURE_RUNS[0]!} prevRun={prevRun} />
+        {activeRun && <E2EDurationChart run={activeRun} prevRun={prevRun} />}
 
         {/* Integrity strip — withheld-by-cause */}
         <section
@@ -6732,6 +7110,7 @@ function Evals() {
           )}
         </section>
       </div>
+      </>}
     </>
   );
 }
