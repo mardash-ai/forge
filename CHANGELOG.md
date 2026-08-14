@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.30.8] - 2026-08-14
+
+### Added
+
+- Six red-against-broken tests for `DELETE /api/e2e/runs/:run_id` in `tests/console-e2e-api.test.ts`, covering: cascade (child workflows/scenes/MCP calls/claims gone after deletion), running-run refusal (409 + row still present + `deleteRun` not called), audit (success row and refused-attempt row both written with operator and timestamp), not-found (clean 404, `deleteRun` not invoked), authorization (automation-token 403 and unauthenticated 401), and recomputation (deleted run absent from run list, no ghost spend contribution). Each test is structured so a broken implementation causes at least one assertion to fail.
+
 ## [1.30.6] - 2026-08-14
 
 ### Added
