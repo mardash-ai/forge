@@ -141,6 +141,12 @@ variable "e2e_provider" {
   description = "LLM provider for e2e runs (anthropic | openai). Wired as E2E_PROVIDER. Override at invocation time."
 }
 
+variable "ingest_url" {
+  type        = string
+  default     = "https://forge.dorinda.ai"
+  description = "Base URL of the console that accepts POST /ingest/run-progress. Wired as FORGE_INGEST_URL."
+}
+
 variable "extractor_model" {
   type        = string
   default     = "gpt-5.1"
@@ -813,6 +819,14 @@ resource "google_cloud_run_v2_job" "runner" {
         # at once, so a whole run shifts without a single commit explaining it.
         # Where to persist a rotated MCP refresh token. Without this the writeback is skipped and
         # the next run inherits a spent grant.
+        # Where the runner reports its progress. Without this the reporter skips and the operator
+        # watches a row that never fills in — the endpoint existing is not the same as it being
+        # reachable, which is exactly how this shipped unusable the first time.
+        env {
+          name  = "FORGE_INGEST_URL"
+          value = var.ingest_url
+        }
+
         env {
           name  = "HAT_REFRESH_TOKEN_SECRET"
           value = google_secret_manager_secret.mcp_refresh_token.secret_id

@@ -20,6 +20,7 @@ import { join, normalize, extname } from 'node:path';
 import { timingSafeEqual, createHmac, randomBytes, createVerify, createPublicKey } from 'node:crypto';
 
 import { envelope, type Finding, type MetricIntent, type QuotaGauge, type Revision } from './domain';
+import { registerIngestRoutes } from '../api/ingest-routes';
 import {
   queryListRuns,
   queryGetRun,
@@ -658,6 +659,13 @@ export function buildServer(
     // RFC 9728 MCP protected-resource discovery doc — must be public so MCP clients can
     // discover the auth server before they have a token.
     '/.well-known/oauth-protected-resource/mcp',
+    // ⛔ MACHINE endpoint — exempt from the SESSION wall, NOT from authentication. The e2e-runner
+    // Cloud Run job reports its progress here carrying a Google-signed OIDC identity token, and the
+    // route verifies that token and the exact service-account email itself before touching the
+    // store. A browser session is the wrong credential for a job that has no browser; requiring one
+    // is why a run's counters could never reach this console at all. Interactive login remains
+    // Google-only — this is not a login path.
+    '/ingest/run-progress',
   ]);
 
   app.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -1884,6 +1892,11 @@ export function buildServer(
   // Required env: CONSOLE_E2E_JOB (Cloud Run Job short name, e.g. "forge-e2e-runner").
   //
   // Body: { reason (required), suite?, workflows? (string[]), provider? }
+
+  // The runner's progress reports land here. The endpoint lives with the store it writes to and the
+  // E2E routes that read it — it was originally registered on forge's control-plane API server,
+  // which is not deployed in this project, so it existed and was unreachable.
+  registerIngestRoutes(app);
 
   app.post('/api/e2e/runs', async (req, reply) => {
     const body = req.body as {

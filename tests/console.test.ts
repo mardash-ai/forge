@@ -456,6 +456,22 @@ describe('server — auth and the write surface', () => {
     const app = buildServer();
     await app.ready();
     const declared = new Set<string>(WRITE_ROUTES);
+
+    /*
+     * NON-ACCOUNT MACHINE WRITES — exempt from the audit table, by name and with a reason.
+     *
+     * The audit table exists so an action against a real account or a real tenant's data is
+     * attributable. `/ingest/run-progress` is neither: it is the e2e-runner job reporting its own
+     * counters into the results store, authenticated by a Google-signed identity token naming
+     * exactly one service account. A single catalogue run reports ~76 times, so auditing it would
+     * add thousands of rows a week to the log whose entire value is that a consequential action is
+     * easy to find in it.
+     *
+     * ⛔ This list is deliberately hostile to growth: each entry must be a machine-authenticated
+     * write that touches NO account and NO tenant data. Anything else belongs in WRITE_ROUTES.
+     */
+    const MACHINE_WRITES_EXEMPT_FROM_AUDIT = new Set<string>(['/ingest/run-progress']);
+    for (const path of MACHINE_WRITES_EXEMPT_FROM_AUDIT) declared.add(path);
     /*
      * Read from Fastify's onRoute hook, NOT from printRoutes().
      *
@@ -470,6 +486,11 @@ describe('server — auth and the write surface', () => {
       return /^(POST|PUT|PATCH|DELETE)$/.test(method!) && !declared.has(path!);
     });
     expect(mutating).toEqual([]);
+    expect(
+      MACHINE_WRITES_EXEMPT_FROM_AUDIT.size,
+      'the audit exemption list grew — every entry must be a machine write touching no account ' +
+        'and no tenant data, and must be justified in the comment above',
+    ).toBeLessThanOrEqual(1);
     // And the enumeration itself must be real — an empty list would make this vacuous.
     expect(REGISTERED_ROUTES.length).toBeGreaterThan(10);
     expect(REGISTERED_ROUTES).toContain('POST /api/tenants/accounts/purge');

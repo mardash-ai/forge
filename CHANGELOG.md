@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.31.0] - 2026-08-14
+
+### Fixed
+
+- **The progress-ingest endpoint existed and could not be called.** It was registered on forge's
+  control-plane API server (`src/api/server.ts`), which is not deployed in this project — so the
+  runner had nowhere to report and every console row read `attempted 0 · passed 0 · $0.00`
+  regardless of what the run actually did. It now registers on the console server, which owns the
+  results store and the E2E routes that read it. The route is exempt from the browser-session wall
+  (a Cloud Run job has no browser) but authenticates its own caller against exactly one service
+  account, and the audited-write guard carries a documented, growth-limited exemption for it because
+  a progress report touches no account and no tenant data.
+
+
 ## [1.30.11] - 2026-08-14
 
 ### Added

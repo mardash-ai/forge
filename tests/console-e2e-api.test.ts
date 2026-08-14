@@ -5,6 +5,11 @@
  * All tests run against in-memory mocks — no database required.
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 import { reconcileRunningRuns } from '../src/console/server';
 import type { PgCpResultsBackend } from '../src/storage/backends/cp-results/pg';
 import type {
@@ -1518,5 +1523,30 @@ describe('DELETE /api/e2e/runs/:run_id — recomputation', () => {
       });
       expect(permalink.statusCode).toBe(404);
     });
+  });
+});
+
+describe('/ingest/run-progress is reachable but never unauthenticated', () => {
+  // The endpoint was registered on forge's control-plane API server, which is not deployed in this
+  // project — so it existed, passed its own tests, and could not be called by anything. The runner
+  // therefore reported nothing and every console row read `attempted 0` forever.
+  //
+  // Moving it here puts it on the surface that owns the store. It is exempt from the SESSION wall
+  // (a Cloud Run job has no browser) but authenticates its own caller, so "public path" must never
+  // become "unauthenticated write".
+  it('is registered on the console server', async () => {
+    const src = readFileSync(join(__dirname, '..', 'src', 'console', 'server.ts'), 'utf8');
+    expect(src).toContain('registerIngestRoutes(app)');
+  });
+
+  it('⛔ is exempt from the session wall ONLY because it verifies its own caller', async () => {
+    const server = readFileSync(join(__dirname, '..', 'src', 'console', 'server.ts'), 'utf8');
+    expect(server).toContain("'/ingest/run-progress'");
+
+    // The route must do its own identity check — otherwise allowlisting it would expose an
+    // unauthenticated write to the results store.
+    const route = readFileSync(join(__dirname, '..', 'src', 'api', 'ingest-routes.ts'), 'utf8');
+    expect(route).toMatch(/FORGE_RUNNER_SA_EMAIL/);
+    expect(route.toLowerCase()).toMatch(/verif|jwks|oidc|token/);
   });
 });
