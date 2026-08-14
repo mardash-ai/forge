@@ -71,6 +71,8 @@ export interface EvalScene {
   workflow_id: string;
   run_id: string;
   scene_index: number;
+  /** Which trial produced this scene. Scenes repeat per trial; the index alone is not unique. */
+  trial: number;
   scene_name: string | null;
   assertions: SceneAssertion[];
   observed_values: ObservedValue[];
@@ -229,6 +231,7 @@ export interface EvalSceneInput {
   workflow_id: string;
   run_id: string;
   scene_index: number;
+  trial?: number;
   scene_name?: string;
   assertions?: SceneAssertion[];
   observed_values?: ObservedValue[];

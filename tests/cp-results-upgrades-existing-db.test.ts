@@ -186,3 +186,77 @@ describe.skipIf(!HAS_PG)('withheld becomes a first-class verdict on an existing 
     expect(r.rows[0].verdict).toBe('error');
   });
 });
+
+describe.skipIf(!HAS_PG)("a failing trial's scenes survive the store", () => {
+  let pool3: Pool;
+  let backend3: PgCpResultsBackend;
+  const WF = 'wf_scene_trials';
+
+  beforeAll(async () => {
+    pool3 = new Pool({ connectionString: process.env.FORGE_DB_URL });
+    // The PREVIOUS shape: keyed on (workflow_id, scene_index) with no trial at all.
+    await pool3.query('DROP TABLE IF EXISTS forge_cp_eval_scenes CASCADE');
+    await pool3.query(`
+      CREATE TABLE forge_cp_eval_scenes (
+        id               text PRIMARY KEY,
+        workflow_id      text NOT NULL,
+        run_id           text NOT NULL,
+        scene_index      int  NOT NULL,
+        scene_name       text,
+        assertions       jsonb NOT NULL DEFAULT '[]',
+        observed_values  jsonb NOT NULL DEFAULT '[]',
+        passed           boolean,
+        created_at       timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (workflow_id, scene_index)
+      )
+    `);
+    await ensureCpResultsSchema(pool3);
+    backend3 = new PgCpResultsBackend(pool3);
+  });
+
+  afterAll(async () => {
+    await pool3?.end().catch(() => undefined);
+  });
+
+  it('⛔ keeps scene 0 from EVERY trial, not just the first', async () => {
+    // W-004, 2026-08-14: trials 1 and 2 passed, trial 3 failed. Trial 3's scene 0 collided with
+    // trial 1's on (workflow_id, scene_index) and ON CONFLICT DO NOTHING discarded it — silently,
+    // with no error and no rejected-row count. The console then showed three green scenes under a
+    // red verdict and no reason, because the only evidence that explained the rejection had been
+    // deleted by a uniqueness constraint.
+    for (const trial of [1, 2, 3]) {
+      await backend3.insertScene({
+        id: `s:${trial}:0`,
+        workflow_id: WF,
+        run_id: 'r',
+        scene_index: 0,
+        trial,
+        scene_name: 'Mark asks Dorinda to take on the passport renewal',
+        passed: trial !== 3, // the third trial is the one that failed
+      });
+    }
+    const scenes = await backend3.listScenes(WF);
+    expect(scenes).toHaveLength(3);
+    expect(scenes.map((s) => s.trial)).toEqual([1, 2, 3]);
+  });
+
+  it('⛔ the FAILING trial is the one that must be readable', async () => {
+    const scenes = await backend3.listScenes(WF);
+    const failing = scenes.filter((s) => s.passed === false);
+    expect(failing).toHaveLength(1);
+    expect(failing[0]!.trial).toBe(3);
+  });
+
+  it('is still idempotent within a trial', async () => {
+    await backend3.insertScene({
+      id: 's:3:0:dup',
+      workflow_id: WF,
+      run_id: 'r',
+      scene_index: 0,
+      trial: 3,
+      scene_name: 'should be ignored',
+    });
+    const scenes = await backend3.listScenes(WF);
+    expect(scenes.filter((s) => s.trial === 3 && s.scene_index === 0)).toHaveLength(1);
+  });
+});

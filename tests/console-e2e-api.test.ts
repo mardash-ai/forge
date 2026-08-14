@@ -171,6 +171,7 @@ function makeScene(overrides: Partial<EvalScene> = {}): EvalScene {
     workflow_id: 'wf_row_01',
     run_id: 'run_001',
     scene_index: 0,
+    trial: 1,
     scene_name: 'check state',
     assertions: [{ name: 'count', expected: 3, operator: 'eq' }],
     observed_values: [{ name: 'count', value: 3 }],

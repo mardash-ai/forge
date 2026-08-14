@@ -4614,6 +4614,8 @@ interface E2ETurn {
 interface E2EScene {
   id: string;
   scene_index: number;
+  /** Which trial produced this scene. Optional so rows written before the column still render. */
+  trial?: number;
   scene_name: string | null;
   assertions: Array<{ name: string; expected: unknown; operator: string }>;
   observed_values: Array<{ name: string; value: unknown }>;
@@ -5533,6 +5535,13 @@ function E2EDrilldownDrawer({
       ) : (
         scenes.map((sc, si) => {
           const allPassed = sc.passed !== false;
+          // ⛔ Show WHICH TRIAL. Until 2026-08-14 the store keyed scenes on (workflow, scene_index)
+          // with no trial, so every trial after the first was silently discarded and the drawer
+          // could only ever show one trial's worth — all green, under a red verdict, with the
+          // failing trial's evidence deleted. Naming the trial is what makes a flaky workflow
+          // legible: "trial 3 failed the bar trials 1 and 2 met" is a different finding from
+          // "this always fails", and they must not look the same.
+          const trialNo = sc.trial;
           return (
             <div
               key={sc.id}
@@ -5549,6 +5558,21 @@ function E2EDrilldownDrawer({
                   {allPassed ? '✓' : '✗'}
                 </span>
                 {sc.scene_name ?? `Scene ${si + 1}`}
+                {trialNo !== undefined && (
+                  <span
+                    style={{
+                      marginLeft: 8,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      letterSpacing: '.04em',
+                      textTransform: 'uppercase',
+                      color: allPassed ? 'var(--text-faint)' : 'var(--crit-text)',
+                    }}
+                  >
+                    trial {trialNo}
+                    {!allPassed ? ' · this is the trial that failed' : ''}
+                  </span>
+                )}
               </div>
               {sc.assertions.map((a, ai) => {
                 const obs = sc.observed_values[ai];

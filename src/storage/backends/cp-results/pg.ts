@@ -119,8 +119,11 @@ export async function ensureCpResultsSchema(pool: Pool): Promise<void> {
       assertions       jsonb       NOT NULL DEFAULT '[]',  -- [{name, expected, operator}]
       observed_values  jsonb       NOT NULL DEFAULT '[]',  -- [{name, value}]
       passed           boolean,
+      -- Which trial produced this scene. A workflow runs N trials over the SAME scene list, so
+      -- scene_index alone cannot identify a row.
+      trial            int         NOT NULL DEFAULT 1,
       created_at       timestamptz NOT NULL DEFAULT now(),
-      UNIQUE (workflow_id, scene_index)
+      UNIQUE (workflow_id, trial, scene_index)
     );
     CREATE INDEX IF NOT EXISTS forge_cp_eval_scenes_workflow
       ON forge_cp_eval_scenes (workflow_id, scene_index);
@@ -227,6 +230,34 @@ export async function ensureCpResultsSchema(pool: Pool): Promise<void> {
 
     ALTER TABLE forge_cp_eval_turns
       ADD COLUMN IF NOT EXISTS attempt int NOT NULL DEFAULT 1;
+
+    ALTER TABLE forge_cp_eval_scenes
+      ADD COLUMN IF NOT EXISTS trial int NOT NULL DEFAULT 1;
+    ALTER TABLE forge_cp_eval_scenes
+      DROP CONSTRAINT IF EXISTS forge_cp_eval_scenes_workflow_id_scene_index_key;
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'forge_cp_eval_scenes_wf_trial_scene_key'
+      ) THEN
+        ALTER TABLE forge_cp_eval_scenes
+          ADD CONSTRAINT forge_cp_eval_scenes_wf_trial_scene_key
+          UNIQUE (workflow_id, trial, scene_index);
+      END IF;
+    END $$;
+
+    -- ⛔ SCENES FROM EVERY TRIAL BUT THE FIRST WERE BEING DELETED.
+    --
+    -- The key was UNIQUE (workflow_id, scene_index), and a workflow runs N trials over the SAME
+    -- scene list — so trial 2's scene 0 collided with trial 1's scene 0 and the insert's
+    -- ON CONFLICT DO NOTHING discarded it. Silently: no error, no rejected-row count, nothing to
+    -- see. Only the FIRST trial's scenes ever reached the store.
+    --
+    -- The cost was exact and expensive. W-004 on 2026-08-14 passed trials 1 and 2 and failed trial
+    -- 3. The console showed three green scenes under a red verdict and no reason, because the
+    -- failing trial's evidence had been deleted by a uniqueness constraint. Mark: "all of the
+    -- trials had green checks for every step, yet the workflow was rejected."
+
 
     -- ⛔ WITHHELD IS A VERDICT, NOT A FAILURE.
     --
@@ -411,6 +442,7 @@ interface SceneRow {
   workflow_id: string;
   run_id: string;
   scene_index: number | string;
+  trial: number | string;
   scene_name: string | null;
   assertions: unknown;
   observed_values: unknown;
@@ -454,6 +486,7 @@ function rowToScene(r: SceneRow): EvalScene {
     workflow_id: r.workflow_id,
     run_id: r.run_id,
     scene_index: Number(r.scene_index),
+    trial: Number(r.trial ?? 1),
     scene_name: r.scene_name,
     assertions: (r.assertions as EvalScene['assertions']) ?? [],
     observed_values: (r.observed_values as EvalScene['observed_values']) ?? [],
@@ -728,15 +761,16 @@ export class PgCpResultsBackend implements CpResultsBackend {
     const now = nowIso();
     const r = await this.pool.query<SceneRow>(
       `INSERT INTO forge_cp_eval_scenes
-         (id, workflow_id, run_id, scene_index, scene_name, assertions, observed_values, passed, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9::timestamptz)
-       ON CONFLICT (workflow_id, scene_index) DO NOTHING
+         (id, workflow_id, run_id, scene_index, trial, scene_name, assertions, observed_values, passed, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10::timestamptz)
+       ON CONFLICT (workflow_id, trial, scene_index) DO NOTHING
        RETURNING *`,
       [
         input.id,
         input.workflow_id,
         input.run_id,
         input.scene_index,
+        input.trial ?? 1,
         input.scene_name ?? null,
         JSON.stringify(input.assertions ?? []),
         JSON.stringify(input.observed_values ?? []),
@@ -746,8 +780,8 @@ export class PgCpResultsBackend implements CpResultsBackend {
     );
     if (!r.rows[0]) {
       const existing = await this.pool.query<SceneRow>(
-        'SELECT * FROM forge_cp_eval_scenes WHERE workflow_id = $1 AND scene_index = $2',
-        [input.workflow_id, input.scene_index],
+        'SELECT * FROM forge_cp_eval_scenes WHERE workflow_id = $1 AND trial = $2 AND scene_index = $3',
+        [input.workflow_id, input.trial ?? 1, input.scene_index],
       );
       return rowToScene(existing.rows[0]!);
     }
@@ -756,7 +790,7 @@ export class PgCpResultsBackend implements CpResultsBackend {
 
   async listScenes(workflowId: string): Promise<EvalScene[]> {
     const r = await this.pool.query<SceneRow>(
-      'SELECT * FROM forge_cp_eval_scenes WHERE workflow_id = $1 ORDER BY scene_index',
+      'SELECT * FROM forge_cp_eval_scenes WHERE workflow_id = $1 ORDER BY trial, scene_index',
       [workflowId],
     );
     return r.rows.map(rowToScene);
