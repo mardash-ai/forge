@@ -1611,3 +1611,52 @@ describe('scene evidence reaches the drilldown', () => {
     expect(routes).toContain('scenes_rejected');
   });
 });
+
+describe('a run can be stopped', () => {
+  // ⛔ Mark, 2026-08-14: "there is no way to stop a run that has already started… I'm wasting money
+  // right now." An expensive action a product can START and cannot STOP is not finished.
+  const src = readFileSync(join(__dirname, '..', 'src', 'console', 'server.ts'), 'utf8');
+  const ui = readFileSync(join(__dirname, '..', 'console', 'src', 'App.tsx'), 'utf8');
+
+  it('exposes POST /api/e2e/runs/:run_id/stop', () => {
+    expect(src).toContain("app.post('/api/e2e/runs/:run_id/stop'");
+  });
+
+  it('⛔ marks the run aborted, never completed', () => {
+    // Slice from the handler's own body, not a guessed range — neighbouring handlers were bleeding
+    // into the window and making the negative assertion meaningless.
+    const start = src.indexOf("app.post('/api/e2e/runs/:run_id/stop'");
+    const handler = src.slice(start, start + 3000);
+    expect(handler).toMatch(/status: 'aborted'/);
+    expect(handler).toMatch(/stopped_by: actor/);
+  });
+
+  it('is an audited write, like every other consequential action', () => {
+    expect(src).toContain("'e2e.run.stop'");
+    // Declared in the audited-write table so the guard test covers it.
+    expect(src).toContain("'/api/e2e/runs/:run_id/stop',");
+  });
+
+  it('refuses to "stop" a run that is not running, with 409', () => {
+    const start = src.indexOf("app.post('/api/e2e/runs/:run_id/stop'");
+    const handler = src.slice(start, start + 3000);
+    expect(handler).toMatch(/nothing to stop/);
+    expect(handler).toMatch(/not_running/);
+  });
+
+  it('the UI offers Stop on both the list and the detail view, only while running', () => {
+    expect(ui).toContain('handleStopRun');
+    expect(ui).toContain('■ Stop run'); // detail
+    expect(ui).toContain("'■ Stop'"); // list row
+    expect(ui).toMatch(/window\.confirm\(/); // stopping a real 40-minute run by mis-click is costly too
+  });
+
+  it('⛔ a stopped run reads "stopped", not the success colour', () => {
+    const start = ui.indexOf("r.status === 'aborted'");
+    const cell = ui.slice(start, start + 1200);
+    expect(cell).toContain('⊘ stopped');
+    expect(cell).toContain('--warn-text');
+    // It names who stopped it — an abandoned run should say whose decision that was.
+    expect(cell).toContain('stopped_by');
+  });
+});

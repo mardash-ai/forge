@@ -23,20 +23,20 @@ describe('E2E tile sub-lines never invent a fraction', () => {
     expect(out).toBe('nothing attempted');
   });
 
-  it('does not claim a percentage when the catalogue size is unknown', () => {
+  it('says the planned count was not reported, rather than inventing one', () => {
     const out = fmtE2ePctOfCatalogue(run({ workflows_attempted: 12, meta: {} }));
-    expect(out).not.toMatch(/%/);
-    expect(out).toBe('catalogue size unknown');
+    expect(out).toBe('planned count not reported');
   });
 
-  it('still reports a real fraction when both numbers are known', () => {
+  it('still resolves when only the legacy catalogue_size is present', () => {
+    // Kept as a fallback so historical rows written before `workflows_intended` still render.
     const out = fmtE2ePctOfCatalogue(run({ workflows_attempted: 38, meta: { catalogue_size: 76 } }));
-    expect(out).toBe('50% of catalogue');
+    expect(out).toBe('38 of 76 · 38 to go');
   });
 
-  it('treats a zero catalogue_size as unknown rather than as a full catalogue', () => {
+  it('treats a zero count as unreported rather than as a full catalogue', () => {
     const out = fmtE2ePctOfCatalogue(run({ workflows_attempted: 5, meta: { catalogue_size: 0 } }));
-    expect(out).toBe('catalogue size unknown');
+    expect(out).toBe('planned count not reported');
   });
 
   it('reports an absent run as unknown, not as a complete one', () => {

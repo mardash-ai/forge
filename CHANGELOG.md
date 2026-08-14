@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.34.0] - 2026-08-14
+
+### Added
+
+- **A run can be stopped.** `POST /api/e2e/runs/:run_id/stop` cancels the Cloud Run execution and
+  marks the run **`aborted`** — never `completed`, because a run someone killed did not finish and
+  showing it beside real results would present unearned outcomes as earned. Until now the only way
+  to halt a run was an operator with gcloud access, so a full catalogue started by mistake burned
+  provider credit until it finished (Mark, 2026-08-14: "I'm wasting money right now"). An expensive
+  action a product can start and cannot stop is not finished. Available on both the list row and the
+  run detail, confirmed before firing, audited as `e2e.run.stop`, and rendered `⊘ stopped · <who>`.
+
+### Fixed
+
+- **"catalogue size unknown" on every run.** The Attempted tile read `meta.catalogue_size`, which
+  only ever existed in a test fixture; the runner reports `workflows_intended`. Two names for one
+  fact, so the tile could never resolve it. It now reads the reported field (falling back to the
+  legacy name for historical rows) and says what is LEFT — `4 of 12 · 8 to go` — because the
+  operator's question during a run is "how much more", not "what percentage".
+
+
 ## [1.33.0] - 2026-08-14
 
 ### Added

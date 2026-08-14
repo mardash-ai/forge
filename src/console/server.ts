@@ -21,6 +21,7 @@ import { timingSafeEqual, createHmac, randomBytes, createVerify, createPublicKey
 
 import { envelope, type Finding, type MetricIntent, type QuotaGauge, type Revision } from './domain';
 import { registerIngestRoutes } from '../api/ingest-routes';
+import { cancelExecution } from '../plugins/console-gcp/jobs';
 import {
   queryListRuns,
   queryGetRun,
@@ -535,6 +536,8 @@ export const WRITE_ROUTES = [
   // Same authorization as the trigger: OIDC session only (automation token is read-only).
   // Audit row is written BEFORE the delete attempt.
   '/api/e2e/runs/:run_id',
+  // Stopping a run is a spend control and an audited write — who killed which run, and when.
+  '/api/e2e/runs/:run_id/stop',
   // ── The Data section. Every one of these changes a real account or a real tenant's data, so
   // every one of them is audited BY CONSTRUCTION: this list is what the guard test checks a
   // mutating route against, and an unlisted POST/DELETE fails the build rather than shipping.
@@ -2013,6 +2016,69 @@ export function buildServer(
       execution_name: execution.execution_name,
       trigger_source: triggerSource,
     });
+  });
+
+  // ── E2E run STOP — POST /api/e2e/runs/:run_id/stop ────────────────────────────────────────────
+  //
+  // ⛔ A SPEND CONTROL. Before this existed, a run started by mistake — wrong scope, a full
+  // catalogue when one workflow was meant — could only be watched while it burned provider credit,
+  // and the only way to stop it was an operator with gcloud access (Mark, 2026-08-14: "there is no
+  // way to stop a run that has already started… I'm wasting money right now"). An expensive action
+  // a product can start and cannot stop is not finished.
+  //
+  // The stopped run is marked `aborted`, NEVER `completed`: a run someone killed did not finish, and
+  // recording it as if it did would put unearned results next to real ones.
+  app.post('/api/e2e/runs/:run_id/stop', async (req, reply) => {
+    const store = await evalStoreGetter();
+    if (!store) return reply.code(501).send(NOT_CONFIGURED);
+
+    const { run_id } = req.params as { run_id: string };
+    const existing = await store.getRun(run_id);
+    if (!existing) {
+      return reply.code(404).send({
+        error: { code: 'not_found', message: `Run "${run_id}" not found`, retry: 'no' as const },
+      });
+    }
+
+    const actor = actorOf(req);
+    let notRunning = false;
+    try {
+      const result = await audited(actor, 'e2e.run.stop', run_id, async () => {
+        // Stopping a finished run is a no-op the caller should hear about, not a silent success.
+        if (existing.status !== 'running') {
+          notRunning = true;
+          throw new Error(`run ${run_id} is already ${existing.status} — nothing to stop`);
+        }
+        const executionName = (existing.meta as { execution_name?: string } | null)?.execution_name;
+        if (!executionName) {
+          throw new Error(`run ${run_id} has no recorded execution — cannot stop what cannot be named`);
+        }
+        const cancelled = await cancelExecution(executionName);
+        // Mark aborted even when the API refuses: the execution may have finished between the
+        // operator's click and this call, and leaving the row 'running' forever is the worse error.
+        await store.updateRun(run_id, {
+          status: 'aborted',
+          completed_at: new Date().toISOString(),
+          meta: {
+            ...(existing.meta ?? {}),
+            stopped_by: actor,
+            stopped_at: new Date().toISOString(),
+            ...(cancelled.reason ? { stop_error: cancelled.reason } : {}),
+          },
+        });
+        return cancelled;
+      });
+      return reply.send(envelope({ run_id, stopped: true, cancelled: result.cancelled }));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return reply.code(notRunning ? 409 : 500).send({
+        error: {
+          code: notRunning ? 'not_running' : 'stop_failed',
+          message,
+          retry: 'no' as const,
+        },
+      });
+    }
   });
 
   // ── E2E run delete — DELETE /api/e2e/runs/:run_id ─────────────────────────────────────────────

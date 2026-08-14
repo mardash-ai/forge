@@ -6492,6 +6492,42 @@ function Evals() {
     navigator.clipboard.writeText(JSON.stringify(wfResult, null, 2)).catch(() => {});
   };
 
+  const [stopInFlight, setStopInFlight] = useState<string | null>(null);
+  const [stopError, setStopError] = useState<string | null>(null);
+
+  /**
+   * Stop a run that is in flight.
+   *
+   * ⛔ A SPEND control. Until this existed the only way to halt a run was an operator with gcloud
+   * access — so a full catalogue started by mistake burned credit until it finished (Mark,
+   * 2026-08-14). Confirmed before firing, because stopping a legitimate 40-minute run by mis-click
+   * is its own expensive mistake.
+   */
+  const handleStopRun = async (runId: string) => {
+    if (
+      !window.confirm(
+        `Stop run ${runId}?\n\nThe execution is cancelled immediately and the run is marked ` +
+          `aborted — not completed. Work already done is kept; nothing further runs.`,
+      )
+    )
+      return;
+    setStopInFlight(runId);
+    setStopError(null);
+    try {
+      const res = await fetch(`/api/e2e/runs/${encodeURIComponent(runId)}/stop`, { method: 'POST' });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+        throw new Error(body?.error?.message ?? `Stop failed (${res.status})`);
+      }
+      runsApi.reload();
+      detailApi.reload();
+    } catch (e) {
+      setStopError((e as Error).message);
+    } finally {
+      setStopInFlight(null);
+    }
+  };
+
   const handleDeleteRun = async (runId: string) => {
     setDeleteInFlight(true);
     setDeleteError(null);
@@ -6766,8 +6802,24 @@ function Evals() {
                             ) : null}
                           </span>
                         ) : r.status === 'aborted' ? (
-                          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>
-                            ⊘ aborted
+                          // A stopped run reads STOPPED and names who stopped it — muted, never the
+                          // success colour. A run someone killed did not finish, and showing it in
+                          // green next to real results would put unearned outcomes beside earned ones.
+                          <span
+                            style={{ fontSize: 12, color: 'var(--warn-text)', fontWeight: 600 }}
+                            title={
+                              (r.meta as { stopped_by?: string } | null)?.stopped_by
+                                ? `stopped by ${(r.meta as { stopped_by: string }).stopped_by}`
+                                : 'stopped before it finished'
+                            }
+                          >
+                            ⊘ stopped
+                            {(r.meta as { stopped_by?: string } | null)?.stopped_by ? (
+                              <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+                                {' · '}
+                                {(r.meta as { stopped_by: string }).stopped_by}
+                              </span>
+                            ) : null}
                           </span>
                         ) : r.status === 'completed' ? (
                           <span style={{ fontSize: 12, color: 'var(--ok-text)', fontWeight: 600 }}>
@@ -6827,6 +6879,29 @@ function Evals() {
                         style={{ ...cell, padding: '4px 8px', width: 48, textAlign: 'center' }}
                         onClick={(e) => e.stopPropagation()}
                       >
+                        {r.status === 'running' && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleStopRun(r.run_id);
+                            }}
+                            disabled={stopInFlight === r.run_id}
+                            title={`Stop run ${r.run_id} — cancels the execution and marks it aborted`}
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 600,
+                              color: 'var(--warn-text)',
+                              border: '1px solid var(--line-strong)',
+                              borderRadius: 'var(--r-sm)',
+                              padding: '2px 8px',
+                              marginRight: 6,
+                              background: 'transparent',
+                              cursor: stopInFlight === r.run_id ? 'wait' : 'pointer',
+                            }}
+                          >
+                            {stopInFlight === r.run_id ? '…' : '■ Stop'}
+                          </button>
+                        )}
                         <button
                           title={
                             r.status === 'running'
@@ -7112,8 +7187,34 @@ function Evals() {
           place with the most context about a run was the one place that stopped telling you it was
           still moving. Same component, same counter-driven data, no interpolation. */}
       {activeRun?.status === 'running' && (
-        <div style={{ marginBottom: 12 }}>
-          <RunProgressBar run={activeRun} />
+        <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <RunProgressBar run={activeRun} />
+          </div>
+          {/* The page you open to WATCH a run is the page that must be able to stop it. */}
+          <button
+            onClick={() => void handleStopRun(activeRun.run_id)}
+            disabled={stopInFlight === activeRun.run_id}
+            title="Stop this run — cancels the execution and marks it aborted"
+            style={{
+              fontSize: 12.5,
+              fontWeight: 650,
+              color: 'var(--warn-text)',
+              border: '1px solid var(--line-strong)',
+              borderRadius: 'var(--r-sm)',
+              padding: '4px 12px',
+              background: 'transparent',
+              whiteSpace: 'nowrap',
+              cursor: stopInFlight === activeRun.run_id ? 'wait' : 'pointer',
+            }}
+          >
+            {stopInFlight === activeRun.run_id ? 'stopping…' : '■ Stop run'}
+          </button>
+        </div>
+      )}
+      {stopError && (
+        <div role="alert" style={{ marginBottom: 12, fontSize: 12.5, color: 'var(--crit-text)' }}>
+          Stop failed: {stopError}
         </div>
       )}
 

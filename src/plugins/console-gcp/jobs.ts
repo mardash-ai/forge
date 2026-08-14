@@ -126,3 +126,31 @@ export async function getExecutionState(
     return { state: 'unknown', message: (e as Error).message };
   }
 }
+
+/**
+ * Cancel a running Cloud Run job execution.
+ *
+ * ⛔ This is a SPEND control, not a convenience. Before it existed, a run started by mistake — the
+ * wrong scope, a full catalogue when one workflow was meant — could only be watched until it
+ * finished, burning provider credit the whole way (Mark, 2026-08-14: "I'm wasting money right now").
+ * The only way to stop one was an operator with gcloud access, which is not a product.
+ *
+ * Cancellation is idempotent from the caller's side: an execution that has already finished returns
+ * an error from the API, and the caller treats that as "nothing left to stop" rather than a failure.
+ */
+export async function cancelExecution(
+  executionName: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<{ cancelled: boolean; reason?: string }> {
+  try {
+    await gcpJson({
+      url: `${RUN_V2}/${executionName}:cancel`,
+      method: 'POST',
+      body: {},
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    });
+    return { cancelled: true };
+  } catch (e) {
+    return { cancelled: false, reason: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}

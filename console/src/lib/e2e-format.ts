@@ -12,7 +12,13 @@ export interface E2ERunCounts {
   workflows_attempted?: number | null;
   workflows_passed?: number | null;
   withheld_count?: number | null;
-  meta?: { catalogue_size?: number } | null;
+  /**
+   * `workflows_intended` is what the RUNNER reports — how many workflows this run set out to
+   * execute, known before the first one starts. `catalogue_size` was the name the UI read and
+   * nothing ever wrote (it existed only in a fixture), so every real run rendered
+   * "catalogue size unknown" while the count sat in the payload under the other name.
+   */
+  meta?: { workflows_intended?: number; catalogue_size?: number } | null;
 }
 
 /**
@@ -24,11 +30,14 @@ export interface E2ERunCounts {
  */
 export function fmtE2ePctOfCatalogue(run: E2ERunCounts | null | undefined): string {
   if (!run) return '—';
-  const catalogue = run.meta?.catalogue_size;
+  const planned = run.meta?.workflows_intended ?? run.meta?.catalogue_size;
   const attempted = run.workflows_attempted ?? 0;
   if (attempted <= 0) return 'nothing attempted';
-  if (!catalogue || catalogue <= 0) return 'catalogue size unknown';
-  return `${Math.round((attempted / catalogue) * 100)}% of catalogue`;
+  if (!planned || planned <= 0) return 'planned count not reported';
+  // Say what is LEFT, not only a percentage — the operator's question during a run is "how much
+  // more", and a bare percentage makes them do the arithmetic (Mark, 2026-08-14).
+  const remaining = Math.max(0, planned - attempted);
+  return remaining > 0 ? `${attempted} of ${planned} · ${remaining} to go` : `${attempted} of ${planned}`;
 }
 
 /** Accepted tile sub-line — the mock's "57% of runnable" (runnable excludes withheld). */
