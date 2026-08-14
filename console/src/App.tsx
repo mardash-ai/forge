@@ -5145,14 +5145,7 @@ function withheldBreakdown(run: E2ERun): Array<{ reason: string; count: number }
 
 function buildE2eTriagePrompt(run: E2ERun, workflows: E2EWorkflow[]): string {
   const failures = workflows.filter((w) => w.verdict === 'fail' || w.verdict === 'error');
-  const failureList = failures.map((w) => `  × ${w.workflow_id}
-                          {/* The code alone is unreadable — `W-001:openai` says nothing about
-                              what was tested. The title rides on meta.name. */}
-                          {(w.meta as { name?: string } | null)?.name ? (
-                            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                              {(w.meta as { name: string }).name}
-                            </div>
-                          ) : null}  —  ${w.prompt ?? ''}`).join('\n');
+  const failureList = failures.map((w) => `  × ${w.workflow_id}  —  ${w.prompt ?? ''}`).join('\n');
   const bd = withheldBreakdown(run);
   return `Triage E2E run ${run.run_id} (remote/${run.provider ?? 'openai'}, api ${(run.meta.api_version as string) ?? ''}).
 Top-line: ${run.workflows_attempted} attempted · ${run.workflows_passed} accepted · ${run.workflows_failed} rejected · ${run.withheld_count} withheld.
@@ -7605,6 +7598,24 @@ function Evals() {
                         >
                           {wf.workflow_id}
                         </span>
+                        {/* The code alone is unreadable — `W-001:openai` says nothing about what was
+                            tested, and nobody remembers 76 of them (Mark, 2026-08-14). The title
+                            rides on meta.name; the row keeps the code as the stable identifier. */}
+                        {(wf.meta as { name?: string } | null)?.name && (
+                          <span
+                            style={{
+                              display: 'block',
+                              fontSize: 12,
+                              color: 'var(--text-secondary)',
+                              marginTop: 2,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {(wf.meta as { name: string }).name}
+                          </span>
+                        )}
                         {wf.prompt && (
                           <span
                             style={{

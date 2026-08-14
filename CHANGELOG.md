@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.35.1] - 2026-08-14
+
+### Fixed
+
+- **The workflow name landed in the wrong place.** A pattern-matched edit hit `w.workflow_id` inside
+  a template literal (the failure-list string) rather than the JSX table cell, injecting markup into
+  a string. It typechecked — the string was still valid TypeScript — and `prettier` caught what the
+  type system could not. The name now renders under the code in the workflow table, where it belongs.
+
+
 ## [1.35.0] - 2026-08-14
 
 ### Added
