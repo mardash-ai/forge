@@ -5983,12 +5983,51 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
   //
   // Note `?? ` does not help here: `0 ?? 75` is 0. Absence and zero must both read as UNKNOWN, and
   // unknown must be shown as unknown — never as a number the operator can act on.
-  const lastAttempted = runs[0]?.workflows_attempted;
-  const lastSpendCents = runs[0]?.spend_cents;
-  const catalogue: number | null =
-    typeof lastAttempted === 'number' && lastAttempted > 0 ? lastAttempted : null;
+  // ⛔ THE COMMENT ABOVE WAS RIGHT AND THE CODE BELOW IT WAS NOT. Until 2026-08-14 this read
+  //     const catalogue = runs[0]?.workflows_attempted
+  // — precisely the run-history inference the paragraph above condemns. It looked correct for weeks
+  // because the previous run was usually a full one; then two 2-workflow verification runs made the
+  // modal offer "Full catalogue — 2 workflows · Estimated spend $0.16" for a 76-workflow, ~$5,
+  // 75-minute run, above a checkbox reading "I confirm: spend approximately $0.16". The RUN itself
+  // was correct — "Full catalogue" posts `suite: "full"` and the count never enters the payload —
+  // so nothing downstream would have caught it. Only the operator's consent was wrong, which is the
+  // one thing this dialog exists to get right. Mark caught it on sight.
+  //
+  // The catalogue's size is now reported BY the catalogue: forge-hat counts suites/full.yaml and
+  // sends `catalogue_size` on every run, so any recent run carries a usable answer whatever scope it
+  // ran. Absent = genuinely unknown, and unknown is shown as unknown.
+  const catalogueFromMeta = runs
+    .map((r) => (r.meta as { catalogue_size?: unknown } | undefined)?.catalogue_size)
+    .find((v) => typeof v === 'number' && v > 0) as number | undefined;
+  const catalogue: number | null = typeof catalogueFromMeta === 'number' ? catalogueFromMeta : null;
+
+  // Price per workflow, from the most recent run that actually has both numbers — then scaled to the
+  // catalogue. Using a previous run's TOTAL spend as the full-catalogue estimate is the same
+  // history-inference error wearing different clothes: a 2-workflow run's $0.16 is not what 76
+  // workflows cost.
+  const priced = runs.find(
+    (r) =>
+      typeof r.spend_cents === 'number' &&
+      r.spend_cents > 0 &&
+      typeof r.workflows_attempted === 'number' &&
+      r.workflows_attempted > 0,
+  );
+  const centsPerWorkflow: number | null = priced ? priced.spend_cents / priced.workflows_attempted : null;
+  // Measured wall clock per workflow — the honest basis for "how long will this take".
+  const timed = runs.find(
+    (r) =>
+      r.started_at &&
+      r.completed_at &&
+      typeof r.workflows_attempted === 'number' &&
+      r.workflows_attempted > 0,
+  );
+  const secsPerWorkflow: number | null = timed
+    ? (new Date(timed.completed_at as string).getTime() - new Date(timed.started_at).getTime()) /
+      1000 /
+      (timed.workflows_attempted as number)
+    : null;
   const fullSpendCents: number | null =
-    typeof lastSpendCents === 'number' && lastSpendCents > 0 ? Math.round(lastSpendCents) : null;
+    centsPerWorkflow !== null && catalogue !== null ? Math.round(centsPerWorkflow * catalogue) : null;
 
   const namedCount =
     namedText
@@ -6201,13 +6240,14 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
           {estimateKnown ? (
             <>
               Estimated spend: <span className="num">{fmtE2eSpend(costCents!)}</span> ·{' '}
-              {fmtE2eRunDuration(scope, namedCount)} · runs in Cloud Run, tenant lock honored
+              {fmtE2eRunDuration(scope, namedCount, catalogue, secsPerWorkflow)} · runs in Cloud Run, tenant
+              lock honored
             </>
           ) : (
             <>
               Estimated spend: <span className="num">not known yet</span> — no run has published to the store,
-              so there is nothing to estimate from. The full catalogue has historically cost around $1 and
-              taken ~40 min. Runs in Cloud Run, tenant lock honored.
+              so there is nothing to estimate from. As of 2026-08-14 the full catalogue is 76 workflows and
+              measured about $5 and 75 minutes. Runs in Cloud Run, tenant lock honored.
             </>
           )}
         </div>

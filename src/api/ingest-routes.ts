@@ -164,6 +164,8 @@ export async function verifyGoogleServiceToken(
 export interface RunProgressPayload {
   run_id: string;
   workflows_intended?: number;
+  /** Size of the FULL catalogue, independent of this run's scope — the run modal prices against it. */
+  catalogue_size?: number;
   /**
    * Per-workflow rows for the run's drilldown table.
    *
@@ -388,6 +390,12 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
     const metaUpdate: Record<string, unknown> = {
       runner_sa: claims.email,
     };
+    if (typeof body.catalogue_size === 'number' && body.catalogue_size > 0) {
+      // Deliberately separate from workflows_intended. The modal must price "Full catalogue" from
+      // the CATALOGUE; pricing it from the last run's scope offered "2 workflows · $0.16" for a
+      // 76-workflow run on 2026-08-14 — wrong toward zero, above a confirmation checkbox.
+      metaUpdate['catalogue_size'] = body.catalogue_size;
+    }
     if (typeof body.workflows_intended === 'number') {
       metaUpdate['workflows_intended'] = body.workflows_intended;
     }

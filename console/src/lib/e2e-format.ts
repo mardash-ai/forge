@@ -77,8 +77,27 @@ export function fmtE2eFullScopeLabel(catalogueSize: number | null | undefined): 
  *   fmtE2eRunDuration('named',  1) → "~1 min"
  *   fmtE2eRunDuration('named',  3) → "~3 min"
  */
-export function fmtE2eRunDuration(scope: 'full' | 'suite' | 'named', namedCount: number): string {
-  if (scope === 'named') return `~${namedCount} min`;
-  if (scope === 'suite') return '~20 min';
-  return '~40 min';
+/**
+ * How long a run of this scope should take.
+ *
+ * ⛔ `full` used to return a hardcoded `~40 min`. Six measured runs on 2026-08-14 averaged ~58s of
+ * WALL CLOCK per workflow, and the catalogue is 76 — about 73 minutes. The modal was therefore
+ * understating a full run by nearly half, next to a spend figure that was understating it by 30x,
+ * above the checkbox where the operator gives consent. Both now derive from what runs actually did.
+ *
+ * `secsPerWorkflow` and `catalogue` are optional: when either is unknown the estimate says so
+ * rather than substituting a number nobody measured.
+ */
+export function fmtE2eRunDuration(
+  scope: 'full' | 'suite' | 'named',
+  namedCount: number,
+  catalogue?: number | null,
+  secsPerWorkflow?: number | null,
+): string {
+  const perWf = typeof secsPerWorkflow === 'number' && secsPerWorkflow > 0 ? secsPerWorkflow : null;
+  const mins = (n: number) => `~${Math.max(1, Math.round((n * (perWf ?? 0)) / 60))} min`;
+  if (scope === 'named') return perWf ? mins(namedCount) : `~${namedCount} min`;
+  if (scope === 'suite') return perWf ? mins(20) : '~20 min';
+  if (perWf && typeof catalogue === 'number' && catalogue > 0) return mins(catalogue);
+  return 'duration not yet measured';
 }

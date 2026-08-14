@@ -145,3 +145,40 @@ describe('operator-facing vocabulary', () => {
     expect(APP).toMatch(/attempt\{/);
   });
 });
+
+describe('the run modal prices the CATALOGUE, not the last run', () => {
+  const code = codeOnly(APP);
+
+  it('⛔ never derives the catalogue size from a previous run’s scope', () => {
+    // 2026-08-14: `const catalogue = runs[0]?.workflows_attempted` sat directly beneath a comment
+    // explaining why that is wrong. It read correctly while every run happened to be full, then two
+    // 2-workflow verification runs made the modal offer "Full catalogue — 2 workflows · $0.16" for a
+    // 76-workflow, ~$5, 75-minute run — above a checkbox reading "I confirm: spend approximately
+    // $0.16". The RUN was correct (`suite: "full"` never uses the count), so nothing downstream
+    // could have caught it. Only consent was wrong, which is the one thing this dialog is for.
+    expect(code).not.toMatch(/catalogue\s*(:[^=]*)?=\s*(typeof\s+)?lastAttempted/);
+    expect(code).not.toMatch(/catalogue[^=\n]*=\s*runs\[0\]\?\.workflows_attempted/);
+  });
+
+  it('reads the size the catalogue reports about itself', () => {
+    // ⛔ This first read `expect(code).toMatch(/catalogue_size/)` and passed against the BROKEN
+    // modal — because a dev fixture contains `catalogue_size: 75`. A guard satisfied by sample data
+    // certifies coverage it never looked at, which is the same failure as the completeness check
+    // that skipped every column with a digit in it. Assert the actual binding, fixtures excluded.
+    const body = withoutFixtures(APP);
+    expect(body).toMatch(/catalogueFromMeta/);
+    expect(body).toMatch(/\.catalogue_size/);
+  });
+
+  it('scales spend per workflow rather than reusing a run’s total', () => {
+    // A 2-workflow run's $0.16 is not what 76 workflows cost — the same inference error in a
+    // different coat.
+    expect(code).toMatch(/centsPerWorkflow/);
+    expect(code).toMatch(/centsPerWorkflow[^;]*\*\s*catalogue/);
+  });
+
+  it('⛔ shows unknown as unknown, never as a figure', () => {
+    // A count nobody can vouch for must not reach a confirmation checkbox.
+    expect(APP).toMatch(/not known yet/);
+  });
+});

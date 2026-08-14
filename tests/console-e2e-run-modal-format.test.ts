@@ -59,9 +59,21 @@ describe('fmtE2eFullScopeLabel — scope label never renders a raw null', () => 
 });
 
 describe('fmtE2eRunDuration — spend estimate scales with the selection', () => {
-  it('returns ~40 min for a full-catalogue run', () => {
-    // The full catalogue has historically taken ~40 min — this must not regress.
-    expect(fmtE2eRunDuration('full', 1)).toBe('~40 min');
+  it('⛔ says the duration is unmeasured rather than inventing ~40 min', () => {
+    // This test used to assert `~40 min` and so PINNED THE BUG. That figure was a guess written
+    // into the source; six measured runs on 2026-08-14 averaged ~58s of wall clock per workflow,
+    // which over 76 workflows is ~73 minutes. The modal was understating a full run by nearly half,
+    // beside a spend figure understating it by 30x, above the checkbox where consent is given.
+    //
+    // A test that locks in an unmeasured number turns a guess into a requirement.
+    expect(fmtE2eRunDuration('full', 1)).toBe('duration not yet measured');
+  });
+
+  it('derives the full-catalogue duration from the catalogue and the measured rate', () => {
+    // 76 workflows x 58s = 4408s = ~73 min.
+    expect(fmtE2eRunDuration('full', 1, 76, 58)).toBe('~73 min');
+    // A bigger catalogue costs proportionally more time — the estimate tracks reality.
+    expect(fmtE2eRunDuration('full', 1, 152, 58)).toBe('~147 min');
   });
 
   it('returns ~20 min for a suite run, not the catalogue ~40 min', () => {
