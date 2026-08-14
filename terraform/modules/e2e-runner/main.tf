@@ -334,6 +334,37 @@ resource "google_secret_manager_secret" "test_control_token" {
   # See PROVIDER_ACCOUNTS.md for the minting procedure.
 }
 
+# ---------------------------------------------------------------------------
+# Dorinda tenant credentials — email + password (enduring).
+#
+# The runner uses these to mint a forge_session at run start via the Dorinda
+# auth surface. The session itself is short-lived and is NEVER stored anywhere
+# — only the enduring email + password live in Secret Manager, mirroring the
+# DORINDA_MCP_TOKEN mint pattern.
+# ---------------------------------------------------------------------------
+
+resource "google_secret_manager_secret" "dorinda_email" {
+  project   = var.project_id
+  secret_id = "${var.name}-dorinda-email"
+  replication {
+    auto {}
+  }
+  # DORINDA_EMAIL — Dorinda tenant email address. Enduring credential; the
+  # runner reads it at startup to mint a short-lived forge_session. The session
+  # itself is never stored. See PROVIDER_ACCOUNTS.md for the minting note.
+}
+
+resource "google_secret_manager_secret" "dorinda_password" {
+  project   = var.project_id
+  secret_id = "${var.name}-dorinda-password"
+  replication {
+    auto {}
+  }
+  # DORINDA_PASSWORD — Dorinda tenant password. Enduring credential; used
+  # alongside DORINDA_EMAIL to mint a forge_session at run start. The session
+  # itself is never stored. See PROVIDER_ACCOUNTS.md for the minting note.
+}
+
 # Placeholder versions for OOB secrets — Cloud Run v2 requires ALL referenced secrets to have
 # at least one version before the job resource can be created (the API validates existence of
 # version "latest" at creation time). These placeholder versions allow bootstrapping; operators
@@ -420,6 +451,32 @@ resource "google_secret_manager_secret_version" "test_control_token" {
   }
 }
 
+resource "google_secret_manager_secret_version" "dorinda_email" {
+  secret      = google_secret_manager_secret.dorinda_email.id
+  secret_data = "PLACEHOLDER_REPLACE_WITH_DORINDA_EMAIL"
+
+  lifecycle {
+    # Operator sets the real tenant email:
+    #   printf '%s' 'user@example.com' | gcloud secrets versions add e2e-runner-dorinda-email \
+    #     --project dorinda-prod --data-file=-
+    # The forge_session minted from this email is short-lived and never stored.
+    ignore_changes = [secret_data]
+  }
+}
+
+resource "google_secret_manager_secret_version" "dorinda_password" {
+  secret      = google_secret_manager_secret.dorinda_password.id
+  secret_data = "PLACEHOLDER_REPLACE_WITH_DORINDA_PASSWORD"
+
+  lifecycle {
+    # Operator sets the real tenant password:
+    #   printf '%s' '<password>' | gcloud secrets versions add e2e-runner-dorinda-password \
+    #     --project dorinda-prod --data-file=-
+    # The forge_session minted from this password is short-lived and never stored.
+    ignore_changes = [secret_data]
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Service account (least-privilege): reads only the secrets it needs
 # ---------------------------------------------------------------------------
@@ -499,6 +556,22 @@ resource "google_secret_manager_secret_iam_member" "runner_test_control_token" {
   member    = "serviceAccount:${google_service_account.runner.email}"
 }
 
+# Dorinda tenant credentials — scoped to this job's own secrets only (same least-privilege
+# pattern as all other e2e-runner-* secrets; no project-level secretAccessor granted).
+resource "google_secret_manager_secret_iam_member" "runner_dorinda_email" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.dorinda_email.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runner.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "runner_dorinda_password" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.dorinda_password.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runner.email}"
+}
+
 # Cloud SQL Client role: required for direct private-IP connections on Cloud SQL v2.
 # The SA does NOT need cloudsql.instanceUser (direct-IP path; no Auth Proxy involved).
 resource "google_project_iam_member" "runner_sql_client" {
@@ -563,6 +636,8 @@ resource "google_cloud_run_v2_job" "runner" {
     google_secret_manager_secret_version.mcp_refresh_token,
     google_secret_manager_secret_version.mcp_client_id,
     google_secret_manager_secret_version.test_control_token,
+    google_secret_manager_secret_version.dorinda_email,
+    google_secret_manager_secret_version.dorinda_password,
   ]
 
   template {
@@ -708,6 +783,29 @@ resource "google_cloud_run_v2_job" "runner" {
         env {
           name  = "DORINDA_TEST_TENANT"
           value = var.tenant
+        }
+
+        # Dorinda tenant credentials — used to mint a forge_session at run start.
+        # Only the enduring email + password are stored; the session itself is
+        # short-lived and never written to Secret Manager or any durable store.
+        env {
+          name = "DORINDA_EMAIL"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.dorinda_email.secret_id
+              version = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "DORINDA_PASSWORD"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.dorinda_password.secret_id
+              version = "latest"
+            }
+          }
         }
 
         # HAT_EXTRACTOR_MODEL — pinned deliberately. `hat verify` fails I4 when this is unset:

@@ -34,6 +34,18 @@
       "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '(.spec.template.spec.template.spec.containers[0] | has(\"command\") | not) or (.spec.template.spec.template.spec.containers[0].command == null)' > /dev/null",
       "cwd": ".",
       "note": "the job does not override the image entrypoint \u2014 forge-hat declares how it starts"
+    },
+    {
+      "kind": "command",
+      "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '[.spec.template.spec.template.spec.containers[0].env[] | select(.name == \"DORINDA_EMAIL\") | .valueSource.secretKeyRef.secret] | first == \"e2e-runner-dorinda-email\"' > /dev/null",
+      "cwd": ".",
+      "note": "DORINDA_EMAIL is wired from e2e-runner-dorinda-email secret in the live job env"
+    },
+    {
+      "kind": "command",
+      "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '[.spec.template.spec.template.spec.containers[0].env[] | select(.name == \"DORINDA_PASSWORD\") | .valueSource.secretKeyRef.secret] | first == \"e2e-runner-dorinda-password\"' > /dev/null",
+      "cwd": ".",
+      "note": "DORINDA_PASSWORD is wired from e2e-runner-dorinda-password secret in the live job env"
     }
   ]
 }

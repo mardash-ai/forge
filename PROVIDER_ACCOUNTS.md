@@ -117,6 +117,8 @@ complete list.
 | `e2e-runner-mcp-refresh-token` | **OAuth authorization_code flow (OOB)** | OAuth refresh token issued by dorinda MCP server | `DORINDA_MCP_REFRESH_TOKEN` | Durable credential the harness uses to mint fresh short-lived MCP access tokens. **Minted by**: (1) run `hat register --app dorinda` to complete DCR + authorization_code flow as a human; (2) store the resulting `refresh_token` in this secret. See forge-hat runbook. |
 | `e2e-runner-mcp-client-id` | **DCR on dorinda MCP server (OOB)** | Client ID assigned during Dynamic Client Registration (e.g. `mcpc_…`) | `DORINDA_MCP_CLIENT_ID` | OAuth client identifier paired with the refresh token above. **Minted by** the same `hat register` flow as `mcp-refresh-token`; store the `client_id` from the DCR response. |
 | `e2e-runner-test-control-token` | Operator (OOB) | Dorinda test-control surface token (`x-dorinda-test-token` header) | `DORINDA_TEST_CONTROL_TOKEN` | Authenticates `hat remote` to `POST /api/test/tenants` and related test-tenant endpoints. **Minted by**: generate or copy the token that dorinda's test-control surface expects, then `printf '%s' '<token>' \| gcloud secrets versions add …` |
+| `e2e-runner-dorinda-email` | Operator (OOB) | Dorinda tenant email address | `DORINDA_EMAIL` | **NEW (2026-08-13).** Enduring credential — the runner reads this at startup and mints a `forge_session` via the Dorinda auth surface. **The session itself is short-lived and is never stored anywhere.** Only the email (an enduring credential) lives in Secret Manager. |
+| `e2e-runner-dorinda-password` | Operator (OOB) | Dorinda tenant password | `DORINDA_PASSWORD` | **NEW (2026-08-13).** Enduring credential — used alongside `DORINDA_EMAIL` to mint a `forge_session` at run start. **The session itself is short-lived and is never stored anywhere.** Only the password (an enduring credential) lives in Secret Manager. |
 
 #### Setting out-of-band secrets after first apply
 
@@ -145,6 +147,16 @@ printf '%s' 'mcpc_...' | gcloud secrets versions add e2e-runner-mcp-client-id \
 # Test-control token — must match what dorinda's /api/test/tenant/* routes expect.
 printf '%s' '<test-control-token>' | gcloud secrets versions add e2e-runner-test-control-token \
   --project dorinda-prod --data-file=-
+
+# Dorinda tenant email (NEW 2026-08-13) — used to mint a forge_session at run start;
+# the session itself is short-lived and never stored.
+printf '%s' 'user@example.com' | gcloud secrets versions add e2e-runner-dorinda-email \
+  --project dorinda-prod --data-file=-
+
+# Dorinda tenant password (NEW 2026-08-13) — used alongside the email to mint a
+# forge_session at run start; the session itself is short-lived and never stored.
+printf '%s' '<password>' | gcloud secrets versions add e2e-runner-dorinda-password \
+  --project dorinda-prod --data-file=-
 ```
 
 #### Rotating the database password
@@ -172,3 +184,9 @@ Apply-time approval is still required per this file's policy.
 **2026-08-11 apply:** Mark's approval covers the push-gated CI apply that instantiates
 `e2e-results` (Cloud SQL), `e2e-runner` (Cloud Run Job), `e2e-runner` (SA), and the five
 `e2e-runner-*` Secret Manager secrets. Applied via `.github/workflows/infra.yml` on push to main.
+
+**2026-08-13 apply:** Adds `e2e-runner-dorinda-email` and `e2e-runner-dorinda-password` Secret
+Manager secrets, wires them as `DORINDA_EMAIL` / `DORINDA_PASSWORD` in the Cloud Run Job env,
+and grants the runner SA `secretAccessor` on both (resource-scoped). The `forge_session` minted
+from these credentials at run start is short-lived and never stored. Applied via push-gated
+infra.yml (touching `terraform/modules/e2e-runner/main.tf` + `forge.infra.json`).
