@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.32.0] - 2026-08-14
+
+### Added
+
+- **`/ingest/run-progress` accepts per-workflow rows.** A run could report `attempted 1 · passed 1`
+  above an EMPTY drilldown table — the aggregate said work happened and the table could not name any
+  of it, because the per-workflow records live in `results.t2.jsonl` inside a container that dies
+  with the task. Rows now travel with the report and are keyed `run_id:workflow_id`, so a run that
+  reports repeatedly as it progresses replaces rather than duplicates. A row that fails to persist is
+  logged and never fails the report — the aggregate counters are already committed by then.
+
+
 ## [1.31.2] - 2026-08-14
 
 ### Changed

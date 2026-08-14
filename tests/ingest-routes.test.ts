@@ -12,6 +12,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 import Fastify from 'fastify';
 import {
   registerIngestRoutes,
@@ -699,5 +704,23 @@ describe('POST /ingest/run-progress — successful write', () => {
       ];
       expect(update['status']).toBe(status);
     }
+  });
+});
+
+describe('per-workflow rows', () => {
+  // A run reading `attempted 1 · passed 1` above an empty drilldown table is the bug this closes:
+  // the aggregate says work happened and the table cannot name any of it (Mark, 2026-08-14).
+  it('persists a row per workflow, keyed so repeats do not duplicate', () => {
+    const src = readFileSync(join(__dirname, '..', 'src', 'api', 'ingest-routes.ts'), 'utf8');
+    expect(src).toContain('insertWorkflow');
+    // Deterministic id — the same workflow in the same run is the SAME row however often reported.
+    expect(src).toMatch(/id: `\$\{body\.run_id\}:\$\{wf\.workflow_id\}`/);
+  });
+
+  it('⛔ a failed workflow row never fails the whole report', () => {
+    const src = readFileSync(join(__dirname, '..', 'src', 'api', 'ingest-routes.ts'), 'utf8');
+    const block = src.slice(src.indexOf('Per-workflow rows'), src.indexOf('return reply.code(200)'));
+    expect(block).toMatch(/try\s*\{/);
+    expect(block).toMatch(/catch/);
   });
 });

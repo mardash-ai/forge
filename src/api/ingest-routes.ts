@@ -164,6 +164,30 @@ export async function verifyGoogleServiceToken(
 export interface RunProgressPayload {
   run_id: string;
   workflows_intended?: number;
+  /**
+   * Per-workflow rows for the run's drilldown table.
+   *
+   * Without these the console shows a run with `attempted 1 · passed 1` above an EMPTY workflow
+   * table — the aggregate says work happened and the table cannot name any of it. The rows live in
+   * `results.t2.jsonl` inside the job, which dies with the container, so the runner sends them here.
+   * Keyed by `run_id` + `workflow_id`, so a repeated report replaces rather than duplicates.
+   */
+  workflows?: Array<{
+    workflow_id: string;
+    verdict: string;
+    integrity_class?: string;
+    provider?: string;
+    duration_ms?: number;
+    started_at?: string;
+    completed_at?: string;
+    input_tokens?: number;
+    output_tokens?: number;
+    lanes?: string[];
+    trials_total?: number;
+    trials_passed?: number;
+    failing_bar?: string;
+    prompt?: string;
+  }>;
   outcomes?: {
     pass?: number;
     fail?: number;
@@ -330,6 +354,43 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
       });
     }
 
-    return reply.code(200).send({ updated: true, run_id: body.run_id });
+    // ── Per-workflow rows ────────────────────────────────────────────────────
+    // Best-effort and idempotent: a run reports repeatedly as it progresses, so the same workflow
+    // arrives more than once. A row that fails to persist must not fail the whole report — the
+    // aggregate counters are the more important signal and are already committed above.
+    let workflowsWritten = 0;
+    if (Array.isArray(body.workflows) && body.workflows.length > 0) {
+      for (const wf of body.workflows) {
+        if (!wf?.workflow_id || !wf?.verdict) continue;
+        try {
+          await backends.cpResults.insertWorkflow({
+            // Deterministic id: the same workflow in the same run is the SAME row, however many
+            // times it is reported. A random id here would fill the table with duplicates.
+            id: `${body.run_id}:${wf.workflow_id}`,
+            run_id: body.run_id,
+            workflow_id: wf.workflow_id,
+            tenant_id: updated.tenant_id,
+            verdict: wf.verdict as never,
+            ...(wf.integrity_class ? { integrity_class: wf.integrity_class as never } : {}),
+            ...(wf.provider ? { provider: wf.provider } : {}),
+            ...(typeof wf.duration_ms === 'number' ? { duration_ms: wf.duration_ms } : {}),
+            ...(wf.started_at ? { started_at: wf.started_at } : {}),
+            ...(wf.completed_at ? { completed_at: wf.completed_at } : {}),
+            ...(typeof wf.input_tokens === 'number' ? { input_tokens: wf.input_tokens } : {}),
+            ...(typeof wf.output_tokens === 'number' ? { output_tokens: wf.output_tokens } : {}),
+            ...(wf.lanes ? { lanes: wf.lanes } : {}),
+            ...(typeof wf.trials_total === 'number' ? { trials_total: wf.trials_total } : {}),
+            ...(typeof wf.trials_passed === 'number' ? { trials_passed: wf.trials_passed } : {}),
+            ...(wf.failing_bar ? { failing_bar: wf.failing_bar } : {}),
+            ...(wf.prompt ? { prompt: wf.prompt } : {}),
+          });
+          workflowsWritten += 1;
+        } catch (e) {
+          req.log?.warn?.({ err: e, workflow_id: wf.workflow_id }, 'ingest: workflow row failed');
+        }
+      }
+    }
+
+    return reply.code(200).send({ updated: true, run_id: body.run_id, workflows: workflowsWritten });
   });
 }
