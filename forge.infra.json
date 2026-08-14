@@ -37,15 +37,27 @@
     },
     {
       "kind": "command",
-      "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '[.spec.template.spec.template.spec.containers[0].env[] | select(.name == \"DORINDA_TENANT_EMAIL\") | .valueSource.secretKeyRef.secret] | first == \"e2e-runner-dorinda-email\"' > /dev/null",
+      "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '[.spec.template.spec.template.spec.containers[0].env[] | select(.name == \"DORINDA_TENANT_EMAIL\") | .valueFrom.secretKeyRef.name] | first == \"e2e-runner-dorinda-email\"' > /dev/null",
       "cwd": ".",
-      "note": "DORINDA_TENANT_EMAIL is wired from e2e-runner-dorinda-email secret in the live job env"
+      "note": "DORINDA_TENANT_EMAIL is wired from e2e-runner-dorinda-email secret in the live job env (jq reads valueFrom/.name \u2014 the v1 shape `gcloud run jobs describe --format=json` actually returns; the v2 valueSource/.secret path made this FAIL against correct infra on every run, 2026-08-14)"
     },
     {
       "kind": "command",
-      "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '[.spec.template.spec.template.spec.containers[0].env[] | select(.name == \"DORINDA_TENANT_PASSWORD\") | .valueSource.secretKeyRef.secret] | first == \"e2e-runner-dorinda-password\"' > /dev/null",
+      "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '[.spec.template.spec.template.spec.containers[0].env[] | select(.name == \"DORINDA_TENANT_PASSWORD\") | .valueFrom.secretKeyRef.name] | first == \"e2e-runner-dorinda-password\"' > /dev/null",
       "cwd": ".",
-      "note": "DORINDA_TENANT_PASSWORD is wired from e2e-runner-dorinda-password secret in the live job env"
+      "note": "DORINDA_TENANT_PASSWORD is wired from e2e-runner-dorinda-password secret in the live job env (jq reads valueFrom/.name \u2014 the v1 shape `gcloud run jobs describe --format=json` actually returns; the v2 valueSource/.secret path made this FAIL against correct infra on every run, 2026-08-14)"
+    },
+    {
+      "kind": "command",
+      "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '[.spec.template.spec.template.spec.containers[0].env[] | select(.name == \"HAT_GOOGLE_TEARDOWN_SERVICE_ACCOUNT\") | .value] | first | (. != null and . != \"\")' > /dev/null",
+      "cwd": ".",
+      "note": "the post-run mail sweep has its WRITER account \u2014 EMPTY means the sweep skips silently and the fixture gets buried again"
+    },
+    {
+      "kind": "command",
+      "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '[.spec.template.spec.template.spec.containers[0].env[] | select(.name == \"HAT_GOOGLE_SUBJECT\") | .value] | first | (. != null and . != \"\")' > /dev/null",
+      "cwd": ".",
+      "note": "the post-run mail sweep knows whose mailbox to clean \u2014 empty disables it"
     }
   ]
 }
