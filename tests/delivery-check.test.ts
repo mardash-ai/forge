@@ -968,7 +968,10 @@ describe('the release check resolves the IMAGE tag, not the git tag', () => {
   });
 
   it('the real driver contains the fallback', async () => {
-    const src = readFileSync(join(__dirname, '..', 'src', 'plugins', 'delivery-check', 'real-driver.ts'), 'utf8');
+    const src = readFileSync(
+      join(__dirname, '..', 'src', 'plugins', 'delivery-check', 'real-driver.ts'),
+      'utf8',
+    );
     expect(src).toMatch(/replace\(\/\^v\/, ''\)/);
   });
 });
