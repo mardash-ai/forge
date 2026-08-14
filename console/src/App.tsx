@@ -24,6 +24,7 @@ import {
 } from './ui/kit';
 import { ExternalGlyph, LogoMark, RAIL_ICON, StatusGlyph, SvgDefs, Wordmark } from './ui/icons';
 import { duration, relative, useApi } from './lib/api';
+import { buildE2eTriagePrompt } from './lib/triage-prompt';
 import {
   fmtE2ePctOfCatalogue,
   fmtE2ePctOfRunnable,
@@ -5200,26 +5201,6 @@ function fmtTrials(total: number, passed: number, verdict: string): string {
   return `${passed}/${total}`;
 }
 
-function withheldBreakdown(run: E2ERun): Array<{ reason: string; count: number }> {
-  const bd = run.meta.withheld_breakdown as Record<string, number> | undefined;
-  if (!bd) return [];
-  return Object.entries(bd).map(([reason, count]) => ({ reason, count }));
-}
-
-function buildE2eTriagePrompt(run: E2ERun, workflows: E2EWorkflow[]): string {
-  const failures = workflows.filter((w) => w.verdict === 'fail' || w.verdict === 'error');
-  const failureList = failures.map((w) => `  × ${w.workflow_id}  —  ${w.prompt ?? ''}`).join('\n');
-  const bd = withheldBreakdown(run);
-  return `Triage E2E run ${run.run_id} (remote/${run.provider ?? 'openai'}, api ${(run.meta.api_version as string) ?? ''}).
-Top-line: ${run.workflows_attempted} attempted · ${run.workflows_passed} accepted · ${run.workflows_failed} rejected · ${run.withheld_count} withheld.
-${bd.map((x) => `  ⊘ ${x.count} trials · ${x.reason}`).join('\n')}
-Failures to triage:
-${failureList || '  (none)'}
-Fetch evidence with the e2e MCP tools: get_e2e_run("${run.run_id}"), get_workflow_result(run, slug), diff_e2e_runs(run, prev).
-For each failure: classify (product / harness / host / environment), find the root cause, and file findings.
-Never lower a bar to make a run green.`;
-}
-
 // ── Verdict pill ──────────────────────────────────────────────────────────
 
 function E2EVerdictPill({ verdict }: { verdict: E2EWorkflow['verdict'] }) {
@@ -6502,11 +6483,17 @@ export function bucketCounts(workflows: E2EWorkflow[]): Record<E2eBucket, number
   return out;
 }
 
-function getEffectiveIC(wf: E2EWorkflow): string {
-  if (bucketOf(wf) === 'withheld') {
-    return (wf.meta as { withheld_reason?: string }).withheld_reason ?? 'withheld';
-  }
-  return wf.integrity_class ?? 'unknown';
+/**
+ * Why a withheld workflow has no verdict, or null when it is not withheld.
+ *
+ * ⛔ This was `getEffectiveIC`, and its second branch returned `integrity_class ?? 'unknown'` — a
+ * column forge-hat has never emitted, so it answered 'unknown' for every row that ever existed. The
+ * only branch that carried information is this one. forge-hat now emits the typed infra reason
+ * (`deploy-window`, `network-unreachable`, …), which is the routing instruction an operator acts on.
+ */
+function withheldReasonOf(wf: E2EWorkflow): string | null {
+  if (bucketOf(wf) !== 'withheld') return null;
+  return (wf.meta as { withheld_reason?: string }).withheld_reason ?? 'reason not reported';
 }
 
 /** Extract tier from meta.tier or from a leading segment in workflow_id (e.g. "h5-foo" → "h5"). */
@@ -6530,7 +6517,6 @@ function Evals() {
   });
   const [reasonFilter, setReasonFilter] = useState<string | null>(() => e2eParam('cause'));
   const [laneFilter, setLaneFilter] = useState<string | null>(() => e2eParam('lane'));
-  const [icFilter, setIcFilter] = useState<string | null>(() => e2eParam('ic'));
   const [tierFilter, setTierFilter] = useState<string | null>(() => e2eParam('tier'));
   const [expandedWfId, setExpandedWfId] = useState<string | null>(() => e2eParam('wf'));
   const [wfPage, setWfPage] = useState(0);
@@ -6626,7 +6612,10 @@ function Evals() {
 
   // Derive the available filter values from the current run's workflows.
   const allLanes = [...new Set(allWorkflows.flatMap((w) => w.lanes))].sort();
-  const allICs = [...new Set(allWorkflows.map((w) => getEffectiveIC(w)))].sort();
+  // The causes actually present among THIS run's withheld workflows — the subtiles' only source.
+  const withheldCauses = [
+    ...new Set(allWorkflows.map(withheldReasonOf).filter((r): r is string => r !== null)),
+  ].sort();
   const allTiers = [
     ...new Set(allWorkflows.map((w) => getWorkflowTier(w)).filter((t): t is string => t !== null)),
   ].sort();
@@ -6637,10 +6626,9 @@ function Evals() {
   const filteredWorkflows: E2EWorkflow[] = allWorkflows.filter((w) => {
     // One helper, shared with the tiles — see bucketOf. These cannot drift apart any more.
     if (verdictFilter !== 'all' && bucketOf(w) !== verdictFilter) return false;
-    if (reasonFilter && (w.meta as { withheld_reason?: string }).withheld_reason !== reasonFilter)
-      return false;
+    // Same helper the subtiles count with — a cause chip can never filter to an empty table again.
+    if (reasonFilter && withheldReasonOf(w) !== reasonFilter) return false;
     if (laneFilter && !w.lanes.includes(laneFilter)) return false;
-    if (icFilter && getEffectiveIC(w) !== icFilter) return false;
     if (tierFilter && getWorkflowTier(w) !== tierFilter) return false;
     return true;
   });
@@ -6656,13 +6644,11 @@ function Evals() {
     (effectivePage + 1) * E2E_WF_PAGE_SIZE,
   );
 
-  const hasActiveFilters =
-    verdictFilter !== 'all' || !!reasonFilter || !!laneFilter || !!icFilter || !!tierFilter;
+  const hasActiveFilters = verdictFilter !== 'all' || !!reasonFilter || !!laneFilter || !!tierFilter;
   const clearFilters = () => {
     setVerdictFilter('all');
     setReasonFilter(null);
     setLaneFilter(null);
-    setIcFilter(null);
     setTierFilter(null);
     setWfPage(0);
   };
@@ -6675,7 +6661,6 @@ function Evals() {
   // same screen as a slow network and as an empty result — three different states, one appearance.
   const wfResultError = expandedWfId && !usingFixture ? wfDrilldownApi.error : null;
 
-  const breakdown = activeRun ? withheldBreakdown(activeRun) : [];
   const prevRun = runs.find((r) => r.run_id !== activeRun?.run_id) ?? null;
 
   // Keep the address bar in step with the view, so any state Mark is looking at can be sent as a
@@ -6689,10 +6674,9 @@ function Evals() {
     set('wf', expandedWfId);
     set('cause', reasonFilter);
     set('lane', laneFilter);
-    set('ic', icFilter);
     set('tier', tierFilter);
     history.replaceState(null, '', u);
-  }, [activeRunId, verdictFilter, expandedWfId, reasonFilter, laneFilter, icFilter, tierFilter]);
+  }, [activeRunId, verdictFilter, expandedWfId, reasonFilter, laneFilter, tierFilter]);
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(location.href).then(
@@ -6709,7 +6693,6 @@ function Evals() {
     setVerdictFilter('all');
     setReasonFilter(null);
     setLaneFilter(null);
-    setIcFilter(null);
     setTierFilter(null);
     setExpandedWfId(null);
     setCassetteOpen(false);
@@ -6718,7 +6701,11 @@ function Evals() {
 
   const handleTriage = () => {
     if (!activeRun) return;
-    const prompt = buildE2eTriagePrompt(activeRun, allWorkflows);
+    // Pass whatever drilldown is loaded. The brief degrades honestly per workflow — "evidence not
+    // loaded, fetch with get_workflow_result(...)" — rather than pretending there was none.
+    const prompt = buildE2eTriagePrompt(activeRun, allWorkflows, {
+      evidence: drilldown ? [drilldown] : [],
+    });
     navigator.clipboard.writeText(prompt).then(
       () => {
         setTriageFlash(true);
@@ -7584,9 +7571,57 @@ function Evals() {
         </div>
       )}
 
+      {/* ── Withheld causes — subtiles, directly beneath the tiles they belong to ────────────────
+          Mark, 2026-08-14: "very badly positioned. You need to scroll to the bottom of the table.
+          The original mockup displayed small horizontal subtiles for withheld causes directly
+          beneath the main tiles... and only display those subtiles if withheld is selected."
+
+          Counted from the ROWS, with the same helper the table filters by, so a cause chip can never
+          again show a number and then filter to nothing. The reasons are forge-hat's typed infra
+          reasons and each one is a different instruction: `deploy-window` means re-run later,
+          `network-unreachable` means fix this machine's network. */}
+      {showRunDetail && verdictFilter === 'withheld' && withheldCauses.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+          {withheldCauses.map((cause) => {
+            const count = allWorkflows.filter((w) => withheldReasonOf(w) === cause).length;
+            const active = reasonFilter === cause;
+            return (
+              <button
+                key={cause}
+                onClick={() => {
+                  setReasonFilter(active ? null : cause);
+                  setWfPage(0);
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'baseline',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: `1px solid ${active ? 'var(--accent)' : 'var(--line)'}`,
+                  background: active ? 'var(--accent-bg)' : 'var(--bg-raised)',
+                  color: active ? 'var(--accent)' : 'var(--text-secondary)',
+                  fontSize: 12.5,
+                  cursor: 'pointer',
+                }}
+                aria-pressed={active}
+                title={`Show only workflows withheld because: ${cause}`}
+              >
+                <span className="num" style={{ fontWeight: 600 }}>
+                  {count}
+                </span>
+                <span className="mono" style={{ fontSize: 11.5 }}>
+                  {cause}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* ── Filter bar: lane / integrity-class / tier + clear-all ────────────
           Only shown when connected; all filters composable and URL-encoded. */}
-      {showRunDetail && (allLanes.length > 0 || allICs.length > 0 || allTiers.length > 0) && (
+      {showRunDetail && (allLanes.length > 0 || allTiers.length > 0) && (
         <div
           style={{
             display: 'flex',
@@ -7642,34 +7677,16 @@ function Evals() {
             </select>
           )}
 
-          {/* Integrity class filter */}
-          {allICs.length > 0 && (
-            <select
-              value={icFilter ?? ''}
-              onChange={(e) => {
-                setIcFilter(e.target.value || null);
-                setWfPage(0);
-              }}
-              style={{
-                font: 'inherit',
-                fontSize: 13,
-                background: icFilter ? 'var(--accent-bg)' : 'var(--bg-raised)',
-                border: `1px solid ${icFilter ? 'var(--accent)' : 'var(--line)'}`,
-                borderRadius: 6,
-                color: icFilter ? 'var(--accent)' : 'var(--ink)',
-                padding: '4px 8px',
-                cursor: 'pointer',
-              }}
-              aria-label="Filter by integrity class"
-            >
-              <option value="">All integrity classes</option>
-              {allICs.map((ic) => (
-                <option key={ic} value={ic}>
-                  {ic}
-                </option>
-              ))}
-            </select>
-          )}
+          {/* ⛔ THE "ALL INTEGRITY CLASSES" FILTER IS GONE — it could never do anything.
+              Mark, 2026-08-14: "I literally have no idea what this means and I built this entire
+              system." That was the strongest possible signal, and the reason turned out to be that
+              the control was dead: `integrity_class` is forge's own invention, forge-hat has never
+              emitted it, so the column is NULL on every production row. `getEffectiveIC` fell back
+              to 'unknown' for all of them, the dropdown offered exactly one value, and selecting it
+              filtered nothing out. Deleted rather than relabelled — dressing up an empty column
+              would have kept a control that cannot answer a question. What the operator actually
+              wants ("why is there no result?") is now the withheld-cause subtiles above, built on
+              forge-hat's real, typed infra reasons. */}
 
           {/* Tier filter */}
           {allTiers.length > 0 && (
@@ -8010,7 +8027,9 @@ function Evals() {
                             copied={wfTriageFlash === wf.id}
                             onTriageWf={() => {
                               if (!activeRun) return;
-                              const prompt = buildE2eTriagePrompt(activeRun, [wf]);
+                              const prompt = buildE2eTriagePrompt(activeRun, [wf], {
+                                evidence: drilldown && drilldown.workflow.id === wf.id ? [drilldown] : [],
+                              });
                               // Only claim "copied" once the clipboard actually accepted it. A flash
                               // fired optimistically would confirm a copy that never happened.
                               navigator.clipboard
@@ -8046,81 +8065,6 @@ function Evals() {
             }}
           >
             {activeRun && <E2EDurationChart run={activeRun} prevRun={prevRun} />}
-
-            {/* Integrity strip — withheld-by-cause */}
-            <section
-              style={{
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--line)',
-                borderRadius: 8,
-                padding: 16,
-              }}
-            >
-              <h2
-                style={{
-                  fontSize: 11,
-                  letterSpacing: '.08em',
-                  textTransform: 'uppercase',
-                  color: 'var(--text-muted)',
-                  marginBottom: 10,
-                  fontWeight: 600,
-                }}
-              >
-                Withheld by cause
-              </h2>
-              {breakdown.length === 0 ? (
-                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No withheld workflows.</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {breakdown.map(({ reason, count }) => (
-                    <button
-                      key={reason}
-                      onClick={() => {
-                        setVerdictFilter('withheld');
-                        setReasonFilter(reasonFilter === reason ? null : reason);
-                      }}
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        padding: '6px 10px',
-                        borderRadius: 6,
-                        border: '1px solid var(--line)',
-                        background: reasonFilter === reason ? 'var(--bg-selected)' : 'var(--bg-raised)',
-                        color: 'var(--text-secondary)',
-                        fontSize: 13,
-                        textAlign: 'left',
-                        cursor: 'pointer',
-                        boxShadow: reasonFilter === reason ? 'inset 0 -2px 0 var(--ember-core)' : undefined,
-                      }}
-                    >
-                      <span className="mono" style={{ fontSize: 12 }}>
-                        {reason}
-                      </span>
-                      <span className="num" style={{ color: 'var(--text-muted)' }}>
-                        {count} trial{count !== 1 ? 's' : ''}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {activeRun?.meta?.trials_ran_clean !== undefined && (
-                <div
-                  style={{
-                    marginTop: 12,
-                    padding: '6px 10px',
-                    borderRadius: 6,
-                    border: '1px solid var(--ok)',
-                    background: 'var(--ok-wash)',
-                    color: 'var(--ok-text)',
-                    fontSize: 12.5,
-                  }}
-                >
-                  {String(activeRun.meta.trials_ran_clean)} / {String(activeRun.meta.trials_total ?? '?')}{' '}
-                  trials ran clean
-                </div>
-              )}
-            </section>
           </div>
         </>
       )}

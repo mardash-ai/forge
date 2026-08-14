@@ -171,3 +171,36 @@ describe('copying the triage prompt confirms itself', () => {
     expect(APP).toMatch(/copied \? '✓ copied' : '⧉ Triage this workflow'/);
   });
 });
+
+describe('withheld causes are real, positioned, and cannot filter to nothing', () => {
+  it('⛔ the dead integrity-class filter is gone', () => {
+    // `integrity_class` is forge's own invention that forge-hat has never emitted, so the column is
+    // NULL on every production row: the dropdown offered one value and selecting it filtered
+    // nothing. Mark: "I literally have no idea what this means and I built this entire system."
+    expect(APP).not.toMatch(/All integrity classes/);
+    expect(APP).not.toMatch(/const \[icFilter, setIcFilter\]/);
+    expect(APP).not.toMatch(/getEffectiveIC\(w\) !== icFilter/);
+  });
+
+  it('replaces it with a helper that answers a real question', () => {
+    expect(APP).toMatch(/function withheldReasonOf\(/);
+    // Only withheld workflows have a reason; everything else is null rather than 'unknown'.
+    expect(APP).toMatch(/if \(bucketOf\(wf\) !== 'withheld'\) return null;/);
+  });
+
+  it('⛔ subtiles sit under the metric tiles and only when Withheld is selected', () => {
+    // "very badly positioned. You need to scroll to the bottom of the table... the original mockup
+    // displayed small horizontal subtiles directly beneath the main tiles."
+    expect(APP).toMatch(/verdictFilter === 'withheld' && withheldCauses\.length > 0/);
+    // The old buried section is gone.
+    expect(APP).not.toMatch(/Integrity strip — withheld-by-cause/);
+    expect(APP).not.toMatch(/Withheld by cause/);
+  });
+
+  it('⛔ a cause chip counts with the SAME helper the table filters by', () => {
+    // The chips used to filter on `meta.withheld_reason`, a key nothing emitted — so clicking a
+    // cause emptied the table. Counting and filtering through one helper makes that impossible.
+    expect(APP).toMatch(/withheldReasonOf\(w\) === cause/);
+    expect(APP).toMatch(/if \(reasonFilter && withheldReasonOf\(w\) !== reasonFilter\) return false;/);
+  });
+});

@@ -55,7 +55,22 @@ export async function api<T>(path: string, init?: RequestInit): Promise<Envelope
 export interface Query<T> {
   data: T | null;
   error: string | null;
+  /**
+   * True only when there is NOTHING to show yet — a cold load. It deliberately stays FALSE while a
+   * poll refreshes data that is already on screen; see `refreshing`.
+   */
   loading: boolean;
+  /**
+   * True whenever a request is in flight, including a background poll over existing data.
+   *
+   * ⛔ These were one flag, and that made the E2E screen unusable during a run. Callers gate whole
+   * subtrees on `loading` (`runsState === 'connected'`, `showRunDetail`), so every 5s poll flipped
+   * it true, every gated block unmounted at once, the document height collapsed below the viewport,
+   * and the browser clamped scrollTop to 0. Remounting a moment later does not restore it — so an
+   * operator reading anything below the fold was thrown back to the top on every tick (Mark,
+   * 2026-08-14: "impossible to read detailed content lower on the page").
+   */
+  refreshing: boolean;
   /** Which providers answered, and which did not — rendered, never swallowed. */
   sources: Array<{ provider_id: string; ok: boolean; error?: string }>;
   asOf: string | null;
@@ -72,6 +87,9 @@ export function useApi<T>(path: string | null, deps: unknown[] = []): Query<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(path));
+  const [refreshing, setRefreshing] = useState(false);
+  /** Whether a payload has ever arrived for the CURRENT path — drives cold-load vs refresh. */
+  const hasData = useRef(false);
   const [sources, setSources] = useState<Query<T>['sources']>([]);
   const [asOf, setAsOf] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -83,16 +101,27 @@ export function useApi<T>(path: string | null, deps: unknown[] = []): Query<T> {
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
 
+  // A NEW path is a cold load again: the data on screen belongs to the previous path and must not
+  // be mistaken for this one's.
+  useEffect(() => {
+    hasData.current = false;
+  }, [path]);
+
   useEffect(() => {
     if (!path) return;
     const id = ++latest.current;
-    setLoading(true);
+    setRefreshing(true);
+    // Cold load only. A poll over data that is already rendered must not unmount the page beneath
+    // the operator's cursor — see the comment on `refreshing` in the Query type. A ref rather than
+    // the `data` state so this stays a pure read, with no setState inside an updater.
+    if (!hasData.current) setLoading(true);
     setError(null);
     setHttpStatus(null);
     setErrorCode(null);
     api<T>(path)
       .then((env) => {
         if (id !== latest.current) return;
+        hasData.current = true;
         setData(env.data);
         setSources(env.sources ?? []);
         setAsOf(env.freshness?.as_of ?? null);
@@ -111,12 +140,15 @@ export function useApi<T>(path: string | null, deps: unknown[] = []): Query<T> {
         }
       })
       .finally(() => {
-        if (id === latest.current) setLoading(false);
+        if (id === latest.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, nonce, ...deps]);
 
-  return { data, error, loading, sources, asOf, note, reload, httpStatus, errorCode };
+  return { data, error, loading, refreshing, sources, asOf, note, reload, httpStatus, errorCode };
 }
 
 export function relative(iso: string | undefined | null): string {

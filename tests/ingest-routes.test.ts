@@ -831,7 +831,14 @@ describe('MCP calls, claims and the workflow name', () => {
 
   it('stores the human-readable workflow name', () => {
     // `W-001:openai` tells an operator nothing about what was tested.
-    expect(src).toMatch(/meta: \{ name: wf\.name \}/);
+    expect(src).toMatch(/name: wf\.name/);
+  });
+
+  it('⛔ stores the WITHHELD REASON alongside the name, in the same meta write', () => {
+    // The console has filtered withheld causes on `meta.withheld_reason` since it was built, against
+    // a key nothing ever emitted — so clicking a cause silently emptied the table. Writing only
+    // `name` here is exactly what kept that half of the contract missing.
+    expect(src).toMatch(/withheld_reason: wf\.withheld_reason/);
   });
 });
 

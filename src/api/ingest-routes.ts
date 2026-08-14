@@ -190,6 +190,8 @@ export interface RunProgressPayload {
     failing_bar?: string;
     prompt?: string;
     name?: string;
+    /** Why a withheld workflow has no verdict — forge-hat's typed infra reason. */
+    withheld_reason?: string;
     /** The conversation — prompt in, visible reply out. Mirrors forge-hat's ProgressReport. */
     turns?: Array<{
       turn_index: number;
@@ -519,7 +521,17 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
               // The human-readable title, on meta because the row has no `name` column. A code like
               // `W-001:openai` tells an operator nothing about what was tested (Mark, 2026-08-14:
               // "workflow codes by themselves are useless").
-              ...(wf.name ? { meta: { name: wf.name } } : {}),
+              // ⛔ Both go in `meta` together. The console has filtered on `meta.withheld_reason`
+              // since it was built, against a key nothing emitted — so clicking a withheld cause
+              // emptied the table. Writing only `name` here is what kept that half missing.
+              ...(wf.name || wf.withheld_reason
+                ? {
+                    meta: {
+                      ...(wf.name ? { name: wf.name } : {}),
+                      ...(wf.withheld_reason ? { withheld_reason: wf.withheld_reason } : {}),
+                    },
+                  }
+                : {}),
             });
             workflowsWritten += 1;
 
