@@ -908,6 +908,98 @@ Each released version maps to a published control-plane image tag
 ## [Unreleased]
 
 
+## [1.37.0] - 2026-08-14
+
+### Fixed
+
+- **The progress bar divided a number by itself.** The denominator was `workflows_attempted` — the
+  count of workflows that had already reported — so the bar could only ever read `n of n` at 100%,
+  on a run that had barely started. It now divides by `meta.workflows_intended` (what this run was
+  asked to do), falling back to `meta.catalogue_size`, with the bar and its trailing label reading
+  the same value. An unknown target renders **no bar** rather than a full one: showing 100% against
+  a denominator nobody reported is the same dishonesty relocated.
+
+- **A workflow that did not pass now explains itself, in the right voice.** Mark: *"all of the trials
+  had green checks for every step, yet the workflow was rejected. It was difficult to understand
+  why."* The drawer opens with the reason — and rejected and withheld are deliberately worded
+  differently. A rejection names the failing bar and explains that passing *some* attempts is still
+  a rejection when the threshold is not met. A withheld workflow is stated as an **absence of a
+  verdict**, in muted type, saying explicitly that it is not evidence against the product — sending
+  someone to debug a product that did nothing wrong is the most expensive mistake this screen makes.
+
+- **Copying a workflow's triage prompt now confirms itself** with the console's existing `✓ copied`
+  flash, keyed per workflow so only the clicked row reacts — and fired only once the clipboard has
+  actually accepted the text, never optimistically.
+
+### Fixed
+
+- **A background poll no longer unmounts the page under the operator.** `useApi` raised `loading` on
+  *every* reload, and the E2E screen gates whole subtrees on it — so each poll made every gated block
+  return false at once, the document collapsed to its header, and the browser clamped `scrollTop` to
+  0. Remounting a moment later does not restore it, so anyone reading below the fold was thrown back
+  to the top on every tick. `loading` now means "there is nothing to show yet"; a new `refreshing`
+  flag means "a request is in flight". Deliberately not fixed by flipping `loading` globally — other
+  screens rely on it during user-driven parameter changes and would have shown stale data with no
+  indicator.
+
+  Neither of the two hypotheses originally recorded was right: it was not data identity (`useApi`
+  keeps the old payload) and not the `replaceState` URL sync (its deps are click-driven, and
+  `replaceState` does not move scroll in any browser).
+
+- **The "All integrity classes" filter is deleted.** Mark: *"I literally have no idea what this means
+  and I built this entire system."* The control was dead: `integrity_class` is forge's own invention
+  that forge-hat has never emitted, so the column is NULL on every production row, the dropdown
+  offered one value, and selecting it filtered nothing. Deleted rather than relabelled — dressing up
+  an empty column keeps a control that cannot answer a question.
+
+- **Withheld causes moved to subtiles beneath the metric tiles, shown only when Withheld is
+  selected** — the original mockup's position, instead of buried below the table. They are counted
+  from the rows with the same helper the table filters by, so a cause can never again display a
+  number and then filter to nothing.
+
+### Changed
+
+- **The triage prompt now carries the evidence instead of pointing at it.** It was run id, counters
+  and a list of failing ids. It now emits a structured brief: run context; an explicit
+  rejected-vs-withheld warning; per-failure failing bar, expected vs observed, flaky-vs-deterministic
+  trial pattern, the transcript, the MCP calls actually made, and extracted claims; a separate
+  withheld section stating plainly that nothing there is a product bug; and the classification
+  protocol. Every cut announces itself (`… [+N chars truncated]`), and the fixed sections are
+  assembled *before* the evidence so a large run can never produce a brief with all evidence and no
+  protocol.
+
+### Fixed
+
+- **A withheld workflow was displayed as rejected.** forge-hat's `UNARMED` / `INFRA-FAIL` mean the
+  RIG failed — nothing was tested, so there is no verdict — and both collapsed into `error`, which
+  the console rendered as `✗ rejected`. W-009 on 2026-08-14 showed every trial step green under a red
+  verdict, because it had never been rejected at all. That inverts accepted/rejected/withheld, the
+  third-outcome discipline the harness rests on, sends someone to debug a product that did nothing
+  wrong, and inflates every run's failure count.
+
+  `withheld` is now a first-class verdict, carried from the runner's vocabulary into the store.
+
+- **Tiles and table can no longer disagree.** The metric tiles counted from run-level counters the
+  runner reports; the table filtered on each row's stored verdict. Two independent sources — so the
+  Withheld tile read `1` while clicking it produced an empty table, because nothing was ever stored
+  as `skip`. One helper (`bucketOf`) now decides the bucket, and the tiles count the ROWS the table
+  will show. Mark's requirement, exactly: *"the number reported in any tile should always match the
+  number listed in the table."*
+
+- **Historical runs are backfilled.** Every existing `error` row is provably a withheld workflow:
+  forge-hat's verdict type is exactly `ACCEPTED | REJECTED | UNARMED | INFRA-FAIL`, the first two
+  were mapped explicitly, and `skip` was never reachable from the runner. Gated behind a
+  `forge_cp_migrations` marker so it runs exactly once — a date bound was tried first and was wrong,
+  because the deploy happens on the same day the cutoff named.
+
+  ⛔ The original plan was to backfill from `integrity_class`. That would have matched **nothing** —
+  forge-hat has never emitted that column, so it is NULL on every production row. A backfill
+  predicate that silently matches zero rows looks exactly like one that worked.
+
+- **The CHECK constraint is migrated, not just widened in `CREATE`.** Widening the list in
+  `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists — the same mistake that
+  emptied every cassette earlier the same day.
+
 ## [1.36.6] - 2026-08-14
 
 ### Fixed
