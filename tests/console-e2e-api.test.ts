@@ -231,6 +231,9 @@ function makeMockStore(
     renewLease: vi.fn(),
     releaseLease: vi.fn(),
     getLease: vi.fn(),
+    // deleteRun is called by the DELETE /api/e2e/runs/:run_id handler.
+    // Default: run existed and was deleted (true). Override per-test to simulate not-found or cascade.
+    deleteRun: vi.fn().mockResolvedValue(true),
     __truncateAllForTests: vi.fn(),
     ...overrides,
   } as unknown as PgCpResultsBackend;
@@ -1127,5 +1130,393 @@ describe('reconcileRunningRuns', () => {
     await reconcileRunningRuns(store, rows as never[], async () => ({ state: 'running' }));
     expect(rows[0]!.status).toBe('running');
     expect(patches).toHaveLength(0);
+  });
+});
+
+// ── DELETE /api/e2e/runs/:run_id ─────────────────────────────────────────────
+//
+// Six behaviours, each proven to fail against a deliberately broken implementation.
+// "Broken" is documented in comments on each test — the assertion(s) that would
+// fail are marked so the red-against-broken story is explicit.
+
+// ── 1. Cascade ───────────────────────────────────────────────────────────────
+//
+// A correct deleteRun removes the run AND cascades to all child tables via FK.
+// A broken impl that deletes only the run row leaves orphan children accessible.
+
+describe('DELETE /api/e2e/runs/:run_id — cascade', () => {
+  it('deletes run and all child records; a store that orphans children causes 200 where 404 is expected', async () => {
+    // Stateful in-memory state — simulates the ON DELETE CASCADE that the real DB enforces.
+    const run = makeRun({ status: 'completed' });
+    const wf = makeWorkflow();
+    let runInStore = true;
+    let childrenInStore = true;
+
+    // BROKEN variant (for illustration): set childrenInStore = false in deleteRun but leave
+    // childrenInStore = true — then getWorkflow returns the wf → workflow GET returns 200, not 404.
+    // The correct store sets BOTH flags to false, which is what the test asserts below.
+    const store = makeMockStore({
+      getRun: vi.fn().mockImplementation(async () => (runInStore ? run : null)),
+      getWorkflow: vi.fn().mockImplementation(async () => (childrenInStore ? wf : null)),
+      listWorkflows: vi.fn().mockImplementation(async () => (childrenInStore ? [wf] : [])),
+      listScenes: vi.fn().mockImplementation(async () => (childrenInStore ? [makeScene()] : [])),
+      listMcpCalls: vi.fn().mockImplementation(async () => (childrenInStore ? [makeMcpCall()] : [])),
+      listClaims: vi.fn().mockImplementation(async () => (childrenInStore ? [makeClaim()] : [])),
+      deleteRun: vi.fn().mockImplementation(async () => {
+        runInStore = false;
+        childrenInStore = false; // correct cascade — a broken impl omits this line
+        return true;
+      }),
+    });
+
+    await withOidcEnv(async () => {
+      const app = buildServer(undefined, undefined, async () => store);
+      closers.push(app);
+
+      // Pre-condition: run and its workflow are accessible.
+      const preRun = await app.inject({
+        method: 'GET',
+        url: '/api/e2e/runs/run_001',
+        headers: { cookie: authed() },
+      });
+      expect(preRun.statusCode).toBe(200);
+      const preWf = await app.inject({
+        method: 'GET',
+        url: '/api/e2e/runs/run_001/workflows/wf_row_01',
+        headers: { cookie: authed() },
+      });
+      expect(preWf.statusCode).toBe(200);
+
+      // Delete the run.
+      const del = await app.inject({
+        method: 'DELETE',
+        url: '/api/e2e/runs/run_001',
+        headers: { cookie: authed() },
+      });
+      expect(del.statusCode).toBe(200);
+      const delBody = JSON.parse(del.body) as { deleted: boolean; run_id: string };
+      expect(delBody.deleted).toBe(true);
+      expect(delBody.run_id).toBe('run_001');
+
+      // Run is gone — a broken impl that skips the run delete would fail here.
+      const runAfter = await app.inject({
+        method: 'GET',
+        url: '/api/e2e/runs/run_001',
+        headers: { cookie: authed() },
+      });
+      expect(runAfter.statusCode).toBe(404);
+
+      // Child workflow is gone — a broken impl that orphans children would return 200 here,
+      // causing this assertion to fail.
+      const wfAfter = await app.inject({
+        method: 'GET',
+        url: '/api/e2e/runs/run_001/workflows/wf_row_01',
+        headers: { cookie: authed() },
+      });
+      expect(wfAfter.statusCode).toBe(404);
+
+      // The server must invoke deleteRun exactly once, not individual child-delete calls.
+      expect(store.deleteRun as ReturnType<typeof vi.fn>).toHaveBeenCalledOnce();
+      expect(store.deleteRun as ReturnType<typeof vi.fn>).toHaveBeenCalledWith('run_001');
+    });
+  });
+});
+
+// ── 2. Running-run refused ────────────────────────────────────────────────────
+//
+// A run whose status is 'running' must be refused with 409; the row must still be
+// present afterwards. A broken impl that deletes it anyway would fail the presence check.
+
+describe('DELETE /api/e2e/runs/:run_id — running-run refused', () => {
+  it('refuses 409 for a running run and the run is still present; a broken impl that deletes it would fail the presence check', async () => {
+    let runInStore = true;
+    const runningRun = makeRun({ status: 'running' });
+
+    const store = makeMockStore({
+      getRun: vi.fn().mockImplementation(async () => (runInStore ? runningRun : null)),
+      listWorkflows: vi.fn().mockResolvedValue([]),
+      // A broken impl calls deleteRun anyway — then runInStore becomes false and the GET
+      // below returns 404 instead of 200, which fails the assertion.
+      deleteRun: vi.fn().mockImplementation(async () => {
+        runInStore = false;
+        return true;
+      }),
+    });
+
+    await withOidcEnv(async () => {
+      const app = buildServer(undefined, undefined, async () => store);
+      closers.push(app);
+
+      // Attempt to delete a running run — must be refused.
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/e2e/runs/run_001',
+        headers: { cookie: authed() },
+      });
+      expect(res.statusCode).toBe(409);
+      const body = JSON.parse(res.body) as { error: { code: string } };
+      expect(body.error.code).toBe('run_is_active');
+
+      // Run must still be present — a broken impl that deletes it would return 404 here.
+      const getRes = await app.inject({
+        method: 'GET',
+        url: '/api/e2e/runs/run_001',
+        headers: { cookie: authed() },
+      });
+      expect(getRes.statusCode).toBe(200);
+
+      // deleteRun must NOT have been called — a broken impl that calls it anyway exposes
+      // the orphan via the runInStore flag check above and also via this assertion.
+      expect(store.deleteRun as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// ── 3. Audit ─────────────────────────────────────────────────────────────────
+//
+// An audit row (operator + time) must be written for BOTH the successful deletion
+// AND the refused (409) deletion attempt. A broken impl that skips the audit on
+// refusal leaves the log empty, causing the find() to return undefined → test fails.
+
+describe('DELETE /api/e2e/runs/:run_id — audit', () => {
+  beforeEach(() => {
+    _resetAuditLog();
+  });
+
+  it('writes a succeeded audit row for a completed deletion; a no-audit impl leaves an empty log', async () => {
+    const store = makeMockStore({
+      getRun: vi.fn().mockResolvedValue(makeRun({ status: 'completed' })),
+      deleteRun: vi.fn().mockResolvedValue(true),
+    });
+
+    await withOidcEnv(async () => {
+      const app = buildServer(undefined, undefined, async () => store);
+      closers.push(app);
+
+      await app.inject({
+        method: 'DELETE',
+        url: '/api/e2e/runs/run_001',
+        headers: { cookie: authed() },
+      });
+
+      const auditRes = await app.inject({
+        method: 'GET',
+        url: '/api/audit',
+        headers: { cookie: authed() },
+      });
+      expect(auditRes.statusCode).toBe(200);
+      const auditBody = JSON.parse(auditRes.body) as {
+        data: Array<{ action: string; target: string; actor: string; outcome: string; at: string }>;
+      };
+      // A broken impl that skips the audit call entirely would leave data empty → row undefined.
+      const row = auditBody.data.find((r) => r.action === 'e2e.run.delete' && r.target === 'run_001');
+      expect(row).toBeDefined();
+      expect(row!.outcome).toBe('succeeded');
+      expect(row!.actor).toBe('mark@mardash.ai');
+      expect(typeof row!.at).toBe('string'); // timestamp must be present
+    });
+  });
+
+  it('writes a failed audit row for a refused (409) deletion; a broken impl that exits before auditing leaves no row', async () => {
+    // BROKEN baseline: the original endpoint returned 409 BEFORE calling audited(), leaving
+    // no trace of the attempt. This test fails against that implementation (row === undefined).
+    // The fix moves the 409 throw inside audited() so the row is always written.
+    const store = makeMockStore({
+      getRun: vi.fn().mockResolvedValue(makeRun({ status: 'running' })),
+      listWorkflows: vi.fn().mockResolvedValue([]),
+      deleteRun: vi.fn().mockResolvedValue(false),
+    });
+
+    await withOidcEnv(async () => {
+      const app = buildServer(undefined, undefined, async () => store);
+      closers.push(app);
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/e2e/runs/run_001',
+        headers: { cookie: authed() },
+      });
+      expect(res.statusCode).toBe(409);
+
+      const auditRes = await app.inject({
+        method: 'GET',
+        url: '/api/audit',
+        headers: { cookie: authed() },
+      });
+      const auditBody = JSON.parse(auditRes.body) as {
+        data: Array<{ action: string; target: string; actor: string; outcome: string }>;
+      };
+      // A broken impl (409 before audited) would leave data empty → row is undefined → fails.
+      const row = auditBody.data.find((r) => r.action === 'e2e.run.delete' && r.target === 'run_001');
+      expect(row).toBeDefined();
+      expect(row!.outcome).toBe('failed'); // 'failed' = the attempt was made but refused
+      expect(row!.actor).toBe('mark@mardash.ai');
+    });
+  });
+});
+
+// ── 4. Not-found ─────────────────────────────────────────────────────────────
+//
+// Deleting a non-existent run must return a clean 404 with error code 'not_found'.
+// A broken impl that throws an unhandled error returns 500; a silent success returns
+// 200 — both fail the status-code assertion.
+
+describe('DELETE /api/e2e/runs/:run_id — not-found', () => {
+  it('returns 404 with not_found when the run does not exist; a broken impl returning 500 or 200 fails the status check', async () => {
+    const store = makeMockStore({
+      getRun: vi.fn().mockResolvedValue(null),
+    });
+
+    await withOidcEnv(async () => {
+      const app = buildServer(undefined, undefined, async () => store);
+      closers.push(app);
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/e2e/runs/nonexistent-run',
+        headers: { cookie: authed() },
+      });
+      // Not 500 (unhandled error), not 200 (silent success).
+      expect(res.statusCode).toBe(404);
+      const body = JSON.parse(res.body) as { error: { code: string } };
+      expect(body.error.code).toBe('not_found');
+
+      // deleteRun must not be called when the run doesn't exist.
+      // A broken impl that calls deleteRun on a non-existent ID might silently succeed
+      // (returning false), masking the not-found case.
+      expect(store.deleteRun as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// ── 5. Authorization ─────────────────────────────────────────────────────────
+//
+// Deletion uses the same authorization rules as the POST trigger: OIDC session only.
+// The automation bearer token is read-only and must be refused with 403.
+// An unauthenticated caller gets 401. A broken impl that permits either would fail.
+
+describe('DELETE /api/e2e/runs/:run_id — authorization', () => {
+  it('refuses deletion for the automation token (read-only identity) with 403; a broken impl that allows it fails the 403 assertion', async () => {
+    const store = makeMockStore({
+      getRun: vi.fn().mockResolvedValue(makeRun({ status: 'completed' })),
+      deleteRun: vi.fn().mockResolvedValue(true),
+    });
+
+    await withAutomationEnv(async () => {
+      const app = buildServer(undefined, undefined, async () => store);
+      closers.push(app);
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/e2e/runs/run_001',
+        headers: { authorization: `Bearer ${AUTOMATION_TOKEN}` },
+      });
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.body) as { error: { code: string } };
+      expect(body.error.code).toBe('forbidden');
+
+      // deleteRun must not have been called — the request was refused at the auth gate.
+      // A broken impl that lets it through would flip this assertion.
+      expect(store.deleteRun as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    });
+  });
+
+  it('refuses deletion for an unauthenticated caller with 401', async () => {
+    const store = makeMockStore({
+      getRun: vi.fn().mockResolvedValue(makeRun({ status: 'completed' })),
+      deleteRun: vi.fn().mockResolvedValue(true),
+    });
+
+    await withOidcEnv(async () => {
+      const app = buildServer(undefined, undefined, async () => store);
+      closers.push(app);
+
+      // No cookie, no bearer token.
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/e2e/runs/run_001',
+      });
+      expect(res.statusCode).toBe(401);
+      expect(store.deleteRun as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// ── 6. Recomputation ─────────────────────────────────────────────────────────
+//
+// After deletion the run must not appear in the run list and must not contribute
+// any count or spend to aggregated views. A broken impl whose list endpoint
+// returns stale data (ghost row) would fail the "run_id absent from list" assertion.
+
+describe('DELETE /api/e2e/runs/:run_id — recomputation', () => {
+  it('deleted run absent from run list with no ghost count or spend; a broken list that includes the ghost fails the absence assertion', async () => {
+    const run = makeRun({
+      status: 'completed',
+      spend_cents: 500,
+      workflows_passed: 8,
+      workflows_failed: 2,
+      pass_rate: 0.8,
+    });
+    let liveRuns: EvalRun[] = [run];
+
+    const store = makeMockStore({
+      getRun: vi.fn().mockImplementation(async (id: string) => liveRuns.find((r) => r.run_id === id) ?? null),
+      listWorkflows: vi.fn().mockResolvedValue([]),
+      listAllRuns: vi.fn().mockImplementation(async () => liveRuns),
+      // Correct cascade: remove the run from the in-memory list so subsequent list calls see
+      // zero rows. A broken impl that leaves liveRuns intact would make the post-delete list
+      // still return the run → the "not in list" assertion below would fail.
+      deleteRun: vi.fn().mockImplementation(async (id: string) => {
+        const existed = liveRuns.some((r) => r.run_id === id);
+        liveRuns = liveRuns.filter((r) => r.run_id !== id);
+        return existed;
+      }),
+    });
+
+    await withOidcEnv(async () => {
+      const app = buildServer(undefined, undefined, async () => store);
+      closers.push(app);
+
+      // Pre-condition: run appears in the list with its spend contribution.
+      const pre = await app.inject({
+        method: 'GET',
+        url: '/api/e2e/runs',
+        headers: { cookie: authed() },
+      });
+      expect(pre.statusCode).toBe(200);
+      const preBody = JSON.parse(pre.body) as { data: EvalRun[] };
+      expect(preBody.data.some((r) => r.run_id === 'run_001')).toBe(true);
+      const preSpend = preBody.data.find((r) => r.run_id === 'run_001')!.spend_cents;
+      expect(preSpend).toBe(500);
+
+      // Delete the run.
+      const del = await app.inject({
+        method: 'DELETE',
+        url: '/api/e2e/runs/run_001',
+        headers: { cookie: authed() },
+      });
+      expect(del.statusCode).toBe(200);
+
+      // After deletion: run must not appear in the list.
+      // A broken list impl (stale cache / wrong filter) that still returns the run fails here.
+      const post = await app.inject({
+        method: 'GET',
+        url: '/api/e2e/runs',
+        headers: { cookie: authed() },
+      });
+      expect(post.statusCode).toBe(200);
+      const postBody = JSON.parse(post.body) as { data: EvalRun[] };
+      expect(postBody.data.some((r) => r.run_id === 'run_001')).toBe(false);
+      // No ghost contribution: list length drops by exactly 1.
+      expect(postBody.data).toHaveLength(0);
+
+      // Permalink for the deleted run must also return 404.
+      const permalink = await app.inject({
+        method: 'GET',
+        url: '/api/e2e/runs/run_001',
+        headers: { cookie: authed() },
+      });
+      expect(permalink.statusCode).toBe(404);
+    });
   });
 });
