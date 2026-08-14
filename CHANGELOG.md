@@ -766,6 +766,14 @@ Each released version maps to a published control-plane image tag
 ## [Unreleased]
 
 
+## [1.30.10] - 2026-08-13
+
+### Added
+- `POST /ingest/run-progress` endpoint on the control-plane that accepts a Cloud Run job's self-reported progress (run id, intended workflow count, per-outcome counters, spend, terminal status) and persists it to the cp-results Postgres store via `PgCpResultsBackend.updateRun()`.
+- Google-signed OIDC service-identity token verification (`verifyGoogleServiceToken`) enforcing RS256 alg, Google issuer, expiry, optional audience, and exact runner service-account email match against `FORGE_RUNNER_SA_EMAIL`; no shared secret or forge session credential is accepted on this endpoint.
+- Idempotent update semantics: repeated reports for the same run id advance counters in-place; terminal status (`completed`, `failed`, `aborted`) settles `completed_at` and is not overwritten by a later non-terminal report.
+- 34-test unit suite (`tests/ingest-routes.test.ts`) covering auth, payload validation, backend-not-configured gate, successful write, counter mapping, and idempotency — all using injected stubs with no database dependency.
+
 ## [1.30.9] - 2026-08-13
 
 ### Added
