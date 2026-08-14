@@ -358,7 +358,38 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
     // Best-effort and idempotent: a run reports repeatedly as it progresses, so the same workflow
     // arrives more than once. A row that fails to persist must not fail the whole report — the
     // aggregate counters are the more important signal and are already committed above.
+    /**
+     * HAT's verdict vocabulary is not the store's.
+     *
+     * The runner speaks ACCEPTED / REJECTED / UNARMED / INFRA-FAIL; the column accepts
+     * pass | fail | error | skip. Sending HAT's words made every row fail its insert — and because
+     * a row failure is deliberately non-fatal, the run reported `attempted 2 · passed 2` above an
+     * empty table with nothing in the response to say why. Translate at the boundary, and treat an
+     * unknown word as `error` rather than dropping the row: a workflow the table cannot classify
+     * still happened, and losing it silently is what this whole endpoint exists to stop.
+     *
+     * ⛔ UNARMED and INFRA-FAIL are RIG failures — `error`, never `fail`. Counting a rig failure as
+     * a product rejection is the misreport that withheld verdicts exist to prevent.
+     */
+    const toStoreVerdict = (v: string): 'pass' | 'fail' | 'error' | 'skip' => {
+      switch (v.toUpperCase()) {
+        case 'ACCEPTED':
+        case 'PASS':
+          return 'pass';
+        case 'REJECTED':
+        case 'FAIL':
+          return 'fail';
+        case 'SKIP':
+        case 'SKIPPED':
+          return 'skip';
+        default:
+          return 'error'; // UNARMED, INFRA-FAIL, and anything unrecognised
+      }
+    };
+
     let workflowsWritten = 0;
+    let workflowsRejected = 0;
+    let lastWorkflowError: string | null = null;
     if (Array.isArray(body.workflows) && body.workflows.length > 0) {
       for (const wf of body.workflows) {
         if (!wf?.workflow_id || !wf?.verdict) continue;
@@ -370,7 +401,7 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
             run_id: body.run_id,
             workflow_id: wf.workflow_id,
             tenant_id: updated.tenant_id,
-            verdict: wf.verdict as never,
+            verdict: toStoreVerdict(wf.verdict),
             ...(wf.integrity_class ? { integrity_class: wf.integrity_class as never } : {}),
             ...(wf.provider ? { provider: wf.provider } : {}),
             ...(typeof wf.duration_ms === 'number' ? { duration_ms: wf.duration_ms } : {}),
@@ -386,11 +417,24 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
           });
           workflowsWritten += 1;
         } catch (e) {
+          // ⛔ Count AND report it. This was silent, so a verdict-vocabulary mismatch rejected every
+          // row while the response said `updated: true` — the caller had no way to know the table
+          // stayed empty. A partial success that reports as a success is the failure mode this
+          // whole night has been about.
+          workflowsRejected += 1;
+          lastWorkflowError = e instanceof Error ? e.message.slice(0, 200) : String(e);
           req.log?.warn?.({ err: e, workflow_id: wf.workflow_id }, 'ingest: workflow row failed');
         }
       }
     }
 
-    return reply.code(200).send({ updated: true, run_id: body.run_id, workflows: workflowsWritten });
+    return reply.code(200).send({
+      updated: true,
+      run_id: body.run_id,
+      workflows: workflowsWritten,
+      ...(workflowsRejected > 0
+        ? { workflows_rejected: workflowsRejected, workflow_error: lastWorkflowError }
+        : {}),
+    });
   });
 }

@@ -724,3 +724,27 @@ describe('per-workflow rows', () => {
     expect(block).toMatch(/catch/);
   });
 });
+
+describe('verdict translation at the boundary', () => {
+  // HAT speaks ACCEPTED/REJECTED/UNARMED/INFRA-FAIL; the column takes pass|fail|error|skip. Sending
+  // HAT's words rejected every row, and because a row failure is non-fatal the response still said
+  // `updated: true` — a run showed `attempted 2 · passed 2` above an empty table (Mark, 2026-08-14).
+  const src = readFileSync(join(__dirname, '..', 'src', 'api', 'ingest-routes.ts'), 'utf8');
+
+  it('maps HAT verdicts onto the store vocabulary', () => {
+    expect(src).toContain("case 'ACCEPTED'");
+    expect(src).toMatch(/return 'pass'/);
+    expect(src).toMatch(/return 'fail'/);
+  });
+
+  it('⛔ rig failures map to error, never to fail', () => {
+    // Counting INFRA-FAIL/UNARMED as a product rejection is the misreport withheld verdicts prevent.
+    const fn = src.slice(src.indexOf('toStoreVerdict'), src.indexOf('let workflowsWritten'));
+    expect(fn).toMatch(/default:\s*\n?\s*return 'error'/);
+    expect(fn).not.toMatch(/INFRA-FAIL[\s\S]{0,40}return 'fail'/);
+  });
+
+  it('⛔ rejected rows are reported, not swallowed', () => {
+    expect(src).toContain('workflows_rejected');
+  });
+});

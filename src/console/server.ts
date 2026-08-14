@@ -1950,6 +1950,10 @@ export function buildServer(
           run_id: runId,
           tenant_id: process.env.CONSOLE_E2E_TENANT ?? 'dorinda-prod',
           trigger_source: triggerSource,
+          // The provider belongs on the COLUMN, not only in meta — the run-history table renders
+          // this field, and burying it in meta left every row showing "—" for a run whose provider
+          // was chosen explicitly in the modal.
+          ...(body.provider ? { provider: body.provider } : {}),
           meta: {
             reason: body.reason.trim(),
             ...(body.suite ? { suite: body.suite } : {}),

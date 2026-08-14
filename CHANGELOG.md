@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.32.1] - 2026-08-14
+
+### Fixed
+
+- **Per-workflow rows were rejected by a vocabulary mismatch, silently.** HAT reports
+  `ACCEPTED`/`REJECTED`/`UNARMED`/`INFRA-FAIL`; the column accepts `pass|fail|error|skip`. Every row
+  failed its insert, and because a row failure is deliberately non-fatal the response still said
+  `updated: true` — so a run showed `attempted 2 · passed 2` above an empty drilldown table with
+  nothing to say why. Verdicts are translated at the boundary (rig failures map to `error`, never
+  `fail` — counting a rig failure as a product rejection is the misreport withheld verdicts exist to
+  prevent), and rejected rows are now counted and returned to the caller instead of swallowed.
+- **The run's provider column was always null.** The trigger stored the operator's choice in `meta`
+  only, so the run-history table rendered "—" for a provider that had been explicitly selected.
+
+
 ## [1.32.0] - 2026-08-14
 
 ### Added
