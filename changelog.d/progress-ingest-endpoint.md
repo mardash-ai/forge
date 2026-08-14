@@ -1,0 +1,3 @@
+### Added
+
+- **`POST /ingest/run-progress` endpoint on the forge control-plane API.** Cloud Run eval jobs now self-report their progress (per-verdict counters, token spend, lifecycle status) directly to the cp-results Postgres store. Auth is the job's own Google-signed OIDC service-identity token (no new shared secret). Repeated reports for the same `run_id` are idempotent — they call `updateRun()` in place. `FORGE_RUNNER_SA_EMAIL` (required) and `FORGE_INGEST_AUDIENCE` (optional) configure which service account is accepted and what `aud` claim is enforced. `forge-hat` gains no database client; the write stays on the schema-owning forge control plane.

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.30.6] - 2026-08-14
+
+### Added
+
+- **`POST /ingest/run-progress` endpoint on the forge control-plane API.** Cloud Run eval jobs now self-report their progress (per-verdict counters, token spend, lifecycle status) directly to the cp-results Postgres store. Auth is the job's own Google-signed OIDC service-identity token (no new shared secret). Repeated reports for the same `run_id` are idempotent. `FORGE_RUNNER_SA_EMAIL` (required) and `FORGE_INGEST_AUDIENCE` (optional) configure which service account is accepted and what `aud` claim is enforced.
+
+### Fixed
+
+- **Delivery checks no longer go red during an in-flight publish.** Added `'pending'` grace state to the delivery-check capability (C38) so in-flight hops resolve as "not delivered yet" rather than failing. The release-publish check now triggers on `workflow_run: completed` (not on the push that starts the publish). The producer check holds pending while a publish run is in-flight. The consumer check stays pending within a configurable adopt window (default 24h) after a new producer release. Genuine failures still produce a red check naming the missing artifact and a concrete remedy.
+
 ## [1.30.5] - 2026-08-14
 
 ### Added
