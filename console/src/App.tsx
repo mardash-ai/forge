@@ -4520,7 +4520,7 @@ function Boards() {
 // when the store is not configured (API returns 501) so the screen is never blank.
 //
 // Mock elements implemented:
-//   Run history table + accepted sparkline
+//   Run history table
 //   7 metric tiles (Attempted, Accepted, Rejected, Withheld, p50, p99, Spend)
 //   4 filter tiles (all/pass/fail/withheld) with ember inset when active
 //   Integrity strip (withheld-by-cause pills, each clickable as a filter)
@@ -5191,67 +5191,6 @@ ${failureList || '  (none)'}
 Fetch evidence with the e2e MCP tools: get_e2e_run("${run.run_id}"), get_workflow_result(run, slug), diff_e2e_runs(run, prev).
 For each failure: classify (product / harness / host / environment), find the root cause, and file findings.
 Never lower a bar to make a run green.`;
-}
-
-// ── Run sparkline (accepted workflows, last N runs) ───────────────────────
-
-function E2ESparkline({
-  runs,
-  width = 260,
-  height = 84,
-}: {
-  runs: E2ERun[];
-  width?: number;
-  height?: number;
-}) {
-  if (runs.length < 2) return null;
-  const vals = [...runs].reverse().map((r) => r.workflows_passed);
-  const min = 0;
-  const max = Math.max(...vals, 1);
-  const pad = 10;
-  const w = width - pad * 2;
-  const h = height - 20; // leave space for bottom line + top label
-  const toX = (i: number) => pad + (i / (vals.length - 1)) * w;
-  const toY = (v: number) => 4 + (h - 4) * (1 - (v - min) / (max - min));
-  const pts = vals.map((v, i) => `${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(' L ');
-  const areaClose = `L ${toX(vals.length - 1).toFixed(1)},${(h + 4).toFixed(1)} L ${toX(0).toFixed(1)},${(h + 4).toFixed(1)} Z`;
-  const last = vals[vals.length - 1]!;
-  const prevBest = Math.max(...vals.slice(0, -1));
-  return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      width="100%"
-      height={height}
-      role="img"
-      aria-label={`Accepted workflows trend: ${vals.join(', ')}`}
-      style={{ display: 'block' }}
-    >
-      <line x1={0} y1={h + 4} x2={width} y2={h + 4} stroke="var(--line)" strokeWidth={1} />
-      <path d={`M ${pts} ${areaClose}`} fill="#4D8EC4" opacity={0.16} />
-      <path d={`M ${pts}`} fill="none" stroke="#4D8EC4" strokeWidth={2} strokeLinejoin="round" />
-      <circle cx={toX(vals.length - 1).toFixed(1)} cy={toY(last).toFixed(1)} r={4} fill="#4D8EC4" />
-      <text
-        x={toX(vals.length - 1)}
-        y={toY(last) - 8}
-        textAnchor="end"
-        fontSize={11}
-        fill="var(--text-muted)"
-      >
-        {last}
-      </text>
-      {prevBest > last && (
-        <text
-          x={toX(vals.indexOf(prevBest))}
-          y={toY(prevBest) - 8}
-          textAnchor="middle"
-          fontSize={11}
-          fill="var(--text-muted)"
-        >
-          {prevBest}
-        </text>
-      )}
-    </svg>
-  );
 }
 
 // ── Verdict pill ──────────────────────────────────────────────────────────
@@ -6787,7 +6726,6 @@ function Evals() {
 
   // ── Run list view ──────────────────────────────────────────────────────────
   if (!activeRunId) {
-    const sparklineRuns = runs.slice(0, 10);
     return (
       <>
         <Head screen="evals" title="E2E Tests" sub="Remote workflow eval results." />
@@ -6868,12 +6806,11 @@ function Evals() {
                         {h}
                       </th>
                     ))}
-                    <th style={{ ...th, minWidth: 260 }}>Accepted (sparkline)</th>
                     <th style={{ ...th, width: 48 }}></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {runs.map((r, ri) => (
+                  {runs.map((r) => (
                     <tr
                       key={r.run_id}
                       style={rowBase}
@@ -6989,9 +6926,6 @@ function Evals() {
                       </td>
                       <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>
                         {fmtE2eSpend(r.spend_cents)}
-                      </td>
-                      <td style={{ ...cell, padding: '2px 12px', minWidth: 260 }}>
-                        {ri === 0 ? <E2ESparkline runs={sparklineRuns} /> : null}
                       </td>
                       <td
                         style={{ ...cell, padding: '4px 8px', width: 48, textAlign: 'center' }}
