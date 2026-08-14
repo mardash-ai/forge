@@ -5936,6 +5936,11 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
         : String(namedCount);
   const estimateKnown = costCents !== null;
   const providers = [openai && 'openai', anthropic && 'anthropic'].filter(Boolean).join(', ') || 'openai';
+  // What the RUNNER accepts is exactly `openai` | `anthropic` | `both`. Sending the human-readable
+  // label meant ticking both boxes produced `provider: "openai, anthropic"` — not a provider, so the
+  // runner refuses the run rather than guessing which one was meant.
+  const providerValue: 'openai' | 'anthropic' | 'both' =
+    openai && anthropic ? 'both' : anthropic ? 'anthropic' : 'openai';
 
   const handleSubmit = async () => {
     if (!confirmed || submitting) return;
@@ -5944,7 +5949,7 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
     try {
       const reqBody: Record<string, unknown> = {
         reason: `manual · ${providers}`,
-        provider: providers,
+        provider: providerValue,
       };
       if (scope === 'suite' && suiteText.trim()) reqBody.suite = suiteText.trim();
       if (scope === 'named' && namedText.trim()) {
