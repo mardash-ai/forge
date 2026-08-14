@@ -4,7 +4,7 @@
  * Tests the shared query functions and the REST / MCP endpoints on the console server.
  * All tests run against in-memory mocks — no database required.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { reconcileRunningRuns } from '../src/console/server';
 import type { PgCpResultsBackend } from '../src/storage/backends/cp-results/pg';
 import type {
@@ -22,7 +22,7 @@ import {
   TRIAGE_INSTRUCTIONS,
   E2E_MCP_TOOLS,
 } from '../src/console/e2e-api';
-import { buildServer, makeSessionCookie, OIDC_SESSION_COOKIE } from '../src/console/server';
+import { buildServer, makeSessionCookie, OIDC_SESSION_COOKIE, _resetAuditLog } from '../src/console/server';
 
 // Mock the GCP jobs module so POST /api/e2e/runs tests never hit the real Cloud Run API.
 // vi.mock is hoisted, so this runs before any import in this file.

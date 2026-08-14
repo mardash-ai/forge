@@ -558,6 +558,11 @@ interface AuditRow {
 }
 const auditLog: AuditRow[] = [];
 
+/** Reset the audit log — for test isolation only. Never call in production code. */
+export function _resetAuditLog(): void {
+  auditLog.length = 0;
+}
+
 /**
  * The audit row is written BEFORE the attempt and updated after.
  *
@@ -2019,21 +2024,35 @@ export function buildServer(
       return reply.code(404).send({ error: { code: 'not_found', message: `run ${run_id} not found` } });
     }
 
-    // Refuse deletion of a live run — the runner is actively writing to it. Stop or await completion.
-    if (existing.status === 'running') {
-      return reply.code(409).send({
-        error: {
-          code: 'run_is_active',
-          message: `run ${run_id} is currently running — stop or let it finish before deleting`,
-        },
-      });
-    }
-
     const actor = actorOf(req);
 
-    // Audit BEFORE the attempt (consistent with every audited write on this surface).
-    // The delete cascades to all child tables; no secondary cleanup is needed.
-    const deleted = await audited(actor, 'e2e.run.delete', run_id, () => store.deleteRun(run_id));
+    // Audit BEFORE the attempt — consistent with every other audited write on this surface.
+    // The 409 path throws INSIDE the audited block so the refusal is recorded with outcome='failed'.
+    // A refusal IS an "attempt"; the row written here is the evidence that it happened.
+    let isRunningRefusal = false;
+    let deleted: boolean;
+    try {
+      deleted = await audited(actor, 'e2e.run.delete', run_id, async () => {
+        // Refuse deletion of a live run. Throwing inside audited() marks the row 'failed'
+        // so the refusal is still recorded — the interesting cases are the ones that don't succeed.
+        if (existing.status === 'running') {
+          isRunningRefusal = true;
+          throw new Error(`run ${run_id} is currently running — stop or let it finish before deleting`);
+        }
+        // The delete cascades to all child tables via ON DELETE CASCADE FKs.
+        return store.deleteRun(run_id);
+      });
+    } catch (e) {
+      if (isRunningRefusal) {
+        return reply.code(409).send({
+          error: {
+            code: 'run_is_active',
+            message: `run ${run_id} is currently running — stop or let it finish before deleting`,
+          },
+        });
+      }
+      throw e;
+    }
 
     if (!deleted) {
       // Race: another request deleted it between our getRun check and here — still a success.

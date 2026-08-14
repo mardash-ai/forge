@@ -38,3 +38,38 @@ export function fmtE2ePctOfRunnable(run: E2ERunCounts | null | undefined): strin
   if (runnable <= 0) return 'none runnable';
   return `${Math.round(((run.workflows_passed ?? 0) / runnable) * 100)}% of runnable`;
 }
+
+/**
+ * Run-modal "Full catalogue" radio label.
+ *
+ * Never renders a raw null: when the catalogue size is known it names the count; when it is not
+ * yet known it says so in words — the same rule applied to the Attempted tile sub-line.
+ *
+ *   fmtE2eFullScopeLabel(75)   → "Full catalogue — 75 workflows"
+ *   fmtE2eFullScopeLabel(null) → "Full catalogue — workflow count not yet known"
+ */
+export function fmtE2eFullScopeLabel(catalogueSize: number | null | undefined): string {
+  if (typeof catalogueSize === 'number' && catalogueSize > 0) {
+    return `Full catalogue — ${catalogueSize} workflows`;
+  }
+  return 'Full catalogue — workflow count not yet known';
+}
+
+/**
+ * Run-modal spend-estimate duration label.
+ *
+ * Scales with the selection instead of borrowing the full-catalogue ~40 min figure for
+ * every scope. Named workflows are estimated at ~1 min each; a suite run at ~20 min; the full
+ * catalogue at ~40 min. Follows the same "name the number when you have it" rule as the other
+ * formatters — the caller is responsible for not surfacing this when no cost estimate is known.
+ *
+ *   fmtE2eRunDuration('full',   1) → "~40 min"
+ *   fmtE2eRunDuration('suite',  1) → "~20 min"
+ *   fmtE2eRunDuration('named',  1) → "~1 min"
+ *   fmtE2eRunDuration('named',  3) → "~3 min"
+ */
+export function fmtE2eRunDuration(scope: 'full' | 'suite' | 'named', namedCount: number): string {
+  if (scope === 'named') return `~${namedCount} min`;
+  if (scope === 'suite') return '~20 min';
+  return '~40 min';
+}

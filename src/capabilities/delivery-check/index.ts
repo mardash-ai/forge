@@ -64,6 +64,7 @@ function toResourceResult(r: CheckResult): DeliveryCheckResult {
     message: r.message,
     ...(r.remedy !== undefined ? { remedy: r.remedy } : {}),
     ...(r.silence_reason !== undefined ? { silence_reason: r.silence_reason } : {}),
+    ...(r.pending_reason !== undefined ? { pending_reason: r.pending_reason } : {}),
     ...(r.detail !== undefined ? { detail: r.detail } : {}),
   };
 }
@@ -127,6 +128,7 @@ export const deliveryCheck: Capability<Input, DeliveryCheckRun> = {
       passed: batch.passed,
       failed: batch.failed,
       silenced: batch.silenced,
+      pending: batch.pending,
       results: batch.results.map(toResourceResult),
       duration_ms: Date.now() - started,
       updated_at: nowIso(),

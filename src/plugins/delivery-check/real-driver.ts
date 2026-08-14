@@ -42,6 +42,30 @@ async function resolveRemoteDigest(imageRef: string): Promise<string | null> {
   }
 }
 
+// ── GitHub REST API helper ────────────────────────────────────────────────────
+
+// Call the GitHub REST API using the GITHUB_TOKEN environment variable (available in CI).
+// Returns the parsed JSON body, or null when the request fails or credentials are absent.
+async function githubApiGet<T>(apiPath: string): Promise<T | null> {
+  const token = process.env['GITHUB_TOKEN'];
+  const repo = process.env['GITHUB_REPOSITORY']; // "owner/repo" set by the Actions runner
+  if (!token || !repo) return null;
+  try {
+    const url = `https://api.github.com/repos/${repo}${apiPath}`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 // ── deployment-state file ─────────────────────────────────────────────────────
 
 // deployment.json tracks the digest of the last successfully deployed image.
@@ -104,6 +128,43 @@ export function createRealDriver(repoRoot: string): DeliveryCheckDriver {
       } catch {
         return [];
       }
+    },
+
+    async getPublishRunState(): Promise<'in_flight' | 'completed' | null> {
+      // Query the GitHub Actions API for the most recent runs of the publish workflow.
+      // In-flight states: queued, requested, waiting, in_progress.
+      // Returns null when GITHUB_TOKEN / GITHUB_REPOSITORY are not set (local / non-CI runs).
+      interface WorkflowRunsResponse {
+        workflow_runs: Array<{ status: string }>;
+      }
+      const data = await githubApiGet<WorkflowRunsResponse>(
+        '/actions/workflows/publish-image.yml/runs?per_page=3',
+      );
+      if (!data || !Array.isArray(data.workflow_runs) || data.workflow_runs.length === 0) return null;
+      // Check if any of the most recent runs are still in-flight.
+      const inFlightStatuses = new Set(['queued', 'requested', 'waiting', 'in_progress']);
+      const hasInFlight = data.workflow_runs.some((r) => inFlightStatuses.has(r.status));
+      return hasInFlight ? 'in_flight' : 'completed';
+    },
+
+    async getTagAgeSeconds(tag: string): Promise<number | null> {
+      // For annotated tags, prefer the tagger timestamp (when the tag object was created).
+      // For lightweight tags, fall back to the tagged commit's author timestamp.
+      const taggerTs = await git(
+        ['for-each-ref', '--format=%(taggerdate:unix)', `refs/tags/${tag}`],
+        repoRoot,
+      );
+      const taggerEpoch = parseInt(taggerTs, 10);
+      if (!isNaN(taggerEpoch) && taggerEpoch > 0) {
+        return Math.floor(Date.now() / 1000) - taggerEpoch;
+      }
+      // Lightweight tag — use the commit timestamp.
+      const commitTs = await git(['log', '-1', '--format=%ct', tag], repoRoot);
+      const commitEpoch = parseInt(commitTs, 10);
+      if (!isNaN(commitEpoch) && commitEpoch > 0) {
+        return Math.floor(Date.now() / 1000) - commitEpoch;
+      }
+      return null;
     },
   };
 }

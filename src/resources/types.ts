@@ -453,11 +453,13 @@ export interface DeliveryCheckRun extends BaseResource {
   type: 'DeliveryCheckRun';
   // Which checks were requested.
   checks_requested: string[];
-  // The overall gate: true iff no check failed (silenced counts as acceptable).
+  // The overall gate: true iff no check failed (silenced + pending count as acceptable).
   ok: boolean;
   passed: number;
   failed: number;
   silenced: number;
+  // Checks that are in-flight and holding — "not delivered yet", not a failure.
+  pending: number;
   // Per-check outcomes, in run order.
   results: DeliveryCheckResult[];
   duration_ms: number;
@@ -465,11 +467,13 @@ export interface DeliveryCheckRun extends BaseResource {
 
 export interface DeliveryCheckResult {
   check: 'producer' | 'release' | 'consumer';
-  status: 'pass' | 'fail' | 'silenced';
+  status: 'pass' | 'fail' | 'silenced' | 'pending';
   artifact: string;
   message: string;
   remedy?: string;
   silence_reason?: string;
+  // Present only when status is 'pending': why the check is holding instead of failing.
+  pending_reason?: string;
   detail?: string;
 }
 

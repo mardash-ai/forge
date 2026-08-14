@@ -9,13 +9,22 @@
 // adapters (git/docker/gh) that the CI script and Capability wire up. Every check that
 // finds a problem returns status:'fail' with a specific artifact name and a concrete remedy;
 // a problem is only silenced by an explicit in-repo declaration carrying a reason.
+//
+// Grace-state contract:
+//   A check returns 'pending' (never 'fail') when the pipeline hop is provably in-flight:
+//   - release: the tag image is absent but the publish CI run has not yet completed.
+//   - producer: unreleased commits exist but a publish run is currently in-flight.
+//   - consumer: pinned version lags but the producer tag is newer than the grace window.
+//   'pending' is NOT 'pass'. It is "not delivered yet, watch this space." The batch is
+//   still ok:true so CI stays green; once the hop settles to a terminal state the check
+//   re-evaluates to pass or fail on the next run.
 
 export type CheckType = 'producer' | 'release' | 'consumer';
 
 // The outcome of a single delivery check.
 export interface CheckResult {
   check: CheckType;
-  status: 'pass' | 'fail' | 'silenced';
+  status: 'pass' | 'fail' | 'silenced' | 'pending';
   // The specific artifact that is behind (named so the build log is unambiguous).
   artifact: string;
   // Human-readable description of what is wrong (empty when passing).
@@ -24,6 +33,9 @@ export interface CheckResult {
   remedy?: string;
   // Present only when status is 'silenced': the declared reason for the accepted lag.
   silence_reason?: string;
+  // Present only when status is 'pending': why the check is holding instead of failing.
+  // Distinguishes "not delivered yet (in-flight)" from "not delivered (genuinely absent)".
+  pending_reason?: string;
   // Extra detail lines (commits, digests, …).
   detail?: string;
 }
@@ -64,6 +76,18 @@ export interface DeliveryCheckDriver {
 
   // Silence file: read the in-repo `.delivery-silence.json` (returns empty when absent).
   readSilences(): Promise<SilenceDeclaration[]>;
+
+  // GRACE — PUBLISH STATE: return whether the publish CI workflow is currently in-flight.
+  //   'in_flight'  — a run is queued, requested, waiting, or in_progress (not yet terminal).
+  //   'completed'  — the most recent run has reached a terminal state (success or failure).
+  //   null         — state cannot be determined (no CI env, no GITHUB_TOKEN, etc.).
+  // Used to distinguish "image not yet published (in-flight)" from "image never published".
+  getPublishRunState(): Promise<'in_flight' | 'completed' | null>;
+
+  // GRACE — TAG AGE: return the age in seconds of the given release tag.
+  // Returns null when not determinable (tag not found, no git access, etc.).
+  // Used by the consumer check to apply a grace window after a producer release.
+  getTagAgeSeconds(tag: string): Promise<number | null>;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -128,6 +152,25 @@ export async function runProducerCheck(
     };
   }
 
+  // Grace state: unreleased commits exist — but is a publish run currently in-flight?
+  // A release job that just started will tag and publish these commits. Hold as pending
+  // rather than failing immediately; the check re-evaluates once the run reaches a terminal state.
+  const publishState = await driver.getPublishRunState();
+  if (publishState === 'in_flight') {
+    return {
+      check,
+      status: 'pending',
+      artifact,
+      message:
+        `${repoName}:main is ${commits.length} commit(s) ahead of ${latestTag} — ` +
+        `a release job is currently in-flight.`,
+      pending_reason:
+        `Not delivered yet (in-flight). The publish CI run is still running; ` +
+        `this check will re-evaluate once it reaches a terminal state.`,
+      detail: commits.join('\n'),
+    };
+  }
+
   const silences = await driver.readSilences();
   const silence = activeSilence(silences, check);
   if (silence) {
@@ -185,12 +228,30 @@ export async function runReleaseCheck(
 
   const expectedDigest = await driver.getTagImageDigest(image, latestTag);
   if (!expectedDigest) {
+    // Image is absent from the registry. Before declaring failure, check whether the
+    // publish CI run is still in-flight — the image may simply not be pushed yet.
+    const publishState = await driver.getPublishRunState();
+    if (publishState === 'in_flight') {
+      return {
+        check,
+        status: 'pending',
+        artifact: `${image}:${latestTag}`,
+        message:
+          `Publish workflow for ${image}:${latestTag} is in-flight — ` +
+          `image not yet available in the registry.`,
+        pending_reason:
+          `Not delivered yet (in-flight). The image will appear in GHCR once the publish run completes. ` +
+          `This check is triggered by the publish workflow's completion and will re-run automatically.`,
+      };
+    }
+
+    // Publish is not in-flight — the image is genuinely missing (publish failed or never ran).
     return {
       check,
       status: 'fail',
       artifact: `${image}:${latestTag}`,
       message: `Release image ${image}:${latestTag} is not published in the registry.`,
-      remedy: `Ensure the publish workflow completed for ${latestTag}; re-run if it failed.`,
+      remedy: `Ensure the publish workflow completed successfully for ${latestTag}; re-run if it failed.`,
     };
   }
 
@@ -250,6 +311,10 @@ export interface ConsumerCheckOpts {
   pinnedVersion: string;
   // The producer's latest release version.
   latestVersion: string;
+  // Grace window in seconds: how long after a producer release before the consumer check turns red.
+  // Default: 86400 (24 hours). Set to 0 to disable the grace window entirely.
+  // During the grace window the check returns 'pending' ("not delivered yet") instead of 'fail'.
+  graceWindowSeconds?: number;
 }
 
 export async function runConsumerCheck(
@@ -257,6 +322,7 @@ export async function runConsumerCheck(
   opts: ConsumerCheckOpts,
 ): Promise<CheckResult> {
   const { consumerName, producerName, pinnedVersion, latestVersion } = opts;
+  const graceWindowSeconds = opts.graceWindowSeconds ?? 86400; // default 24h
   const check: CheckType = 'consumer';
   const artifact = `${consumerName}:${producerName}@${pinnedVersion}`;
 
@@ -267,6 +333,27 @@ export async function runConsumerCheck(
       artifact,
       message: `${consumerName} is current — pinned to ${producerName}@${latestVersion}.`,
     };
+  }
+
+  // Grace window: if the producer released recently, the consumer adopt/rollout may still
+  // be in-flight. Return 'pending' ("not delivered yet") instead of 'fail' during this window.
+  if (graceWindowSeconds > 0) {
+    const tagAge = await driver.getTagAgeSeconds(latestVersion);
+    if (tagAge !== null && tagAge < graceWindowSeconds) {
+      const ageMinutes = Math.round(tagAge / 60);
+      const windowHours = Math.round(graceWindowSeconds / 3600);
+      return {
+        check,
+        status: 'pending',
+        artifact,
+        message:
+          `${consumerName} is pinned to ${producerName}@${pinnedVersion} — ` +
+          `${producerName}@${latestVersion} was released ${ageMinutes}m ago (within ${windowHours}h adopt window).`,
+        pending_reason:
+          `Not delivered yet — adopt is pending. The consumer has ${windowHours}h from the producer release ` +
+          `to update its pin before this check turns red.`,
+      };
+    }
   }
 
   const silences = await driver.readSilences();
@@ -303,7 +390,9 @@ export interface BatchCheckResult {
   passed: number;
   failed: number;
   silenced: number;
-  // True iff all checks passed or were explicitly silenced (no unaddressed failures).
+  // Checks that are in-flight and holding — "not delivered yet", not a failure.
+  pending: number;
+  // True iff all checks passed or were explicitly silenced/pending (no unaddressed failures).
   ok: boolean;
 }
 
@@ -312,7 +401,8 @@ export async function runChecks(checks: Array<() => Promise<CheckResult>>): Prom
   const failed = results.filter((r) => r.status === 'fail').length;
   const silenced = results.filter((r) => r.status === 'silenced').length;
   const passed = results.filter((r) => r.status === 'pass').length;
-  return { results, passed, failed, silenced, ok: failed === 0 };
+  const pending = results.filter((r) => r.status === 'pending').length;
+  return { results, passed, failed, silenced, pending, ok: failed === 0 };
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -320,7 +410,8 @@ export async function runChecks(checks: Array<() => Promise<CheckResult>>): Prom
 // ────────────────────────────────────────────────────────────────────────────
 
 export function formatCheckResult(r: CheckResult): string {
-  const icon = r.status === 'pass' ? '✓' : r.status === 'silenced' ? '~' : '✗';
+  const icon =
+    r.status === 'pass' ? '✓' : r.status === 'silenced' ? '~' : r.status === 'pending' ? '⏳' : '✗';
   const lines: string[] = [`${icon} [${r.check}] ${r.artifact}: ${r.message}`];
   if (r.detail) {
     for (const line of r.detail.split('\n')) {
@@ -329,6 +420,7 @@ export function formatCheckResult(r: CheckResult): string {
   }
   if (r.remedy) lines.push(`  → ${r.remedy}`);
   if (r.silence_reason) lines.push(`  ~ silenced: ${r.silence_reason}`);
+  if (r.pending_reason) lines.push(`  ⏳ ${r.pending_reason}`);
   return lines.join('\n');
 }
 
@@ -336,9 +428,16 @@ export function formatBatchResult(batch: BatchCheckResult): string {
   const lines = batch.results.map(formatCheckResult);
   lines.push('');
   if (batch.ok) {
-    lines.push(`delivery-check: ${batch.passed} passed, ${batch.silenced} silenced — all hops delivered.`);
+    const parts: string[] = [`${batch.passed} passed`];
+    if (batch.silenced > 0) parts.push(`${batch.silenced} silenced`);
+    if (batch.pending > 0) parts.push(`${batch.pending} pending`);
+    const summary = batch.pending > 0 ? 'in-flight hops not yet delivered.' : 'all hops delivered.';
+    lines.push(`delivery-check: ${parts.join(', ')} — ${summary}`);
   } else {
-    lines.push(`delivery-check: ${batch.failed} FAILED, ${batch.passed} passed, ${batch.silenced} silenced`);
+    const parts: string[] = [`${batch.failed} FAILED`, `${batch.passed} passed`];
+    if (batch.silenced > 0) parts.push(`${batch.silenced} silenced`);
+    if (batch.pending > 0) parts.push(`${batch.pending} pending`);
+    lines.push(`delivery-check: ${parts.join(', ')}`);
     lines.push(`Fix the failing checks above before proceeding.`);
   }
   return lines.join('\n');

@@ -24,6 +24,7 @@ import { registerConnectRoutes } from './connect-routes';
 import { registerMembershipRoutes } from './membership-routes';
 import { registerBillingRoutes } from './billing-routes';
 import { registerTenantRoutes } from './tenant-routes';
+import { registerIngestRoutes } from './ingest-routes';
 import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
 
@@ -194,6 +195,12 @@ registerBillingRoutes(app);
 // C34 whole-tenant teardown — registered on BOTH planes: the app calls it over the internal
 // network (data), and an operator may call it from the control plane.
 registerTenantRoutes(app);
+
+// Runner ingest — POST /ingest/run-progress: the Cloud Run eval job reports its own progress
+// here, authenticated by a Google-signed service-identity OIDC token. Writes land in the
+// cp-results store so the console tab that was updated at trigger time reflects the real outcome
+// rather than a destroyed-container last state.
+registerIngestRoutes(app);
 
 // Event APIs.
 app.get('/events', async (req) => {

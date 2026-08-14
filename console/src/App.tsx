@@ -24,7 +24,12 @@ import {
 } from './ui/kit';
 import { ExternalGlyph, LogoMark, RAIL_ICON, StatusGlyph, SvgDefs, Wordmark } from './ui/icons';
 import { duration, relative, useApi } from './lib/api';
-import { fmtE2ePctOfCatalogue, fmtE2ePctOfRunnable } from './lib/e2e-format';
+import {
+  fmtE2ePctOfCatalogue,
+  fmtE2ePctOfRunnable,
+  fmtE2eFullScopeLabel,
+  fmtE2eRunDuration,
+} from './lib/e2e-format';
 import { fixtureForSelection } from './lib/seed-editor';
 import { FIXTURES } from './lib/fixtures';
 
@@ -6031,7 +6036,7 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
             >
               <input type="radio" name="e2e-scope" checked={scope === s} onChange={() => setScope(s)} />
               {s === 'full' ? (
-                `Full catalogue — ${catalogue} workflows`
+                fmtE2eFullScopeLabel(catalogue)
               ) : s === 'suite' ? (
                 <>
                   Suite{' '}
@@ -6127,8 +6132,8 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
         >
           {estimateKnown ? (
             <>
-              Estimated spend: <span className="num">{fmtE2eSpend(costCents!)}</span> · ~40 min · runs in
-              Cloud Run, tenant lock honored
+              Estimated spend: <span className="num">{fmtE2eSpend(costCents!)}</span> ·{' '}
+              {fmtE2eRunDuration(scope, namedCount)} · runs in Cloud Run, tenant lock honored
             </>
           ) : (
             <>

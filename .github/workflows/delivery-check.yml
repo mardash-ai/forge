@@ -5,8 +5,22 @@ name: Delivery Check
 #   tag→image   (release hop 1): release image not published in GHCR → FAIL
 #   image→run   (release hop 2): deployed image is not on the release digest → FAIL
 #
-# Runs on every push to main (catches regressions immediately) and on a daily schedule
-# (catches drift that accumulates without a push — e.g. a deploy that's overdue).
+# TRIGGER DESIGN — why each job uses a different trigger:
+#
+#   producer-check  fires on push:main (catches drift immediately) and on schedule.
+#   release-check   fires on workflow_run: Publish control-plane image [completed] and
+#                   on schedule — it does NOT run on push:main.
+#
+#   The release-check cannot run on the push that STARTS the publish; the image is not
+#   yet in GHCR. Triggering on workflow_run:completed means by the time this job runs
+#   the publish has already reached a terminal state (succeeded or failed), so:
+#     - success → image is in GHCR → check evaluates correctly
+#     - failure → image is absent → check returns fail with a specific remedy
+#
+#   During the schedule run (or a manual dispatch) the check may catch an in-flight
+#   publish. In that case the check logic (plugin/delivery-check/index.ts) queries
+#   the GitHub API for the publish run state and returns 'pending' instead of 'fail'
+#   while the run is in_flight.
 #
 # Every failing check exits 1, names the specific artifact that is behind, and states
 # the exact remedy. A lag is silenced ONLY by a .delivery-silence.json file in the repo
@@ -15,6 +29,9 @@ name: Delivery Check
 on:
   push:
     branches: [main]
+  workflow_run:
+    workflows: ['Publish control-plane image']
+    types: [completed]
   schedule:
     # Daily at 08:00 UTC — catches drift that accumulates without a push.
     - cron: '0 8 * * *'
@@ -23,16 +40,53 @@ on:
 permissions:
   contents: read
   packages: read # needed for docker manifest inspect against GHCR
+  actions: read # needed for getPublishRunState() GitHub API calls
 
 jobs:
-  delivery-check:
-    name: Delivery pipeline check
+  # ── Producer check ──────────────────────────────────────────────────────────
+  # Runs on push:main, schedule, and workflow_dispatch.
+  # Does NOT run on workflow_run — the producer check is about git state, not image state,
+  # and it is already evaluated on the push that created the commit.
+  producer-check:
+    name: Producer check — main must be current with latest release
+    if: github.event_name != 'workflow_run'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (full history — git log needs tag ancestry)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0 # full history so git describe + git log work correctly
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      # Fails if main has source commits not included in any release tag.
+      # Remedy: publish a new release (bump version → tag → push image).
+      - name: Producer check — main must be current with latest release
+        run: npx tsx scripts/delivery-check.ts producer
+        env:
+          FORGE_PRODUCER_REPO_NAME: forge
+          FORGE_PRODUCER_SOURCE_PATHS: src/,tests/,package.json,Dockerfile,.github/workflows/
+
+  # ── Release check ──────────────────────────────────────────────────────────
+  # Triggered by: workflow_run completion, schedule, or manual dispatch.
+  # Does NOT run on push:main — triggering on push would race the publish workflow
+  # that push:tag starts. By waiting for workflow_run:completed the image is already
+  # in GHCR (or the publish failed), so the check evaluates against a terminal state.
+  release-check:
+    name: Release check — deployed control-plane must be on the latest release digest
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history — git describe needs tag ancestry)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -51,27 +105,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── Producer check ────────────────────────────────────────────────────────
-      # Fails if main has source commits not included in any release tag.
-      # Remedy: publish a new release (bump version → tag → push image).
-      - name: Producer check — main must be current with latest release
-        run: npx tsx scripts/delivery-check.ts producer
-        env:
-          FORGE_PRODUCER_REPO_NAME: forge
-          FORGE_PRODUCER_SOURCE_PATHS: src/,tests/,package.json,Dockerfile,.github/workflows/
-
-      # ── Release check ─────────────────────────────────────────────────────────
       # Fails if:
       #   - The latest vX.Y.Z tag's image is not published in GHCR (hop: tag→image).
+      #     Grace state: if a publish run is still in_flight, returns 'pending' instead of
+      #     'fail' so the CI check stays green while the publish completes.
       #   - The deployed control-plane is not running the latest release digest (hop: image→run).
       #     The deployed digest is tracked in deployment.json and updated by the release process.
       #     If FORGE_DEPLOYED_DIGEST is set (e.g. injected by the deploy automation), it takes
       #     precedence over deployment.json.
-      - name: Release check — deployed control-plane must be on the latest release digest
+      - name: Release check — image published and deployed digest matches
         run: npx tsx scripts/delivery-check.ts release
         env:
           FORGE_CP_IMAGE: ghcr.io/${{ github.repository_owner }}/forge-control-plane
           FORGE_CP_IMAGE_LABEL: forge-control-plane
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           # FORGE_DEPLOYED_DIGEST: ${{ secrets.FORGE_DEPLOYED_DIGEST }}
           # Uncomment the line above and set the secret once the deploy automation
           # is wired to update it after each successful deploy.

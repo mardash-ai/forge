@@ -35,6 +35,14 @@ function makeDriver(overrides: Partial<DeliveryCheckDriver> = {}): DeliveryCheck
     async readSilences() {
       return [];
     },
+    // Grace-state stubs: return null (state cannot be determined) by default so existing
+    // tests are unaffected — the grace path only activates when state is 'in_flight'.
+    async getPublishRunState() {
+      return null;
+    },
+    async getTagAgeSeconds(_tag) {
+      return null;
+    },
     ...overrides,
   };
 }
@@ -619,5 +627,312 @@ describe("forge's own delivery checks — wired red/green demonstration", () => 
 
     const formatted = formatBatchResult(batch);
     expect(formatted).toContain('all hops delivered');
+  });
+});
+
+// ── Grace-state: both directions proven for every check ───────────────────────
+//
+// Each check has two directions:
+//   (a) in-flight / within grace window → status:'pending'   ("not delivered yet")
+//   (b) genuinely undelivered, terminal state → status:'fail' ("not delivered")
+//
+// These are the canonical proofs required by the acceptance criteria.
+
+describe('grace-state: producer check — in-flight vs genuinely untagged', () => {
+  it('PENDING (in-flight): unreleased commits + publish run is in_flight → pending, never fail', async () => {
+    const driver = makeDriver({
+      async getUnreleasedCommits() {
+        return [
+          'chore: bump version to v1.29.0',
+          'feat: add grace-state to delivery-check',
+        ];
+      },
+      async getPublishRunState() {
+        return 'in_flight'; // publish-image.yml is still running
+      },
+    });
+
+    const result = await runProducerCheck(driver, {
+      repoName: 'forge',
+      sourcePaths: ['src/', 'tests/', 'package.json'],
+    });
+
+    expect(result.status).toBe('pending');
+    expect(result.message).toContain('in-flight');
+    expect(result.pending_reason).toContain('not delivered yet');
+    expect(result.pending_reason).toContain('in-flight');
+    // Pending must have no remedy — it is not an actionable failure
+    expect(result.remedy).toBeUndefined();
+    // Detail still names the commits for observability
+    expect(result.detail).toBeDefined();
+  });
+
+  it('RED (genuinely untagged): unreleased commits + publish completed → fail with remedy', async () => {
+    const driver = makeDriver({
+      async getUnreleasedCommits() {
+        return ['feat: something never shipped'];
+      },
+      async getPublishRunState() {
+        return 'completed'; // publish ran and finished — still unreleased
+      },
+    });
+
+    const result = await runProducerCheck(driver, {
+      repoName: 'forge',
+      sourcePaths: ['src/', 'tests/', 'package.json'],
+    });
+
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain('source changes on main are not included in any release');
+    expect(result.remedy).toContain('new release');
+    // Must NOT be pending — publish finished, gap is real
+    expect(result.status).not.toBe('pending');
+  });
+
+  it('RED (state unknown): unreleased commits + getPublishRunState=null → conservative fail', async () => {
+    const driver = makeDriver({
+      async getUnreleasedCommits() {
+        return ['feat: unreleased'];
+      },
+      async getPublishRunState() {
+        return null; // cannot determine (no GITHUB_TOKEN, local run, etc.)
+      },
+    });
+
+    const result = await runProducerCheck(driver, { repoName: 'forge', sourcePaths: [] });
+
+    // Without confirmed in_flight, treat as genuinely undelivered
+    expect(result.status).toBe('fail');
+    expect(result.remedy).toBeDefined();
+  });
+});
+
+describe('grace-state: release check — in-flight vs genuinely missing image', () => {
+  it('PENDING (in-flight): image absent + publish in_flight → pending, never fail', async () => {
+    const driver = makeDriver({
+      async getTagImageDigest(_image, _tag) {
+        return null; // not yet in registry
+      },
+      async getPublishRunState() {
+        return 'in_flight'; // publish-image.yml is still running
+      },
+    });
+
+    const result = await runReleaseCheck(driver, { image: IMAGE, label: 'forge-control-plane' });
+
+    expect(result.status).toBe('pending');
+    expect(result.artifact).toContain('v1.28.9');
+    expect(result.message).toContain('in-flight');
+    expect(result.pending_reason).toContain('not delivered yet');
+    expect(result.pending_reason).toContain('in-flight');
+    // No remedy — nothing to fix right now
+    expect(result.remedy).toBeUndefined();
+  });
+
+  it('RED (genuinely missing): image absent + publish completed → fail naming the missing image', async () => {
+    const driver = makeDriver({
+      async getTagImageDigest(_image, _tag) {
+        return null; // image not in registry despite publish finishing
+      },
+      async getPublishRunState() {
+        return 'completed'; // publish ran and finished — image is genuinely absent
+      },
+    });
+
+    const result = await runReleaseCheck(driver, { image: IMAGE, label: 'forge-control-plane' });
+
+    expect(result.status).toBe('fail');
+    // Must name the specific missing image (e.g. ghcr.io/.../forge-control-plane:v1.28.9)
+    expect(result.artifact).toContain('forge-control-plane');
+    expect(result.artifact).toContain('v1.28.9');
+    expect(result.message).toContain('not published');
+    expect(result.remedy).toContain('publish workflow');
+    // Must NOT be pending — publish is done, gap is real
+    expect(result.status).not.toBe('pending');
+  });
+
+  it('RED (state unknown): image absent + getPublishRunState=null → conservative fail', async () => {
+    const driver = makeDriver({
+      async getTagImageDigest(_image, _tag) {
+        return null;
+      },
+      async getPublishRunState() {
+        return null; // cannot determine (no GITHUB_TOKEN)
+      },
+    });
+
+    const result = await runReleaseCheck(driver, { image: IMAGE, label: 'forge-control-plane' });
+
+    // Without confirmed in_flight, image absent = genuinely not published
+    expect(result.status).toBe('fail');
+    expect(result.remedy).toBeDefined();
+  });
+});
+
+describe('grace-state: consumer check — adopt window vs genuinely overdue', () => {
+  it('PENDING (within window): version lags + tag is young → pending, never fail', async () => {
+    const FIVE_MINUTES = 300; // seconds
+    const driver = makeDriver({
+      async getTagAgeSeconds(_tag) {
+        return FIVE_MINUTES; // tag is 5 minutes old — well within the 24h window
+      },
+    });
+
+    const result = await runConsumerCheck(driver, {
+      consumerName: 'forge-os',
+      producerName: 'forge',
+      pinnedVersion: 'v1.28.0',
+      latestVersion: 'v1.29.0',
+      graceWindowSeconds: 86400, // 24h
+    });
+
+    expect(result.status).toBe('pending');
+    expect(result.message).toContain('5m ago');
+    expect(result.message).toContain('within 24h adopt window');
+    expect(result.pending_reason).toContain('not delivered yet');
+    expect(result.pending_reason).toContain('adopt is pending');
+    // No remedy — adopt window is open
+    expect(result.remedy).toBeUndefined();
+  });
+
+  it('RED (genuinely overdue): version lags + tag is old → fail with remedy', async () => {
+    const TWENTY_FIVE_HOURS = 90_000; // seconds — outside 24h window
+    const driver = makeDriver({
+      async getTagAgeSeconds(_tag) {
+        return TWENTY_FIVE_HOURS;
+      },
+    });
+
+    const result = await runConsumerCheck(driver, {
+      consumerName: 'forge-os',
+      producerName: 'forge',
+      pinnedVersion: 'v1.28.0',
+      latestVersion: 'v1.29.0',
+      graceWindowSeconds: 86400,
+    });
+
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain('forge-os is pinned to forge@v1.28.0');
+    expect(result.remedy).toContain('Update the forge pin');
+    // Must NOT be pending — grace window has closed
+    expect(result.status).not.toBe('pending');
+  });
+
+  it('RED (age unknown): version lags + getTagAgeSeconds=null → conservative fail (no grace)', async () => {
+    const driver = makeDriver({
+      async getTagAgeSeconds(_tag) {
+        return null; // cannot determine tag age
+      },
+    });
+
+    const result = await runConsumerCheck(driver, {
+      consumerName: 'forge-os',
+      producerName: 'forge',
+      pinnedVersion: 'v1.28.0',
+      latestVersion: 'v1.29.0',
+      graceWindowSeconds: 86400,
+    });
+
+    // Cannot confirm within window → treat as overdue
+    expect(result.status).toBe('fail');
+    expect(result.remedy).toBeDefined();
+  });
+
+  it('RED (grace disabled): graceWindowSeconds=0 disables the window entirely', async () => {
+    const driver = makeDriver({
+      async getTagAgeSeconds(_tag) {
+        return 60; // 1 minute — would be pending normally, but grace is disabled
+      },
+    });
+
+    const result = await runConsumerCheck(driver, {
+      consumerName: 'forge-os',
+      producerName: 'forge',
+      pinnedVersion: 'v1.28.0',
+      latestVersion: 'v1.29.0',
+      graceWindowSeconds: 0,
+    });
+
+    expect(result.status).toBe('fail');
+  });
+});
+
+describe('grace-state: batch + formatting', () => {
+  it('pending result formats with ⏳ icon and pending_reason, no remedy arrow', () => {
+    const r: CheckResult = {
+      check: 'release',
+      status: 'pending',
+      artifact: `${IMAGE}:v1.29.0`,
+      message: 'Publish workflow for the image is in-flight — not yet available.',
+      pending_reason: 'Not delivered yet (in-flight). Will re-evaluate once publish completes.',
+    };
+    const out = formatCheckResult(r);
+    expect(out).toContain('⏳');
+    expect(out).toContain('not delivered yet');
+    // No remedy arrow — pending is not an error to fix right now
+    expect(out).not.toContain('→');
+  });
+
+  it('batch ok:true when all checks are pending (in-flight)', async () => {
+    const driver = makeDriver({
+      async getTagImageDigest() {
+        return null;
+      },
+      async getPublishRunState() {
+        return 'in_flight';
+      },
+    });
+
+    const batch = await runChecks([() => runReleaseCheck(driver, { image: IMAGE, label: 'forge-control-plane' })]);
+
+    expect(batch.ok).toBe(true);
+    expect(batch.failed).toBe(0);
+    expect(batch.pending).toBe(1);
+    expect(batch.passed).toBe(0);
+
+    const out = formatBatchResult(batch);
+    expect(out).toContain('1 pending');
+    expect(out).toContain('in-flight hops not yet delivered');
+    expect(out).not.toContain('all hops delivered'); // in-flight ≠ delivered
+    expect(out).not.toContain('FAILED');
+  });
+
+  it('BATCH PENDING+PASS: producer passes, release pending — stays green through publish window', async () => {
+    // The canonical "publish window" scenario:
+    // Producer check passes (tag is visible), release is pending (image building).
+    // A human watching the CI during a publish should see green/pending, never red.
+    const driver = makeDriver({
+      async getLatestReleaseTag() {
+        return 'v1.29.0'; // tag visible
+      },
+      async getUnreleasedCommits() {
+        return []; // all commits in tag — producer passes
+      },
+      async getTagImageDigest() {
+        return null; // image not yet in GHCR
+      },
+      async getPublishRunState() {
+        return 'in_flight'; // publish-image.yml running
+      },
+      async getDeployedDigest() {
+        return null;
+      },
+    });
+
+    const batch = await runChecks([
+      () => runProducerCheck(driver, { repoName: 'forge', sourcePaths: ['src/', 'tests/'] }),
+      () => runReleaseCheck(driver, { image: IMAGE, label: 'forge-control-plane' }),
+    ]);
+
+    expect(batch.ok).toBe(true);
+    expect(batch.failed).toBe(0);
+    expect(batch.passed).toBe(1);
+    expect(batch.pending).toBe(1);
+
+    const out = formatBatchResult(batch);
+    expect(out).toContain('1 passed');
+    expect(out).toContain('1 pending');
+    expect(out).toContain('in-flight hops not yet delivered');
+    expect(out).not.toContain('FAILED');
   });
 });
