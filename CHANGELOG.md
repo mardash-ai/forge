@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.31.2] - 2026-08-14
+
+### Changed
+
+- **The E2E list view's button now reads "▶ Run", not "↻ Re-run".** On a page that is not showing a
+  run there is nothing to re-do — the button starts a fresh full-catalogue run, and now says so. The
+  run-detail view keeps "↻ Re-run", which is the correct verb there, as does the per-workflow row.
+  The modal continues to default to the full catalogue.
+
+
 ## [1.31.1] - 2026-08-14
 
 ### Fixed

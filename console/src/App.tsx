@@ -6657,7 +6657,7 @@ function Evals() {
                 cursor: 'pointer',
               }}
             >
-              ↻ Re-run
+              ▶ Run
             </button>
           )}
           {runsState === 'connected' && (

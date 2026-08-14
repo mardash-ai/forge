@@ -1550,3 +1550,32 @@ describe('/ingest/run-progress is reachable but never unauthenticated', () => {
     expect(route.toLowerCase()).toMatch(/verif|jwks|oidc|token/);
   });
 });
+
+describe('the E2E action buttons say what they do', () => {
+  // Mark, 2026-08-14: the list view's button said "Re-run", which is wrong on a page that is not
+  // showing a run — there is nothing to re-do. It starts a fresh full-suite run, so it says "Run".
+  // From inside a run, "Re-run" is exactly right and stays.
+  const src = readFileSync(join(__dirname, '..', 'console', 'src', 'App.tsx'), 'utf8');
+
+  it('the list view offers "Run", not "Re-run"', () => {
+    const runIdx = src.indexOf('▶ Run');
+    const listGuard = src.indexOf('if (!activeRunId)');
+    const detailMarker = src.indexOf('🔗 Copy link');
+
+    expect(runIdx).toBeGreaterThan(-1);
+    // The Run button sits in the list branch: after the !activeRunId guard, before the detail view.
+    expect(runIdx).toBeGreaterThan(listGuard);
+    expect(runIdx).toBeLessThan(detailMarker);
+    // And there is exactly one of it — a second would mean the detail view got relabelled too.
+    expect(src.split('▶ Run').length - 1).toBe(1);
+  });
+
+  it('a run detail still offers "Re-run"', () => {
+    const detail = src.slice(src.indexOf('🔗 Copy link'));
+    expect(detail).toContain('↻ Re-run');
+  });
+
+  it('the run modal defaults to the full catalogue', () => {
+    expect(src).toMatch(/useState<'full' \| 'suite' \| 'named'>\('full'\)/);
+  });
+});
