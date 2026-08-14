@@ -187,6 +187,14 @@ export interface RunProgressPayload {
     trials_passed?: number;
     failing_bar?: string;
     prompt?: string;
+    scenes?: Array<{
+      trial?: number;
+      scene_index: number;
+      scene_name?: string;
+      passed?: boolean;
+      assertions?: Array<{ name: string; expected: unknown; operator: string }>;
+      observed_values?: Array<{ name: string; value: unknown }>;
+    }>;
   }>;
   outcomes?: {
     pass?: number;
@@ -407,6 +415,8 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
 
     let workflowsWritten = 0;
     let workflowsRejected = 0;
+    let scenesWritten = 0;
+    let scenesRejected = 0;
     let lastWorkflowError: string | null = null;
     if (Array.isArray(body.workflows) && body.workflows.length > 0) {
       for (const wf of body.workflows) {
@@ -434,6 +444,28 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
             ...(wf.prompt ? { prompt: wf.prompt } : {}),
           });
           workflowsWritten += 1;
+
+          // Scene evidence for the trial drilldown. Same idempotence rule as the workflow row: a
+          // deterministic id per (run, workflow, trial, scene) so repeated reports replace rather
+          // than multiply. Without these the console shows a verdict with no evidence behind it.
+          for (const sc of wf.scenes ?? []) {
+            try {
+              await backends.cpResults.insertScene({
+                id: `${body.run_id}:${wf.workflow_id}:${sc.trial ?? 1}:${sc.scene_index}`,
+                workflow_id: `${body.run_id}:${wf.workflow_id}`,
+                run_id: body.run_id,
+                scene_index: sc.scene_index,
+                ...(sc.scene_name ? { scene_name: sc.scene_name } : {}),
+                ...(typeof sc.passed === 'boolean' ? { passed: sc.passed } : {}),
+                ...(sc.assertions ? { assertions: sc.assertions } : {}),
+                ...(sc.observed_values ? { observed_values: sc.observed_values } : {}),
+              });
+              scenesWritten += 1;
+            } catch (e) {
+              scenesRejected += 1;
+              lastWorkflowError = e instanceof Error ? e.message.slice(0, 200) : String(e);
+            }
+          }
         } catch (e) {
           // ⛔ Count AND report it. This was silent, so a verdict-vocabulary mismatch rejected every
           // row while the response said `updated: true` — the caller had no way to know the table
@@ -450,6 +482,8 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
       updated: true,
       run_id: body.run_id,
       workflows: workflowsWritten,
+      scenes: scenesWritten,
+      ...(scenesRejected > 0 ? { scenes_rejected: scenesRejected } : {}),
       ...(workflowsRejected > 0
         ? { workflows_rejected: workflowsRejected, workflow_error: lastWorkflowError }
         : {}),

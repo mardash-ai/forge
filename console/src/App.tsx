@@ -7106,6 +7106,17 @@ function Evals() {
         </button>
       </div>
 
+      {/* Live progress for a run in flight.
+          Mark, 2026-08-14: opening a running run must not cost you sight of its state — the list
+          view showed a bar and clicking through to the detail replaced it with nothing, so the one
+          place with the most context about a run was the one place that stopped telling you it was
+          still moving. Same component, same counter-driven data, no interpolation. */}
+      {activeRun?.status === 'running' && (
+        <div style={{ marginBottom: 12 }}>
+          <RunProgressBar run={activeRun} />
+        </div>
+      )}
+
       {/* Store-state banner (run-detail view) */}
       {storeStateBanner}
 

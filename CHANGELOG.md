@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.33.0] - 2026-08-14
+
+### Added
+
+- **The run-detail view shows the progress bar while a run is in flight.** Clicking into a running
+  run replaced the bar with nothing, so the view holding the most context about a run was the one
+  that stopped telling you it was still moving. Same component and same counter-driven data as the
+  list view, and the detail already polls every 15s while running, so it advances.
+- **`/ingest/run-progress` persists scene evidence.** A workflow could show `✓ accepted · 3/3` above
+  "No scene data for this trial" — the verdict with its reasoning missing. Scenes are keyed
+  `run:workflow:trial:scene` so repeated reports replace rather than multiply, and rejected scenes
+  are counted and returned (`scenes_rejected`) instead of swallowed.
+
+
 ## [1.32.2] - 2026-08-14
 
 ### Fixed

@@ -1579,3 +1579,35 @@ describe('the E2E action buttons say what they do', () => {
     expect(src).toMatch(/useState<'full' \| 'suite' \| 'named'>\('full'\)/);
   });
 });
+
+describe('a running run keeps its signal when you click into it', () => {
+  const src = readFileSync(join(__dirname, '..', 'console', 'src', 'App.tsx'), 'utf8');
+
+  it('the detail view renders the progress bar while running', () => {
+    // Mark, 2026-08-14: clicking into a running run replaced the bar with nothing, so the view with
+    // the most context was the one that stopped saying the run was alive.
+    const detail = src.slice(src.indexOf('🔗 Copy link'));
+    expect(detail).toMatch(/activeRun\?\.status === 'running'/);
+    expect(detail).toContain('<RunProgressBar run={activeRun} />');
+  });
+
+  it('the detail view polls while the run is in flight, so the bar advances', () => {
+    expect(src).toMatch(/detailRun\?\.status !== 'running'/);
+    expect(src).toMatch(/setInterval\(\(\) => detailApi\.reload\(\)/);
+  });
+});
+
+describe('scene evidence reaches the drilldown', () => {
+  const routes = readFileSync(join(__dirname, '..', 'src', 'api', 'ingest-routes.ts'), 'utf8');
+
+  it('the route persists scenes, keyed so repeats replace', () => {
+    // "No scene data for this trial" under an ACCEPTED workflow is a verdict with its evidence
+    // missing — the opposite of what an acceptance harness is for.
+    expect(routes).toContain('insertScene');
+    expect(routes).toMatch(/\$\{sc\.trial \?\? 1\}:\$\{sc\.scene_index\}/);
+  });
+
+  it('⛔ rejected scenes are counted and returned, never swallowed', () => {
+    expect(routes).toContain('scenes_rejected');
+  });
+});
