@@ -349,7 +349,7 @@ resource "google_secret_manager_secret" "dorinda_email" {
   replication {
     auto {}
   }
-  # DORINDA_EMAIL — Dorinda tenant email address. Enduring credential; the
+  # DORINDA_TENANT_EMAIL — Dorinda tenant email address (the name `hat remote` reads). Enduring credential; the
   # runner reads it at startup to mint a short-lived forge_session. The session
   # itself is never stored. See PROVIDER_ACCOUNTS.md for the minting note.
 }
@@ -360,8 +360,8 @@ resource "google_secret_manager_secret" "dorinda_password" {
   replication {
     auto {}
   }
-  # DORINDA_PASSWORD — Dorinda tenant password. Enduring credential; used
-  # alongside DORINDA_EMAIL to mint a forge_session at run start. The session
+  # DORINDA_TENANT_PASSWORD — Dorinda tenant password (the name `hat remote` reads). Enduring credential; used
+  # alongside DORINDA_TENANT_EMAIL to mint a forge_session at run start. The session
   # itself is never stored. See PROVIDER_ACCOUNTS.md for the minting note.
 }
 
@@ -789,7 +789,7 @@ resource "google_cloud_run_v2_job" "runner" {
         # Only the enduring email + password are stored; the session itself is
         # short-lived and never written to Secret Manager or any durable store.
         env {
-          name = "DORINDA_EMAIL"
+          name = "DORINDA_TENANT_EMAIL"
           value_source {
             secret_key_ref {
               secret  = google_secret_manager_secret.dorinda_email.secret_id
@@ -799,7 +799,7 @@ resource "google_cloud_run_v2_job" "runner" {
         }
 
         env {
-          name = "DORINDA_PASSWORD"
+          name = "DORINDA_TENANT_PASSWORD"
           value_source {
             secret_key_ref {
               secret  = google_secret_manager_secret.dorinda_password.secret_id

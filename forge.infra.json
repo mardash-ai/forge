@@ -37,15 +37,15 @@
     },
     {
       "kind": "command",
-      "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '[.spec.template.spec.template.spec.containers[0].env[] | select(.name == \"DORINDA_EMAIL\") | .valueSource.secretKeyRef.secret] | first == \"e2e-runner-dorinda-email\"' > /dev/null",
+      "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '[.spec.template.spec.template.spec.containers[0].env[] | select(.name == \"DORINDA_TENANT_EMAIL\") | .valueSource.secretKeyRef.secret] | first == \"e2e-runner-dorinda-email\"' > /dev/null",
       "cwd": ".",
-      "note": "DORINDA_EMAIL is wired from e2e-runner-dorinda-email secret in the live job env"
+      "note": "DORINDA_TENANT_EMAIL is wired from e2e-runner-dorinda-email secret in the live job env"
     },
     {
       "kind": "command",
-      "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '[.spec.template.spec.template.spec.containers[0].env[] | select(.name == \"DORINDA_PASSWORD\") | .valueSource.secretKeyRef.secret] | first == \"e2e-runner-dorinda-password\"' > /dev/null",
+      "run": "gcloud run jobs describe e2e-runner --region=us-east1 --project=dorinda-prod --format=json | jq -e '[.spec.template.spec.template.spec.containers[0].env[] | select(.name == \"DORINDA_TENANT_PASSWORD\") | .valueSource.secretKeyRef.secret] | first == \"e2e-runner-dorinda-password\"' > /dev/null",
       "cwd": ".",
-      "note": "DORINDA_PASSWORD is wired from e2e-runner-dorinda-password secret in the live job env"
+      "note": "DORINDA_TENANT_PASSWORD is wired from e2e-runner-dorinda-password secret in the live job env"
     }
   ]
 }
