@@ -168,6 +168,19 @@ module "e2e_runner" {
   tenant           = var.tenant
   e2e_provider     = var.e2e_provider
   e2e_model        = var.e2e_model
+
+  # The post-run mail sweep's WRITER delegation.
+  #
+  # ⛔ Literal, not a variable, and NOT optional-by-omission. These default to "" in the module,
+  # which makes the sweep skip — so leaving them unset here would have shipped a cleanup that
+  # silently never runs. That is the exact shape of the bug this whole line of work started from:
+  # a capability that exists, reports fine, and does nothing.
+  #
+  # `hat-teardown@` is the writer (calendar.events + gmail.send + gmail.modify). It is deliberately
+  # NOT `hat-verifier@`, which stays *.readonly so the credential that checks can never be the one
+  # that acts — the runner asserts that separation again at run time.
+  google_teardown_service_account = "hat-teardown@${var.project_id}.iam.gserviceaccount.com"
+  google_teardown_subject         = "dorinda-test@mardash.ai"
 }
 
 # ---------------------------------------------------------------------------
