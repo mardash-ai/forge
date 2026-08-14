@@ -55,3 +55,36 @@ describe('the runner job can sweep mail after a run', () => {
     );
   });
 });
+
+describe('the job can outlive a full catalogue run', () => {
+  const MODULE_SRC = readFileSync(join(process.cwd(), 'terraform/modules/e2e-runner/main.tf'), 'utf8');
+
+  it('⛔ the timeout exceeds the measured full-catalogue wall clock, with margin', () => {
+    // 2026-08-14: the cap was 3600s while 76 workflows x ~58s of measured wall clock projects to
+    // ~4400s. A full run was guaranteed to be killed two-thirds through — and because the kill
+    // lands before the terminal progress push, the run row sits in `running` forever. The operator
+    // pays for 60 workflows and gets a run that never resolves.
+    //
+    // A timeout tuned tight enough to fire on a HEALTHY run is not a safety net; it is a scheduled
+    // failure. This asserts the backstop stays a backstop.
+    const m = MODULE_SRC.match(/variable "job_timeout"[\s\S]*?default\s+=\s+"(\d+)s"/);
+    expect(m, 'job_timeout default not found — test needs updating').toBeTruthy();
+    const timeoutS = Number(m![1]);
+
+    const WORKFLOWS = 76; // suites/full.yaml
+    const MEASURED_WALL_S_PER_WORKFLOW = 58; // mean of six runs, 2026-08-14
+    const projected = WORKFLOWS * MEASURED_WALL_S_PER_WORKFLOW;
+
+    expect(timeoutS).toBeGreaterThan(projected);
+    // And not merely by a hair — the estimate is a mean, so half of all runs are slower than it.
+    expect(timeoutS).toBeGreaterThanOrEqual(Math.round(projected * 1.5));
+  });
+
+  it('the catalogue size the estimate is built on has not moved', () => {
+    // If the suite grows, the projection above is stale and the timeout may no longer clear it.
+    // Failing here is the point: it forces the number to be re-derived rather than assumed.
+    const suite = readFileSync(join(process.cwd(), '../forge-hat/suites/full.yaml'), 'utf8');
+    const entries = suite.split('\n').filter((l) => /^\s*-\s/.test(l)).length;
+    expect(entries).toBeLessThanOrEqual(76);
+  });
+});

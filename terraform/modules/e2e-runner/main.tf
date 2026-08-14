@@ -98,9 +98,30 @@ variable "disk_gb" {
 
 variable "job_timeout" {
   type        = string
-  default     = "3600s"
-  description = "Timeout for a single E2E runner job execution. An E2E suite can take O(minutes)."
+  default     = "7200s"
+  description = "Timeout for a single E2E runner job execution. Must exceed the FULL catalogue's wall clock with margin — see the note below."
 }
+
+# ⛔ WHY 7200s, and why the old 3600s was a trap.
+#
+# Six measured runs on 2026-08-14 averaged ~58s of WALL CLOCK per workflow (not
+# p50 of a workflow's own duration — the whole slice, including its retries and
+# the per-trial tenant reset+seed). The catalogue is 76 workflows:
+#
+#     76 x 58s ~= 4,400s ~= 73 minutes      against a 3,600s = 60 minute cap
+#
+# So a full-catalogue run was guaranteed to be KILLED about two-thirds through,
+# with maxRetries=0. And the kill lands before `pushProgress('completed')`, so
+# the run row is left in `running` FOREVER: no terminal status, no final
+# counters, no post-run mail sweep. The operator pays for ~60 workflows and gets
+# a run that never resolves — every layer reporting fine while the thing simply
+# stops. That is the same defect family as a drilldown that never fetched and a
+# cleanup that was never invoked.
+#
+# 7200s is ~1.6x the projected worst case rather than 0.8x. The cap is a
+# backstop against a hung run, so it should sit well clear of the honest
+# expected duration — a timeout tuned tight enough to fire on a HEALTHY run is
+# not a safety net, it is a scheduled failure.
 
 # ---------------------------------------------------------------------------
 # hat-remote environment — mirrors exactly what the forge-hat binary reads
