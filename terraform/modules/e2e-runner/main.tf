@@ -160,6 +160,33 @@ variable "e2e_model" {
 }
 
 # ---------------------------------------------------------------------------
+# Google MAIL teardown — the writer delegation the post-run sweep needs
+# ---------------------------------------------------------------------------
+# Every run in which the product drafts and sends mail leaves its own outgoing
+# copy behind. Those accumulate until they bury the standing fixture the NEXT
+# run's precondition looks for: by 2026-08-14 `subject:roof` returned 34
+# messages, 33 of them the tenant's own chases, and check B11 had been failing
+# for weeks against a fixture that was present the whole time.
+#
+# `hat remote` sweeps that residue after a completed run. It needs the WRITER
+# delegation to do so — never the read-only verifier, which must stay incapable
+# of changing what it reports on.
+#
+# Empty by default: unset means the sweep SKIPS with a stated reason, which is
+# the correct behaviour anywhere the delegation is not granted.
+variable "google_teardown_service_account" {
+  type        = string
+  default     = ""
+  description = "Delegated WRITER service account (gmail.modify) for the post-run mail sweep. Wired as HAT_GOOGLE_TEARDOWN_SERVICE_ACCOUNT. Empty disables the sweep."
+}
+
+variable "google_teardown_subject" {
+  type        = string
+  default     = ""
+  description = "Workspace user whose mailbox the sweep cleans. Wired as HAT_GOOGLE_SUBJECT. Empty disables the sweep."
+}
+
+# ---------------------------------------------------------------------------
 # Cloud SQL: dedicated E2E / cp-results Postgres instance
 # ---------------------------------------------------------------------------
 # DEDICATED instance — NOT a database on dorinda-prod's application Cloud SQL.
@@ -491,6 +518,24 @@ resource "google_service_account" "runner" {
   project      = var.project_id
   account_id   = var.name
   display_name = "Forge E2E runner — Cloud Run Job SA"
+}
+
+# ---------------------------------------------------------------------------
+# The runner impersonates the WRITER account to sweep mail after a run.
+# ---------------------------------------------------------------------------
+# `hat remote` mints a delegated token through IAM signJwt — no key material
+# anywhere — which requires the runner to hold tokenCreator ON the writer
+# account. Scoped to that ONE account: the runner can act as the writer and as
+# nothing else, and notably not as the read-only verifier, which must remain
+# incapable of altering what it reports on.
+#
+# count = 0 when no writer is configured, so an environment without the
+# delegation neither grants a stray binding nor fails to plan.
+resource "google_service_account_iam_member" "runner_impersonates_teardown" {
+  count              = var.google_teardown_service_account == "" ? 0 : 1
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${var.google_teardown_service_account}"
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.runner.email}"
 }
 
 resource "google_secret_manager_secret_iam_member" "runner_db_password" {
@@ -840,6 +885,19 @@ resource "google_cloud_run_v2_job" "runner" {
         env {
           name  = "HAT_EXTRACTOR_MODEL"
           value = var.extractor_model
+        }
+
+        # The post-run mail sweep. Absent -> `sweepMailResidue` returns a SKIP naming the missing
+        # variable, rather than doing nothing quietly: a cleanup that silently no-ops is
+        # indistinguishable in the logs from one that worked.
+        env {
+          name  = "HAT_GOOGLE_TEARDOWN_SERVICE_ACCOUNT"
+          value = var.google_teardown_service_account
+        }
+
+        env {
+          name  = "HAT_GOOGLE_SUBJECT"
+          value = var.google_teardown_subject
         }
 
         env {
