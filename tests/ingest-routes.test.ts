@@ -834,3 +834,34 @@ describe('MCP calls, claims and the workflow name', () => {
     expect(src).toMatch(/meta: \{ name: wf\.name \}/);
   });
 });
+
+describe('the ingest route can carry a full catalogue', () => {
+  const routeSrc = readFileSync(join(__dirname, '..', 'src', 'api', 'ingest-routes.ts'), 'utf8');
+
+  it('⛔ accepts a body large enough for every workflow in the catalogue', () => {
+    // 2026-08-14, found in pre-flight before a full run: the server-wide bodyLimit is 1 MB, and the
+    // runner re-sends every workflow it knows about on each push (deliberately — a repeat heals a
+    // dropped report). One workflow measured 164 KB raw / 35 KB clipped, so 76 workflows is ~2.7 MB.
+    // Every push from roughly workflow 7 would have 413'd, INCLUDING the terminal one: counters
+    // frozen at 6, row stuck `running` forever while the job quietly finished. The exact failure
+    // this pipe exists to prevent, caused by the pipe, and triggered by SUCCESS.
+    const m = routeSrc.match(/bodyLimit:\s*(\d+)\s*\*\s*1024\s*\*\s*1024/);
+    expect(m, 'the ingest route must set its own bodyLimit').toBeTruthy();
+    const limitBytes = Number(m![1]) * 1024 * 1024;
+
+    const CATALOGUE = 76;
+    const CLIPPED_BYTES_PER_WORKFLOW = 35_023; // measured against real stored evidence
+    const projected = CATALOGUE * CLIPPED_BYTES_PER_WORKFLOW;
+
+    expect(limitBytes).toBeGreaterThan(projected);
+    // Headroom, not a hairline: the suite grows, and a limit that only just fits today fails
+    // silently on the run that adds the workflow which crosses it.
+    expect(limitBytes).toBeGreaterThanOrEqual(projected * 4);
+  });
+
+  it('raises the limit on THIS route only, never server-wide', () => {
+    // No other endpoint has any business accepting a multi-megabyte body.
+    const server = readFileSync(join(__dirname, '..', 'src', 'console', 'server.ts'), 'utf8');
+    expect(server).toMatch(/bodyLimit:\s*1_000_000/);
+  });
+});
