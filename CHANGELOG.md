@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.30.2] - 2026-08-14
+
+### Fixed
+
+- **"Full catalogue" now names the full suite instead of naming nothing.** The run modal sent no
+  suite and no workflow list for that scope, and the runner refuses a triggered run that names no
+  work — an empty selection is a wiring bug far more often than a deliberate request to spend a full
+  live run. The intent is now explicit (`suite: "full"`, the 76-workflow suite) rather than implied
+  by absence.
+
+
 ## [1.30.1] - 2026-08-13
 
 ### Fixed

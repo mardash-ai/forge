@@ -5951,6 +5951,11 @@ function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => 
         reason: `manual · ${providers}`,
         provider: providerValue,
       };
+      // "Full catalogue" must NAME the full suite. Sending neither a suite nor a workflow list
+      // reads as "named nothing", which the runner refuses outright — an empty selection is a
+      // wiring bug far more often than a deliberate request to spend a full live run, so the
+      // intent has to be explicit rather than implied by absence.
+      if (scope === 'full') reqBody.suite = 'full';
       if (scope === 'suite' && suiteText.trim()) reqBody.suite = suiteText.trim();
       if (scope === 'named' && namedText.trim()) {
         reqBody.workflows = namedText
