@@ -760,6 +760,47 @@ Each released version maps to a published control-plane image tag
 ## [Unreleased]
 
 
+## [1.30.7] - 2026-08-13
+
+### Fixed
+
+- **Delivery checks no longer go red during an in-flight publish.** Added `'pending'` grace state to the delivery-check capability (C38) so in-flight hops resolve as "not delivered yet" rather than failing. The release-publish check now triggers on `workflow_run: completed` (not on the push that starts the publish), ensuring it only evaluates after the publish reaches a terminal state. The producer check holds pending while a publish run is in-flight. The consumer check stays pending within a configurable adopt window (default 24h) after a new producer release. Genuine failures — publish completed but image absent, or consumer lag past the grace window — still produce a red check naming the missing artifact and a concrete remedy. Tests prove both directions (in-flight → pending; genuinely undelivered → fail) for every check type.
+
+### Added
+- Six red-against-broken tests for `DELETE /api/e2e/runs/:run_id` in `tests/console-e2e-api.test.ts`:
+  cascade (children gone), running-run refused (409 + still present), audit (success and refusal both recorded), not-found (clean 404), authorization (automation token 403, no-cookie 401), and recomputation (deleted run absent from list with no ghost spend).
+
+### Fixed
+- `DELETE /api/e2e/runs/:run_id` now writes an audit row for refused (409) deletion attempts; previously the handler returned 409 before calling `audited()`, leaving no record of the attempt. The 409 check now throws inside the `audited()` block so refusals are recorded with `outcome='failed'`.
+- Exported `_resetAuditLog()` from `src/console/server.ts` for test isolation.
+
+### Fixed
+
+- **The e2e-runner job exported env names the runner does not read.** It set `DORINDA_MCP_ENDPOINT`
+  and `DORINDA_TENANT`; `hat remote` reads `DORINDA_MCP_URL` and `DORINDA_TEST_TENANT`. Every run
+  triggered from the console therefore died with `DORINDA_MCP_URL is not set` about twenty-five
+  seconds after the click — with correct credentials sitting one variable name away. The tenant value
+  is now the owner **id** (an email fails as "tenant is not flagged as a test tenant", an error that
+  points at the tenant rather than at the value), and `HAT_EXTRACTOR_MODEL` is pinned so a silent
+  provider-side model change cannot move every baseline at once.
+
+### Fixed
+- Run-modal scope label no longer renders a raw `null` when no historical run exists in the store; it now says "workflow count not yet known" in words.
+- Run-modal spend-estimate duration now scales with the selection: a single named workflow shows `~1 min`, a suite run shows `~20 min`, and only the full-catalogue selection shows `~40 min`. Previously `~40 min` was hardcoded for every scope, inflating the estimate ~40× for small selections.
+- Both fixes are backed by a new `fmtE2eFullScopeLabel` / `fmtE2eRunDuration` formatter pair in `console/src/lib/e2e-format.ts`, following the same "name the number when you have it, say plainly when you don't" rule applied to the Attempted tile.
+
+### Added
+
+- **`POST /ingest/run-progress` endpoint on the forge control-plane API.** Cloud Run eval jobs now self-report their progress (per-verdict counters, token spend, lifecycle status) directly to the cp-results Postgres store. Auth is the job's own Google-signed OIDC service-identity token (no new shared secret). Repeated reports for the same `run_id` are idempotent — they call `updateRun()` in place. `FORGE_RUNNER_SA_EMAIL` (required) and `FORGE_INGEST_AUDIENCE` (optional) configure which service account is accepted and what `aud` claim is enforced. `forge-hat` gains no database client; the write stays on the schema-owning forge control plane.
+
+### Fixed
+
+- **The e2e-runner can now keep its own MCP grant current.** The grant is single-use, so each run
+  consumed the stored refresh token and left the next one to fail `invalid_grant`. The job's service
+  account gets `secretVersionAdder` on the refresh-token secret **only**, and the job is told where
+  to write (`HAT_REFRESH_TOKEN_SECRET` / `HAT_REFRESH_TOKEN_PROJECT`), so a rotation survives the
+  container that performed it.
+
 ## [1.30.0] - 2026-08-13
 
 ### Added
