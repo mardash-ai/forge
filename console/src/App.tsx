@@ -7071,7 +7071,7 @@ function Evals() {
                                   onClick={(e) => e.stopPropagation()}
                                   style={{ color: 'inherit', textDecoration: 'underline' }}
                                 >
-                                  Cloud Run ↗
+                                  run logs ↗
                                 </a>
                               </>
                             ) : null}
@@ -7109,7 +7109,7 @@ function Evals() {
                                   onClick={(e) => e.stopPropagation()}
                                   style={{ color: 'inherit', textDecoration: 'underline' }}
                                 >
-                                  Cloud Run ↗
+                                  run logs ↗
                                 </a>
                               </>
                             ) : null}

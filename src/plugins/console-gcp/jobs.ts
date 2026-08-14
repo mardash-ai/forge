@@ -59,9 +59,22 @@ export async function triggerCloudRunJob(opts: JobRunRequest): Promise<JobExecut
 }
 
 /**
- * Build a GCP Console URL for a Cloud Run execution, given the execution resource name.
+ * Build a GCP Console URL for ONE Cloud Run execution.
  *
- * The URL opens the execution detail page where logs and job output are visible.
+ * ⛔ The previous URL was a route that does not exist. It built
+ *     /run/jobs/details/{region}/{job}/executions/{id}
+ * by pattern-matching the job page's own path, and the Console answered "URL not found" — so the
+ * one link an operator clicks when a run has failed took them to a dead end (Mark, 2026-08-14).
+ *
+ * This shape is not guessed: it is the `Log URI` that `gcloud run jobs executions describe` prints
+ * for the same execution, so it is Google's own answer to "where do I look at this execution",
+ * reproduced field for field. It is also the more useful destination — the link only ever renders on
+ * a FAILED or STOPPED run, and what you want then is what the container actually said, not a status
+ * page restating the failure you already know about.
+ *
+ * The advancedFilter is newline-separated (%0A) and pins all four identifiers, so the view is scoped
+ * to this execution alone rather than the job's whole history.
+ *
  * Returns null when the name does not match the expected 8-segment path.
  */
 export function buildExecutionConsoleUrl(executionName: string, project: string): string | null {
@@ -72,7 +85,25 @@ export function buildExecutionConsoleUrl(executionName: string, project: string)
   const jobName = parts[5];
   const id = parts[7];
   if (!region || !jobName || !id) return null;
-  return `https://console.cloud.google.com/run/jobs/details/${region}/${jobName}/executions/${id}?project=${encodeURIComponent(project)}`;
+  const filter = [
+    'resource.type="cloud_run_job"',
+    `resource.labels.job_name="${jobName}"`,
+    `resource.labels.location="${region}"`,
+    `labels."run.googleapis.com/execution_name"="${id}"`,
+  ].join('\n');
+  return (
+    `https://console.cloud.google.com/logs/viewer?project=${encodeURIComponent(project)}` +
+    `&advancedFilter=${encodeURIComponent(filter)}`
+  );
+}
+
+/**
+ * The job's executions LIST page — a stable fallback when there is no single execution to point at.
+ *
+ * Verified by Mark against the live Console on 2026-08-14; this is the route that loads.
+ */
+export function buildJobExecutionsUrl(region: string, jobName: string, project: string): string {
+  return `https://console.cloud.google.com/run/jobs/details/${region}/${jobName}/executions?project=${encodeURIComponent(project)}`;
 }
 
 /** Terminal-or-not state of a Cloud Run Job execution, as the console needs it. */
