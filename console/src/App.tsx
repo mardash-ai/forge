@@ -6764,7 +6764,34 @@ function Evals() {
                           <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>
                             ⊘ aborted
                           </span>
-                        ) : null}
+                        ) : r.status === 'completed' ? (
+                          <span style={{ fontSize: 12, color: 'var(--ok-text)', fontWeight: 600 }}>
+                            ✓ completed
+                            {(r.meta as { execution_url?: string }).execution_url ? (
+                              <>
+                                {' · '}
+                                <a
+                                  href={(r.meta as { execution_url: string }).execution_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  style={{ color: 'inherit', textDecoration: 'underline' }}
+                                >
+                                  Cloud Run ↗
+                                </a>
+                              </>
+                            ) : null}
+                          </span>
+                        ) : (
+                          // ⛔ Never render an empty status cell. `completed` — the SUCCESS case —
+                          // fell through to null here, so a run that worked looked like a row with
+                          // no status at all, indistinguishable from a broken render. An unknown
+                          // status is shown verbatim rather than hidden: seeing a word you did not
+                          // expect is recoverable, seeing nothing is not.
+                          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>
+                            {r.status ?? 'unknown'}
+                          </span>
+                        )}
                       </td>
                       <td
                         style={{ ...cell, color: 'var(--text-muted)', fontSize: 12.5, whiteSpace: 'nowrap' }}

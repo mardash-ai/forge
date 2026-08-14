@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.30.3] - 2026-08-14
+
+### Fixed
+
+- **A successful run showed no status at all.** The run-history status cell handled `running`,
+  `failed` and `aborted`, and everything else fell through to `null` — so `completed`, the success
+  case, rendered an empty cell indistinguishable from a broken row. It now reads `✓ completed` with a
+  link to the execution, and any unrecognised status is shown verbatim rather than hidden: seeing an
+  unexpected word is recoverable, seeing nothing is not.
+
+
 ## [1.30.2] - 2026-08-14
 
 ### Fixed
