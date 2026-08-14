@@ -187,6 +187,21 @@ export interface RunProgressPayload {
     trials_passed?: number;
     failing_bar?: string;
     prompt?: string;
+    name?: string;
+    mcp_calls?: Array<{
+      call_index: number;
+      tool_name: string;
+      request: Record<string, unknown>;
+      response?: Record<string, unknown>;
+      error?: string;
+    }>;
+    claims?: Array<{
+      claim_index: number;
+      claim_type?: string;
+      claim_text?: string;
+      verdict?: string;
+      evidence?: Record<string, unknown>;
+    }>;
     scenes?: Array<{
       trial?: number;
       scene_index: number;
@@ -416,6 +431,8 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
     let workflowsWritten = 0;
     let workflowsRejected = 0;
     let scenesWritten = 0;
+    let childrenWritten = 0;
+    let childrenRejected = 0;
     let scenesRejected = 0;
     let lastWorkflowError: string | null = null;
     if (Array.isArray(body.workflows) && body.workflows.length > 0) {
@@ -442,8 +459,53 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
             ...(typeof wf.trials_passed === 'number' ? { trials_passed: wf.trials_passed } : {}),
             ...(wf.failing_bar ? { failing_bar: wf.failing_bar } : {}),
             ...(wf.prompt ? { prompt: wf.prompt } : {}),
+            // The human-readable title, on meta because the row has no `name` column. A code like
+            // `W-001:openai` tells an operator nothing about what was tested (Mark, 2026-08-14:
+            // "workflow codes by themselves are useless").
+            ...(wf.name ? { meta: { name: wf.name } } : {}),
           });
           workflowsWritten += 1;
+
+          // MCP calls — what the assistant actually DID. Deterministic ids keep repeated reports
+          // idempotent, exactly as for the workflow row itself.
+          for (const call of wf.mcp_calls ?? []) {
+            try {
+              await backends.cpResults.insertMcpCall({
+                id: `${body.run_id}:${wf.workflow_id}:call:${call.call_index}`,
+                workflow_id: `${body.run_id}:${wf.workflow_id}`,
+                run_id: body.run_id,
+                call_index: call.call_index,
+                tool_name: call.tool_name,
+                request: call.request ?? {},
+                ...(call.response ? { response: call.response } : {}),
+                ...(call.error ? { error: call.error } : {}),
+              });
+              childrenWritten += 1;
+            } catch (e) {
+              childrenRejected += 1;
+              lastWorkflowError = e instanceof Error ? e.message.slice(0, 200) : String(e);
+            }
+          }
+
+          // Claims — what the assistant SAID, and whether it held up.
+          for (const claim of wf.claims ?? []) {
+            try {
+              await backends.cpResults.insertClaim({
+                id: `${body.run_id}:${wf.workflow_id}:claim:${claim.claim_index}`,
+                workflow_id: `${body.run_id}:${wf.workflow_id}`,
+                run_id: body.run_id,
+                claim_index: claim.claim_index,
+                ...(claim.claim_type ? { claim_type: claim.claim_type } : {}),
+                ...(claim.claim_text ? { claim_text: claim.claim_text } : {}),
+                ...(claim.verdict ? { verdict: claim.verdict as never } : {}),
+                ...(claim.evidence ? { evidence: claim.evidence } : {}),
+              });
+              childrenWritten += 1;
+            } catch (e) {
+              childrenRejected += 1;
+              lastWorkflowError = e instanceof Error ? e.message.slice(0, 200) : String(e);
+            }
+          }
 
           // Scene evidence for the trial drilldown. Same idempotence rule as the workflow row: a
           // deterministic id per (run, workflow, trial, scene) so repeated reports replace rather
@@ -483,6 +545,8 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
       run_id: body.run_id,
       workflows: workflowsWritten,
       scenes: scenesWritten,
+      children: childrenWritten,
+      ...(childrenRejected > 0 ? { children_rejected: childrenRejected } : {}),
       ...(scenesRejected > 0 ? { scenes_rejected: scenesRejected } : {}),
       ...(workflowsRejected > 0
         ? { workflows_rejected: workflowsRejected, workflow_error: lastWorkflowError }

@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.35.0] - 2026-08-14
+
+### Added
+
+- **The drilldown shows MCP calls, claims, and what each workflow actually tests.**
+  `/ingest/run-progress` now persists per-workflow MCP calls (what the assistant DID) and extracted
+  claims (what it SAID), each keyed deterministically so repeated reports replace rather than
+  multiply, with rejected children counted and returned (`children_rejected`) instead of swallowed.
+  The workflow's human-readable name is stored on the row's meta and rendered under its code —
+  `W-001:openai` alone tells an operator nothing about what was tested.
+
+
 ## [1.34.0] - 2026-08-14
 
 ### Added

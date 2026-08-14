@@ -793,3 +793,26 @@ describe('the route persists every metric the sender can provide', () => {
     ).toEqual([]);
   });
 });
+
+describe('MCP calls, claims and the workflow name', () => {
+  const src = readFileSync(join(__dirname, '..', 'src', 'api', 'ingest-routes.ts'), 'utf8');
+
+  it('persists MCP calls with deterministic ids', () => {
+    expect(src).toContain('insertMcpCall');
+    expect(src).toMatch(/:call:\$\{call\.call_index\}/);
+  });
+
+  it('persists claims with deterministic ids', () => {
+    expect(src).toContain('insertClaim');
+    expect(src).toMatch(/:claim:\$\{claim\.claim_index\}/);
+  });
+
+  it('⛔ a rejected child row is counted and returned, never swallowed', () => {
+    expect(src).toContain('children_rejected');
+  });
+
+  it('stores the human-readable workflow name', () => {
+    // `W-001:openai` tells an operator nothing about what was tested.
+    expect(src).toMatch(/meta: \{ name: wf\.name \}/);
+  });
+});
