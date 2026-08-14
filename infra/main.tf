@@ -82,11 +82,14 @@ variable "test_control_url" {
 }
 
 variable "tenant" {
-  type        = string
-  default     = ""
+  type = string
+  # The standing acceptance tenant's OWNER ID. ⛔ Not the email: `hat remote` looks the tenant up
+  # by owner id, and an email here fails as "tenant exists but is not flagged as a test tenant" —
+  # an error that points at the tenant's flag rather than at this value, and costs an hour.
+  default     = "user_54f358ae87974f43b5e0"
   description = <<-EOT
-    Test tenant identity (email or owner ID) the harness runs against.
-    Passed to e2e-runner as DORINDA_TENANT.
+    Test tenant OWNER ID the harness runs against (robin@dorinda.test).
+    Passed to e2e-runner as DORINDA_TEST_TENANT — the name `hat remote` reads.
     Set via TF_VAR_tenant or a .tfvars file; empty = harness falls back to its own default.
   EOT
 }

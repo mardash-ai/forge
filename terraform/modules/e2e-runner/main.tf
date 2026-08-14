@@ -112,7 +112,7 @@ variable "mcp_endpoint" {
   description = <<-EOT
     MCP server URL for the target app (e.g. https://dorinda.ai/mcp).
     Stored in Secret Manager (e2e-runner-mcp-endpoint) so the URL can be
-    rotated without a TF re-apply — wired as DORINDA_MCP_ENDPOINT.
+    rotated without a TF re-apply — wired as DORINDA_MCP_URL (the name `hat remote` reads).
     Secret value is set out-of-band; this variable seeds the initial SM secret.
   EOT
 }
@@ -130,7 +130,7 @@ variable "tenant" {
   default     = ""
   description = <<-EOT
     Test tenant identity (email address or owner ID) the harness runs against.
-    Wired as DORINDA_TENANT — plain env var; override at invocation time if tests
+    Wired as DORINDA_TEST_TENANT (the name `hat remote` reads) — plain env var; override at invocation time if tests
     span multiple tenants. Empty string ⇒ harness picks a default from its own config.
   EOT
 }
@@ -139,6 +139,12 @@ variable "e2e_provider" {
   type        = string
   default     = "anthropic"
   description = "LLM provider for e2e runs (anthropic | openai). Wired as E2E_PROVIDER. Override at invocation time."
+}
+
+variable "extractor_model" {
+  type        = string
+  default     = "gpt-5.1"
+  description = "Claim-extractor model, wired as HAT_EXTRACTOR_MODEL. Pinned on purpose — see I4."
 }
 
 variable "e2e_model" {
@@ -276,7 +282,7 @@ resource "google_secret_manager_secret" "openai_key" {
 #
 # The mint change (t1) switches from a static DORINDA_MCP_TOKEN to an OAuth
 # refresh-token flow. Three SM secrets carry the durable credential set:
-#   • e2e-runner-mcp-endpoint     → DORINDA_MCP_ENDPOINT
+#   • e2e-runner-mcp-endpoint     → DORINDA_MCP_URL
 #   • e2e-runner-mcp-refresh-token → DORINDA_MCP_REFRESH_TOKEN
 #   • e2e-runner-mcp-client-id     → DORINDA_MCP_CLIENT_ID
 #
@@ -292,7 +298,7 @@ resource "google_secret_manager_secret" "mcp_endpoint" {
   replication {
     auto {}
   }
-  # DORINDA_MCP_ENDPOINT — the MCP server URL (e.g. https://dorinda.ai/mcp).
+  # DORINDA_MCP_URL — the MCP server URL (e.g. https://api.dorinda.ai/mcp).
   # Stored in SM so the URL can be updated without a TF re-apply.
 }
 
@@ -625,7 +631,7 @@ resource "google_cloud_run_v2_job" "runner" {
         # hat-remote credential set — mirrors .hat/env exactly (no extras, no less).
         #
         # MCP durable credentials (replaces AUTH_SERVICE_TOKEN / DORINDA_MCP_TOKEN):
-        #   DORINDA_MCP_ENDPOINT      — MCP server URL; in SM so URL changes need no re-apply.
+        #   DORINDA_MCP_URL           — MCP server URL; in SM so URL changes need no re-apply.
         #   DORINDA_MCP_REFRESH_TOKEN — OAuth refresh token; hat mints short-lived access tokens.
         #   DORINDA_MCP_CLIENT_ID     — DCR-assigned client ID paired with the refresh token.
         #
@@ -634,7 +640,8 @@ resource "google_cloud_run_v2_job" "runner" {
         #   DORINDA_TEST_CONTROL_TOKEN — auth token for that surface (x-dorinda-test-token header).
         #
         # Tenant identity:
-        #   DORINDA_TENANT — email / owner ID the harness runs against.
+        #   DORINDA_TEST_TENANT — the OWNER ID the harness runs against (not the email: an
+        #   email here produces a misleading "tenant is not flagged as a test tenant" error).
         #
         # Provider / model selection:
         #   E2E_PROVIDER — which LLM provider (anthropic | openai). Override at invocation time.
@@ -642,7 +649,7 @@ resource "google_cloud_run_v2_job" "runner" {
         # -------------------------------------------------------------------------
 
         env {
-          name = "DORINDA_MCP_ENDPOINT"
+          name = "DORINDA_MCP_URL"
           value_source {
             secret_key_ref {
               secret  = google_secret_manager_secret.mcp_endpoint.secret_id
@@ -687,8 +694,16 @@ resource "google_cloud_run_v2_job" "runner" {
         }
 
         env {
-          name  = "DORINDA_TENANT"
+          name  = "DORINDA_TEST_TENANT"
           value = var.tenant
+        }
+
+        # HAT_EXTRACTOR_MODEL — pinned deliberately. `hat verify` fails I4 when this is unset:
+        # an unpinned claim-extractor lets a silent provider-side model change move every baseline
+        # at once, so a whole run shifts without a single commit explaining it.
+        env {
+          name  = "HAT_EXTRACTOR_MODEL"
+          value = var.extractor_model
         }
 
         env {
