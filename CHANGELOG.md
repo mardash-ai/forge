@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.32.2] - 2026-08-14
+
+### Fixed
+
+- **The ingest route ignored half the metrics it was sent.** The runner was extended to report
+  `rejected_count`, `p50_duration_ms`, `p99_duration_ms` and token totals; this handler was not
+  extended to copy them into its update, so the console rendered them null while the payload carried
+  the values correctly. `withheld_count` now comes from the runner's own count rather than falling
+  back to `skip` — a rig failure is not a skipped workflow. A test now fails when any
+  `EvalRunUpdate` column is never written here, so a sender-side addition cannot silently die at the
+  receiver.
+
+
 ## [1.32.1] - 2026-08-14
 
 ### Fixed

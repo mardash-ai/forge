@@ -195,6 +195,12 @@ export interface RunProgressPayload {
     skip?: number;
   };
   spend_cents?: number;
+  withheld_count?: number;
+  rejected_count?: number;
+  p50_duration_ms?: number;
+  p99_duration_ms?: number;
+  total_input_tokens?: number;
+  total_output_tokens?: number;
   status?: 'running' | 'completed' | 'failed' | 'aborted';
 }
 
@@ -317,9 +323,21 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
       workflows_attempted: attempted,
       workflows_passed: pass,
       workflows_failed: fail + error, // both fail and error verdicts are non-passing outcomes
-      withheld_count: skip,
+      // The runner counts withheld verdicts itself (INFRA-FAIL / UNARMED). Falling back to `skip`
+      // is a poor proxy — a rig failure is not a skipped workflow.
+      withheld_count: typeof body.withheld_count === 'number' ? body.withheld_count : skip,
       spend_cents: Number(body.spend_cents ?? 0),
     };
+
+    // ⛔ EVERY metric the sender provides must be persisted here. Extending the runner to report
+    // p50/p99 and token totals without extending THIS mapping left them null in the console while
+    // the payload carried them correctly — the sender and the receiver are two halves of one
+    // contract, and changing one alone is the defect this file keeps producing.
+    if (typeof body.rejected_count === 'number') update.rejected_count = body.rejected_count;
+    if (typeof body.p50_duration_ms === 'number') update.p50_duration_ms = body.p50_duration_ms;
+    if (typeof body.p99_duration_ms === 'number') update.p99_duration_ms = body.p99_duration_ms;
+    if (typeof body.total_input_tokens === 'number') update.total_input_tokens = body.total_input_tokens;
+    if (typeof body.total_output_tokens === 'number') update.total_output_tokens = body.total_output_tokens;
 
     if (attempted > 0) {
       update.pass_rate = pass / attempted;

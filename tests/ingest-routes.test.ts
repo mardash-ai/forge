@@ -748,3 +748,48 @@ describe('verdict translation at the boundary', () => {
     expect(src).toContain('workflows_rejected');
   });
 });
+
+describe('the route persists every metric the sender can provide', () => {
+  // ⛔ The defect this closes: the runner was extended to report p50/p99 and token totals, the route
+  // was NOT extended to copy them into its update, and the console rendered null while the payload
+  // carried the values correctly. Sender and receiver are two halves of one contract; changing one
+  // alone is the failure this file keeps producing (Mark, 2026-08-14: "check ALL metrics").
+  const src = readFileSync(join(__dirname, '..', 'src', 'api', 'ingest-routes.ts'), 'utf8');
+  const types = readFileSync(
+    join(__dirname, '..', 'src', 'storage', 'backends', 'cp-results', 'types.ts'),
+    'utf8',
+  );
+
+  it('⛔ every EvalRunUpdate column is either persisted here or explicitly server-derived', () => {
+    const block = types.slice(types.indexOf('interface EvalRunUpdate'));
+    const columns = [...block.slice(0, block.indexOf('}')).matchAll(/^\s+([a-z0-9_]+)\??:/gm)].map(
+      (m) => m[1] as string,
+    );
+    expect(columns.length).toBeGreaterThan(5);
+
+    // Derived by this handler from `outcomes`, or set by it directly — not carried on the payload.
+    const derived = new Set([
+      'workflows_attempted',
+      'workflows_passed',
+      'workflows_failed',
+      'pass_rate',
+      'completed_at',
+      'meta',
+      'status',
+      'withheld_count', // taken from the payload when present, falls back to a derived value
+    ]);
+
+    // A column counts as persisted whether it is set in the update LITERAL (`spend_cents: …`) or
+    // assigned afterwards (`update.p50_duration_ms = …`). Checking only one form made the guard
+    // accuse working code, which is how a check earns its way into being ignored.
+    const literal = src.slice(src.indexOf('const update: EvalRunUpdate'), src.indexOf('const isTerminal'));
+    const unpersisted = columns.filter(
+      (c) => !derived.has(c) && !src.includes(`update.${c}`) && !new RegExp(`^\\s+${c}:`, 'm').test(literal),
+    );
+    expect(
+      unpersisted,
+      `these columns are never written by the ingest route, so they stay null no matter what the ` +
+        `runner sends: ${unpersisted.join(', ')}`,
+    ).toEqual([]);
+  });
+});
