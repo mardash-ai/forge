@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const MODULE = readFileSync(join(process.cwd(), 'terraform/modules/e2e-runner/main.tf'), 'utf8');
@@ -81,10 +81,20 @@ describe('the job can outlive a full catalogue run', () => {
   });
 
   it('the catalogue size the estimate is built on has not moved', () => {
-    // If the suite grows, the projection above is stale and the timeout may no longer clear it.
-    // Failing here is the point: it forces the number to be re-derived rather than assumed.
-    const suite = readFileSync(join(process.cwd(), '../forge-hat/suites/full.yaml'), 'utf8');
-    const entries = suite.split('\n').filter((l) => /^\s*-\s/.test(l)).length;
+    // ⛔ GUARDED, because this reads a SIBLING repo. The first version read
+    // `../forge-hat/suites/full.yaml` unconditionally — fine on a dev box where both repos sit side
+    // by side, ENOENT in CI where only `forge` is checked out. It failed the build and blocked the
+    // publish (2026-08-14). The gate did its job; the test was wrong.
+    //
+    // Skipping is safe here because forge-hat asserts the count in ITS OWN CI, where the file always
+    // exists (`tests/ingest-report.test.ts` pins 76). And the assertion that actually protects this
+    // repo — timeout > catalogue x measured rate, just above — runs unconditionally off a constant.
+    // So nothing is silently uncovered by the skip.
+    const suitePath = join(process.cwd(), '../forge-hat/suites/full.yaml');
+    if (!existsSync(suitePath)) return;
+    const entries = readFileSync(suitePath, 'utf8')
+      .split('\n')
+      .filter((l) => /^\s*-\s/.test(l)).length;
     expect(entries).toBeLessThanOrEqual(76);
   });
 });
