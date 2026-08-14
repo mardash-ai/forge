@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.31.1] - 2026-08-14
+
+### Fixed
+
+- **The release delivery-check asked the registry for a tag that is never created.** Releases are
+  git-tagged `v1.31.0`; `docker/metadata-action` publishes `{{version}}`, which strips the `v`, so
+  the image is `1.31.0`. The check looked up the v-prefixed tag, missed a perfectly published image,
+  and reported "not published in the registry" on every release — a guard that is red whenever it
+  runs is one everybody learns to ignore. It now tries the tag as given, then v-stripped.
+
+
 ## [1.31.0] - 2026-08-14
 
 ### Fixed
