@@ -110,3 +110,79 @@ describe.skipIf(!HAS_PG)('cp-results schema — upgrading a database that alread
     expect(legacy?.attempt).toBe(1);
   });
 });
+
+describe.skipIf(!HAS_PG)('withheld becomes a first-class verdict on an existing database', () => {
+  let pool2: Pool;
+
+  beforeAll(async () => {
+    pool2 = new Pool({ connectionString: process.env.FORGE_DB_URL });
+    // The PREVIOUS shape: verdict CHECK without 'withheld', and rows already written under the old
+    // mapping where UNARMED/INFRA-FAIL collapsed into 'error'.
+    // Simulate a genuine first upgrade: no migration marker yet. Without this the earlier describe
+    // block's initialiser has already stamped the marker (against a database that had no legacy
+    // rows), and the backfill correctly skips — a test artefact, not a product fault, but one that
+    // would otherwise read as the backfill being broken.
+    await pool2.query('DROP TABLE IF EXISTS forge_cp_migrations');
+    await pool2.query('DROP TABLE IF EXISTS forge_cp_eval_workflows CASCADE');
+    await pool2.query(`
+      CREATE TABLE forge_cp_eval_workflows (
+        id              text PRIMARY KEY,
+        run_id          text NOT NULL,
+        workflow_id     text NOT NULL,
+        tenant_id       text NOT NULL,
+        verdict         text NOT NULL CHECK (verdict IN ('pass','fail','error','skip')),
+        integrity_class text,
+        meta            jsonb NOT NULL DEFAULT '{}',
+        created_at      timestamptz NOT NULL DEFAULT now(),
+        updated_at      timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await pool2.query(
+      `INSERT INTO forge_cp_eval_workflows (id, run_id, workflow_id, tenant_id, verdict, created_at)
+       VALUES ('old_withheld','r','W-009','t','error', timestamptz '2026-08-14T19:53:00Z'),
+              ('old_pass','r','W-001','t','pass',      timestamptz '2026-08-14T19:53:00Z'),
+              ('old_fail','r','W-002','t','fail',      timestamptz '2026-08-14T19:53:00Z')`,
+    );
+    await ensureCpResultsSchema(pool2);
+  });
+
+  afterAll(async () => {
+    await pool2?.end().catch(() => undefined);
+  });
+
+  it('⛔ the CHECK constraint is migrated, not merely widened in CREATE', async () => {
+    // Widening the list in `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists
+    // — the exact mistake that made every cassette empty earlier the same day.
+    await pool2.query(
+      `INSERT INTO forge_cp_eval_workflows (id, run_id, workflow_id, tenant_id, verdict)
+       VALUES ('new_withheld','r2','W-010','t','withheld')`,
+    );
+    const r = await pool2.query(`SELECT verdict FROM forge_cp_eval_workflows WHERE id='new_withheld'`);
+    expect(r.rows[0].verdict).toBe('withheld');
+  });
+
+  it("⛔ historical 'error' rows are backfilled — W-009 stops being a rejection", async () => {
+    const r = await pool2.query(`SELECT verdict FROM forge_cp_eval_workflows WHERE id='old_withheld'`);
+    expect(r.rows[0].verdict).toBe('withheld');
+  });
+
+  it('leaves genuine passes and rejections untouched', async () => {
+    const r = await pool2.query(
+      `SELECT id, verdict FROM forge_cp_eval_workflows WHERE id IN ('old_pass','old_fail') ORDER BY id`,
+    );
+    expect(r.rows.map((x) => `${x.id}=${x.verdict}`)).toEqual(['old_fail=fail', 'old_pass=pass']);
+  });
+
+  it('⛔ the backfill is bounded in time, so a FUTURE unrecognised verdict is not eaten', async () => {
+    // 'error' now means "the store refused to guess" — precisely the rows a human must see. A later
+    // restart must not silently reclassify them as withheld. A DATE bound failed this: the deploy
+    // happens on 2026-08-14, so same-day rows written afterwards still fell inside the window.
+    await pool2.query(
+      `INSERT INTO forge_cp_eval_workflows (id, run_id, workflow_id, tenant_id, verdict, created_at)
+       VALUES ('future_error','r3','W-011','t','error', now())`,
+    );
+    await ensureCpResultsSchema(pool2);
+    const r = await pool2.query(`SELECT verdict FROM forge_cp_eval_workflows WHERE id='future_error'`);
+    expect(r.rows[0].verdict).toBe('error');
+  });
+});

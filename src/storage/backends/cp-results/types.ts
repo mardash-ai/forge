@@ -58,7 +58,12 @@ export interface EvalWorkflow {
   updated_at: string;
 }
 
-export type WorkflowVerdict = 'pass' | 'fail' | 'error' | 'skip';
+/**
+ * ⛔ `withheld` is not a failure. forge-hat's UNARMED / INFRA-FAIL mean the RIG failed and nothing
+ * was tested, so no verdict exists. Collapsing it into `error` made the console display a blind run
+ * as "✗ rejected" — telling the operator the product broke when the harness did.
+ */
+export type WorkflowVerdict = 'pass' | 'fail' | 'error' | 'skip' | 'withheld';
 export type IntegrityClass = 'clean' | 'degraded' | 'corrupted' | 'unknown';
 
 export interface EvalScene {

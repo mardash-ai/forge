@@ -4562,7 +4562,12 @@ interface E2EWorkflow {
   id: string;
   run_id: string;
   workflow_id: string;
-  verdict: 'pass' | 'fail' | 'error' | 'skip';
+  /**
+   * ⛔ `withheld` means the RIG failed (UNARMED / INFRA-FAIL) — nothing was tested, so there is no
+   * verdict. It is NOT a failure. `skip` is the legacy spelling for rows written before 2026-08-14.
+   * Read this through bucketOf(), never directly.
+   */
+  verdict: 'pass' | 'fail' | 'error' | 'skip' | 'withheld';
   integrity_class: string | null;
   prompt: string | null;
   duration_ms: number | null;
@@ -5173,7 +5178,8 @@ function fmtE2eSpendSub(run: E2ERun | null | undefined): string {
 }
 
 function fmtTrials(total: number, passed: number, verdict: string): string {
-  if (verdict === 'skip') return '—';
+  // Withheld means nothing was tested, so there is no x/y to state.
+  if (verdict === 'skip' || verdict === 'withheld') return '—';
   return `${passed}/${total}`;
 }
 
@@ -5200,7 +5206,11 @@ Never lower a bar to make a run green.`;
 // ── Verdict pill ──────────────────────────────────────────────────────────
 
 function E2EVerdictPill({ verdict }: { verdict: E2EWorkflow['verdict'] }) {
-  if (verdict === 'pass') {
+  // ⛔ Read through bucketOf, never off the raw verdict. This pill used to test `=== 'skip'` for
+  // withheld and let everything else fall through to "✗ rejected", so a run the rig never armed was
+  // labelled a product failure (W-009, 2026-08-14 — every trial step green under a red verdict).
+  const bucket = bucketOf({ verdict } as E2EWorkflow);
+  if (bucket === 'pass') {
     return (
       <span
         style={{
@@ -5219,7 +5229,7 @@ function E2EVerdictPill({ verdict }: { verdict: E2EWorkflow['verdict'] }) {
       </span>
     );
   }
-  if (verdict === 'skip') {
+  if (bucket === 'withheld') {
     return (
       <span
         style={{
@@ -6368,8 +6378,42 @@ type E2eStoreState = 'loading' | 'connected' | 'not-configured' | 'error';
 const E2E_WF_PAGE_SIZE = 25;
 
 /** Effective integrity class for a workflow — 'clean' for ran-clean, withheld reason for skips. */
+// ── The ONE definition of which bucket a workflow is in ───────────────────────────────────────────
+//
+// ⛔ Three of Mark's eight observations on 2026-08-14 were this single defect. The metric TILES
+// counted from the run-level counters the runner reports (`withheld_count`, `workflows_failed`),
+// while the TABLE filtered on each row's stored verdict. Two sources, computed independently, free
+// to disagree — and they did: the Withheld tile read 1 while clicking it produced an empty table,
+// because nothing was ever stored as 'skip'.
+//
+// Worse, `UNARMED`/`INFRA-FAIL` collapsed into 'error' and the pill rendered anything that was not
+// 'skip' as "✗ rejected". A run where the RIG failed — nothing tested, no verdict — was shown to the
+// operator as a product failure. W-009 displayed every trial step green under a red verdict.
+//
+// So: ONE function decides the bucket, and the tiles COUNT ROWS rather than reading a parallel
+// counter. Mark's requirement, exactly: "the number reported in any tile should always match the
+// number listed in the table. The tiles should function like a top-level filter of the table."
+export type E2eBucket = 'pass' | 'fail' | 'withheld';
+
+export function bucketOf(wf: E2EWorkflow): E2eBucket {
+  if (wf.verdict === 'pass') return 'pass';
+  // 'skip' is the legacy spelling that predates the `withheld` verdict; rows written before
+  // 2026-08-14 may still carry it, and they mean the same thing.
+  if (wf.verdict === 'withheld' || wf.verdict === 'skip') return 'withheld';
+  // 'fail' is a product rejection; 'error' is an unrecognised verdict the store refused to guess at.
+  // Both are red, and neither is withheld.
+  return 'fail';
+}
+
+/** Bucket counts taken from the ROWS themselves — the tiles' only source. */
+export function bucketCounts(workflows: E2EWorkflow[]): Record<E2eBucket, number> {
+  const out: Record<E2eBucket, number> = { pass: 0, fail: 0, withheld: 0 };
+  for (const w of workflows) out[bucketOf(w)] += 1;
+  return out;
+}
+
 function getEffectiveIC(wf: E2EWorkflow): string {
-  if (wf.verdict === 'skip') {
+  if (bucketOf(wf) === 'withheld') {
     return (wf.meta as { withheld_reason?: string }).withheld_reason ?? 'withheld';
   }
   return wf.integrity_class ?? 'unknown';
@@ -6495,12 +6539,12 @@ function Evals() {
     ...new Set(allWorkflows.map((w) => getWorkflowTier(w)).filter((t): t is string => t !== null)),
   ].sort();
 
+  // Counted from the rows the table will show — never from a parallel run-level counter.
+  const counts = bucketCounts(allWorkflows);
+
   const filteredWorkflows: E2EWorkflow[] = allWorkflows.filter((w) => {
-    if (verdictFilter !== 'all') {
-      if (verdictFilter === 'pass' && w.verdict !== 'pass') return false;
-      if (verdictFilter === 'fail' && w.verdict !== 'fail' && w.verdict !== 'error') return false;
-      if (verdictFilter === 'withheld' && w.verdict !== 'skip') return false;
-    }
+    // One helper, shared with the tiles — see bucketOf. These cannot drift apart any more.
+    if (verdictFilter !== 'all' && bucketOf(w) !== verdictFilter) return false;
     if (reasonFilter && (w.meta as { withheld_reason?: string }).withheld_reason !== reasonFilter)
       return false;
     if (laneFilter && !w.lanes.includes(laneFilter)) return false;
@@ -7402,7 +7446,7 @@ function Evals() {
               setWfPage(0);
             }}
             label="Accepted"
-            value={activeRun?.workflows_passed ?? '—'}
+            value={counts.pass}
             color="var(--ok-text)"
             sub={fmtE2ePctOfRunnable(activeRun)}
           />
@@ -7414,7 +7458,7 @@ function Evals() {
               setWfPage(0);
             }}
             label="Rejected"
-            value={activeRun?.workflows_failed ?? '—'}
+            value={counts.fail}
             color="var(--crit-text)"
             sub="honest reds"
           />
@@ -7426,7 +7470,7 @@ function Evals() {
               setWfPage(0);
             }}
             label="Withheld"
-            value={activeRun?.withheld_count ?? '—'}
+            value={counts.withheld}
             color="var(--text-muted)"
             sub="⊘ blind ≠ failed"
           />
@@ -7801,8 +7845,8 @@ function Evals() {
                         >
                           {wf.failing_bar
                             ? wf.failing_bar
-                            : wf.verdict === 'skip'
-                              ? `withheld — ${String(wf.meta.withheld_reason ?? 'no trial ran')}`
+                            : bucketOf(wf) === 'withheld'
+                              ? `withheld — ${String(wf.meta.withheld_reason ?? 'reason not reported')}`
                               : '—'}
                         </span>
                       </td>

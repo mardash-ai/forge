@@ -449,7 +449,22 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
        * ⛔ UNARMED and INFRA-FAIL are RIG failures — `error`, never `fail`. Counting a rig failure as
        * a product rejection is the misreport that withheld verdicts exist to prevent.
        */
-      const toStoreVerdict = (v: string): 'pass' | 'fail' | 'error' | 'skip' => {
+      // ⛔ THE THIRD OUTCOME IS NOT A FAILURE.
+      //
+      // forge-hat speaks ACCEPTED | REJECTED | UNARMED | INFRA-FAIL. The last two mean the RIG
+      // failed — the run never armed, or the harness could not observe — so nothing was tested and
+      // there is NO verdict. They used to collapse into 'error', and the console renders anything
+      // that is not 'skip' as "✗ rejected". So a blind run was shown to the operator as a product
+      // failure: W-009 on 2026-08-14 displayed every trial step green under a red verdict, because
+      // it had never been rejected at all.
+      //
+      // That is the most expensive wrong conclusion this console can produce — it sends someone to
+      // debug a product that did nothing wrong — and it inflates every run's failure count.
+      // "blind ≠ failed" is the discipline the whole harness rests on; the store must carry it.
+      //
+      // Anything genuinely unrecognised still becomes 'error': an unknown word is not a licence to
+      // guess which of the three outcomes was meant.
+      const toStoreVerdict = (v: string): 'pass' | 'fail' | 'error' | 'skip' | 'withheld' => {
         switch (v.toUpperCase()) {
           case 'ACCEPTED':
           case 'PASS':
@@ -460,8 +475,13 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
           case 'SKIP':
           case 'SKIPPED':
             return 'skip';
+          case 'UNARMED':
+          case 'INFRA-FAIL':
+          case 'INFRA_FAIL':
+          case 'WITHHELD':
+            return 'withheld';
           default:
-            return 'error'; // UNARMED, INFRA-FAIL, and anything unrecognised
+            return 'error'; // unrecognised — never guessed into one of the three real outcomes
         }
       };
 

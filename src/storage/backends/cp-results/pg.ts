@@ -86,7 +86,7 @@ export async function ensureCpResultsSchema(pool: Pool): Promise<void> {
       workflow_id       text        NOT NULL,
       tenant_id         text        NOT NULL,
       verdict           text        NOT NULL
-                          CHECK (verdict IN ('pass','fail','error','skip')),
+                          CHECK (verdict IN ('pass','fail','error','skip','withheld')),
       integrity_class   text
                           CHECK (integrity_class IN ('clean','degraded','corrupted','unknown')),
       prompt            text,
@@ -227,6 +227,57 @@ export async function ensureCpResultsSchema(pool: Pool): Promise<void> {
 
     ALTER TABLE forge_cp_eval_turns
       ADD COLUMN IF NOT EXISTS attempt int NOT NULL DEFAULT 1;
+
+    -- ⛔ WITHHELD IS A VERDICT, NOT A FAILURE.
+    --
+    -- forge-hat's UNARMED / INFRA-FAIL mean the RIG failed: nothing was tested, so there is no
+    -- verdict to report. They were collapsed into 'error', and the console renders anything that is
+    -- not 'skip' as "✗ rejected" — so a blind run was displayed to the operator as a product
+    -- failure. That inverts accepted/rejected/withheld, the third-outcome discipline this harness
+    -- exists to protect ("blind ≠ failed"), and it inflates every run's apparent failure count.
+    --
+    -- A CHECK constraint on an existing table is a MIGRATION. Widening the list in the CREATE above
+    -- does nothing to a database that already ran it — the same mistake that made every cassette
+    -- empty earlier today. Drop and re-add explicitly.
+    ALTER TABLE forge_cp_eval_workflows
+      DROP CONSTRAINT IF EXISTS forge_cp_eval_workflows_verdict_check;
+    ALTER TABLE forge_cp_eval_workflows
+      ADD CONSTRAINT forge_cp_eval_workflows_verdict_check
+      CHECK (verdict IN ('pass','fail','error','skip','withheld'));
+
+    -- One-time backfill: every historical 'error' row IS a withheld workflow.
+    --
+    -- This is provable rather than inferred. forge-hat's verdict type is exactly
+    -- 'ACCEPTED' | 'REJECTED' | 'UNARMED' | 'INFRA-FAIL' (core/arm-state.ts:181). The old mapping
+    -- sent ACCEPTED→pass and REJECTED→fail explicitly and everything else to the DEFAULT branch, so
+    -- 'error' could only ever have been UNARMED or INFRA-FAIL — both withheld. ('skip' was never
+    -- reachable from the runner at all; it existed only in console fixtures.)
+    --
+    -- ⛔ The original plan was to backfill from integrity_class. That would have matched NOTHING:
+    -- forge-hat has never emitted integrity_class, so the column is NULL on every production row.
+    -- A backfill predicate that silently matches zero rows looks exactly like a backfill that
+    -- worked — which is why this one is keyed on a value we can prove.
+    --
+    -- ⛔ It must run EXACTLY ONCE, and a date bound cannot express that. The first attempt used
+    -- created_at < '2026-08-15' — but the deploy happens ON 2026-08-14, so every row written after
+    -- it that same day still fell inside the window and would have been reclassified. Caught by the
+    -- test that inserts a fresh 'error' row and re-runs the initialiser.
+    --
+    -- Going forward 'error' means "an unrecognised verdict the store refused to guess at" — exactly
+    -- the rows a human most needs to see. An idempotent-looking UPDATE would quietly eat them on
+    -- every restart. A marker makes "once" a fact rather than an assumption.
+    CREATE TABLE IF NOT EXISTS forge_cp_migrations (
+      name       text        PRIMARY KEY,
+      applied_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM forge_cp_migrations WHERE name = 'withheld-backfill-2026-08-14') THEN
+        UPDATE forge_cp_eval_workflows SET verdict = 'withheld' WHERE verdict = 'error';
+        INSERT INTO forge_cp_migrations (name) VALUES ('withheld-backfill-2026-08-14');
+      END IF;
+    END $$;
 
     -- ⛔ attempt shipped in the CREATE TABLE above and NOWHERE ELSE, which does nothing to a
     -- database where forge_cp_eval_turns already exists — and it did, created hours earlier by
