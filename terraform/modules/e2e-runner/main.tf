@@ -473,6 +473,18 @@ resource "google_secret_manager_secret_iam_member" "runner_mcp_refresh_token" {
   member    = "serviceAccount:${google_service_account.runner.email}"
 }
 
+# ⛔ The MCP grant is SINGLE-USE: refreshing consumes the token and the server returns a
+# replacement. A container writes that replacement to a filesystem that dies with the task, so
+# without somewhere durable to put it, run N rotates the grant and run N+1 fails `invalid_grant` —
+# every run poisoning its successor (observed 2026-08-13, runs 2 and 3). versionAdder — scoped to
+# THIS secret — is what lets the runner keep the stored grant current.
+resource "google_secret_manager_secret_iam_member" "runner_mcp_refresh_token_writeback" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.mcp_refresh_token.secret_id
+  role      = "roles/secretmanager.secretVersionAdder"
+  member    = "serviceAccount:${google_service_account.runner.email}"
+}
+
 resource "google_secret_manager_secret_iam_member" "runner_mcp_client_id" {
   project   = var.project_id
   secret_id = google_secret_manager_secret.mcp_client_id.secret_id
@@ -701,6 +713,18 @@ resource "google_cloud_run_v2_job" "runner" {
         # HAT_EXTRACTOR_MODEL — pinned deliberately. `hat verify` fails I4 when this is unset:
         # an unpinned claim-extractor lets a silent provider-side model change move every baseline
         # at once, so a whole run shifts without a single commit explaining it.
+        # Where to persist a rotated MCP refresh token. Without this the writeback is skipped and
+        # the next run inherits a spent grant.
+        env {
+          name  = "HAT_REFRESH_TOKEN_SECRET"
+          value = google_secret_manager_secret.mcp_refresh_token.secret_id
+        }
+
+        env {
+          name  = "HAT_REFRESH_TOKEN_PROJECT"
+          value = var.project_id
+        }
+
         env {
           name  = "HAT_EXTRACTOR_MODEL"
           value = var.extractor_model
