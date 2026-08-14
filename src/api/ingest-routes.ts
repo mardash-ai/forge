@@ -601,14 +601,35 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
         }
       }
 
+      // ⛔ A REJECTION MUST NAME ITS CAUSE AND REACH A LOG, not merely increment a counter.
+      //
+      // On 2026-08-14 every workflow inserted perfectly and every TURN failed on a missing column.
+      // `lastWorkflowError` was attached only when WORKFLOWS were rejected, so the response carried
+      // a bare `children_rejected` number, nothing was written to the service log, and the endpoint
+      // answered 200/updated. Every cassette in a live full-catalogue run read "No transcript was
+      // recorded" and Mark found it before I did — while the exact Postgres error sat in this
+      // function's local variable and was discarded.
+      //
+      // The response alone is not enough: it is read by a Cloud Run job that treats reporting as
+      // best-effort and moves on, so a rejection that rides only in the body is one nobody sees.
+      if (workflowsRejected > 0 || childrenRejected > 0 || scenesRejected > 0) {
+        console.error(
+          `⛔ ingest ${body.run_id}: rejected ${workflowsRejected} workflow(s), ` +
+            `${childrenRejected} child row(s), ${scenesRejected} scene(s) — ` +
+            `${lastWorkflowError ?? 'no cause recorded'}`,
+        );
+      }
+
       return reply.code(200).send({
         updated: true,
         run_id: body.run_id,
         workflows: workflowsWritten,
         scenes: scenesWritten,
         children: childrenWritten,
-        ...(childrenRejected > 0 ? { children_rejected: childrenRejected } : {}),
-        ...(scenesRejected > 0 ? { scenes_rejected: scenesRejected } : {}),
+        ...(childrenRejected > 0
+          ? { children_rejected: childrenRejected, children_error: lastWorkflowError }
+          : {}),
+        ...(scenesRejected > 0 ? { scenes_rejected: scenesRejected, scenes_error: lastWorkflowError } : {}),
         ...(workflowsRejected > 0
           ? { workflows_rejected: workflowsRejected, workflow_error: lastWorkflowError }
           : {}),

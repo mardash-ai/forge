@@ -224,6 +224,20 @@ export async function ensureCpResultsSchema(pool: Pool): Promise<void> {
 
     ALTER TABLE forge_cp_eval_runs
       ADD COLUMN IF NOT EXISTS spend_cents bigint NOT NULL DEFAULT 0;
+
+    ALTER TABLE forge_cp_eval_turns
+      ADD COLUMN IF NOT EXISTS attempt int NOT NULL DEFAULT 1;
+
+    -- ⛔ attempt shipped in the CREATE TABLE above and NOWHERE ELSE, which does nothing to a
+    -- database where forge_cp_eval_turns already exists — and it did, created hours earlier by
+    -- v1.36.0. CREATE TABLE IF NOT EXISTS is a no-op on an existing table, columns included.
+    --
+    -- Result (2026-08-14, caught by Mark mid-run): every insertTurn failed with "column attempt does
+    -- not exist", the route counted it into children_rejected and carried on, and every cassette in
+    -- a live full-catalogue run read "No transcript was recorded" — while mcp_calls, claims and
+    -- scenes all populated normally, because only turns had gained a column. Adding a column to an
+    -- existing table is a MIGRATION, never a CREATE edit.
+
   `);
 }
 

@@ -865,3 +865,23 @@ describe('the ingest route can carry a full catalogue', () => {
     expect(server).toMatch(/bodyLimit:\s*1_000_000/);
   });
 });
+
+describe('a rejected row names its cause and reaches a log', () => {
+  const src = readFileSync(join(__dirname, '..', 'src', 'api', 'ingest-routes.ts'), 'utf8');
+
+  it('⛔ children_rejected carries the reason, not just a count', () => {
+    // 2026-08-14: every workflow inserted and every TURN failed on a missing column. The cause was
+    // attached only when WORKFLOWS were rejected, so the response was a bare number and the endpoint
+    // answered 200/updated. Every cassette in a live run read "No transcript was recorded".
+    expect(src).toMatch(/children_rejected: childrenRejected, children_error: lastWorkflowError/);
+    expect(src).toMatch(/scenes_rejected: scenesRejected, scenes_error: lastWorkflowError/);
+  });
+
+  it('⛔ rejections are written to the service log', () => {
+    // The response body is read by a job that treats reporting as best-effort and moves on. A
+    // rejection that rides only in the body is one nobody will ever see.
+    const block = src.slice(src.indexOf('workflowsRejected > 0 || childrenRejected > 0'));
+    expect(block).toMatch(/console\.error/);
+    expect(block).toMatch(/lastWorkflowError \?\? 'no cause recorded'/);
+  });
+});
