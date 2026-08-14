@@ -92,6 +92,8 @@ export interface EvalTurn {
   workflow_id: string;
   run_id: string;
   turn_index: number;
+  /** Which attempt (conversation) this turn belongs to, 1-based. */
+  attempt: number;
   scene: string | null;
   prompt: string;
   reply: string;
@@ -116,6 +118,7 @@ export interface EvalTurnInput {
   workflow_id: string;
   run_id: string;
   turn_index: number;
+  attempt?: number;
   scene?: string;
   prompt: string;
   reply: string;

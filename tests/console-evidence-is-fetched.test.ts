@@ -111,6 +111,16 @@ describe('the cassette panel renders only what happened', () => {
     expect(body).not.toMatch(/\.slice\(0,\s*2\)/);
   });
 
+  it('⛔ separates the attempts instead of running them together', () => {
+    // Mark, 2026-08-14: "a user repeatedly says 'Use Dorinda' — is it having the user say it far too
+    // often?" No: W-001 runs 3 attempts, each a FRESH chat saying the canonical two words exactly
+    // once. But the panel rendered all three as one continuous scroll, so correct behaviour read as
+    // a broken prompt. Evidence that misrepresents its own STRUCTURE is a defect even when every
+    // value in it is true.
+    expect(APP).toMatch(/a fresh conversation/);
+    expect(APP).toMatch(/t\.attempt \?\? 1/);
+  });
+
   it('says so plainly when no transcript was recorded, rather than reconstructing one', () => {
     expect(APP).toMatch(/No transcript was recorded for this workflow/);
   });

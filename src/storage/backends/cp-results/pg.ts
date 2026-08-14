@@ -137,6 +137,10 @@ export async function ensureCpResultsSchema(pool: Pool): Promise<void> {
       workflow_id           text        NOT NULL REFERENCES forge_cp_eval_workflows(id) ON DELETE CASCADE,
       run_id                text        NOT NULL,
       turn_index            int         NOT NULL,
+      -- Which attempt (conversation) the turn belongs to. A workflow runs N attempts, each a FRESH
+      -- chat; without this the console renders them as one transcript and a user who correctly says
+      -- "Use Dorinda." once per conversation appears to repeat themselves (Mark, 2026-08-14).
+      attempt               int         NOT NULL DEFAULT 1,
       scene                 text,
       prompt                text        NOT NULL DEFAULT '',
       reply                 text        NOT NULL DEFAULT '',
@@ -354,6 +358,7 @@ interface TurnRow {
   workflow_id: string;
   run_id: string;
   turn_index: number | string;
+  attempt: number | string;
   scene: string | null;
   prompt: string;
   reply: string;
@@ -368,6 +373,7 @@ function rowToTurn(r: TurnRow): EvalTurn {
     workflow_id: r.workflow_id,
     run_id: r.run_id,
     turn_index: Number(r.turn_index),
+    attempt: Number(r.attempt ?? 1),
     scene: r.scene,
     prompt: r.prompt,
     reply: r.reply,
@@ -697,9 +703,9 @@ export class PgCpResultsBackend implements CpResultsBackend {
     const now = nowIso();
     const r = await this.pool.query<TurnRow>(
       `INSERT INTO forge_cp_eval_turns
-         (id, workflow_id, run_id, turn_index, scene, prompt, reply, tool_calls,
+         (id, workflow_id, run_id, turn_index, attempt, scene, prompt, reply, tool_calls,
           tool_trace_unreadable, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::timestamptz)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11::timestamptz)
        ON CONFLICT (workflow_id, turn_index) DO NOTHING
        RETURNING *`,
       [
@@ -707,6 +713,7 @@ export class PgCpResultsBackend implements CpResultsBackend {
         input.workflow_id,
         input.run_id,
         input.turn_index,
+        input.attempt ?? 1,
         input.scene ?? null,
         input.prompt,
         input.reply,

@@ -187,6 +187,7 @@ function makeTurn(overrides: Partial<EvalTurn> = {}): EvalTurn {
     workflow_id: 'wf_row_01',
     run_id: 'run_001',
     turn_index: 0,
+    attempt: 1,
     scene: 'check state',
     prompt: 'Use Dorinda.',
     reply: "I'm connected to your household.",

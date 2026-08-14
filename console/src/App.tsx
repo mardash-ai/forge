@@ -4595,6 +4595,8 @@ interface E2EWorkflowResult {
 interface E2ETurn {
   id: string;
   turn_index: number;
+  /** Which attempt (conversation) this turn belongs to, 1-based. */
+  attempt: number;
   scene: string | null;
   prompt: string;
   reply: string;
@@ -4885,6 +4887,7 @@ const E2E_FIXTURE_WORKFLOW_RESULT: E2EWorkflowResult = {
     {
       id: 't-1',
       turn_index: 0,
+      attempt: 1,
       scene: 'Turn 2 — Mark asks for an email to Sam',
       prompt: 'Use Dorinda.',
       reply: "I'm connected to your household. What would you like to do?",
@@ -4894,6 +4897,7 @@ const E2E_FIXTURE_WORKFLOW_RESULT: E2EWorkflowResult = {
     {
       id: 't-2',
       turn_index: 1,
+      attempt: 2,
       scene: 'Turn 2 — Mark asks for an email to Sam',
       prompt: 'Email Sam about the roof quote.',
       reply: 'Before I draft that — which Sam did you mean, Sam Ortiz or Sam Whitfield?',
@@ -5530,6 +5534,10 @@ function E2ECassettePanel({
 }) {
   const wf = wfResult?.workflow;
   const turns = wfResult?.turns ?? [];
+  // Group the transcript by ATTEMPT. Each attempt is an independent, fresh conversation — rendering
+  // them as one continuous scroll made a user who says "Use Dorinda." once per chat look like they
+  // were repeating themselves (Mark, 2026-08-14). Correct behaviour, displayed as a defect.
+  const attempts = [...new Map(turns.map((t) => [t.attempt ?? 1, true])).keys()].sort((a, b) => a - b);
   const claims = wfResult?.claims ?? [];
 
   return (
@@ -5633,121 +5641,146 @@ function E2ECassettePanel({
           </div>
         ) : (
           <>
-            {turns.map((t) => (
-              <div key={t.id} style={{ margin: '18px 0' }}>
-                {t.scene && (
+            {attempts.map((attemptNo) => (
+              <div key={`attempt-${attemptNo}`}>
+                {attempts.length > 1 && (
                   <div
                     style={{
-                      fontSize: 11,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      margin: '22px 0 10px',
+                      color: 'var(--text-faint)',
+                      fontSize: 11.5,
                       letterSpacing: '.06em',
                       textTransform: 'uppercase',
-                      color: 'var(--text-faint)',
-                      marginBottom: 6,
                       fontWeight: 600,
                     }}
                   >
-                    scene · {t.scene}
+                    <span style={{ height: 1, background: 'var(--line)', flex: 1 }} />
+                    attempt {attemptNo} of {attempts.length} · a fresh conversation
+                    <span style={{ height: 1, background: 'var(--line)', flex: 1 }} />
                   </div>
                 )}
-
-                {/* What the tenant said */}
-                <div
-                  style={{
-                    fontSize: 11.5,
-                    letterSpacing: '.06em',
-                    textTransform: 'uppercase',
-                    color: 'var(--text-muted)',
-                    marginBottom: 4,
-                    fontWeight: 600,
-                  }}
-                >
-                  Robin
-                </div>
-                <div
-                  style={{
-                    border: '1px solid var(--ember-wash)',
-                    borderRadius: 9,
-                    padding: '10px 13px',
-                    background: 'var(--ember-wash)',
-                    fontSize: 14,
-                    whiteSpace: 'pre-wrap',
-                  }}
-                >
-                  {t.prompt || <span style={{ color: 'var(--text-muted)' }}>(no prompt recorded)</span>}
-                </div>
-
-                {/* What it called */}
-                {t.tool_trace_unreadable ? (
-                  <div
-                    style={{
-                      margin: '8px 0 8px 18px',
-                      fontSize: 12.5,
-                      color: 'var(--warn-text)',
-                    }}
-                  >
-                    ⚠ The tool trace could not be read for this turn — this is NOT the same as the assistant
-                    calling no tools. Any tool expectation here withheld its verdict.
-                  </div>
-                ) : (
-                  t.tool_calls.map((tc, i) => (
-                    <div
-                      key={`${t.id}-tc-${i}`}
-                      style={{
-                        border: '1px solid var(--line)',
-                        borderLeft: `3px solid ${tc.ok === false ? 'var(--crit)' : '#4D8EC4'}`,
-                        borderRadius: 7,
-                        margin: '8px 0 8px 18px',
-                        padding: '8px 11px',
-                        background: 'var(--bg-surface)',
-                        fontFamily: 'var(--mono)',
-                        fontSize: 12,
-                      }}
-                    >
-                      <div style={{ color: 'var(--text-muted)' }}>→ {tc.tool}</div>
-                      {tc.summary && (
+                {turns
+                  .filter((t) => (t.attempt ?? 1) === attemptNo)
+                  .map((t) => (
+                    <div key={t.id} style={{ margin: '18px 0' }}>
+                      {t.scene && (
                         <div
                           style={{
-                            color: tc.ok === false ? 'var(--crit-text)' : 'var(--text-muted)',
-                            marginTop: 2,
-                            whiteSpace: 'pre-wrap',
+                            fontSize: 11,
+                            letterSpacing: '.06em',
+                            textTransform: 'uppercase',
+                            color: 'var(--text-faint)',
+                            marginBottom: 6,
+                            fontWeight: 600,
                           }}
                         >
-                          ← {tc.summary}
+                          scene · {t.scene}
                         </div>
                       )}
-                    </div>
-                  ))
-                )}
 
-                {/* What it actually replied — the half that was missing entirely */}
-                <div
-                  style={{
-                    fontSize: 11.5,
-                    letterSpacing: '.06em',
-                    textTransform: 'uppercase',
-                    color: 'var(--text-muted)',
-                    margin: '10px 0 4px',
-                    fontWeight: 600,
-                  }}
-                >
-                  Dorinda
-                </div>
-                <div
-                  style={{
-                    border: '1px solid var(--line)',
-                    borderRadius: 9,
-                    padding: '10px 13px',
-                    background: 'var(--bg-raised)',
-                    fontSize: 14,
-                    whiteSpace: 'pre-wrap',
-                  }}
-                >
-                  {t.reply || (
-                    <span style={{ color: 'var(--text-muted)' }}>
-                      (the assistant produced no visible reply)
-                    </span>
-                  )}
-                </div>
+                      {/* What the tenant said */}
+                      <div
+                        style={{
+                          fontSize: 11.5,
+                          letterSpacing: '.06em',
+                          textTransform: 'uppercase',
+                          color: 'var(--text-muted)',
+                          marginBottom: 4,
+                          fontWeight: 600,
+                        }}
+                      >
+                        Robin
+                      </div>
+                      <div
+                        style={{
+                          border: '1px solid var(--ember-wash)',
+                          borderRadius: 9,
+                          padding: '10px 13px',
+                          background: 'var(--ember-wash)',
+                          fontSize: 14,
+                          whiteSpace: 'pre-wrap',
+                        }}
+                      >
+                        {t.prompt || <span style={{ color: 'var(--text-muted)' }}>(no prompt recorded)</span>}
+                      </div>
+
+                      {/* What it called */}
+                      {t.tool_trace_unreadable ? (
+                        <div
+                          style={{
+                            margin: '8px 0 8px 18px',
+                            fontSize: 12.5,
+                            color: 'var(--warn-text)',
+                          }}
+                        >
+                          ⚠ The tool trace could not be read for this turn — this is NOT the same as the
+                          assistant calling no tools. Any tool expectation here withheld its verdict.
+                        </div>
+                      ) : (
+                        t.tool_calls.map((tc, i) => (
+                          <div
+                            key={`${t.id}-tc-${i}`}
+                            style={{
+                              border: '1px solid var(--line)',
+                              borderLeft: `3px solid ${tc.ok === false ? 'var(--crit)' : '#4D8EC4'}`,
+                              borderRadius: 7,
+                              margin: '8px 0 8px 18px',
+                              padding: '8px 11px',
+                              background: 'var(--bg-surface)',
+                              fontFamily: 'var(--mono)',
+                              fontSize: 12,
+                            }}
+                          >
+                            <div style={{ color: 'var(--text-muted)' }}>→ {tc.tool}</div>
+                            {tc.summary && (
+                              <div
+                                style={{
+                                  color: tc.ok === false ? 'var(--crit-text)' : 'var(--text-muted)',
+                                  marginTop: 2,
+                                  whiteSpace: 'pre-wrap',
+                                }}
+                              >
+                                ← {tc.summary}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+
+                      {/* What it actually replied — the half that was missing entirely */}
+                      <div
+                        style={{
+                          fontSize: 11.5,
+                          letterSpacing: '.06em',
+                          textTransform: 'uppercase',
+                          color: 'var(--text-muted)',
+                          margin: '10px 0 4px',
+                          fontWeight: 600,
+                        }}
+                      >
+                        Dorinda
+                      </div>
+                      <div
+                        style={{
+                          border: '1px solid var(--line)',
+                          borderRadius: 9,
+                          padding: '10px 13px',
+                          background: 'var(--bg-raised)',
+                          fontSize: 14,
+                          whiteSpace: 'pre-wrap',
+                        }}
+                      >
+                        {t.reply || (
+                          <span style={{ color: 'var(--text-muted)' }}>
+                            (the assistant produced no visible reply)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
               </div>
             ))}
 

@@ -191,6 +191,7 @@ export interface RunProgressPayload {
     /** The conversation — prompt in, visible reply out. Mirrors forge-hat's ProgressReport. */
     turns?: Array<{
       turn_index: number;
+      attempt?: number;
       scene?: string;
       prompt?: string;
       reply?: string;
@@ -506,6 +507,7 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
                 workflow_id: `${body.run_id}:${wf.workflow_id}`,
                 run_id: body.run_id,
                 turn_index: turn.turn_index,
+                ...(typeof turn.attempt === 'number' ? { attempt: turn.attempt } : {}),
                 ...(turn.scene ? { scene: turn.scene } : {}),
                 prompt: turn.prompt ?? '',
                 reply: turn.reply ?? '',
