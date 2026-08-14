@@ -114,3 +114,60 @@ describe('the console reads through one helper, not two sources', () => {
     expect(APP).toMatch(/if \(bucket === 'withheld'\)/);
   });
 });
+
+describe('the progress bar divides by the target, not by itself', () => {
+  it('⛔ never uses workflows_attempted as the denominator', () => {
+    // It read `const intended = run.workflows_attempted`, so it divided a number by itself and could
+    // only ever show "n of n" at 100% — on a run that had barely started (Mark, 2026-08-14).
+    const bar = APP.slice(
+      APP.indexOf('function RunProgressBar'),
+      APP.indexOf('function RunProgressBar') + 5000,
+    );
+    expect(bar).not.toMatch(/const intended = run\.workflows_attempted/);
+    expect(bar).toMatch(/workflows_intended/);
+    expect(bar).toMatch(/catalogue_size/);
+  });
+
+  it('the bar and its label read the same value', () => {
+    const bar = APP.slice(
+      APP.indexOf('function RunProgressBar'),
+      APP.indexOf('function RunProgressBar') + 5000,
+    );
+    expect(bar).toMatch(/completed \/ target/);
+    expect(bar).toMatch(/\{completed\} \/ \{target\}/);
+  });
+
+  it('⛔ an unknown target renders no bar rather than a full one', () => {
+    // Rendering 100% against a denominator nobody reported is the same dishonesty relocated.
+    const bar = APP.slice(
+      APP.indexOf('function RunProgressBar'),
+      APP.indexOf('function RunProgressBar') + 5000,
+    );
+    expect(bar).toMatch(/hasCounter = target !== null/);
+    expect(bar).toMatch(/total not reported/);
+  });
+});
+
+describe('a workflow that did not pass explains itself', () => {
+  it('⛔ speaks in two voices — withheld is not a failure', () => {
+    // "all of the trials had green checks for every step, yet the workflow was rejected."
+    expect(APP).toMatch(/Why this was rejected/);
+    expect(APP).toMatch(/No verdict — the harness could not test this/);
+    // The withheld voice must say plainly that this is NOT product evidence.
+    expect(APP).toMatch(/This is not evidence against the product/);
+  });
+
+  it('explains why green steps can still be a rejection', () => {
+    expect(APP).toMatch(/attempts passed/);
+    expect(APP).toMatch(/the failure is the bar named above/);
+  });
+});
+
+describe('copying the triage prompt confirms itself', () => {
+  it('⛔ flashes only after the clipboard accepts it', () => {
+    // A flash fired optimistically confirms a copy that may never have happened.
+    expect(APP).toMatch(/wfTriageFlash/);
+    expect(APP).toMatch(/\.then\(\(\) => \{\s*setWfTriageFlash/);
+    expect(APP).toMatch(/copied \? '✓ copied' : '⧉ Triage this workflow'/);
+  });
+});

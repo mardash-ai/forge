@@ -5101,10 +5101,25 @@ function RunProgressBar({ run }: { run: E2ERun }) {
     return () => clearInterval(id);
   }, []);
 
-  const intended = run.workflows_attempted ?? 0;
+  // ⛔ THE DENOMINATOR IS THE TARGET, NOT THE PROGRESS SO FAR.
+  //
+  // This read `run.workflows_attempted` — the count of workflows that have already REPORTED. So the
+  // bar divided a number by itself and could only ever show "n of n" at 100%, on a run that had
+  // barely started. Mark, 2026-08-14: "it should instead show n of total workflows... I know the
+  // data is already sent to the client."
+  //
+  // He was right that it is already here: `workflows_intended` is what THIS run was asked to
+  // execute, and `catalogue_size` is the full suite — forge-hat reports both on every push.
+  // Prefer the former (a 2-workflow run should read "1 of 2", not "1 of 76").
+  const meta = run.meta as { workflows_intended?: unknown; catalogue_size?: unknown } | undefined;
+  const num = (v: unknown): number | null => (typeof v === 'number' && v > 0 ? v : null);
+  const target = num(meta?.workflows_intended) ?? num(meta?.catalogue_size);
+
   const completed = (run.workflows_passed ?? 0) + (run.workflows_failed ?? 0) + (run.withheld_count ?? 0);
-  const hasCounter = intended > 0;
-  const pct = hasCounter ? Math.min(100, (completed / intended) * 100) : null;
+  // Unknown target = no bar. Rendering a full bar against a denominator nobody reported is the same
+  // dishonesty in a different place; the run modal already takes the say-so-plainly path.
+  const hasCounter = target !== null;
+  const pct = hasCounter ? Math.min(100, (completed / target) * 100) : null;
 
   const startedMs = run.started_at ? new Date(run.started_at).getTime() : null;
   const elapsedStr = startedMs !== null ? fmtElapsedMs(now - startedMs) : null;
@@ -5119,7 +5134,9 @@ function RunProgressBar({ run }: { run: E2ERun }) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>⏺ running</span>
-        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>started {elapsedStr ?? '—'} ago</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          {completed > 0 ? `${completed} done · total not reported` : `started ${elapsedStr ?? '—'} ago`}
+        </span>
       </div>
     );
   }
@@ -5153,7 +5170,7 @@ function RunProgressBar({ run }: { run: E2ERun }) {
           />
         </div>
         <span style={{ fontSize: 11.5, fontFamily: 'var(--mono)', whiteSpace: 'nowrap' }}>
-          {completed} / {intended}
+          {completed} / {target}
         </span>
       </div>
       <span style={{ fontSize: 10.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
@@ -5362,12 +5379,18 @@ function E2EMetricTile({
 function E2EDrilldownDrawer({
   wfResult,
   error,
+  copied,
   onCassette,
   onTriageWf,
 }: {
   wfResult: E2EWorkflowResult | null;
   /** Why the evidence could not be loaded. Distinguishes "failed" from "still loading". */
   error?: string | null;
+  /**
+   * True briefly after the triage prompt reaches the clipboard. A silent copy is indistinguishable
+   * from a click that missed — Mark, 2026-08-14. Same flash idiom the run header already uses.
+   */
+  copied?: boolean;
   onCassette: () => void;
   onTriageWf: () => void;
 }) {
@@ -5435,15 +5458,82 @@ function E2EDrilldownDrawer({
             padding: '4px 10px',
             border: '1px solid var(--line)',
             borderRadius: 6,
-            color: 'var(--text-secondary)',
+            color: copied ? 'var(--ok-text)' : 'var(--text-secondary)',
             background: 'var(--bg-surface)',
             fontSize: 13,
           }}
           title="Copy a triage prompt for this workflow to the clipboard"
         >
-          ⧉ Triage this workflow
+          {copied ? '✓ copied' : '⧉ Triage this workflow'}
         </button>
       </div>
+
+      {/* ── Why this workflow did not pass ────────────────────────────────────────────────────────
+          Mark, 2026-08-14: "all of the trials had green checks for every step, yet the workflow was
+          rejected. It was difficult to understand why."
+
+          Two different facts, deliberately in two different voices:
+
+          REJECTED — the product failed a bar. There is something to fix, and the failing bar names
+          it. Red, because a red should mean the product failed.
+
+          WITHHELD — the RIG failed (UNARMED / INFRA-FAIL). Nothing was tested, so there is NO
+          verdict and nothing to debug in the product. Muted, and worded as an absence rather than a
+          fault: telling someone to go and fix a product that did nothing wrong is the most
+          expensive mistake this screen can make. */}
+      {wf && bucketOf(wf) !== 'pass' && (
+        <div
+          style={{
+            border: '1px solid var(--line)',
+            borderLeft: `3px solid ${bucketOf(wf) === 'withheld' ? 'var(--text-muted)' : 'var(--crit)'}`,
+            borderRadius: 7,
+            padding: '10px 13px',
+            marginBottom: 14,
+            background: 'var(--bg-surface)',
+          }}
+        >
+          <div
+            style={{
+              fontSize: 11.5,
+              letterSpacing: '.06em',
+              textTransform: 'uppercase',
+              fontWeight: 600,
+              color: bucketOf(wf) === 'withheld' ? 'var(--text-muted)' : 'var(--crit-text)',
+              marginBottom: 6,
+            }}
+          >
+            {bucketOf(wf) === 'withheld'
+              ? '⊘ No verdict — the harness could not test this'
+              : '✗ Why this was rejected'}
+          </div>
+
+          {bucketOf(wf) === 'withheld' ? (
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              The run never armed, or the harness could not observe the result, so no verdict was produced.{' '}
+              <strong>This is not evidence against the product</strong> — do not treat it as a failure or file
+              a bug from it.
+              <div style={{ marginTop: 6, fontFamily: 'var(--mono)', fontSize: 12 }}>
+                reason: {String((wf.meta as { withheld_reason?: string })?.withheld_reason ?? 'not reported')}
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 12.5, color: 'var(--crit-text)' }}>
+                {wf.failing_bar ?? 'the failing bar was not reported'}
+              </div>
+              <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: 12.5 }}>
+                {typeof wf.trials_passed === 'number' && typeof wf.trials_total === 'number'
+                  ? `${wf.trials_passed} of ${wf.trials_total} attempts passed — a workflow is only accepted when it clears its threshold, so passing some attempts is still a rejection.`
+                  : 'attempt counts were not reported.'}
+              </div>
+              <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: 12.5 }}>
+                The scenes below show every step of every attempt. A step marked ✓ passed its own assertion —
+                the failure is the bar named above, not necessarily a step.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {scenes.length === 0 ? (
         <div
@@ -6449,6 +6539,8 @@ function Evals() {
   const [rerunWfId, setRerunWfId] = useState<string | null>(null);
   const [rerunFlash, setRerunFlash] = useState<string | null>(null);
   const [triageFlash, setTriageFlash] = useState(false);
+  /** Which workflow's triage prompt was just copied — keyed so only the clicked row flashes. */
+  const [wfTriageFlash, setWfTriageFlash] = useState<string | null>(null);
   const [linkFlash, setLinkFlash] = useState(false);
   const [deleteConfirmRunId, setDeleteConfirmRunId] = useState<string | null>(null);
   const [deleteInFlight, setDeleteInFlight] = useState(false);
@@ -7915,10 +8007,19 @@ function Evals() {
                             wfResult={drawerWfResult}
                             error={isExpanded ? wfResultError : null}
                             onCassette={() => setCassetteOpen(true)}
+                            copied={wfTriageFlash === wf.id}
                             onTriageWf={() => {
                               if (!activeRun) return;
                               const prompt = buildE2eTriagePrompt(activeRun, [wf]);
-                              navigator.clipboard.writeText(prompt).catch(() => {});
+                              // Only claim "copied" once the clipboard actually accepted it. A flash
+                              // fired optimistically would confirm a copy that never happened.
+                              navigator.clipboard
+                                .writeText(prompt)
+                                .then(() => {
+                                  setWfTriageFlash(wf.id);
+                                  setTimeout(() => setWfTriageFlash(null), 1600);
+                                })
+                                .catch(() => {});
                             }}
                           />
                         </td>
