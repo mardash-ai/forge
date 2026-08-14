@@ -1606,8 +1606,17 @@ describe('the E2E action buttons say what they do', () => {
     expect(detail).toContain('↻ Re-run');
   });
 
-  it('the run modal defaults to the full catalogue', () => {
-    expect(src).toMatch(/useState<'full' \| 'suite' \| 'named'>\('full'\)/);
+  it('the run modal defaults to the full catalogue when nothing is pre-selected', () => {
+    // The dialog can now be opened pre-scoped by the detail view's "re-run these" control, so the
+    // default is conditional. The PROPERTY that matters is unchanged and is what this asserts:
+    // opened with no prefill, it still lands on the full catalogue.
+    expect(src).toMatch(/useState<'full' \| 'suite' \| 'named'>\(prefill \? 'named' : 'full'\)/);
+  });
+
+  it('⛔ a pre-scoped dialog names workflows rather than silently running everything', () => {
+    // The failure this guards: a prefill that set scope but not the list, or the list but not the
+    // scope, would post `suite: full` — turning "re-run these 2" into a 76-workflow run.
+    expect(src).toMatch(/useState\(prefill \? prefill\.workflows\.join\(', '\) : ''\)/);
   });
 });
 

@@ -29,6 +29,9 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const APP = readFileSync(join(__dirname, '..', 'console', 'src', 'App.tsx'), 'utf8');
 
+/** Strip comments before matching, so a guard cannot be satisfied — or tripped — by prose. */
+const codeOnly = (src: string): string => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
 // The bucket rule, mirrored here so the property can be exercised without booting the app. The
 // source-level tests below assert App.tsx actually uses this shape rather than a second copy.
 type Verdict = 'pass' | 'fail' | 'error' | 'skip' | 'withheld';
@@ -202,5 +205,56 @@ describe('withheld causes are real, positioned, and cannot filter to nothing', (
     // cause emptied the table. Counting and filtering through one helper makes that impossible.
     expect(APP).toMatch(/withheldReasonOf\(w\) === cause/);
     expect(APP).toMatch(/if \(reasonFilter && withheldReasonOf\(w\) !== reasonFilter\) return false;/);
+  });
+});
+
+describe('re-run exactly what the table is showing', () => {
+  const code = codeOnly(APP);
+
+  it('⛔ takes every FILTERED row, never just the current page', () => {
+    // "Re-run all rejected" must mean all of them. A button that silently re-ran page 1 of 2 would
+    // spend half the money and report success — and paginated tables make that the easy mistake.
+    expect(code).toMatch(/rerunTargets = \[/);
+    expect(code).toMatch(/filteredWorkflows\.map\(\(w\) => w\.workflow_id\.split\(':'\)\[0\]/);
+    // pagedWorkflows is the per-page slice; it must not be the source.
+    const block = code.slice(code.indexOf('rerunTargets = ['), code.indexOf('rerunTargets = [') + 260);
+    expect(block).not.toMatch(/pagedWorkflows/);
+  });
+
+  it('strips the provider suffix and de-duplicates', () => {
+    // Rows are `W-004:openai`; the trigger takes `W-004`. A workflow that ran on two lanes appears
+    // twice in the table and must be sent once.
+    expect(code).toMatch(/new Set\(/);
+    expect(code).toMatch(/\.split\(':'\)\[0\]/);
+  });
+
+  it('⛔ the button count and the request come from ONE array', () => {
+    // A count computed separately from the payload is how a dialog ends up offering a 76-workflow
+    // run labelled "$0.16". Both read rerunTargets.
+    expect(code).toMatch(/Re-run these \{rerunTargets\.length\}/);
+    expect(code).toMatch(/setRunModalPrefill\(\{ workflows: rerunTargets/);
+  });
+
+  it('only offers itself when a filter is active', () => {
+    // Re-running everything is what the list view's Run button already does; a second control for
+    // the same thing is a way to click the wrong one.
+    expect(code).toMatch(/hasActiveFilters && rerunTargets\.length > 0/);
+  });
+
+  it('⛔ keeps the confirm step — this spends money', () => {
+    // It opens the dialog; it does not fire a run. The estimate is recomputed for the subset.
+    expect(code).toMatch(/setRunModalOpen\(true\)/);
+    expect(code).not.toMatch(/setRunModalPrefill\([^)]*\);\s*void handleRun/);
+  });
+
+  it('⛔ clears the prefill on BOTH exits', () => {
+    // The dialog remounts on each open and re-reads `prefill`; a stale one would silently scope the
+    // next run to a filter the operator has since cleared.
+    const closes = code.match(/setRunModalPrefill\(null\)/g) ?? [];
+    expect(closes.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('carries the failing run’s provider as the default lane', () => {
+    expect(code).toMatch(/provider: activeRun\?\.provider/);
   });
 });

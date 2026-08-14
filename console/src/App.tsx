@@ -6070,12 +6070,41 @@ function E2EDurationChart({ run, prevRun }: { run: E2ERun; prevRun: E2ERun | nul
 
 // ── Run modal ─────────────────────────────────────────────────────────────
 
-function E2ERunModal({ runs, onClose, onRun }: { runs: E2ERun[]; onClose: () => void; onRun: () => void }) {
-  const [scope, setScope] = useState<'full' | 'suite' | 'named'>('full');
+/**
+ * `prefill` opens the dialog already scoped to a specific set of workflows.
+ *
+ * Used by the detail view's "re-run these" control: filter the table to the rejected rows, click
+ * once, and the dialog opens naming exactly those workflows. The confirm step is deliberately kept —
+ * this is a spend-triggering control, and the last time one carried a wrong number it offered a
+ * 76-workflow, ~$6 run labelled "$0.16" (2026-08-14). Pre-filling changes what is selected, never
+ * whether the operator gets to see the price first.
+ */
+export interface E2ERunPrefill {
+  /** Bare workflow ids, provider suffix already stripped and de-duplicated. */
+  workflows: string[];
+  /** The lane the failing run used — the sane default when re-running its failures. */
+  provider?: string | null;
+}
+
+function E2ERunModal({
+  runs,
+  prefill,
+  onClose,
+  onRun,
+}: {
+  runs: E2ERun[];
+  prefill?: E2ERunPrefill | null;
+  onClose: () => void;
+  onRun: () => void;
+}) {
+  const [scope, setScope] = useState<'full' | 'suite' | 'named'>(prefill ? 'named' : 'full');
   const [suiteText, setSuiteText] = useState('');
-  const [namedText, setNamedText] = useState('');
-  const [openai, setOpenai] = useState(true);
-  const [anthropic, setAnthropic] = useState(false);
+  const [namedText, setNamedText] = useState(prefill ? prefill.workflows.join(', ') : '');
+  // A prefill carries the lane its failures ran on; without one the dialog's own default stands.
+  const [openai, setOpenai] = useState(prefill?.provider ? prefill.provider.includes('openai') : true);
+  const [anthropic, setAnthropic] = useState(
+    prefill?.provider ? prefill.provider.includes('anthropic') : false,
+  );
   const [confirmed, setConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -6546,6 +6575,8 @@ function Evals() {
   const [wfPage, setWfPage] = useState(0);
   const [cassetteOpen, setCassetteOpen] = useState(false);
   const [runModalOpen, setRunModalOpen] = useState(false);
+  /** Set when the dialog was opened by "re-run these" — cleared on close so the next open is full. */
+  const [runModalPrefill, setRunModalPrefill] = useState<E2ERunPrefill | null>(null);
   const [rerunWfId, setRerunWfId] = useState<string | null>(null);
   const [rerunFlash, setRerunFlash] = useState<string | null>(null);
   const [triageFlash, setTriageFlash] = useState(false);
@@ -6656,6 +6687,22 @@ function Evals() {
     if (tierFilter && getWorkflowTier(w) !== tierFilter) return false;
     return true;
   });
+
+  // ── The set "re-run these" will send ────────────────────────────────────────────────────────────
+  //
+  // Derived from filteredWorkflows — the SAME array the table renders and the button counts — so the
+  // number on the button, the number in the dialog and the number actually sent cannot disagree.
+  // That is not a theoretical concern here: a tile counting from one source while a table filtered
+  // from another is precisely the bug Mark reported this morning.
+  //
+  // ⛔ Every row is FILTERED, never just the current page. "Re-run all rejected" means all of them;
+  // a button that silently re-ran page 1 of 2 would spend half the money and report success.
+  //
+  // Row ids are `W-004:openai`; the trigger takes `W-004`. A workflow that ran on two lanes appears
+  // twice and must be sent once.
+  const rerunTargets = [
+    ...new Set(filteredWorkflows.map((w) => w.workflow_id.split(':')[0]!).filter(Boolean)),
+  ];
 
   // Pagination — keep the expanded row always visible regardless of current page.
   const expandedIdx = expandedWfId ? filteredWorkflows.findIndex((w) => w.id === expandedWfId) : -1;
@@ -7374,10 +7421,18 @@ function Evals() {
       {/* Run modal */}
       {runModalOpen && (
         <E2ERunModal
+          prefill={runModalPrefill}
           runs={runs}
-          onClose={() => setRunModalOpen(false)}
+          // ⛔ Clear the prefill on BOTH exits. The dialog is conditionally rendered, so it remounts
+          // and re-reads `prefill` on every open — leaving a stale one set would silently scope the
+          // NEXT run to a filter the operator has since cleared and forgotten about.
+          onClose={() => {
+            setRunModalOpen(false);
+            setRunModalPrefill(null);
+          }}
           onRun={() => {
             setRunModalOpen(false);
+            setRunModalPrefill(null);
             runsApi.reload();
           }}
         />
@@ -7742,6 +7797,39 @@ function Evals() {
           )}
 
           <div style={{ flex: 1 }} />
+
+          {/* ── Re-run exactly what the table is showing ────────────────────────────────────────
+              Mark, 2026-08-14: "a very common usecase will be to re-run all rejected tests… click
+              the Rejected tile and then click a Re-run button… with only the workflows that were
+              visible."
+
+              Only offered when a filter is active: re-running EVERYTHING is what the list view's Run
+              button already does, and a second control for the same thing is a way to click the
+              wrong one. The count is `rerunTargets.length` — the same array that becomes the request
+              — so the button, the dialog and the run cannot disagree about how much this costs. */}
+          {hasActiveFilters && rerunTargets.length > 0 && (
+            <button
+              onClick={() => {
+                setRunModalPrefill({ workflows: rerunTargets, provider: activeRun?.provider ?? null });
+                setRunModalOpen(true);
+              }}
+              style={{
+                font: 'inherit',
+                fontSize: 12.5,
+                fontWeight: 600,
+                padding: '4px 12px',
+                border: '1px solid var(--accent)',
+                borderRadius: 6,
+                background: 'var(--accent-bg)',
+                color: 'var(--accent)',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+              title={`Open the run dialog naming these ${rerunTargets.length} workflow(s): ${rerunTargets.join(', ')}`}
+            >
+              ↻ Re-run these {rerunTargets.length}
+            </button>
+          )}
 
           {/* Clear all filters — single obvious action */}
           {hasActiveFilters && (
