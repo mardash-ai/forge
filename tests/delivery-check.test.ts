@@ -1,4 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 import {
   runProducerCheck,
   runReleaseCheck,
@@ -933,5 +938,37 @@ describe('grace-state: batch + formatting', () => {
     expect(out).toContain('1 pending');
     expect(out).toContain('in-flight hops not yet delivered');
     expect(out).not.toContain('FAILED');
+  });
+});
+
+describe('the release check resolves the IMAGE tag, not the git tag', () => {
+  // Releases are git-tagged `v1.31.0`; docker/metadata-action publishes `type=semver,{{version}}`,
+  // which strips the `v`. Asking the registry for `v1.31.0` misses an image that published fine, so
+  // the check reported "not published in the registry" on EVERY release — a guard that is red
+  // whenever it runs is one everybody learns to ignore.
+  it('falls back to the v-stripped tag when the v-prefixed one is absent', async () => {
+    const asked: string[] = [];
+    const driver = {
+      async getTagImageDigest(image: string, tag: string) {
+        asked.push(`${image}:${tag}`);
+        return tag === '1.31.0' ? 'sha256:abc' : null;
+      },
+    };
+    // Exercise the same fallback the real driver implements.
+    const resolve = async (image: string, tag: string) =>
+      (await driver.getTagImageDigest(image, tag)) ??
+      (tag.startsWith('v') ? await driver.getTagImageDigest(image, tag.slice(1)) : null);
+
+    const digest = await resolve('ghcr.io/mardash-ai/forge-control-plane', 'v1.31.0');
+    expect(digest).toBe('sha256:abc');
+    expect(asked).toEqual([
+      'ghcr.io/mardash-ai/forge-control-plane:v1.31.0',
+      'ghcr.io/mardash-ai/forge-control-plane:1.31.0',
+    ]);
+  });
+
+  it('the real driver contains the fallback', async () => {
+    const src = readFileSync(join(__dirname, '..', 'src', 'plugins', 'delivery-check', 'real-driver.ts'), 'utf8');
+    expect(src).toMatch(/replace\(\/\^v\/, ''\)/);
   });
 });

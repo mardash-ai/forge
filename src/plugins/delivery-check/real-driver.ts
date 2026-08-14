@@ -108,7 +108,19 @@ export function createRealDriver(repoRoot: string): DeliveryCheckDriver {
     },
 
     async getTagImageDigest(image: string, tag: string): Promise<string | null> {
-      return resolveRemoteDigest(`${image}:${tag}`);
+      // ⛔ The GIT tag and the IMAGE tag are not the same string. Releases are tagged `v1.31.0`,
+      // but `docker/metadata-action` publishes with `type=semver,pattern={{version}}`, which strips
+      // the leading `v` — the image is `1.31.0`. Asking the registry for `v1.31.0` therefore misses
+      // an image that was published perfectly, and the check reports "not published in the
+      // registry" on every single release. A guard that is red whenever it runs teaches everyone to
+      // ignore it, which is the failure this whole family exists to prevent.
+      //
+      // Try the tag as given, then without the leading `v`. Whichever resolves is the truth.
+      const direct = await resolveRemoteDigest(`${image}:${tag}`);
+      if (direct) return direct;
+      const stripped = tag.replace(/^v/, '');
+      if (stripped === tag) return null;
+      return resolveRemoteDigest(`${image}:${stripped}`);
     },
 
     async getDeployedDigest(image: string): Promise<string | null> {
