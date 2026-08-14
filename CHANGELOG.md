@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.30.5] - 2026-08-14
+
+### Added
+
+- **Six red-against-broken tests for `DELETE /api/e2e/runs/:run_id`** in `tests/console-e2e-api.test.ts`: cascade (children gone after deletion), running-run refused (409 + still present), audit (success and refusal both recorded), not-found (clean 404), authorization (automation token 403, no-cookie 401), and recomputation (deleted run absent from list with no ghost spend). Each test is structured to fail against a deliberately broken implementation before passing against the current one.
+
+### Fixed
+
+- **`DELETE /api/e2e/runs/:run_id` now writes an audit row for refused (409) deletion attempts.** Previously the handler returned 409 before calling `audited()`, leaving no record of the attempt. The 409 check now throws inside the `audited()` block so refusals are recorded with `outcome='failed'`.
+- **Prettier formatting** applied to `src/api/ingest-routes.ts`, `tests/delivery-check.test.ts`, and `tests/ingest-routes.test.ts` (pre-existing style drift from `6c8e38c`).
+
+## [1.30.4] - 2026-08-14
+
+### Fixed
+
+- **Delivery checks no longer go red during an in-flight publish.** Added `'pending'` grace state to the delivery-check capability (C38). Release check triggers on `workflow_run: completed` instead of `push`; producer check holds pending while a publish run is in-flight; consumer check stays pending within a configurable adopt window after a new producer release. Genuine failures still go red with a named artifact and remedy.
+- **Ingest routes verifier is now injectable for unit tests.** `registerIngestRoutes` accepts an optional `{ verifyToken }` override so tests can stub out the Google JWKS check without network I/O.
+
 ## [1.30.3] - 2026-08-14
 
 ### Fixed

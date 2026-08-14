@@ -642,10 +642,7 @@ describe('grace-state: producer check — in-flight vs genuinely untagged', () =
   it('PENDING (in-flight): unreleased commits + publish run is in_flight → pending, never fail', async () => {
     const driver = makeDriver({
       async getUnreleasedCommits() {
-        return [
-          'chore: bump version to v1.29.0',
-          'feat: add grace-state to delivery-check',
-        ];
+        return ['chore: bump version to v1.29.0', 'feat: add grace-state to delivery-check'];
       },
       async getPublishRunState() {
         return 'in_flight'; // publish-image.yml is still running
@@ -659,7 +656,7 @@ describe('grace-state: producer check — in-flight vs genuinely untagged', () =
 
     expect(result.status).toBe('pending');
     expect(result.message).toContain('in-flight');
-    expect(result.pending_reason).toContain('not delivered yet');
+    expect(result.pending_reason).toContain('Not delivered yet');
     expect(result.pending_reason).toContain('in-flight');
     // Pending must have no remedy — it is not an actionable failure
     expect(result.remedy).toBeUndefined();
@@ -723,7 +720,7 @@ describe('grace-state: release check — in-flight vs genuinely missing image', 
     expect(result.status).toBe('pending');
     expect(result.artifact).toContain('v1.28.9');
     expect(result.message).toContain('in-flight');
-    expect(result.pending_reason).toContain('not delivered yet');
+    expect(result.pending_reason).toContain('Not delivered yet');
     expect(result.pending_reason).toContain('in-flight');
     // No remedy — nothing to fix right now
     expect(result.remedy).toBeUndefined();
@@ -789,7 +786,7 @@ describe('grace-state: consumer check — adopt window vs genuinely overdue', ()
     expect(result.status).toBe('pending');
     expect(result.message).toContain('5m ago');
     expect(result.message).toContain('within 24h adopt window');
-    expect(result.pending_reason).toContain('not delivered yet');
+    expect(result.pending_reason).toContain('Not delivered yet');
     expect(result.pending_reason).toContain('adopt is pending');
     // No remedy — adopt window is open
     expect(result.remedy).toBeUndefined();
@@ -868,7 +865,7 @@ describe('grace-state: batch + formatting', () => {
     };
     const out = formatCheckResult(r);
     expect(out).toContain('⏳');
-    expect(out).toContain('not delivered yet');
+    expect(out).toContain('Not delivered yet');
     // No remedy arrow — pending is not an error to fix right now
     expect(out).not.toContain('→');
   });
@@ -883,7 +880,9 @@ describe('grace-state: batch + formatting', () => {
       },
     });
 
-    const batch = await runChecks([() => runReleaseCheck(driver, { image: IMAGE, label: 'forge-control-plane' })]);
+    const batch = await runChecks([
+      () => runReleaseCheck(driver, { image: IMAGE, label: 'forge-control-plane' }),
+    ]);
 
     expect(batch.ok).toBe(true);
     expect(batch.failed).toBe(0);

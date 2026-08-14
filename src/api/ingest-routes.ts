@@ -176,6 +176,15 @@ export interface RunProgressPayload {
 
 // ── Route registration ────────────────────────────────────────────────────────
 
+export interface RegisterIngestRoutesOpts {
+  /**
+   * Token verifier — injectable for unit tests.
+   * Defaults to `verifyGoogleServiceToken` (live Google JWKS verification).
+   * Tests substitute a stub that bypasses network I/O.
+   */
+  verifyToken?: typeof verifyGoogleServiceToken;
+}
+
 /**
  * Register the ingest routes on the given Fastify instance.
  *
@@ -183,7 +192,8 @@ export interface RunProgressPayload {
  * The endpoint is deliberately NOT behind any forge session gate — it has its own
  * Google service-identity check performed inline.
  */
-export function registerIngestRoutes(app: FastifyInstance): void {
+export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngestRoutesOpts): void {
+  const verifyToken = opts?.verifyToken ?? verifyGoogleServiceToken;
   /**
    * POST /ingest/run-progress
    *
@@ -224,7 +234,7 @@ export function registerIngestRoutes(app: FastifyInstance): void {
       });
     }
 
-    const claims = await verifyGoogleServiceToken(token, { audience, serviceAccountEmail: runnerSaEmail });
+    const claims = await verifyToken(token, { audience, serviceAccountEmail: runnerSaEmail });
     if (!claims) {
       return reply.code(401).send({
         error: {
@@ -282,7 +292,7 @@ export function registerIngestRoutes(app: FastifyInstance): void {
     const update: EvalRunUpdate = {
       workflows_attempted: attempted,
       workflows_passed: pass,
-      workflows_failed: fail + error,   // both fail and error verdicts are non-passing outcomes
+      workflows_failed: fail + error, // both fail and error verdicts are non-passing outcomes
       withheld_count: skip,
       spend_cents: Number(body.spend_cents ?? 0),
     };
@@ -291,8 +301,7 @@ export function registerIngestRoutes(app: FastifyInstance): void {
       update.pass_rate = pass / attempted;
     }
 
-    const isTerminal =
-      body.status === 'completed' || body.status === 'failed' || body.status === 'aborted';
+    const isTerminal = body.status === 'completed' || body.status === 'failed' || body.status === 'aborted';
     if (body.status) {
       update.status = body.status;
     }
