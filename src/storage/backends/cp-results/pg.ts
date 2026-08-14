@@ -9,6 +9,8 @@ import type {
   EvalWorkflowInput,
   EvalScene,
   EvalSceneInput,
+  EvalTurn,
+  EvalTurnInput,
   EvalMcpCall,
   EvalMcpCallInput,
   EvalClaim,
@@ -19,10 +21,11 @@ import type {
 
 // Control-plane-only Postgres results store.
 //
-// Five tables:
+// Six tables:
 //   forge_cp_eval_runs       — run-level metrics (one row per suite run)
 //   forge_cp_eval_workflows  — per-workflow drilldown (verdict, integrity, prompt, duration)
 //   forge_cp_eval_scenes     — scene assertions + observed values per workflow
+//   forge_cp_eval_turns      — the conversation: prompt in, visible reply out (the cassette)
 //   forge_cp_eval_mcp_calls  — every MCP tool call and response per workflow
 //   forge_cp_eval_claims     — extracted claims / structured cassette content per workflow
 //
@@ -121,6 +124,29 @@ export async function ensureCpResultsSchema(pool: Pool): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS forge_cp_eval_scenes_workflow
       ON forge_cp_eval_scenes (workflow_id, scene_index);
+
+    -- -----------------------------------------------------------------------
+    -- The CONVERSATION per workflow — prompt in, visible reply out. This is
+    -- what the console's cassette panel renders. Until 2026-08-14 no such
+    -- table existed, so the panel showed a hardcoded prompt and no reply at
+    -- all: a mock presented to the operator as a transcript.
+    -- Unique on (workflow_id, turn_index) — idempotent re-insert is safe.
+    -- -----------------------------------------------------------------------
+    CREATE TABLE IF NOT EXISTS forge_cp_eval_turns (
+      id                    text        PRIMARY KEY,
+      workflow_id           text        NOT NULL REFERENCES forge_cp_eval_workflows(id) ON DELETE CASCADE,
+      run_id                text        NOT NULL,
+      turn_index            int         NOT NULL,
+      scene                 text,
+      prompt                text        NOT NULL DEFAULT '',
+      reply                 text        NOT NULL DEFAULT '',
+      tool_calls            jsonb       NOT NULL DEFAULT '[]',  -- [{tool, ok, summary}]
+      tool_trace_unreadable boolean     NOT NULL DEFAULT false,
+      created_at            timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (workflow_id, turn_index)
+    );
+    CREATE INDEX IF NOT EXISTS forge_cp_eval_turns_workflow
+      ON forge_cp_eval_turns (workflow_id, turn_index);
 
     -- -----------------------------------------------------------------------
     -- Every MCP tool call and response per workflow (the interaction log).
@@ -321,6 +347,34 @@ interface SceneRow {
   observed_values: unknown;
   passed: boolean | null;
   created_at: Date | string;
+}
+
+interface TurnRow {
+  id: string;
+  workflow_id: string;
+  run_id: string;
+  turn_index: number | string;
+  scene: string | null;
+  prompt: string;
+  reply: string;
+  tool_calls: unknown;
+  tool_trace_unreadable: boolean;
+  created_at: Date | string;
+}
+
+function rowToTurn(r: TurnRow): EvalTurn {
+  return {
+    id: r.id,
+    workflow_id: r.workflow_id,
+    run_id: r.run_id,
+    turn_index: Number(r.turn_index),
+    scene: r.scene,
+    prompt: r.prompt,
+    reply: r.reply,
+    tool_calls: (r.tool_calls as EvalTurn['tool_calls']) ?? [],
+    tool_trace_unreadable: Boolean(r.tool_trace_unreadable),
+    created_at: toIso(r.created_at)!,
+  };
 }
 
 function rowToScene(r: SceneRow): EvalScene {
@@ -637,6 +691,48 @@ export class PgCpResultsBackend implements CpResultsBackend {
     return r.rows.map(rowToScene);
   }
 
+  // --- Conversation turns (the cassette) -----------------------------------
+
+  async insertTurn(input: EvalTurnInput): Promise<EvalTurn> {
+    const now = nowIso();
+    const r = await this.pool.query<TurnRow>(
+      `INSERT INTO forge_cp_eval_turns
+         (id, workflow_id, run_id, turn_index, scene, prompt, reply, tool_calls,
+          tool_trace_unreadable, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::timestamptz)
+       ON CONFLICT (workflow_id, turn_index) DO NOTHING
+       RETURNING *`,
+      [
+        input.id,
+        input.workflow_id,
+        input.run_id,
+        input.turn_index,
+        input.scene ?? null,
+        input.prompt,
+        input.reply,
+        JSON.stringify(input.tool_calls ?? []),
+        input.tool_trace_unreadable ?? false,
+        now,
+      ],
+    );
+    if (!r.rows[0]) {
+      const existing = await this.pool.query<TurnRow>(
+        'SELECT * FROM forge_cp_eval_turns WHERE workflow_id = $1 AND turn_index = $2',
+        [input.workflow_id, input.turn_index],
+      );
+      return rowToTurn(existing.rows[0]!);
+    }
+    return rowToTurn(r.rows[0]);
+  }
+
+  async listTurns(workflowId: string): Promise<EvalTurn[]> {
+    const r = await this.pool.query<TurnRow>(
+      'SELECT * FROM forge_cp_eval_turns WHERE workflow_id = $1 ORDER BY turn_index',
+      [workflowId],
+    );
+    return r.rows.map(rowToTurn);
+  }
+
   // --- MCP calls -----------------------------------------------------------
 
   async insertMcpCall(input: EvalMcpCallInput): Promise<EvalMcpCall> {
@@ -771,9 +867,16 @@ export class PgCpResultsBackend implements CpResultsBackend {
 
   async __truncateAllForTests(): Promise<void> {
     // Order matters: children before parents (FK cascade would handle it, but explicit is cleaner).
+    //
+    // ⛔ EVERY child table belongs in this list. Postgres refuses to TRUNCATE a table referenced by
+    // a foreign key unless the referencing table is truncated in the same statement, so omitting one
+    // does not leak rows quietly — it fails the whole helper with "cannot truncate a table
+    // referenced in a foreign key constraint", taking every DB-backed test with it. Adding a table
+    // above without adding it here breaks the suite, not just the new feature.
     await this.pool.query(`
       TRUNCATE forge_cp_eval_claims,
                forge_cp_eval_mcp_calls,
+               forge_cp_eval_turns,
                forge_cp_eval_scenes,
                forge_cp_eval_workflows,
                forge_cp_eval_runs,

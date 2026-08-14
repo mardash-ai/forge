@@ -16,6 +16,7 @@ import type {
   EvalRun,
   EvalWorkflow,
   EvalScene,
+  EvalTurn,
   EvalMcpCall,
   EvalClaim,
 } from '../src/storage/backends/cp-results/types';
@@ -179,6 +180,23 @@ function makeScene(overrides: Partial<EvalScene> = {}): EvalScene {
   };
 }
 
+/** A conversational turn — the unit the console's cassette panel renders. */
+function makeTurn(overrides: Partial<EvalTurn> = {}): EvalTurn {
+  return {
+    id: 'tn_01',
+    workflow_id: 'wf_row_01',
+    run_id: 'run_001',
+    turn_index: 0,
+    scene: 'check state',
+    prompt: 'Use Dorinda.',
+    reply: "I'm connected to your household.",
+    tool_calls: [{ tool: 'use_dorinda', ok: true, summary: 'session bound' }],
+    tool_trace_unreadable: false,
+    created_at: '2026-08-11T01:01:01Z',
+    ...overrides,
+  };
+}
+
 function makeMcpCall(overrides: Partial<EvalMcpCall> = {}): EvalMcpCall {
   return {
     id: 'call_01',
@@ -222,6 +240,7 @@ function makeMockStore(
     listWorkflows: vi.fn().mockResolvedValue([]),
     getWorkflow: vi.fn().mockResolvedValue(null),
     listScenes: vi.fn().mockResolvedValue([]),
+    listTurns: vi.fn().mockResolvedValue([]),
     listMcpCalls: vi.fn().mockResolvedValue([]),
     listClaims: vi.fn().mockResolvedValue([]),
     // The rest are not called by e2e-api — stub them out.
@@ -311,14 +330,16 @@ describe('queryGetWorkflow', () => {
     expect(await queryGetWorkflow(store, 'nope')).toBeNull();
   });
 
-  it('returns workflow + scenes + mcp_calls + claims', async () => {
+  it('returns workflow + scenes + turns + mcp_calls + claims', async () => {
     const wf = makeWorkflow();
     const sc = makeScene();
+    const turn = makeTurn();
     const call = makeMcpCall();
     const claim = makeClaim();
     const store = makeMockStore({
       getWorkflow: vi.fn().mockResolvedValue(wf),
       listScenes: vi.fn().mockResolvedValue([sc]),
+      listTurns: vi.fn().mockResolvedValue([turn]),
       listMcpCalls: vi.fn().mockResolvedValue([call]),
       listClaims: vi.fn().mockResolvedValue([claim]),
     });
@@ -328,6 +349,12 @@ describe('queryGetWorkflow', () => {
     expect(result!.mcp_calls).toHaveLength(1);
     expect(result!.claims).toHaveLength(1);
     expect(result!.mcp_calls[0]!.tool_name).toBe('search');
+
+    // ⛔ The drilldown must carry the CONVERSATION, not just the verdict and the tool calls. The
+    // console's cassette panel renders these; with none to render it showed a hardcoded prompt and
+    // no reply, which reads as an incomplete recording rather than an absent one (2026-08-14).
+    expect(result!.turns).toHaveLength(1);
+    expect(result!.turns[0]!.reply).toBe("I'm connected to your household.");
   });
 });
 
@@ -549,6 +576,7 @@ describe('console server — GET /api/e2e/* REST endpoints', () => {
     const store = makeMockStore({
       getWorkflow: vi.fn().mockResolvedValue(makeWorkflow()),
       listScenes: vi.fn().mockResolvedValue([makeScene()]),
+      listTurns: vi.fn().mockResolvedValue([]),
       listMcpCalls: vi.fn().mockResolvedValue([makeMcpCall()]),
       listClaims: vi.fn().mockResolvedValue([makeClaim()]),
     });
@@ -1165,6 +1193,7 @@ describe('DELETE /api/e2e/runs/:run_id — cascade', () => {
       getWorkflow: vi.fn().mockImplementation(async () => (childrenInStore ? wf : null)),
       listWorkflows: vi.fn().mockImplementation(async () => (childrenInStore ? [wf] : [])),
       listScenes: vi.fn().mockImplementation(async () => (childrenInStore ? [makeScene()] : [])),
+      listTurns: vi.fn().mockImplementation(async () => (childrenInStore ? [makeTurn()] : [])),
       listMcpCalls: vi.fn().mockImplementation(async () => (childrenInStore ? [makeMcpCall()] : [])),
       listClaims: vi.fn().mockImplementation(async () => (childrenInStore ? [makeClaim()] : [])),
       deleteRun: vi.fn().mockImplementation(async () => {

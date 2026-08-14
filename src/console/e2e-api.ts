@@ -15,11 +15,12 @@ import type {
   EvalRun,
   EvalWorkflow,
   EvalScene,
+  EvalTurn,
   EvalMcpCall,
   EvalClaim,
 } from '../storage/backends/cp-results/types';
 
-export type { EvalRun, EvalWorkflow, EvalScene, EvalMcpCall, EvalClaim };
+export type { EvalRun, EvalWorkflow, EvalScene, EvalTurn, EvalMcpCall, EvalClaim };
 
 // ── Response shapes ─────────────────────────────────────────────────────────
 
@@ -37,6 +38,8 @@ export interface RunDetail {
 export interface WorkflowResult {
   workflow: EvalWorkflow;
   scenes: EvalScene[];
+  /** The conversation — what the console's cassette panel renders. */
+  turns: EvalTurn[];
   mcp_calls: EvalMcpCall[];
   claims: EvalClaim[];
 }
@@ -78,12 +81,13 @@ export async function queryGetWorkflow(
 ): Promise<WorkflowResult | null> {
   const workflow = await store.getWorkflow(workflowRowId);
   if (!workflow) return null;
-  const [scenes, mcp_calls, claims] = await Promise.all([
+  const [scenes, turns, mcp_calls, claims] = await Promise.all([
     store.listScenes(workflowRowId),
+    store.listTurns(workflowRowId),
     store.listMcpCalls(workflowRowId),
     store.listClaims(workflowRowId),
   ]);
-  return { workflow, scenes, mcp_calls, claims };
+  return { workflow, scenes, turns, mcp_calls, claims };
 }
 
 export async function queryDiffRuns(

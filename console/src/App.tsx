@@ -4585,8 +4585,22 @@ interface E2ERunDetail {
 interface E2EWorkflowResult {
   workflow: E2EWorkflow;
   scenes: E2EScene[];
+  /** The conversation. Optional so a store predating the turns table still parses. */
+  turns?: E2ETurn[];
   mcp_calls: E2EMcpCall[];
   claims: E2EClaim[];
+}
+
+/** One conversational turn — the unit the cassette panel renders. */
+interface E2ETurn {
+  id: string;
+  turn_index: number;
+  scene: string | null;
+  prompt: string;
+  reply: string;
+  tool_calls: Array<{ tool: string; ok?: boolean; summary?: string }>;
+  /** The trace could not be READ — never render this as "called nothing". */
+  tool_trace_unreadable: boolean;
 }
 
 interface E2EScene {
@@ -4865,6 +4879,28 @@ const E2E_FIXTURE_RUN_DETAIL: E2ERunDetail = {
 // Fixture cassette transcript (for draft-approve-sent drilldown)
 const E2E_FIXTURE_WORKFLOW_RESULT: E2EWorkflowResult = {
   workflow: E2E_FIXTURE_WORKFLOWS[0]!,
+  // Dev-only sample transcript, shown ONLY behind the visible SAMPLE DATA marker. Real runs render
+  // their own turns or say plainly that none were recorded — never this.
+  turns: [
+    {
+      id: 't-1',
+      turn_index: 0,
+      scene: 'Turn 2 — Mark asks for an email to Sam',
+      prompt: 'Use Dorinda.',
+      reply: "I'm connected to your household. What would you like to do?",
+      tool_calls: [{ tool: 'use_dorinda', ok: true, summary: 'session bound to robin@dorinda.test' }],
+      tool_trace_unreadable: false,
+    },
+    {
+      id: 't-2',
+      turn_index: 1,
+      scene: 'Turn 2 — Mark asks for an email to Sam',
+      prompt: 'Email Sam about the roof quote.',
+      reply: 'Before I draft that — which Sam did you mean, Sam Ortiz or Sam Whitfield?',
+      tool_calls: [{ tool: 'draft_email', ok: true, summary: 'draft staged, not sent' }],
+      tool_trace_unreadable: false,
+    },
+  ],
   scenes: [
     {
       id: 's-1',
@@ -5372,10 +5408,13 @@ function E2EMetricTile({
 
 function E2EDrilldownDrawer({
   wfResult,
+  error,
   onCassette,
   onTriageWf,
 }: {
   wfResult: E2EWorkflowResult | null;
+  /** Why the evidence could not be loaded. Distinguishes "failed" from "still loading". */
+  error?: string | null;
   onCassette: () => void;
   onTriageWf: () => void;
 }) {
@@ -5394,7 +5433,16 @@ function E2EDrilldownDrawer({
         <strong className="mono" style={{ fontSize: 13 }}>
           {wf?.workflow_id ?? '—'}
         </strong>
-        <Chip>trial 1 of {wf?.trials_total ?? 1}</Chip>
+        {/* ⛔ This read `trial 1 of {trials_total}` with the "1" HARDCODED — it said "trial 1" for
+            every attempt, above a drawer that pools the evidence from ALL attempts rather than
+            showing one. It described a per-attempt breakdown that has never existed. "Trial" is
+            genuine forge-hat vocabulary (core/infra.ts, circuit-breaker.ts), but the operator-facing
+            word is the plainer one hat also uses (`firstAttempt`): an attempt is one run at the
+            workflow, and 3/3 means three attempts that all passed. */}
+        <Chip>
+          {wf?.trials_total ?? 1} attempt{(wf?.trials_total ?? 1) === 1 ? '' : 's'}
+          {typeof wf?.trials_passed === 'number' ? ` · ${wf.trials_passed} passed` : ''}
+        </Chip>
         {wf?.integrity_class && (
           <span
             style={{
@@ -5445,8 +5493,18 @@ function E2EDrilldownDrawer({
       </div>
 
       {scenes.length === 0 ? (
-        <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '8px 0' }}>
-          {wfResult === null ? 'Loading drilldown…' : 'No scene data for this trial.'}
+        <div
+          style={{
+            color: error ? 'var(--warn-text)' : 'var(--text-muted)',
+            fontSize: 13,
+            padding: '8px 0',
+          }}
+        >
+          {error
+            ? `Could not load this workflow's evidence: ${error}`
+            : wfResult === null
+              ? 'Loading evidence…'
+              : 'The runner recorded no scenes for this workflow.'}
         </div>
       ) : (
         scenes.map((sc, si) => {
@@ -5532,7 +5590,7 @@ function E2ECassettePanel({
   onDownload: () => void;
 }) {
   const wf = wfResult?.workflow;
-  const calls = wfResult?.mcp_calls ?? [];
+  const turns = wfResult?.turns ?? [];
   const claims = wfResult?.claims ?? [];
 
   return (
@@ -5566,7 +5624,9 @@ function E2ECassettePanel({
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
           <strong className="mono">{wf ? `${wf.workflow_id}.jsonl` : 'cassette.jsonl'}</strong>
-          <Chip>trial 1</Chip>
+          <Chip>
+            {turns.length} turn{turns.length === 1 ? '' : 's'}
+          </Chip>
           <Chip>remote · {wf?.provider ?? 'openai'}</Chip>
           <div style={{ flex: 1 }} />
           <button
@@ -5614,40 +5674,44 @@ function E2ECassettePanel({
           </button>
         </div>
 
-        {/* Turns */}
+        {/* ── The transcript — ONLY what actually happened ──────────────────────────────────────
+            ⛔ This panel used to be a MOCKUP wired to nothing. It rendered a hardcoded "Use
+            Dorinda." prompt, a hardcoded assistant reply ("Connected to <id>. Here's your current
+            snapshot…"), and `calls.slice(0, 2)` from a `mcp_calls` array the console never fetched.
+            So an operator opening a cassette saw an invented prompt, an invented answer, and no
+            tool calls — fabricated evidence, indistinguishable in appearance from a real record.
+            Mark, 2026-08-14: "it shows the initial prompt but no response. It feels like an
+            incomplete cassette." It was not incomplete; it was not a cassette.
+
+            Everything below is read from `turns`, which forge-hat captures per `host.turn` and
+            ships in its progress report. Nothing here is synthesised. */}
         {wfResult === null ? (
           <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading cassette…</div>
+        ) : turns.length === 0 ? (
+          <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '8px 0' }}>
+            No transcript was recorded for this workflow. A run from a forge-hat older than v0.24.0 did not
+            ship its turns, so nothing can be shown here — rather than a reconstruction.
+          </div>
         ) : (
           <>
-            {/* Robin turn 1 */}
-            <div style={{ margin: '14px 0' }}>
-              <div
-                style={{
-                  fontSize: 11.5,
-                  letterSpacing: '.06em',
-                  textTransform: 'uppercase',
-                  color: 'var(--text-muted)',
-                  marginBottom: 4,
-                  fontWeight: 600,
-                }}
-              >
-                Robin
-              </div>
-              <div
-                style={{
-                  border: '1px solid var(--ember-wash)',
-                  borderRadius: 9,
-                  padding: '10px 13px',
-                  background: 'var(--ember-wash)',
-                  fontSize: 14,
-                }}
-              >
-                Use Dorinda.
-              </div>
-            </div>
-            {/* Assistant turn with tool calls 0+1 */}
-            {calls.length > 0 && (
-              <div style={{ margin: '14px 0' }}>
+            {turns.map((t) => (
+              <div key={t.id} style={{ margin: '18px 0' }}>
+                {t.scene && (
+                  <div
+                    style={{
+                      fontSize: 11,
+                      letterSpacing: '.06em',
+                      textTransform: 'uppercase',
+                      color: 'var(--text-faint)',
+                      marginBottom: 6,
+                      fontWeight: 600,
+                    }}
+                  >
+                    scene · {t.scene}
+                  </div>
+                )}
+
+                {/* What the tenant said */}
                 <div
                   style={{
                     fontSize: 11.5,
@@ -5658,30 +5722,77 @@ function E2ECassettePanel({
                     fontWeight: 600,
                   }}
                 >
-                  Assistant · {Math.min(2, calls.length)} tool calls
+                  Robin
                 </div>
-                {calls.slice(0, 2).map((c) => (
+                <div
+                  style={{
+                    border: '1px solid var(--ember-wash)',
+                    borderRadius: 9,
+                    padding: '10px 13px',
+                    background: 'var(--ember-wash)',
+                    fontSize: 14,
+                    whiteSpace: 'pre-wrap',
+                  }}
+                >
+                  {t.prompt || <span style={{ color: 'var(--text-muted)' }}>(no prompt recorded)</span>}
+                </div>
+
+                {/* What it called */}
+                {t.tool_trace_unreadable ? (
                   <div
-                    key={c.id}
                     style={{
-                      border: '1px solid var(--line)',
-                      borderLeft: '3px solid #4D8EC4',
-                      borderRadius: 7,
                       margin: '8px 0 8px 18px',
-                      padding: '8px 11px',
-                      background: 'var(--bg-surface)',
-                      fontFamily: 'var(--mono)',
-                      fontSize: 12,
+                      fontSize: 12.5,
+                      color: 'var(--warn-text)',
                     }}
                   >
-                    <div style={{ color: 'var(--text-muted)' }}>
-                      → {c.tool_name} {JSON.stringify(c.request).slice(0, 60)}
-                    </div>
-                    <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
-                      ← {c.response ? JSON.stringify(c.response).slice(0, 80) : (c.error ?? '—')}
-                    </div>
+                    ⚠ The tool trace could not be read for this turn — this is NOT the same as the assistant
+                    calling no tools. Any tool expectation here withheld its verdict.
                   </div>
-                ))}
+                ) : (
+                  t.tool_calls.map((tc, i) => (
+                    <div
+                      key={`${t.id}-tc-${i}`}
+                      style={{
+                        border: '1px solid var(--line)',
+                        borderLeft: `3px solid ${tc.ok === false ? 'var(--crit)' : '#4D8EC4'}`,
+                        borderRadius: 7,
+                        margin: '8px 0 8px 18px',
+                        padding: '8px 11px',
+                        background: 'var(--bg-surface)',
+                        fontFamily: 'var(--mono)',
+                        fontSize: 12,
+                      }}
+                    >
+                      <div style={{ color: 'var(--text-muted)' }}>→ {tc.tool}</div>
+                      {tc.summary && (
+                        <div
+                          style={{
+                            color: tc.ok === false ? 'var(--crit-text)' : 'var(--text-muted)',
+                            marginTop: 2,
+                            whiteSpace: 'pre-wrap',
+                          }}
+                        >
+                          ← {tc.summary}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+
+                {/* What it actually replied — the half that was missing entirely */}
+                <div
+                  style={{
+                    fontSize: 11.5,
+                    letterSpacing: '.06em',
+                    textTransform: 'uppercase',
+                    color: 'var(--text-muted)',
+                    margin: '10px 0 4px',
+                    fontWeight: 600,
+                  }}
+                >
+                  Dorinda
+                </div>
                 <div
                   style={{
                     border: '1px solid var(--line)',
@@ -5689,91 +5800,76 @@ function E2ECassettePanel({
                     padding: '10px 13px',
                     background: 'var(--bg-raised)',
                     fontSize: 14,
+                    whiteSpace: 'pre-wrap',
                   }}
                 >
-                  Connected to {wf?.workflow_id ?? 'household'}. Here&apos;s your current snapshot…
-                </div>
-                {claims.filter((cl) => cl.verdict === 'verified').length > 0 && (
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '6px 0 0 18px' }}>
-                    {claims
-                      .filter((cl) => cl.verdict === 'verified')
-                      .map((cl) => (
-                        <Chip key={cl.id}>{cl.claim_text ?? cl.claim_type} ✓</Chip>
-                      ))}
-                  </div>
-                )}
-              </div>
-            )}
-            {/* Remaining MCP calls shown as tool cards */}
-            {calls.slice(2).map((c) => (
-              <div key={c.id} style={{ margin: '14px 0' }}>
-                <div
-                  style={{
-                    fontSize: 11.5,
-                    letterSpacing: '.06em',
-                    textTransform: 'uppercase',
-                    color: 'var(--text-muted)',
-                    marginBottom: 4,
-                    fontWeight: 600,
-                  }}
-                >
-                  Assistant · 1 tool call
-                </div>
-                <div
-                  style={{
-                    border: '1px solid var(--line)',
-                    borderLeft: '3px solid #4D8EC4',
-                    borderRadius: 7,
-                    margin: '8px 0 8px 18px',
-                    padding: '8px 11px',
-                    background: 'var(--bg-surface)',
-                    fontFamily: 'var(--mono)',
-                    fontSize: 12,
-                  }}
-                >
-                  <div style={{ color: 'var(--text-muted)' }}>
-                    → {c.tool_name} {JSON.stringify(c.request).slice(0, 80)}
-                  </div>
-                  <div style={{ color: c.error ? 'var(--crit-text)' : 'var(--text-muted)', marginTop: 2 }}>
-                    ← {c.error ? c.error : c.response ? JSON.stringify(c.response).slice(0, 80) : '—'}
-                  </div>
+                  {t.reply || (
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      (the assistant produced no visible reply)
+                    </span>
+                  )}
                 </div>
               </div>
             ))}
-            {/* Verify turn */}
-            {(wfResult.workflow.verdict === 'fail' || wfResult.workflow.verdict === 'error') && (
-              <div style={{ margin: '14px 0' }}>
+
+            {/* Claims the extractor drew from those replies. Real rows, or nothing. */}
+            {claims.length > 0 && (
+              <div style={{ marginTop: 18 }}>
                 <div
                   style={{
                     fontSize: 11.5,
                     letterSpacing: '.06em',
                     textTransform: 'uppercase',
                     color: 'var(--text-muted)',
-                    marginBottom: 4,
+                    marginBottom: 6,
                     fontWeight: 600,
                   }}
                 >
-                  Verify · external observer
+                  Claims extracted · {claims.length}
                 </div>
-                <div
-                  style={{
-                    border: '1px solid var(--line)',
-                    borderLeft: '3px solid var(--crit)',
-                    borderRadius: 7,
-                    margin: '8px 0 8px 18px',
-                    padding: '8px 11px',
-                    background: 'var(--bg-surface)',
-                    fontFamily: 'var(--mono)',
-                    fontSize: 12,
-                  }}
-                >
-                  <div style={{ color: 'var(--text-muted)' }}>→ observe · trial-bounded</div>
-                  <div style={{ color: 'var(--crit-text)', marginTop: 2 }}>
-                    ← {wfResult.workflow.failing_bar ?? 'assertion failed'} ✗
-                  </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {claims.map((cl) => (
+                    <Chip key={cl.id}>
+                      {cl.claim_text ?? cl.claim_type}
+                      {cl.verdict === 'verified' ? ' ✓' : cl.verdict === 'refuted' ? ' ✗' : ''}
+                    </Chip>
+                  ))}
                 </div>
               </div>
             )}
+
+            {/* Why it failed, when it did — from the row, not invented. */}
+            {(wfResult.workflow.verdict === 'fail' || wfResult.workflow.verdict === 'error') &&
+              wfResult.workflow.failing_bar && (
+                <div style={{ margin: '18px 0 0' }}>
+                  <div
+                    style={{
+                      fontSize: 11.5,
+                      letterSpacing: '.06em',
+                      textTransform: 'uppercase',
+                      color: 'var(--text-muted)',
+                      marginBottom: 4,
+                      fontWeight: 600,
+                    }}
+                  >
+                    Failing bar
+                  </div>
+                  <div
+                    style={{
+                      border: '1px solid var(--line)',
+                      borderLeft: '3px solid var(--crit)',
+                      borderRadius: 7,
+                      padding: '8px 11px',
+                      background: 'var(--bg-surface)',
+                      fontFamily: 'var(--mono)',
+                      fontSize: 12,
+                      color: 'var(--crit-text)',
+                    }}
+                  >
+                    {wfResult.workflow.failing_bar}
+                  </div>
+                </div>
+              )}
           </>
         )}
       </div>
@@ -6346,6 +6442,28 @@ function Evals() {
 
   const runs: E2ERun[] = runsApi.data ?? (usingFixture ? E2E_FIXTURE_RUNS : []);
 
+  // ── The drilldown's evidence — FETCHED, never assumed empty ────────────────────────────────
+  //
+  // ⛔ Until 2026-08-14 both drilldown call sites built their result as
+  // `{ workflow: wf, scenes: [], mcp_calls: [], claims: [] }` — a hardcoded empty literal for every
+  // real workflow, with the populated shape reachable ONLY by the dev fixture. So the drawer read
+  // "No scene data" under an ACCEPTED verdict on every real run, permanently, no matter how much
+  // evidence the runner shipped or the store held. The endpoint existed and returned all three
+  // collections correctly; the console simply never asked.
+  //
+  // The lesson worth more than the fix: this was "verified" by querying the API and seeing
+  // `scenes: 2`. The API was telling the truth about a row that nothing rendered. Evidence is
+  // verified in the BROWSER or it is not verified.
+  const wfDrilldownApi = useApi<E2EWorkflowResult>(
+    expandedWfId && !usingFixture ? `/api/e2e/workflows/${encodeURIComponent(expandedWfId)}` : null,
+    [expandedWfId],
+  );
+  // Match the id before use. useApi keeps its last payload when the path goes null, so expanding a
+  // second workflow would otherwise flash workflow A's scenes under workflow B's verdict —
+  // attaching real evidence to the wrong claim, which is worse than showing none.
+  const drilldown =
+    wfDrilldownApi.data && wfDrilldownApi.data.workflow.id === expandedWfId ? wfDrilldownApi.data : null;
+
   // The fixture detail describes ONE specific run. Only substitute it when it matches the
   // requested run — never let fixture B's workflows appear under run A's name.
   const fixtureDetailForRun =
@@ -6401,13 +6519,13 @@ function Evals() {
     setWfPage(0);
   };
 
-  const expandedWf = allWorkflows.find((w) => w.id === expandedWfId) ?? null;
   const wfResult: E2EWorkflowResult | null =
     usingFixture && expandedWfId === E2E_FIXTURE_WORKFLOW_RESULT.workflow.id
       ? E2E_FIXTURE_WORKFLOW_RESULT
-      : expandedWf
-        ? { workflow: expandedWf, scenes: [], mcp_calls: [], claims: [] }
-        : null;
+      : drilldown;
+  // A failed drilldown fetch must SAY SO. Left as null it renders "Loading…" forever, which is the
+  // same screen as a slow network and as an empty result — three different states, one appearance.
+  const wfResultError = expandedWfId && !usingFixture ? wfDrilldownApi.error : null;
 
   const breakdown = activeRun ? withheldBreakdown(activeRun) : [];
   const prevRun = runs.find((r) => r.run_id !== activeRun?.run_id) ?? null;
@@ -7562,10 +7680,15 @@ function Evals() {
                   const isExpanded = expandedWfId === wf.id;
                   const isRerunPending = rerunWfId === wf.id;
                   const isRerunQueued = rerunFlash === wf.id;
-                  const drawerWfResult: E2EWorkflowResult =
+                  // Only the EXPANDED row has fetched evidence; a collapsed row renders no drawer,
+                  // so null is honest there. Never synthesise `scenes: []` for a real workflow —
+                  // that is indistinguishable from "we asked and there was none".
+                  const drawerWfResult: E2EWorkflowResult | null =
                     usingFixture && wf.id === E2E_FIXTURE_WORKFLOW_RESULT.workflow.id
                       ? E2E_FIXTURE_WORKFLOW_RESULT
-                      : { workflow: wf, scenes: [], mcp_calls: [], claims: [] };
+                      : isExpanded
+                        ? drilldown
+                        : null;
                   return [
                     <tr
                       key={wf.id}
@@ -7739,6 +7862,7 @@ function Evals() {
                         <td colSpan={6} style={{ padding: '0 12px 12px' }}>
                           <E2EDrilldownDrawer
                             wfResult={drawerWfResult}
+                            error={isExpanded ? wfResultError : null}
                             onCassette={() => setCassetteOpen(true)}
                             onTriageWf={() => {
                               if (!activeRun) return;

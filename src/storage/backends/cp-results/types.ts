@@ -79,6 +79,50 @@ export interface SceneAssertion {
   operator: string; // e.g. 'eq', 'contains', 'matches', 'gt'
 }
 
+/**
+ * One conversational turn — what was asked, and what the assistant visibly replied.
+ *
+ * ⛔ This is the CASSETTE. Before it existed, forge-hat captured the reply in every `host.turn` and
+ * dropped it inside the container, so the console's cassette panel had no transcript to show and
+ * displayed a hardcoded "Use Dorinda." with nothing beneath it — a fabricated prompt presented as a
+ * record. An acceptance harness whose transcript is a mock cannot be used to judge a verdict.
+ */
+export interface EvalTurn {
+  id: string;
+  workflow_id: string;
+  run_id: string;
+  turn_index: number;
+  scene: string | null;
+  prompt: string;
+  reply: string;
+  tool_calls: TurnToolCall[];
+  /**
+   * The tool trace could not be READ — an expired session, an unparseable timeline. Distinct from
+   * an empty trace: "the assistant called nothing" and "nobody could see what it called" are
+   * opposite facts, and conflating them is how a blind run reads as a clean one.
+   */
+  tool_trace_unreadable: boolean;
+  created_at: string;
+}
+
+export interface TurnToolCall {
+  tool: string;
+  ok?: boolean;
+  summary?: string;
+}
+
+export interface EvalTurnInput {
+  id: string;
+  workflow_id: string;
+  run_id: string;
+  turn_index: number;
+  scene?: string;
+  prompt: string;
+  reply: string;
+  tool_calls?: TurnToolCall[];
+  tool_trace_unreadable?: boolean;
+}
+
 export interface ObservedValue {
   name: string;
   value: unknown;
@@ -262,6 +306,14 @@ export interface CpResultsBackend {
 
   /** List all scenes for a workflow, ordered by scene_index. */
   listScenes(workflowId: string): Promise<EvalScene[]>;
+
+  // --- Conversation turns (the cassette) ----------------------------------
+
+  /** Insert a turn row. Idempotent on (workflow_id, turn_index). */
+  insertTurn(input: EvalTurnInput): Promise<EvalTurn>;
+
+  /** List all turns for a workflow, ordered by turn_index. */
+  listTurns(workflowId: string): Promise<EvalTurn[]>;
 
   // --- MCP tool calls + responses -----------------------------------------
 

@@ -46,6 +46,8 @@ function makeBackendMock(
     listWorkflows: vi.fn().mockResolvedValue([]),
     insertScene: vi.fn(),
     listScenes: vi.fn().mockResolvedValue([]),
+    insertTurn: vi.fn(),
+    listTurns: vi.fn().mockResolvedValue([]),
     insertMcpCall: vi.fn(),
     listMcpCalls: vi.fn().mockResolvedValue([]),
     insertClaim: vi.fn(),
@@ -805,6 +807,22 @@ describe('MCP calls, claims and the workflow name', () => {
   it('persists claims with deterministic ids', () => {
     expect(src).toContain('insertClaim');
     expect(src).toMatch(/:claim:\$\{claim\.claim_index\}/);
+  });
+
+  it('persists the CONVERSATION — prompt and reply both', () => {
+    // The reply is the half that never left the container. forge-hat captured it in every
+    // `host.turn` and dropped it, so the console's cassette panel had no transcript and covered
+    // that with a hardcoded prompt and no answer at all (2026-08-14).
+    expect(src).toContain('insertTurn');
+    expect(src).toMatch(/:turn:\$\{turn\.turn_index\}/);
+    expect(src).toMatch(/prompt: turn\.prompt/);
+    expect(src).toMatch(/reply: turn\.reply/);
+  });
+
+  it('carries "the tool trace was unreadable" through the pipe', () => {
+    // An unreadable trace is not an empty one. Dropping the flag here would let a blind turn render
+    // as one where the assistant simply called nothing.
+    expect(src).toContain('tool_trace_unreadable');
   });
 
   it('⛔ a rejected child row is counted and returned, never swallowed', () => {

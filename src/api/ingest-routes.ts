@@ -188,6 +188,15 @@ export interface RunProgressPayload {
     failing_bar?: string;
     prompt?: string;
     name?: string;
+    /** The conversation — prompt in, visible reply out. Mirrors forge-hat's ProgressReport. */
+    turns?: Array<{
+      turn_index: number;
+      scene?: string;
+      prompt?: string;
+      reply?: string;
+      tool_calls?: Array<{ tool: string; ok?: boolean; summary?: string }>;
+      tool_trace_unreadable?: boolean;
+    }>;
     mcp_calls?: Array<{
       call_index: number;
       tool_name: string;
@@ -479,6 +488,29 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
                 request: call.request ?? {},
                 ...(call.response ? { response: call.response } : {}),
                 ...(call.error ? { error: call.error } : {}),
+              });
+              childrenWritten += 1;
+            } catch (e) {
+              childrenRejected += 1;
+              lastWorkflowError = e instanceof Error ? e.message.slice(0, 200) : String(e);
+            }
+          }
+
+          // The conversation itself — prompt in, visible reply out. This is the cassette the
+          // console renders. Before it was persisted the panel had nothing to show and displayed a
+          // hardcoded "Use Dorinda." with no reply beneath it, on every run.
+          for (const turn of wf.turns ?? []) {
+            try {
+              await backends.cpResults.insertTurn({
+                id: `${body.run_id}:${wf.workflow_id}:turn:${turn.turn_index}`,
+                workflow_id: `${body.run_id}:${wf.workflow_id}`,
+                run_id: body.run_id,
+                turn_index: turn.turn_index,
+                ...(turn.scene ? { scene: turn.scene } : {}),
+                prompt: turn.prompt ?? '',
+                reply: turn.reply ?? '',
+                ...(turn.tool_calls ? { tool_calls: turn.tool_calls } : {}),
+                ...(turn.tool_trace_unreadable ? { tool_trace_unreadable: true } : {}),
               });
               childrenWritten += 1;
             } catch (e) {

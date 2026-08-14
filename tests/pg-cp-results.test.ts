@@ -204,6 +204,62 @@ describe.skipIf(!HAS_PG)('cp-results Postgres backend — schema, CRUD, lease, i
   });
 
   // -----------------------------------------------------------------------
+  // Turns — the conversation the console's cassette panel renders.
+  //
+  // ⛔ Before this table existed the panel had no transcript to show and
+  // covered the gap with a HARDCODED prompt and no reply — a fabricated
+  // record in the same type and layout as a real one (2026-08-14).
+  // -----------------------------------------------------------------------
+
+  it('insertTurn — stores the reply and tool calls; listTurns returns ordered', async () => {
+    await backend.insertTurn({
+      id: 'turn_01',
+      workflow_id: WF_ID,
+      run_id: RUN_ID,
+      turn_index: 0,
+      scene: 'topic detection',
+      prompt: 'Use Dorinda.',
+      reply: "I'm connected to your household.",
+      tool_calls: [{ tool: 'use_dorinda', ok: true, summary: 'session bound' }],
+    });
+    await backend.insertTurn({
+      id: 'turn_02',
+      workflow_id: WF_ID,
+      run_id: RUN_ID,
+      turn_index: 1,
+      prompt: 'What is on my calendar?',
+      reply: 'You have two events today.',
+      tool_trace_unreadable: true,
+    });
+
+    const turns = await backend.listTurns(WF_ID);
+    expect(turns.length).toBe(2);
+    expect(turns[0]!.turn_index).toBe(0);
+    expect(turns[1]!.turn_index).toBe(1);
+    // The reply is the half that was missing end-to-end — assert it explicitly.
+    expect(turns[0]!.reply).toBe("I'm connected to your household.");
+    expect(turns[0]!.tool_calls[0]!.tool).toBe('use_dorinda');
+    expect(turns[0]!.tool_trace_unreadable).toBe(false);
+    // An unreadable trace is not an empty one; the flag must survive the round trip.
+    expect(turns[1]!.tool_trace_unreadable).toBe(true);
+    expect(turns[1]!.tool_calls).toEqual([]);
+  });
+
+  it('insertTurn — idempotent on (workflow_id, turn_index)', async () => {
+    await backend.insertTurn({
+      id: 'turn_01_dup',
+      workflow_id: WF_ID,
+      run_id: RUN_ID,
+      turn_index: 0, // same index
+      prompt: 'should be ignored',
+      reply: 'should be ignored',
+    });
+    const turns = await backend.listTurns(WF_ID);
+    expect(turns.filter((t) => t.turn_index === 0).length).toBe(1);
+    expect(turns[0]!.reply).toBe("I'm connected to your household."); // original preserved
+  });
+
+  // -----------------------------------------------------------------------
   // MCP calls
   // -----------------------------------------------------------------------
 
@@ -379,7 +435,7 @@ describe.skipIf(!HAS_PG)('cp-results Postgres backend — schema, CRUD, lease, i
   });
 
   // -----------------------------------------------------------------------
-  // FK cascade: deleting a run cascades to workflows/scenes/calls/claims
+  // FK cascade: deleting a run cascades to workflows/scenes/turns/calls/claims
   // -----------------------------------------------------------------------
 
   it('FK cascade — deleting a run removes all child rows', async () => {
@@ -392,5 +448,9 @@ describe.skipIf(!HAS_PG)('cp-results Postgres backend — schema, CRUD, lease, i
     expect(calls).toHaveLength(0);
     const claims = await backend.listClaims(WF_ID);
     expect(claims).toHaveLength(0);
+    // A transcript orphaned by a deleted run is both a leak and a privacy problem — it is the
+    // literal content of the conversation.
+    const turns = await backend.listTurns(WF_ID);
+    expect(turns).toHaveLength(0);
   });
 });

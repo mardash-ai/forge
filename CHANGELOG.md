@@ -908,6 +908,64 @@ Each released version maps to a published control-plane image tag
 ## [Unreleased]
 
 
+## [1.36.0] - 2026-08-14
+
+### Fixed
+
+- **The E2E drilldown never fetched its evidence.** Both call sites built the drawer's result as
+  `{ workflow, scenes: [], mcp_calls: [], claims: [] }` — a hardcoded empty literal for every real
+  workflow, with the populated shape reachable only by the dev fixture. `GET /api/e2e/workflows/:id`
+  existed and returned all three collections correctly; the console simply never called it. So an
+  ACCEPTED workflow read "No scene data for this trial" on every run, permanently, no matter how much
+  evidence the runner shipped or the store held. The drawer now fetches, matches the returned id
+  against the expanded row before rendering (so one workflow's evidence can never appear under
+  another's verdict), and distinguishes *loading* from *loaded and empty* from *the fetch failed*
+  instead of showing one appearance for all three.
+
+- **The cassette panel was a mockup.** It rendered a hardcoded prompt (`Use Dorinda.`), a hardcoded
+  assistant reply (`Connected to <id>. Here's your current snapshot…`), and `calls.slice(0, 2)` of an
+  array that was always empty. An operator reading it saw an invented conversation in the same type,
+  colour and layout as a real one — fabricated evidence inside the harness built to rule that out. It
+  now renders the real `turns`, in full, and says plainly when no transcript was recorded rather than
+  reconstructing one.
+
+- **The drilldown chip claimed to show "trial 1 of N" with the 1 hardcoded**, above a drawer that
+  pools evidence from every attempt — describing a per-attempt breakdown that has never existed. It
+  now counts attempts in plain language. ("Trial" remains genuine forge-hat vocabulary internally;
+  the operator-facing word is the plainer one hat also uses.)
+
+### Added
+
+- **`forge_cp_eval_turns`** — the conversation per workflow (prompt, reply, tool calls,
+  `tool_trace_unreadable`), with `ON DELETE CASCADE`, idempotent on `(workflow_id, turn_index)`, and
+  surfaced through `queryGetWorkflow`. `POST /ingest/run-progress` persists the turns forge-hat sends.
+
+- **A guard for the class, not the instance** (`tests/console-evidence-is-fetched.test.ts`): the
+  console may not synthesise an empty evidence set for a real workflow, may not contain a hardcoded
+  conversational prompt or assistant reply outside the marked dev fixtures, and may not truncate a
+  transcript. All eight assertions were verified red against the pre-fix console before being trusted.
+
+  The lesson worth more than the fix: this was "verified" by querying the API and seeing `scenes: 2`.
+  The API was telling the truth about a row nothing rendered. Operator-facing evidence is verified in
+  the browser or it is not verified.
+
+### Fixed
+
+- **The release delivery-check asked the registry for a tag that is never created.** Releases are
+  git-tagged `v1.31.0`; `docker/metadata-action` publishes `type=semver,{{version}}`, which strips
+  the `v`, so the image is `1.31.0`. The check looked up `v1.31.0`, missed a perfectly published
+  image, and reported "not published in the registry" on **every** release — a guard that is red
+  whenever it runs is one everybody learns to ignore. It now tries the tag as given and then
+  v-stripped, and whichever resolves is the truth.
+
+### Fixed
+
+- **The e2e-runner job exported tenant credentials under names the runner does not read.** It wired
+  `DORINDA_EMAIL` / `DORINDA_PASSWORD`; `hat remote` reads `DORINDA_TENANT_EMAIL` /
+  `DORINDA_TENANT_PASSWORD`. The third name mismatch of the night, and the same symptom each time: a
+  job that starts, looks correctly configured, and behaves as if unconfigured. forge-hat now carries
+  a test that fails when this module exports a name the runner never consumes.
+
 ## [1.30.12] - 2026-08-13
 
 ### Added
