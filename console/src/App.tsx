@@ -85,6 +85,10 @@ interface Bootstrap {
   project: string;
   region: string;
   auth: string;
+  /** The running build's version, read from the image's own package.json. */
+  version?: string | null;
+  /** Commit stamped at image build. Absent on a local dev build — honestly, not invented. */
+  commit?: string | null;
   /** The authenticated operator's email address, or 'anonymous' in open mode. */
   actor?: string;
   providers: Array<{ provider_id: string; label: string; kind: string; ok: boolean; detail: string }>;
@@ -377,6 +381,36 @@ export default function App() {
             </span>
           </div>
           <div style={{ fontFamily: 'var(--mono)', fontSize: 10.5 }}>⌘K jump · . density</div>
+          {/*
+            ⛔ WHAT IS ACTUALLY RUNNING, ON SCREEN.
+
+            "Is my fix deployed?" was a question only `gcloud` could answer. On 2026-08-16 this
+            console sat two releases behind for two days — the Re-run fix released, reported as
+            shipped, never adopted — and nothing on the page could have told anyone. The scheduled
+            pin-check was RED the entire time and went unread.
+
+            Read from the package.json INSIDE the image, so it reports what is RUNNING rather than
+            what a config file claims. A dev build has no release identity and says so rather than
+            inventing one.
+          */}
+          <div
+            data-testid="console-version"
+            title={
+              boot.data?.commit
+                ? `forge-console ${boot.data.version ?? 'unknown'} · commit ${boot.data.commit}`
+                : 'forge-console — running from a local build (no release identity)'
+            }
+            style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--text-faint)' }}
+          >
+            {boot.data?.version ? (
+              <>
+                v{boot.data.version}
+                {boot.data.commit ? ` · ${boot.data.commit.slice(0, 7)}` : ' · dev'}
+              </>
+            ) : (
+              'version unknown'
+            )}
+          </div>
         </div>
 
         {/* WHO IS HOLDING THE PANE, AND THE WAY TO PUT IT DOWN. The console grants real reach over

@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.41.0] - 2026-08-16
+
+### Added
+
+- **The console reports the build it is running**, in the nav rail: `v1.41.0 · abc1234`. Read from
+  the `package.json` INSIDE the image, so it reports what is RUNNING rather than what a config file
+  claims; the commit is stamped at image build (`FORGE_COMMIT`) so it cannot drift from the image.
+  - Why: "is my fix deployed?" was a question only `gcloud` could answer. On 2026-08-16 this console
+    served v1.37.1 for two days while v1.38.0 and v1.39.0 sat released and unadopted — including a
+    feature Mark had asked for and been told had shipped. Nothing on the page could have revealed
+    it, and the scheduled pin-check was RED the whole time and went unread.
+  - **Three states, never confusable**: `v1.41.0 · abc1234` (a real release), `v1.41.0 · dev` (running
+    the source, no build stamp), `version unknown` (bootstrap has not answered). A version display
+    that can be wrong is worse than none — it turns "I don't know" into false confidence. All three
+    verified in a browser.
+
+
 ## [1.40.2] - 2026-08-16
 
 ### Fixed

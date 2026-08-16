@@ -15,6 +15,7 @@
  * mutating route exists outside it.
  */
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import pkgJson from '../../package.json';
 import { readFile } from 'node:fs/promises';
 import { join, normalize, extname } from 'node:path';
 import { timingSafeEqual, createHmac, randomBytes, createVerify, createPublicKey } from 'node:crypto';
@@ -979,6 +980,21 @@ export function buildServer(
       auth: auth.mode,
       actor: actorOf(req),
       providers: health,
+      /*
+       * ⛔ WHAT IS ACTUALLY RUNNING — put on screen because "is my fix deployed?" was, repeatedly,
+       * a question only `gcloud` could answer.
+       *
+       * On 2026-08-16 this console sat two releases behind for two days and nobody could tell by
+       * looking at it: the Re-run fix was released, reported as shipped, and never adopted. The
+       * scheduled pin-check was RED the whole time and went unread. A version in the corner of the
+       * screen is the cheapest possible answer to a question this estate keeps getting wrong.
+       *
+       * `version` is read from the package.json INSIDE the image, so it reports what is running
+       * rather than what any config file claims. `commit` is stamped at build time; absent on a
+       * local `npm run dev`, which is honest — a dev build has no release identity.
+       */
+      version: (pkgJson as { version?: string }).version ?? null,
+      commit: process.env.FORGE_COMMIT || null,
     });
   });
 

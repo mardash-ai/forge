@@ -13,6 +13,15 @@ LABEL org.opencontainers.image.title="Forge Control Plane"
 LABEL org.opencontainers.image.description="Forge developer/orchestration runtime (control plane). Not for production data-plane use."
 LABEL com.mardash-ai.plane="control"
 
+# ⛔ The running build's identity, readable from INSIDE the container.
+#
+# "Is my fix deployed?" was a question only `gcloud` could answer, and on 2026-08-16 this console
+# ran two releases behind for two days without anything on screen able to say so. The console
+# renders this in the nav rail. Absent on a local build, which is honest — a dev build has no
+# release identity, and inventing one would be worse than admitting it.
+ARG FORGE_COMMIT=""
+ENV FORGE_COMMIT=$FORGE_COMMIT
+
 # Docker CLI + Compose plugin, so the platform can run app builds/tests in Docker.
 # Also: git (Release/C18 resolves the app's HEAD commit + GHCR owner) and the Buildx
 # plugin (Release resolves an image's registry digest via `docker buildx imagetools
