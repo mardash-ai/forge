@@ -258,6 +258,32 @@ export interface RunProgressPayload {
   p99_duration_ms?: number;
   total_input_tokens?: number;
   total_output_tokens?: number;
+  /**
+   * Fingerprints of the MCP TOOL SURFACE the run executed against — forge-hat's B3 baselines.
+   *
+   * ⛔ THE QUESTION THIS ANSWERS: a workflow flipped red — did the PRODUCT change, or did the
+   * surface under it change? dorinda-api's `agent-instructions.md` has 51 revisions, and rewriting
+   * it end to end moves no tool name, argument, description or annotation. Nothing else the runner
+   * sends can separate the two, so without these a regression is attributed by guesswork.
+   *
+   * Three fields, because the answer must name WHICH surface moved: `contract_hash` = tool names +
+   * argument shapes, `guidance_hash` = descriptions + annotations, `instructions_hash` = the
+   * server's own instruction block.
+   *
+   * Sent on the TERMINAL push only (the surface cannot move mid-run), and each field is optional:
+   * the runner omits what it could not read rather than inventing a value. ⛔ Persisted to
+   * `meta.manifest` EXACTLY as received — an absent hash must stay absent all the way to the
+   * console, because `manifestDelta` reports `known: false` for it. Defaulting a missing hash here
+   * would turn "nobody read the surface" into "the surface did not change", which is the same class
+   * of error as scoring a default.
+   */
+  manifest?: {
+    contract_hash?: string;
+    guidance_hash?: string;
+    instructions_hash?: string;
+    /** Live-derived from the run's own tools/list — the only hash that survives the container. */
+    served_tools_hash?: string;
+  };
   status?: 'running' | 'completed' | 'failed' | 'aborted';
 }
 
@@ -439,6 +465,23 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
       }
       if (typeof body.workflows_intended === 'number') {
         metaUpdate['workflows_intended'] = body.workflows_intended;
+      }
+      // The MCP tool surface the run executed against, so a red workflow can be attributed to the
+      // SURFACE moving rather than the product. Arrives on the terminal push only; `meta` is jsonb
+      // and merges key-by-key on update (`meta = meta || $n::jsonb`), so a later push that carries
+      // no manifest cannot clobber the one already stored.
+      //
+      // ⛔ Field-by-field, and only strings that are actually present. A hash the runner could not
+      // read must reach the console ABSENT — `manifestDelta` answers `known: false` for it, which is
+      // the truth. Writing `''` (or an empty `manifest: {}`) instead would let two unread surfaces
+      // compare equal and report "unchanged" about something nobody looked at.
+      if (body.manifest && typeof body.manifest === 'object') {
+        const hashes: Record<string, string> = {};
+        for (const key of ['contract_hash', 'guidance_hash', 'instructions_hash', 'served_tools_hash'] as const) {
+          const value = body.manifest[key];
+          if (typeof value === 'string' && value.trim()) hashes[key] = value;
+        }
+        if (Object.keys(hashes).length > 0) metaUpdate['manifest'] = hashes;
       }
       update.meta = metaUpdate;
 

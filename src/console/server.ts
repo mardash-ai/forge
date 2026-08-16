@@ -29,9 +29,11 @@ import {
   queryGetRun,
   queryGetWorkflow,
   queryDiffRuns,
+  queryInstability,
   TRIAGE_INSTRUCTIONS,
   E2E_MCP_TOOLS,
 } from './e2e-api';
+import { manifestDelta, manifestFromMeta } from './manifest-delta';
 import { getEvalStore } from './e2e-store';
 import type { PgCpResultsBackend } from '../storage/backends/cp-results/pg';
 import { aggregate, createRegistry, type ProviderContext, type ProviderRegistry } from './providers/types';
@@ -2211,7 +2213,37 @@ export function buildServer(
       return reply.code(404).send({
         error: { code: 'not_found', message: 'one or both run_ids not found' },
       });
-    return envelope(diff);
+
+    // INSTABILITY — the noise floor, attached to the SAME response.
+    //
+    // A diff says what changed; it cannot say whether this row changes all the time anyway. Serving
+    // the two together is what stops a caller pairing a fresh diff with stale (or absent) history,
+    // and it costs one round trip instead of two. `?window=` overrides how many runs back to look.
+    //
+    // ⛔ ADDITIVE ONLY. Every existing DiffResult key keeps its exact shape and meaning — the
+    // diff_e2e_runs MCP tool reads them, and a triage agent's protocol is written against them.
+    const windowRaw = (req.query as { window?: string }).window;
+    const windowParsed = windowRaw === undefined ? NaN : Number.parseInt(String(windowRaw), 10);
+    const instability = await queryInstability(store, {
+      window: Number.isFinite(windowParsed) && windowParsed > 0 ? windowParsed : undefined,
+    });
+
+    // The tool-surface attribution: did the MCP manifest move between these two runs? This is the
+    // difference between "the product regressed" and "the instruction block moved under it" — and
+    // agent-instructions.md has 51 revisions, so it is the first question a red raises.
+    //
+    // ⛔ Honest about absence. `.dockerignore` excludes `.hat/`, so a containerised run reports no
+    // RECORDED hashes and only `served_tools_hash` (derived live from that run's own tools/list).
+    // `manifestDelta` answers `known: false` when either side is unreadable — never "unchanged",
+    // because an unread field is not evidence of stability.
+    const current = await store.getRun(q.run_id);
+    const baselineRun = await store.getRun(baselineRunId);
+    const manifest_delta = manifestDelta(
+      manifestFromMeta(baselineRun?.meta),
+      manifestFromMeta(current?.meta),
+    );
+
+    return envelope({ ...diff, instability: Object.fromEntries(instability), manifest_delta });
   });
 
   // ── E2E trigger — POST /api/e2e/runs ─────────────────────────────────────────────────────────

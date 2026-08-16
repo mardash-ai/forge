@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Button,
   Card,
@@ -23,9 +23,31 @@ import {
   type StatusTone,
 } from './ui/kit';
 import { ExternalGlyph, LogoMark, RAIL_ICON, StatusGlyph, SvgDefs, Wordmark } from './ui/icons';
-import { duration, relative, useApi } from './lib/api';
+import { ApiError, api, duration, relative, useApi } from './lib/api';
 import { buildE2eTriagePrompt } from './lib/triage-prompt';
-import { fmtE2ePctOfCatalogue, fmtE2ePctOfRunnable } from './lib/e2e-format';
+import {
+  E2E_WITHHELD_NOT_A_REGRESSION,
+  e2eDeltaCounts,
+  e2eDeltaSegments,
+  e2eDiffRowKey,
+  e2eGroupDiffChanges,
+  e2ePreviousRun,
+  e2eSparkSeries,
+  fmtE2eDeltaCompact,
+  fmtE2eDeltaTitle,
+  fmtE2eDiffVerdict,
+  fmtE2eFlipHistory,
+  fmtE2ePctOfCatalogue,
+  fmtE2ePctOfRunnable,
+} from './lib/e2e-format';
+import type {
+  E2EDeltaCounts,
+  E2EDiffChange,
+  E2EDiffKind,
+  E2EDiffPayload,
+  E2EInstability,
+  E2ESparkMark,
+} from './lib/e2e-format';
 import { fixtureForSelection } from './lib/seed-editor';
 import { FIXTURES } from './lib/fixtures';
 
@@ -4841,6 +4863,36 @@ interface E2EClaim {
   cassette: Record<string, unknown>;
 }
 
+/**
+ * `GET /api/e2e/diff?run_id=<id>` — this run against the one before it.
+ *
+ * `baseline_run_id` is OPTIONAL on the wire and defaults, server-side, to the most recent run that
+ * started strictly before this one. The console does not derive its own: two callers computing "the
+ * previous run" two ways is exactly how they come to disagree, and the console's old derivation
+ * (`runs.find(r => r.run_id !== active)` over a DESC list) resolved to a LATER run for every run but
+ * the newest. `e2ePreviousRun` mirrors the server's rule for the one place a run object is needed
+ * locally (the duration chart's label).
+ *
+ * ⛔ `withheld_now` is NOT a regression bucket. `regressions` admits exactly one kind — `newly-red`.
+ * See `E2E_WITHHELD_NOT_A_REGRESSION`.
+ *
+ * `instability` is served by a newer forge than some consoles will be talking to; it is optional
+ * here, and every reader degrades to "no history yet" rather than to a confident claim.
+ */
+interface E2EDiff extends E2EDiffPayload {
+  run_id: string;
+  baseline_run_id: string;
+  regressions: E2EWorkflow[];
+  improvements: E2EWorkflow[];
+  new_failures: E2EWorkflow[];
+  new_passes: E2EWorkflow[];
+  withheld_now: E2EWorkflow[];
+  became_graded: E2EWorkflow[];
+  changes: E2EDiffChange[];
+  counts: Record<E2EDiffKind, number>;
+  instability?: Record<string, E2EInstability>;
+}
+
 // ── Fixtures (matching the 2026-08-11 reference run from the mock) ─────────
 
 const E2E_FIXTURE_RUNS: E2ERun[] = [
@@ -6266,6 +6318,688 @@ function E2EDurationChart({ run, prevRun }: { run: E2ERun; prevRun: E2ERun | nul
   );
 }
 
+// ── Run-over-run diff surfaces ────────────────────────────────────────────
+//
+// ⛔ THE INVARIANT, restated where it is rendered: a WITHHELD verdict is NEVER a regression.
+//
+// `became-withheld` means the rig stopped observing — forge-hat's UNARMED / INFRA-FAIL, including
+// `claims-unavailable`. It gets its own section, its own (non-red) colour, and appears in no red
+// total anywhere on this screen. Reporting one as a red is the defect that cost three releases on
+// 2026-08-16, so the UI states the rule out loud rather than relying on the reader to know it.
+//
+// The counts are computed by `e2e-format.ts` from the SAME arrays these components render, never
+// from the server's parallel `counts` map — the rule the verdict tiles already follow, for the same
+// reason: a headline and the rows beneath it must not be able to disagree.
+
+/** Tone → the token pair every diff surface colours with. One table, so nothing hand-picks a hex. */
+const E2E_DIFF_TONE = {
+  crit: { text: 'var(--crit-text)', line: 'var(--crit)', wash: 'var(--crit-wash)' },
+  warn: { text: 'var(--warn-text)', line: 'var(--warn)', wash: 'var(--warn-wash)' },
+  ok: { text: 'var(--ok-text)', line: 'var(--ok)', wash: 'var(--ok-wash)' },
+  info: { text: 'var(--info-text)', line: 'var(--info)', wash: 'var(--info-wash)' },
+  neutral: { text: 'var(--text-secondary)', line: 'var(--line-strong)', wash: 'var(--bg-raised)' },
+} as const;
+
+type E2EDiffTone = keyof typeof E2E_DIFF_TONE;
+
+/**
+ * The verdict-history sparkline.
+ *
+ * A withheld run is a SHORT FLAT bar, not a missing one and not a coloured one: the series must not
+ * break (which would read as a flip) and must not colour (which would read as a verdict). Height
+ * carries the class as well as colour, so the three marks stay distinguishable without relying on
+ * hue alone.
+ */
+function E2ESparkline({ marks, label }: { marks: E2ESparkMark[]; label: string }) {
+  if (marks.length === 0) return null;
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      style={{ display: 'inline-flex', gap: 2, alignItems: 'flex-end', height: 13 }}
+    >
+      {marks.map((m, i) => (
+        <span
+          key={i}
+          style={{
+            display: 'block',
+            width: 5,
+            borderRadius: 1,
+            height: m === 'held' ? 5 : 13,
+            opacity: m === 'held' ? 0.6 : 0.85,
+            background:
+              m === 'ok' ? 'var(--ok)' : m === 'red' ? 'var(--crit)' : 'var(--info)',
+          }}
+        />
+      ))}
+    </span>
+  );
+}
+
+/** One diff row: workflow, `before → after`, and the flip history behind it. */
+function E2EDiffRow({
+  change,
+  tone,
+  hatched,
+  wf,
+  instability,
+  onOpen,
+}: {
+  change: E2EDiffChange;
+  tone: E2EDiffTone;
+  /** A hatched stripe means "this one flips" — form carrying the class, not colour alone. */
+  hatched?: boolean;
+  wf: E2EWorkflow | undefined;
+  instability: E2EInstability | undefined;
+  onOpen: (change: E2EDiffChange) => void;
+}) {
+  const t = E2E_DIFF_TONE[tone];
+  const withheldNow = change.kind === 'became-withheld';
+  // The AFTER trial fraction comes from this run's own row. There is no BEFORE fraction to show:
+  // the diff carries the baseline's verdict, not its trial counts — so the arrow is deliberately
+  // asymmetric rather than inventing `3/3` for the left-hand side.
+  const after = fmtE2eDiffVerdict(change.after, wf ? { passed: wf.trials_passed, total: wf.trials_total } : null);
+  const before = fmtE2eDiffVerdict(change.before);
+  const marks = e2eSparkSeries(instability, { trailingWithheld: withheldNow });
+  const history = fmtE2eFlipHistory(instability);
+  const sub = [change.provider, withheldNow ? (wf ? withheldReasonOf(wf) : null) : null]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(change)}
+      title={`Show ${change.workflow_id} in the table below`}
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '4px minmax(120px, 1.3fr) minmax(120px, 1fr) minmax(140px, 1.1fr)',
+        alignItems: 'center',
+        gap: 10,
+        width: '100%',
+        textAlign: 'left',
+        padding: '8px 10px 8px 0',
+        background: 'var(--bg-surface)',
+        border: 'none',
+        borderRadius: 0,
+        font: 'inherit',
+        color: 'var(--text-primary)',
+        cursor: 'pointer',
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          alignSelf: 'stretch',
+          borderRadius: '2px 0 0 2px',
+          minHeight: 22,
+          background: hatched
+            ? `repeating-linear-gradient(135deg, ${t.line} 0 3px, transparent 3px 6px)`
+            : t.line,
+        }}
+      />
+      <span style={{ fontFamily: 'var(--mono)', fontSize: 12.5, paddingLeft: 10, minWidth: 0 }}>
+        {change.workflow_id}
+        {sub ? (
+          <small
+            style={{
+              display: 'block',
+              fontFamily: 'var(--font)',
+              fontSize: 11.5,
+              color: 'var(--text-muted)',
+              marginTop: 1,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {sub}
+          </small>
+        ) : null}
+      </span>
+      <span
+        className="num"
+        style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--text-secondary)' }}
+      >
+        <span style={{ color: change.before === 'pass' ? 'var(--ok-text)' : 'var(--text-muted)' }}>
+          {before}
+        </span>
+        <span style={{ color: 'var(--text-faint)', margin: '0 5px' }}>→</span>
+        <span style={{ color: t.text }}>{after}</span>
+      </span>
+      <span
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 7,
+          fontSize: 11.5,
+          color: 'var(--text-muted)',
+        }}
+      >
+        <E2ESparkline marks={marks} label={`Verdict history: ${history}`} />
+        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {withheldNow && marks.length === 0 ? 'no verdict' : history}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+/** One titled group of diff rows, capped so a 40-row group cannot bury the group below it. */
+function E2EDiffGroup({
+  index,
+  title,
+  sub,
+  tone,
+  hatched,
+  changes,
+  note,
+  workflowsByKey,
+  instability,
+  onOpen,
+  onShowAll,
+}: {
+  index: string;
+  title: string;
+  sub: string;
+  tone: E2EDiffTone;
+  hatched?: boolean;
+  changes: E2EDiffChange[];
+  note?: string;
+  workflowsByKey: Map<string, E2EWorkflow>;
+  instability: Record<string, E2EInstability> | undefined;
+  onOpen: (change: E2EDiffChange) => void;
+  onShowAll: () => void;
+}) {
+  const LIMIT = 6;
+  if (changes.length === 0) return null;
+  const t = E2E_DIFF_TONE[tone];
+  const shown = changes.slice(0, LIMIT);
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: 8,
+          padding: '0 2px 6px',
+          fontSize: 11,
+          fontFamily: 'var(--mono)',
+          letterSpacing: '.08em',
+          textTransform: 'uppercase',
+          color: t.text,
+          flexWrap: 'wrap',
+        }}
+      >
+        <span className="num" style={{ color: 'var(--text-faint)' }}>
+          {index}
+        </span>
+        <span>
+          {title} ({changes.length})
+        </span>
+        <span
+          style={{
+            fontFamily: 'var(--font)',
+            fontSize: 12,
+            letterSpacing: 0,
+            textTransform: 'none',
+            color: 'var(--text-muted)',
+          }}
+        >
+          {sub}
+        </span>
+      </div>
+      {note ? (
+        <p
+          style={{
+            margin: '0 0 6px',
+            padding: '6px 10px',
+            fontSize: 12,
+            lineHeight: 1.45,
+            color: 'var(--text-secondary)',
+            background: t.wash,
+            border: `1px solid ${t.line}`,
+            borderRadius: 'var(--r-sm)',
+          }}
+        >
+          {note}
+        </p>
+      ) : null}
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 1,
+          background: 'var(--line-faint)',
+          border: '1px solid var(--line)',
+          borderRadius: 'var(--r-md)',
+          overflow: 'hidden',
+        }}
+      >
+        {shown.map((c) => (
+          <E2EDiffRow
+            key={c.key}
+            change={c}
+            tone={tone}
+            hatched={hatched}
+            wf={workflowsByKey.get(c.key)}
+            instability={instability?.[c.key]}
+            onOpen={onOpen}
+          />
+        ))}
+      </div>
+      {changes.length > shown.length ? (
+        <button
+          type="button"
+          onClick={onShowAll}
+          style={{
+            marginTop: 6,
+            padding: '3px 9px',
+            fontSize: 12,
+            color: 'var(--text-secondary)',
+            background: 'transparent',
+            border: '1px solid var(--line-strong)',
+            borderRadius: 'var(--r-sm)',
+            cursor: 'pointer',
+          }}
+        >
+          {changes.length - shown.length} more — show all in the table →
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * SURFACE 1 — the run-detail diff panel: "do I need to care about last night?"
+ *
+ * Delta chips, then the rows behind them, in the order attention should go: trusted reds, then reds
+ * on workflows that flip anyway, then recoveries, then withheld — which is labelled, in words, as
+ * not a product regression.
+ *
+ * ⛔ Gated on `loading` (the cold load) and NEVER on `refreshing`. The E2E screen polls every 5s, and
+ * a subtree that unmounts on each tick collapses the document height and throws the reader's scroll
+ * back to the top.
+ */
+function E2ERunDiffPanel({
+  run,
+  diff,
+  loading,
+  error,
+  httpStatus,
+  errorCode,
+  workflows,
+  onFilterKind,
+  onOpenChange,
+}: {
+  run: E2ERun;
+  diff: E2EDiff | null;
+  loading: boolean;
+  error: string | null;
+  httpStatus: number | null;
+  errorCode: string | null;
+  workflows: E2EWorkflow[];
+  onFilterKind: (kind: E2EDiffKind) => void;
+  onOpenChange: (change: E2EDiffChange) => void;
+}) {
+  const frame: React.CSSProperties = {
+    background: 'var(--bg-surface)',
+    border: '1px solid var(--line)',
+    borderRadius: 8,
+    padding: 16,
+  };
+  const heading = (
+    <h2
+      style={{
+        fontSize: 11,
+        letterSpacing: '.08em',
+        textTransform: 'uppercase',
+        color: 'var(--text-muted)',
+        marginBottom: 10,
+        fontWeight: 600,
+      }}
+    >
+      What changed since the previous run
+    </h2>
+  );
+  const quiet = (body: React.ReactNode) => (
+    <section style={frame}>
+      {heading}
+      <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>{body}</div>
+    </section>
+  );
+
+  // ⛔ 501 is "the results store is not configured" — a distinct, nameable state with its own
+  // remedy. It is not an error and it is certainly not a reason to show sample numbers.
+  if (httpStatus === 501) {
+    return quiet(
+      <>
+        <strong style={{ color: 'var(--text-secondary)' }}>Results store not configured.</strong> No
+        run history is being recorded, so there is nothing to compare this run against.
+      </>,
+    );
+  }
+  // The endpoint's own answer for "this is the first run there is". Calm, not an error state.
+  if (errorCode === 'no_baseline' || httpStatus === 404) {
+    return quiet(
+      <>
+        No earlier run to compare against — <span className="mono">{run.run_id}</span> is the first
+        run on record, so every result in it is new information.
+      </>,
+    );
+  }
+  if (loading && !diff) return quiet('Comparing against the previous run…');
+  if (error && !diff) return quiet(`Comparison unavailable — ${error}`);
+  if (!diff) return quiet('No comparison available for this run.');
+
+  const counts = e2eDeltaCounts(diff);
+  const groups = e2eGroupDiffChanges(diff);
+  const workflowsByKey = new Map(workflows.map((w) => [e2eDiffRowKey(w), w]));
+  const chips: Array<{ n: number; label: string; tone: E2EDiffTone; title: string }> = [
+    {
+      n: counts.trustedRed,
+      label: 'newly red',
+      tone: 'crit',
+      title: 'Passed in the baseline, fails now, and nothing in the history says this workflow flips',
+    },
+    {
+      n: counts.flakyRed,
+      label: 'red, but flips',
+      tone: 'warn',
+      title: 'Newly red on a workflow whose verdict changes often — weak evidence on its own',
+    },
+    { n: counts.recovered, label: 'recovered', tone: 'ok', title: 'Failed in the baseline, passes now' },
+    {
+      n: counts.withheld,
+      label: 'withheld',
+      tone: 'info',
+      title: E2E_WITHHELD_NOT_A_REGRESSION,
+    },
+    {
+      n: counts.unchanged,
+      label: 'unchanged',
+      tone: 'neutral',
+      title: 'Same classification in both runs',
+    },
+  ];
+
+  return (
+    <section style={frame}>
+      {heading}
+      <div
+        style={{
+          fontFamily: 'var(--mono)',
+          fontSize: 11.5,
+          color: 'var(--text-muted)',
+          marginBottom: 10,
+          overflowWrap: 'anywhere',
+        }}
+      >
+        {diff.baseline_run_id} → {diff.run_id}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {chips.map((c) => {
+          const t = E2E_DIFF_TONE[c.tone];
+          return (
+            <span
+              key={c.label}
+              title={c.title}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 7,
+                padding: '6px 10px',
+                borderRadius: 'var(--r-md)',
+                border: `1px solid ${c.n > 0 ? t.line : 'var(--line)'}`,
+                background: c.n > 0 ? t.wash : 'var(--bg-raised)',
+                fontSize: 12.5,
+                color: 'var(--text-secondary)',
+              }}
+            >
+              <b
+                className="num"
+                style={{ fontSize: 14, fontWeight: 600, color: c.n > 0 ? t.text : 'var(--text-muted)' }}
+              >
+                {c.n}
+              </b>
+              {c.label}
+            </span>
+          );
+        })}
+      </div>
+
+      <E2EDiffGroup
+        index="01"
+        title="Newly red"
+        sub="— treat as real"
+        tone="crit"
+        changes={groups.trustedRed}
+        workflowsByKey={workflowsByKey}
+        instability={diff.instability}
+        onOpen={onOpenChange}
+        onShowAll={() => onFilterKind('newly-red')}
+      />
+      <E2EDiffGroup
+        index="02"
+        title="Newly red — but this workflow flips"
+        sub="— weak evidence; confirm before chasing"
+        tone="warn"
+        hatched
+        changes={groups.flakyRed}
+        workflowsByKey={workflowsByKey}
+        instability={diff.instability}
+        onOpen={onOpenChange}
+        onShowAll={() => onFilterKind('newly-red')}
+      />
+      <E2EDiffGroup
+        index="03"
+        title="Recovered"
+        sub="— failed in the baseline, passes now"
+        tone="ok"
+        changes={groups.recovered}
+        workflowsByKey={workflowsByKey}
+        instability={diff.instability}
+        onOpen={onOpenChange}
+        onShowAll={() => onFilterKind('newly-green')}
+      />
+      <E2EDiffGroup
+        index="04"
+        title="Withheld"
+        sub="— the rig stopped observing"
+        tone="info"
+        changes={groups.withheld}
+        note={E2E_WITHHELD_NOT_A_REGRESSION}
+        workflowsByKey={workflowsByKey}
+        instability={diff.instability}
+        onOpen={onOpenChange}
+        onShowAll={() => onFilterKind('became-withheld')}
+      />
+
+      {counts.newlyRed === 0 && counts.recovered === 0 && counts.withheld === 0 ? (
+        <p style={{ margin: '14px 0 0', fontSize: 13, color: 'var(--text-muted)' }}>
+          Nothing moved between these two runs — every workflow kept its classification.
+        </p>
+      ) : null}
+      {counts.becameGraded > 0 || counts.added > 0 || counts.removed > 0 ? (
+        <p style={{ margin: '12px 0 0', fontSize: 12, color: 'var(--text-faint)' }}>
+          Also in this comparison: {counts.becameGraded} newly graded (the rig can see them again),{' '}
+          {counts.added} added, {counts.removed} no longer run.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * SURFACE 2 — the delta chip strip above the workflow table.
+ *
+ * Follows the withheld-cause sub-tile strip exactly: the counts come from the ROWS the table is
+ * about to render, and clicking a chip drives the SAME filter state the verdict tiles drive. A chip
+ * can therefore never show a number and then filter to an empty table.
+ *
+ * ⛔ `became-withheld` is a chip, not a red one, and it is never added to the newly-red count.
+ */
+function E2EDeltaChips({
+  counts,
+  active,
+  onPick,
+}: {
+  counts: Array<{ kind: E2EDiffKind; label: string; tone: E2EDiffTone; count: number; title: string }>;
+  active: E2EDiffKind | null;
+  onPick: (kind: E2EDiffKind | null) => void;
+}) {
+  const shown = counts.filter((c) => c.count > 0);
+  if (shown.length === 0) return null;
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
+      <span
+        style={{
+          fontSize: 11,
+          letterSpacing: '.07em',
+          textTransform: 'uppercase',
+          color: 'var(--text-muted)',
+          fontWeight: 600,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        vs previous run
+      </span>
+      {shown.map((c) => {
+        const t = E2E_DIFF_TONE[c.tone];
+        const on = active === c.kind;
+        return (
+          <button
+            key={c.kind}
+            onClick={() => onPick(on ? null : c.kind)}
+            aria-pressed={on}
+            title={c.title}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'baseline',
+              gap: 6,
+              padding: '4px 10px',
+              borderRadius: 6,
+              border: `1px solid ${on ? t.line : 'var(--line)'}`,
+              background: on ? t.wash : 'var(--bg-raised)',
+              color: on ? t.text : 'var(--text-secondary)',
+              fontSize: 12.5,
+              cursor: 'pointer',
+            }}
+          >
+            <span className="num" style={{ fontWeight: 600, color: t.text }}>
+              {c.count}
+            </span>
+            <span>{c.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * SURFACE 3's data — one delta per completed run in the history table.
+ *
+ * There is no batch diff endpoint, so this fetches one diff per run, and therefore bounds itself:
+ * only the most recent `E2E_DELTA_COLUMN_LIMIT` COMPLETED runs, each fetched exactly once per mount
+ * (`asked` is a ref, so the 5s run-list poll cannot re-fire them). Rows past the bound render `—`
+ * rather than a number nobody computed.
+ *
+ * `window=1` on each request is deliberate: the compact column shows only TOTAL newly-red, which the
+ * instability window does not affect, and the default window makes the endpoint walk ten runs of
+ * workflow rows per call. Asking for history this column does not render would multiply the query
+ * budget by five for nothing.
+ */
+const E2E_DELTA_COLUMN_LIMIT = 8;
+
+type E2EDeltaEntry =
+  | { state: 'loading' }
+  /** The endpoint's `no_baseline`: this is the oldest run there is. Calm, not an error. */
+  | { state: 'none' }
+  | { state: 'error'; message: string }
+  | { state: 'ok'; counts: E2EDeltaCounts };
+
+function useE2ERunDeltas(runs: E2ERun[], enabled: boolean): Map<string, E2EDeltaEntry> {
+  const [deltas, setDeltas] = useState<Map<string, E2EDeltaEntry>>(() => new Map());
+  const asked = useRef<Set<string>>(new Set());
+  const targets = enabled
+    ? runs
+        .filter((r) => r.status === 'completed')
+        .slice(0, E2E_DELTA_COLUMN_LIMIT)
+        .map((r) => r.run_id)
+    : [];
+  // A string key, so a poll that rebuilds an identical `runs` array does not re-run the effect.
+  const targetKey = targets.join('|');
+  useEffect(() => {
+    let cancelled = false;
+    const put = (runId: string, entry: E2EDeltaEntry) => {
+      if (cancelled) return;
+      setDeltas((m) => new Map(m).set(runId, entry));
+    };
+    for (const runId of targets) {
+      if (asked.current.has(runId)) continue;
+      asked.current.add(runId);
+      put(runId, { state: 'loading' });
+      api<E2EDiff>(`/api/e2e/diff?run_id=${encodeURIComponent(runId)}&window=1`)
+        .then((env) => put(runId, { state: 'ok', counts: e2eDeltaCounts(env.data) }))
+        .catch((e: unknown) => {
+          if (e instanceof ApiError && e.code === 'no_baseline') return put(runId, { state: 'none' });
+          put(runId, {
+            state: 'error',
+            message: e instanceof Error ? e.message : 'comparison failed',
+          });
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetKey, enabled]);
+  return deltas;
+}
+
+/** The `Δ vs prev` cell. Every state is named; none of them is a blank. */
+function E2EDeltaCell({ entry }: { entry: E2EDeltaEntry | undefined }) {
+  const faint: React.CSSProperties = { color: 'var(--text-faint)', fontSize: 12 };
+  if (!entry) return <span style={{ ...faint }} title="not computed for older runs">—</span>;
+  if (entry.state === 'loading') return <span style={faint}>…</span>;
+  if (entry.state === 'none')
+    return (
+      <span style={faint} title="no earlier run to compare against">
+        first run
+      </span>
+    );
+  if (entry.state === 'error')
+    return (
+      <span style={faint} title={`comparison unavailable — ${entry.message}`}>
+        ?
+      </span>
+    );
+  const segs = e2eDeltaSegments(entry.counts);
+  const title = fmtE2eDeltaTitle(entry.counts);
+  // Not a blank and not a dash: a comparison DID run and found nothing, which is different from
+  // no comparison having run at all.
+  if (segs.length === 0)
+    return (
+      <span style={faint} title={title}>
+        {fmtE2eDeltaCompact(entry.counts)}
+      </span>
+    );
+  return (
+    <span
+      title={title}
+      aria-label={title}
+      style={{ display: 'inline-flex', gap: 7, fontFamily: 'var(--mono)', fontSize: 12.5 }}
+    >
+      {segs.map((s) => (
+        <span key={s.kind} style={{ color: E2E_DIFF_TONE[s.tone].text, whiteSpace: 'nowrap' }}>
+          {s.glyph}
+          {s.count}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 // ── Run modal ─────────────────────────────────────────────────────────────
 
 /**
@@ -7247,6 +7981,15 @@ function Evals() {
   const [reasonFilter, setReasonFilter] = useState<string | null>(() => e2eParam('cause'));
   const [laneFilter, setLaneFilter] = useState<string | null>(() => e2eParam('lane'));
   const [tierFilter, setTierFilter] = useState<string | null>(() => e2eParam('tier'));
+  /**
+   * The run-over-run delta chip strip's filter — one more dimension of the SAME filter state the
+   * verdict tiles drive, deliberately, so a chip, a tile and the table cannot disagree about which
+   * rows exist.
+   */
+  const [deltaFilter, setDeltaFilter] = useState<E2EDiffKind | null>(() => {
+    const d = e2eParam('delta');
+    return d === 'newly-red' || d === 'newly-green' || d === 'became-withheld' ? d : null;
+  });
   const [expandedWfId, setExpandedWfId] = useState<string | null>(() => e2eParam('wf'));
   const [wfPage, setWfPage] = useState(0);
   const [cassetteOpen, setCassetteOpen] = useState(false);
@@ -7268,6 +8011,19 @@ function Evals() {
   // In dev mode, fixtures are available behind a visible SAMPLE DATA marker.
   const runsApi = useApi<E2ERun[]>('/api/e2e/runs');
   const detailApi = useApi<E2ERunDetail>(activeRunId ? `/api/e2e/runs/${activeRunId}` : null);
+  /**
+   * The run-over-run comparison — fetched ONCE for the active run and shared by the diff panel and
+   * the chip strip. Two components fetching the same endpoint independently is how two surfaces on
+   * one screen come to show different numbers for the same question.
+   *
+   * `baseline_run_id` is left off on purpose: the server owns the definition of "the previous run"
+   * (nearest strictly-older `started_at`), and the console asking for a baseline it derived itself
+   * is exactly the drift this endpoint was given a default to end.
+   */
+  const diffApi = useApi<E2EDiff>(
+    activeRunId ? `/api/e2e/diff?run_id=${encodeURIComponent(activeRunId)}` : null,
+    [activeRunId],
+  );
 
   // Live-update: while any run is in-progress, reload the list every 5 s so progress-bar counters
   // advance and the run transitions to its terminal state without a manual refresh.
@@ -7304,6 +8060,10 @@ function Evals() {
   const usingFixture = IS_DEV && runsState !== 'connected';
 
   const runs: E2ERun[] = runsApi.data ?? (usingFixture ? E2E_FIXTURE_RUNS : []);
+
+  // `Δ vs prev` for the run-history table. Bounded, cached per run id, and never asked for in
+  // fixture mode — a compiled-in run has no real predecessor to compare against.
+  const runDeltas = useE2ERunDeltas(runs, runsState === 'connected');
 
   // ── The drilldown's evidence — FETCHED, never assumed empty ────────────────────────────────
   //
@@ -7352,11 +8112,68 @@ function Evals() {
   // Counted from the rows the table will show — never from a parallel run-level counter.
   const counts = bucketCounts(allWorkflows);
 
+  // ── How this run's rows join to the diff ──────────────────────────────────────────────────────
+  //
+  // `e2eDiffRowKey` is a verbatim mirror of the server's `diffRowKey`, and both sides derive the key
+  // from the same stored fields on the same rows, so the join is exact — including for a workflow
+  // that ran on two providers, whose two lanes must stay two rows. A bare `workflow_id` key would
+  // let an anthropic regression hide behind an openai pass.
+  //
+  // ⛔ Matched to the run it describes before use. `useApi` keeps its last payload when the path
+  // changes, so selecting another run would otherwise paint the PREVIOUS run's comparison over the
+  // new one for a beat — the same guard `fixtureDetailForRun` applies above, for the same reason:
+  // never let one run's rows appear under another run's name.
+  const diff: E2EDiff | null =
+    diffApi.data && activeRunId && diffApi.data.run_id === activeRunId ? diffApi.data : null;
+  const diffKindByKey = new Map<string, E2EDiffKind>();
+  for (const c of diff?.changes ?? []) diffKindByKey.set(c.key, c.kind);
+  const diffKindOf = (w: E2EWorkflow): E2EDiffKind | null =>
+    diffKindByKey.get(e2eDiffRowKey(w)) ?? null;
+
+  /**
+   * The chip strip's counts — taken from the ROWS the table will render, exactly like the verdict
+   * tiles and the withheld-cause subtiles, never from the diff's own `counts` map. A chip can
+   * therefore never show a number and then filter to nothing.
+   *
+   * ⛔ `became-withheld` is here as its own chip and is never folded into `newly-red`.
+   */
+  const deltaChipCounts: Array<{
+    kind: E2EDiffKind;
+    label: string;
+    tone: 'crit' | 'ok' | 'info';
+    count: number;
+    title: string;
+  }> = [
+    {
+      kind: 'newly-red',
+      label: 'newly red',
+      tone: 'crit',
+      count: allWorkflows.filter((w) => diffKindOf(w) === 'newly-red').length,
+      title: 'Passed in the previous run, fails in this one — show only these',
+    },
+    {
+      kind: 'newly-green',
+      label: 'newly green',
+      tone: 'ok',
+      count: allWorkflows.filter((w) => diffKindOf(w) === 'newly-green').length,
+      title: 'Failed in the previous run, passes in this one — show only these',
+    },
+    {
+      kind: 'became-withheld',
+      label: 'became withheld',
+      tone: 'info',
+      count: allWorkflows.filter((w) => diffKindOf(w) === 'became-withheld').length,
+      title: E2E_WITHHELD_NOT_A_REGRESSION,
+    },
+  ];
+
   const filteredWorkflows: E2EWorkflow[] = allWorkflows.filter((w) => {
     // One helper, shared with the tiles — see bucketOf. These cannot drift apart any more.
     if (verdictFilter !== 'all' && bucketOf(w) !== verdictFilter) return false;
     // Same helper the subtiles count with — a cause chip can never filter to an empty table again.
     if (reasonFilter && withheldReasonOf(w) !== reasonFilter) return false;
+    // Same helper the delta chips count with, for the same reason.
+    if (deltaFilter && diffKindOf(w) !== deltaFilter) return false;
     if (laneFilter && !w.lanes.includes(laneFilter)) return false;
     if (tierFilter && getWorkflowTier(w) !== tierFilter) return false;
     return true;
@@ -7389,12 +8206,28 @@ function Evals() {
     (effectivePage + 1) * E2E_WF_PAGE_SIZE,
   );
 
-  const hasActiveFilters = verdictFilter !== 'all' || !!reasonFilter || !!laneFilter || !!tierFilter;
+  const hasActiveFilters =
+    verdictFilter !== 'all' || !!reasonFilter || !!deltaFilter || !!laneFilter || !!tierFilter;
   const clearFilters = () => {
+    setVerdictFilter('all');
+    setReasonFilter(null);
+    setDeltaFilter(null);
+    setLaneFilter(null);
+    setTierFilter(null);
+    setWfPage(0);
+  };
+
+  /**
+   * Show one diff kind in the table below. Clears the verdict/cause/lane/tier filters first: a delta
+   * chip that composed with a stale verdict filter would show "3 newly red" and then a table of one,
+   * which is the class of tile/table disagreement this screen has already been burned by.
+   */
+  const showDeltaKind = (kind: E2EDiffKind | null) => {
     setVerdictFilter('all');
     setReasonFilter(null);
     setLaneFilter(null);
     setTierFilter(null);
+    setDeltaFilter(kind);
     setWfPage(0);
   };
 
@@ -7406,7 +8239,16 @@ function Evals() {
   // same screen as a slow network and as an empty result — three different states, one appearance.
   const wfResultError = expandedWfId && !usingFixture ? wfDrilldownApi.error : null;
 
-  const prevRun = runs.find((r) => r.run_id !== activeRun?.run_id) ?? null;
+  // ⛔ The nearest STRICTLY-OLDER run, not "the first row that isn't this one".
+  //
+  // `runs` is started_at DESC, so the old `runs.find((r) => r.run_id !== activeRun?.run_id)` was
+  // right only for the newest run. For every other run it resolved to the run immediately AFTER the
+  // one being viewed — and E2EDurationChart then labelled that later run "previous nightly". A
+  // comparison silently running backwards is worse than no comparison at all.
+  //
+  // `e2ePreviousRun` mirrors the rule `GET /api/e2e/diff` applies server-side when no baseline is
+  // given, so the chart and the diff panel can never name different baselines.
+  const prevRun = e2ePreviousRun(runs, activeRun);
 
   // Keep the address bar in step with the view, so any state Mark is looking at can be sent as a
   // link. replaceState (not push) — the console's existing idiom for view params; back still exits
@@ -7418,10 +8260,11 @@ function Evals() {
     set('f', verdictFilter === 'all' ? null : verdictFilter);
     set('wf', expandedWfId);
     set('cause', reasonFilter);
+    set('delta', deltaFilter);
     set('lane', laneFilter);
     set('tier', tierFilter);
     history.replaceState(null, '', u);
-  }, [activeRunId, verdictFilter, expandedWfId, reasonFilter, laneFilter, tierFilter]);
+  }, [activeRunId, verdictFilter, expandedWfId, reasonFilter, deltaFilter, laneFilter, tierFilter]);
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(location.href).then(
@@ -7437,11 +8280,21 @@ function Evals() {
     setActiveRunId(rid);
     setVerdictFilter('all');
     setReasonFilter(null);
+    // Cleared with the rest: a delta filter belongs to the run it was computed against, and carrying
+    // it into another run would filter that run's table by the previous run's comparison.
+    setDeltaFilter(null);
     setLaneFilter(null);
     setTierFilter(null);
     setExpandedWfId(null);
     setCassetteOpen(false);
     setWfPage(0);
+  };
+
+  /** A diff-panel row → that workflow's row in the table below, expanded. */
+  const handleOpenDiffRow = (change: E2EDiffChange) => {
+    showDeltaKind(change.kind === 'newly-red' || change.kind === 'newly-green' || change.kind === 'became-withheld' ? change.kind : null);
+    const wf = allWorkflows.find((w) => e2eDiffRowKey(w) === change.key);
+    setExpandedWfId(wf ? wf.id : null);
   };
 
   const handleTriage = () => {
@@ -7729,6 +8582,11 @@ function Evals() {
                         'Attempted',
                         'Pass',
                         'Withheld',
+                        // ▲ newly red · ▼ recovered · ⊘ became withheld, against the run before this
+                        // one. ⛔ The ⊘ count is NEVER folded into ▲ and is never coloured as a
+                        // failure: a withheld verdict means the rig stopped observing, not that the
+                        // product broke.
+                        'Δ vs prev',
                         'Spend',
                       ] as const
                     ).map((h) => (
@@ -7853,6 +8711,16 @@ function Evals() {
                       </td>
                       <td style={{ ...cell, textAlign: 'right', color: 'var(--text-muted)' }} className="num">
                         {r.withheld_count}
+                      </td>
+                      <td style={{ ...cell, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {/* Only completed runs. A run still in flight has no final classification
+                            to compare, and one that failed or was stopped never produced a set of
+                            verdicts a delta could honestly be taken from. */}
+                        {r.status === 'completed' ? (
+                          <E2EDeltaCell entry={runDeltas.get(r.run_id)} />
+                        ) : (
+                          <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>—</span>
+                        )}
                       </td>
                       <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>
                         {fmtE2eSpend(r.spend_cents)}
@@ -8407,6 +9275,22 @@ function Evals() {
         </div>
       )}
 
+      {/* ── Δ vs the previous run — chips, directly above the table they filter ──────────────────
+          Built on the withheld-cause sub-tile strip's precedent: the counts come from the ROWS the
+          table is about to render (same `diffKindOf` the table filters by), and clicking a chip
+          drives the same filter state the verdict tiles drive. Tiles, chips and table therefore
+          cannot disagree about which rows exist.
+
+          ⛔ `became withheld` is its own chip, coloured info, and is never added to `newly red`.
+          The rig having stopped observing is not the product regressing — the confusion that cost
+          three releases on 2026-08-16.
+
+          Gated on the diff having ARRIVED, never on `diffApi.refreshing`: this block sits above the
+          workflow table, and unmounting it on a background poll would shift everything below it. */}
+      {showRunDetail && diff && (
+        <E2EDeltaChips counts={deltaChipCounts} active={deltaFilter} onPick={showDeltaKind} />
+      )}
+
       {/* ── Filter bar: lane / integrity-class / tier + clear-all ────────────
           Only shown when connected; all filters composable and URL-encoded. */}
       {showRunDetail && (allLanes.length > 0 || allTiers.length > 0) && (
@@ -8867,6 +9751,19 @@ function Evals() {
             }}
           >
             {activeRun && <E2EDurationChart run={activeRun} prevRun={prevRun} />}
+            {activeRun && (
+              <E2ERunDiffPanel
+                run={activeRun}
+                diff={diff}
+                loading={diffApi.loading}
+                error={diffApi.error}
+                httpStatus={diffApi.httpStatus}
+                errorCode={diffApi.errorCode}
+                workflows={allWorkflows}
+                onFilterKind={showDeltaKind}
+                onOpenChange={handleOpenDiffRow}
+              />
+            )}
           </div>
         </>
       )}

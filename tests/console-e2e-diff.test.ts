@@ -35,7 +35,11 @@ describe('the verdict algebra', () => {
       expect(isVerdictBearing(v)).toBe(!isWithheldVerdict(v));
     }
     expect(isVerdictBearing('pass')).toBe(true);
-    expect(isVerdictBearing('error')).toBe(true);
+    // ⛔ `error` means the sender used a word the receiver does not know — a broken contract,
+    // not a graded product failure. Counting it as red reports a runner/store mismatch as a
+    // regression, which is the withheld bug one verdict over.
+    expect(isVerdictBearing('error')).toBe(false);
+    expect(isWithheldVerdict('error')).toBe(true);
     expect(isWithheldVerdict('withheld')).toBe(true);
     expect(isWithheldVerdict('skip')).toBe(true);
   });
@@ -45,11 +49,11 @@ describe('the verdict algebra', () => {
     expect(classifyChange('fail', 'pass')).toBe('newly-green');
     expect(classifyChange('pass', 'pass')).toBe('still-green');
     expect(classifyChange('fail', 'fail')).toBe('still-red');
-    expect(classifyChange('pass', 'error')).toBe('newly-red');
+    expect(classifyChange('pass', 'error')).toBe('became-withheld');
   });
 
   it('⛔ a verdict that became WITHHELD is never a regression', () => {
-    for (const held of ['withheld', 'skip'] as WorkflowVerdict[]) {
+    for (const held of ['withheld', 'skip', 'error'] as WorkflowVerdict[]) {
       const kind = classifyChange('pass', held);
       expect(kind).toBe('became-withheld');
       expect(isRegression(kind)).toBe(false);
