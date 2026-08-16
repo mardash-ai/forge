@@ -123,6 +123,15 @@ export interface Revision {
   id: string;
   image_digest: string;
   image_ref: string;
+  /**
+   * The release this digest was published as, resolved from the registry.
+   *
+   * Services are rolled BY DIGEST on purpose — a tag is a label someone can move. The cost is that
+   * a screen showing only `app@sha256:abf3cd1…` cannot answer "is v1.40.2 live?", which is how this
+   * console ran two releases behind for two days unnoticed. `null` means we could not resolve one;
+   * it is rendered as unknown and never guessed.
+   */
+  image_version?: string | null;
   created_at: string;
   traffic_percent: number;
   ready: boolean;

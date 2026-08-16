@@ -54,6 +54,79 @@ interface RunRevision {
   conditions?: Array<{ type?: string; state?: string; message?: string }>;
 }
 
+/**
+ * ⛔ WHAT VERSION IS THIS SERVICE ACTUALLY RUNNING?
+ *
+ * Every service here is rolled BY DIGEST, deliberately — a tag is a label someone can move, and
+ * digest-pinning is what makes a rollout verifiable. The cost is that the deploys screen could show
+ * `app@sha256:abf3cd1…` and nothing else, so "is v1.40.2 live?" was a question only
+ * `gcloud artifacts docker images list` could answer.
+ *
+ * That cost is not hypothetical: on 2026-08-16 forge-console served v1.37.1 for two days while two
+ * releases sat unadopted — one of them a feature Mark had asked for and been told had shipped — and
+ * no screen in this console could have revealed it.
+ *
+ * So: resolve the digest back to its tag through Artifact Registry. The digest stays the identity;
+ * the tag is presentation. A digest is immutable, so the answer is cached for the process lifetime.
+ *
+ * Returns null — never a guess — when the image is not in Artifact Registry, when the lookup fails,
+ * or when the image carries no version-shaped tag. The UI renders that as unknown, because a
+ * version display that can be WRONG is worse than none.
+ */
+const versionCache = new Map<string, string | null>();
+
+export async function resolveImageVersion(
+  imageRef: string,
+  ctx: { signal?: AbortSignal },
+): Promise<string | null> {
+  if (!imageRef) return null;
+  // A ref that already carries a tag needs no lookup: `…/app:v1.2.3` or `…/app:v1.2.3@sha256:…`.
+  const tagged = /:(v?\d+\.\d+\.\d+[^@]*)(?:@|$)/.exec(imageRef);
+  if (tagged) return tagged[1]!;
+
+  const at = imageRef.indexOf('@');
+  if (at < 0) return null;
+  const digest = imageRef.slice(at + 1);
+  const path = imageRef.slice(0, at);
+  if (versionCache.has(digest)) return versionCache.get(digest)!;
+
+  // us-east1-docker.pkg.dev/<project>/<repo>/<package...>
+  const m = /^([a-z0-9-]+)-docker\.pkg\.dev\/([^/]+)\/([^/]+)\/(.+)$/.exec(path);
+  if (!m) {
+    versionCache.set(digest, null); // not Artifact Registry — nothing to resolve against
+    return null;
+  }
+  const [, location, imgProject, repo, pkg] = m;
+  try {
+    const res = await gcpJson<{ tags?: string[] }>({
+      url:
+        `https://artifactregistry.googleapis.com/v1/projects/${imgProject}/locations/${location}` +
+        `/repositories/${repo}/dockerImages/${encodeURIComponent(`${pkg}@${digest}`)}`,
+      ...(ctx.signal ? { signal: ctx.signal } : {}),
+    });
+    const tags = res?.tags ?? [];
+    /*
+     * ⛔ NOT EVERY SERVICE TAGS WITH SEMVER, and assuming so is how this shows a version for one
+     * service and "unknown" for the rest.
+     *
+     * Verified against the live estate 2026-08-16:
+     *   forge-console, forge-data-plane   v1.40.2      semver, from a release tag
+     *   dorinda-api, dorinda-web, …-site  8d588a8      the COMMIT the image was built from
+     *
+     * A commit sha is a perfectly good build identity — it is what those pipelines publish — so
+     * take it when there is no semver. `latest` is excluded because it names nothing: it is
+     * whatever was pushed last, which is the opposite of an identity.
+     */
+    const version = tags.find((t) => /^v?\d+\.\d+\.\d+/.test(t)) ?? tags.find((t) => t !== 'latest') ?? null;
+    versionCache.set(digest, version);
+    return version;
+  } catch {
+    // A failed lookup is UNKNOWN, not "no version". Not cached: a transient 503 must not freeze
+    // this digest as unknown for the life of the process.
+    return null;
+  }
+}
+
 export function createCloudRunRuntimeProvider(opts: {
   id: string;
   envs: string[];
@@ -100,6 +173,15 @@ export function createCloudRunRuntimeProvider(opts: {
         { signal: ctx.signal, maxPages: 3 },
       );
 
+      // Resolve digest → version once per UNIQUE image, in parallel. Revisions of one service
+      // usually repeat a handful of digests, and the cache makes repeats free.
+      const uniqueImages = [...new Set(revisions.map((r) => r.containers?.[0]?.image ?? '').filter(Boolean))];
+      const versions = new Map<string, string | null>(
+        await Promise.all(
+          uniqueImages.map(async (img) => [img, await resolveImageVersion(img, ctx)] as const),
+        ),
+      );
+
       return revisions
         .map((r) => {
           const short = r.name.split('/').pop() ?? r.name;
@@ -110,6 +192,8 @@ export function createCloudRunRuntimeProvider(opts: {
             // The digest is the identity. A tag is a label someone can move.
             image_digest: image.includes('@') ? image.split('@')[1]! : '',
             image_ref: image,
+            // null = we could not resolve one. Rendered as unknown, never guessed.
+            image_version: versions.get(image) ?? null,
             created_at: r.createTime ?? '',
             traffic_percent: traffic.get(short) ?? 0,
             ready: ready?.state === 'CONDITION_SUCCEEDED',

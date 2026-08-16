@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.42.0] - 2026-08-16
+
+### Added
+
+- **A Version column on Deploys, for every service.** Services are rolled BY DIGEST on purpose — a
+  tag is a label someone can move — but that left the screen showing `app@sha256:abf3cd1…` and
+  nothing else, so "is v1.40.2 live?" was answerable only by `gcloud artifacts docker images list`.
+  The digest remains the identity; the version now sits beside it, resolved from Artifact Registry
+  for the digest actually serving, cached per digest (immutable) and resolved once per unique image.
+  - ⛔ **It accepts a commit-sha tag, not only semver.** The first implementation matched semver and
+    would have shown a version for forge-console and forge-data-plane while blanking dorinda-api,
+    dorinda-web and dorinda-site — those pipelines tag by commit. Three of five services blank is
+    exactly the "just forge-console" outcome this was asked to avoid, and only checking the live
+    estate caught it. `latest` is never accepted: it names whatever was pushed last.
+  - An unresolvable image renders **unknown**, never a guess. A failed lookup is not cached, so a
+    transient 503 cannot freeze a digest as unknown for the process lifetime.
+  - Verified in a browser across all three cases: `v1.40.2`, `8d588a8`, `unknown`.
+
+
 ## [1.41.0] - 2026-08-16
 
 ### Added

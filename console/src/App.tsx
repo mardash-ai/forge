@@ -2264,6 +2264,8 @@ interface Rev {
   id: string;
   image_digest: string;
   image_ref: string;
+  /** Release the digest was published as. null ⇒ unresolvable; shown as unknown, never guessed. */
+  image_version?: string | null;
   created_at: string;
   traffic_percent: number;
   ready: boolean;
@@ -2358,7 +2360,7 @@ function Deploys() {
             subtitle="The digest is the identity — a tag is a label someone can move, and on cutover night `:latest` meant two different images an hour apart."
             pad={false}
           >
-            <Table head={['', 'Revision', 'Traffic', 'Ready', 'Digest', 'Scaling', 'Created']}>
+            <Table head={['', 'Revision', 'Traffic', 'Ready', 'Version', 'Digest', 'Scaling', 'Created']}>
               {revs.data!.map((r) => {
                 const live = r.traffic_percent > 0;
                 return (
@@ -2390,6 +2392,32 @@ function Deploys() {
                     </Td>
                     <Td>
                       <Status tone={r.ready ? 'ok' : 'crit'} label={r.ready ? 'ready' : 'not ready'} />
+                    </Td>
+                    {/*
+                      ⛔ VERSION BESIDE THE DIGEST, NOT INSTEAD OF IT.
+
+                      The digest stays the identity — a tag is a label someone can move, and
+                      digest-pinning is what makes a rollout verifiable. But a screen showing only
+                      `sha256:abf3cd1…` cannot answer "is v1.40.2 live?", which is how this console
+                      ran two releases behind for two days with nobody able to see it.
+
+                      Resolved from the registry, so it describes the digest actually serving. When
+                      it cannot be resolved it says `unknown` — never a guess, because a version
+                      that can be WRONG is worse than none.
+                    */}
+                    <Td mono>
+                      {r.image_version ? (
+                        <span style={{ color: 'var(--text-primary)' }} title={r.image_ref}>
+                          {r.image_version}
+                        </span>
+                      ) : (
+                        <span
+                          style={{ color: 'var(--text-faint)' }}
+                          title={r.image_ref || 'no image reference'}
+                        >
+                          unknown
+                        </span>
+                      )}
                     </Td>
                     <Td mono>
                       {r.image_digest ? r.image_digest.slice(0, 19) : <Pill tone="warn">tag only</Pill>}
