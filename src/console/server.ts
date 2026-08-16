@@ -2168,12 +2168,45 @@ export function buildServer(
     const store = await evalStoreGetter();
     if (!store) return reply.code(501).send(NOT_CONFIGURED);
     const q = req.query as { run_id?: string; baseline_run_id?: string };
-    if (!q.run_id || !q.baseline_run_id) {
+    if (!q.run_id) {
       return reply.code(400).send({
-        error: { code: 'bad_request', message: 'run_id and baseline_run_id are required' },
+        error: { code: 'bad_request', message: 'run_id is required' },
       });
     }
-    const diff = await queryDiffRuns(store, q.run_id, q.baseline_run_id);
+
+    // ⛔ ONE definition of "the previous run", derived server-side.
+    //
+    // `baseline_run_id` is optional and defaults to the most recent run that STARTED STRICTLY
+    // BEFORE this one. The console derived its own baseline as
+    // `runs.find((r) => r.run_id !== activeRun.run_id)` over a started_at-DESC list, which for any
+    // run except the newest resolves to a run that happened AFTER the one being viewed — and then
+    // labelled it "this run vs previous nightly". Two callers deriving a baseline two ways is how
+    // they come to disagree; deriving it once here means every surface compares the same pair.
+    let baselineRunId = q.baseline_run_id;
+    if (!baselineRunId) {
+      const current = await store.getRun(q.run_id);
+      if (!current) {
+        return reply.code(404).send({ error: { code: 'not_found', message: 'run_id not found' } });
+      }
+      const candidates = await store.listAllRuns({ limit: 100 });
+      // listAllRuns is started_at DESC, so the first strictly-older row is the nearest predecessor.
+      const previous = candidates.find(
+        (r) =>
+          r.run_id !== current.run_id &&
+          r.started_at &&
+          current.started_at &&
+          String(r.started_at) < String(current.started_at),
+      );
+      if (!previous) {
+        // ⛔ One run is not a comparison. Say so rather than inventing a baseline from one point.
+        return reply.code(404).send({
+          error: { code: 'no_baseline', message: 'no earlier run to compare against' },
+        });
+      }
+      baselineRunId = previous.run_id;
+    }
+
+    const diff = await queryDiffRuns(store, q.run_id, baselineRunId);
     if (!diff)
       return reply.code(404).send({
         error: { code: 'not_found', message: 'one or both run_ids not found' },

@@ -18,9 +18,10 @@ import type {
   EvalTurn,
   EvalMcpCall,
   EvalClaim,
+  WorkflowVerdict,
 } from '../storage/backends/cp-results/types';
 
-export type { EvalRun, EvalWorkflow, EvalScene, EvalTurn, EvalMcpCall, EvalClaim };
+export type { EvalRun, EvalWorkflow, EvalScene, EvalTurn, EvalMcpCall, EvalClaim, WorkflowVerdict };
 
 // ── Response shapes ─────────────────────────────────────────────────────────
 
@@ -44,18 +45,112 @@ export interface WorkflowResult {
   claims: EvalClaim[];
 }
 
+/**
+ * ⛔ A WITHHELD VERDICT IS NEVER A REGRESSION — the rule this module used to break.
+ *
+ * `WorkflowVerdict` carries the warning on its own declaration: *"withheld is not a failure.
+ * forge-hat's UNARMED / INFRA-FAIL mean the RIG failed and nothing was tested, so no verdict
+ * exists."* `queryDiffRuns` nonetheless bucketed on `verdict !== 'pass'`, so **every withheld row
+ * counted as a regression** — and `diff_e2e_runs` puts that in front of a triage agent. That is
+ * HAT-F-065's defect exactly: a rig failure reported as a product failure, which on 2026-08-16 cost
+ * three releases and four paid live runs before anyone disbelieved it.
+ *
+ * The rule now lives in named exported functions instead of inline in a loop — the other half of
+ * what that incident taught: a rule no test can call is a rule nobody checks.
+ *
+ * ⚠️ These mirror `forge-hat/src/results/diff.ts` and live in a different repo, so they can drift.
+ * forge computes the diff because only forge has BOTH runs: the Cloud Run job mounts no artifacts
+ * volume, so the runner cannot see its own history.
+ */
+
+/** A verdict that actually graded the product. */
+export function isVerdictBearing(verdict: WorkflowVerdict | null | undefined): boolean {
+  return verdict === 'pass' || verdict === 'fail' || verdict === 'error';
+}
+
+/** ⛔ No verdict exists — never a product signal, in either direction. */
+export function isWithheldVerdict(verdict: WorkflowVerdict | null | undefined): boolean {
+  return verdict === 'withheld' || verdict === 'skip';
+}
+
+function isFailing(verdict: WorkflowVerdict): boolean {
+  return verdict === 'fail' || verdict === 'error';
+}
+
+export type DiffChangeKind =
+  | 'newly-red'
+  | 'newly-green'
+  | 'still-red'
+  | 'still-green'
+  | 'became-withheld'
+  | 'became-graded'
+  | 'withheld-both'
+  | 'added'
+  | 'removed';
+
+/** ⛔ The single decision, exported so a test can assert it by name. */
+export function classifyChange(
+  before: WorkflowVerdict | null,
+  after: WorkflowVerdict | null,
+): DiffChangeKind {
+  if (before === null) return 'added';
+  if (after === null) return 'removed';
+
+  const beforeGraded = isVerdictBearing(before);
+  const afterGraded = isVerdictBearing(after);
+  if (!beforeGraded && !afterGraded) return 'withheld-both';
+  if (beforeGraded && !afterGraded) return 'became-withheld';
+  if (!beforeGraded && afterGraded) return 'became-graded';
+
+  if (before === 'pass' && isFailing(after)) return 'newly-red';
+  if (isFailing(before) && after === 'pass') return 'newly-green';
+  return before === 'pass' ? 'still-green' : 'still-red';
+}
+
+/** ⛔ Exactly one kind is a regression. `became-withheld` is deliberately excluded. */
+export function isRegression(kind: DiffChangeKind): boolean {
+  return kind === 'newly-red';
+}
+
+/**
+ * The provider-qualified row key.
+ *
+ * ⛔ Keying on bare `workflow_id` collapsed a dual-provider run into one entry, so **an anthropic
+ * regression could hide behind an openai pass** — the exact shape of HAT-F-065's blast radius,
+ * where one lane was blind for weeks while the other stayed green.
+ */
+export function diffRowKey(wf: Pick<EvalWorkflow, 'workflow_id' | 'provider'>): string {
+  return wf.provider ? `${wf.workflow_id}:${wf.provider}` : wf.workflow_id;
+}
+
+export interface DiffChange {
+  key: string;
+  workflow_id: string;
+  provider: string | null;
+  kind: DiffChangeKind;
+  before: WorkflowVerdict | null;
+  after: WorkflowVerdict | null;
+}
+
 /** Run-over-run regression analysis. */
 export interface DiffResult {
   run_id: string;
   baseline_run_id: string;
-  /** Workflows passing in baseline but failing (verdict != 'pass') in run. */
+  /** ⛔ GRADED green → GRADED red only. A withheld row is never here. */
   regressions: EvalWorkflow[];
-  /** Workflows failing in baseline but passing in run. */
+  /** Graded failing in baseline, passing in run. */
   improvements: EvalWorkflow[];
-  /** New workflows in run (not in baseline) with verdict != 'pass'. */
+  /** Not in baseline, graded failing in run. */
   new_failures: EvalWorkflow[];
-  /** New workflows in run (not in baseline) with verdict == 'pass'. */
+  /** Not in baseline, passing in run. */
   new_passes: EvalWorkflow[];
+  /** Had a verdict, has none now — the rig stopped observing. An alarm, never a regression. */
+  withheld_now: EvalWorkflow[];
+  /** Was withheld, now graded. Evidence arrived; the verdict itself may still be red. */
+  became_graded: EvalWorkflow[];
+  /** Every row's classification, for a UI that wants the whole picture. */
+  changes: DiffChange[];
+  counts: Record<DiffChangeKind, number>;
 }
 
 // ── Query functions ─────────────────────────────────────────────────────────
@@ -103,24 +198,55 @@ export async function queryDiffRuns(
     store.listWorkflows(baselineRunId),
   ]);
 
-  // Keyed by workflow_id (the suite-level identifier, not the database row id).
-  const baselineMap = new Map<string, EvalWorkflow>(baselineWorkflows.map((w) => [w.workflow_id, w]));
+  // ⛔ Provider-qualified, so a dual-provider run does not collapse two lanes into one row.
+  const baselineMap = new Map<string, EvalWorkflow>(baselineWorkflows.map((w) => [diffRowKey(w), w]));
+  const runMap = new Map<string, EvalWorkflow>(runWorkflows.map((w) => [diffRowKey(w), w]));
 
   const regressions: EvalWorkflow[] = [];
   const improvements: EvalWorkflow[] = [];
   const new_failures: EvalWorkflow[] = [];
   const new_passes: EvalWorkflow[] = [];
+  const withheld_now: EvalWorkflow[] = [];
+  const became_graded: EvalWorkflow[] = [];
+  const changes: DiffChange[] = [];
+  const counts: Record<DiffChangeKind, number> = {
+    'newly-red': 0,
+    'newly-green': 0,
+    'still-red': 0,
+    'still-green': 0,
+    'became-withheld': 0,
+    'became-graded': 0,
+    'withheld-both': 0,
+    added: 0,
+    removed: 0,
+  };
 
-  for (const wf of runWorkflows) {
-    const baseline = baselineMap.get(wf.workflow_id);
-    if (baseline) {
-      if (wf.verdict !== 'pass' && baseline.verdict === 'pass') regressions.push(wf);
-      else if (wf.verdict === 'pass' && baseline.verdict !== 'pass') improvements.push(wf);
-      // both passing or both failing → not a regression or improvement, skip
-    } else {
-      // Not in baseline — new workflow
-      if (wf.verdict !== 'pass') new_failures.push(wf);
-      else new_passes.push(wf);
+  for (const key of [...new Set([...baselineMap.keys(), ...runMap.keys()])].sort()) {
+    const before = baselineMap.get(key) ?? null;
+    const after = runMap.get(key) ?? null;
+    const kind = classifyChange(before?.verdict ?? null, after?.verdict ?? null);
+    counts[kind] += 1;
+
+    const anchor = (after ?? before) as EvalWorkflow;
+    changes.push({
+      key,
+      workflow_id: anchor.workflow_id,
+      provider: anchor.provider,
+      kind,
+      before: before?.verdict ?? null,
+      after: after?.verdict ?? null,
+    });
+
+    // ⛔ `regressions` admits ONE kind. Everything else has its own home, so a rig failure can
+    // never arrive dressed as a product regression.
+    if (kind === 'newly-red' && after) regressions.push(after);
+    else if (kind === 'newly-green' && after) improvements.push(after);
+    else if (kind === 'became-withheld' && after) withheld_now.push(after);
+    else if (kind === 'became-graded' && after) became_graded.push(after);
+    else if (kind === 'added' && after) {
+      if (after.verdict === 'pass') new_passes.push(after);
+      else if (isVerdictBearing(after.verdict)) new_failures.push(after);
+      // A brand-new row that is withheld is neither a pass nor a failure — nothing was tested.
     }
   }
 
@@ -131,6 +257,10 @@ export async function queryDiffRuns(
     improvements,
     new_failures,
     new_passes,
+    withheld_now,
+    became_graded,
+    changes,
+    counts,
   };
 }
 

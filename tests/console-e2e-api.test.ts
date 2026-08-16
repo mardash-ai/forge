@@ -600,7 +600,7 @@ describe('console server — GET /api/e2e/* REST endpoints', () => {
     });
   });
 
-  it('GET /api/e2e/diff returns 400 when baseline_run_id missing', async () => {
+  it('GET /api/e2e/diff defaults the baseline, and says so when there is no earlier run', async () => {
     const store = makeMockStore();
     await withOidcEnv(async () => {
       const app = buildServer(undefined, undefined, async () => store);
@@ -610,7 +610,35 @@ describe('console server — GET /api/e2e/* REST endpoints', () => {
         url: '/api/e2e/diff?run_id=run_002',
         headers: { cookie: authed() },
       });
-      expect(res.statusCode).toBe(400);
+      // ⛔ CONTRACT CHANGE: baseline_run_id is now OPTIONAL and defaults server-side to the most
+      // recent run that started strictly before this one — so the console cannot derive its own
+      // (it derived one that resolved to a LATER run for anything but the newest). When no earlier
+      // run exists, the honest answer is "no baseline", never an invented comparison.
+      expect(res.statusCode).toBe(404);
+      // This fixture's store holds no runs at all, so the run itself is unknown.
+      expect(res.json().error.code).toBe('not_found');
+    });
+  });
+
+  it('⛔ GET /api/e2e/diff refuses to invent a baseline when the run is the only one', async () => {
+    // One run is not a comparison. The old console derived its own baseline client-side and, for
+    // any run but the newest, compared against a run that happened LATER. Deriving it server-side
+    // means the honest answer here is "no baseline" rather than a wrong pair.
+    const only = { run_id: 'run_solo', started_at: '2026-08-16T02:00:00.000Z' };
+    const store = makeMockStore({
+      getRun: vi.fn().mockResolvedValue(only),
+      listAllRuns: vi.fn().mockResolvedValue([only]),
+    });
+    await withOidcEnv(async () => {
+      const app = buildServer(undefined, undefined, async () => store);
+      closers.push(app);
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/e2e/diff?run_id=run_solo',
+        headers: { cookie: authed() },
+      });
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe('no_baseline');
     });
   });
 
