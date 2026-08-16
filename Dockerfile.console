@@ -16,6 +16,18 @@ RUN npm ci --omit=dev --omit=optional || npm install --omit=dev --omit=optional
 COPY tsconfig.json ./
 COPY src ./src
 COPY --from=ui /ui/dist ./console/dist
+# ⛔ The running build's identity, readable from INSIDE the container.
+#
+# This is the Dockerfile that actually builds forge-console (dorinda-forge-console's release.yml
+# builds it from checked-out forge source). The ARG in ./Dockerfile does NOT apply here — putting it
+# only there produced a production console reporting its commit as "dev", which is honest but not
+# the answer a released build should give.
+#
+# `version` comes from the package.json copied above, so it needs no build arg and cannot drift.
+# The commit does need one; absent, the console says `dev` rather than inventing an identity.
+ARG FORGE_COMMIT=""
+ENV FORGE_COMMIT=$FORGE_COMMIT
+
 ENV PORT=3000 CONSOLE_UI_DIR=/forge/console/dist NODE_ENV=production
 EXPOSE 3000
 CMD ["./node_modules/.bin/tsx", "src/console/server.ts"]

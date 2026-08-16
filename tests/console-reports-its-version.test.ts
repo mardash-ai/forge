@@ -28,6 +28,7 @@ const root = join(__dirname, '..');
 const SERVER = readFileSync(join(root, 'src', 'console', 'server.ts'), 'utf8');
 const APP = readFileSync(join(root, 'console', 'src', 'App.tsx'), 'utf8');
 const DOCKERFILE = readFileSync(join(root, 'Dockerfile'), 'utf8');
+const DOCKERFILE_CONSOLE = readFileSync(join(root, 'Dockerfile.console'), 'utf8');
 const PUBLISH = readFileSync(join(root, '.github', 'workflows', 'publish-image.yml'), 'utf8');
 
 /** Comments describe the bug; only code can reintroduce it. */
@@ -54,6 +55,28 @@ describe('the console reports the build it is actually running', () => {
     expect(codeOnly(DOCKERFILE)).toMatch(/ARG FORGE_COMMIT=""/);
     expect(codeOnly(DOCKERFILE)).toMatch(/ENV FORGE_COMMIT=\$FORGE_COMMIT/);
     expect(codeOnly(PUBLISH)).toMatch(/FORGE_COMMIT=\$\{\{ github\.sha \}\}/);
+  });
+
+  it('⛔ EVERY Dockerfile that ships a console carries the stamp — not just the default one', () => {
+    /*
+     * The one I got wrong. `Dockerfile` is forge's own image; forge-console in production is built
+     * from `Dockerfile.console` by dorinda-forge-console's release workflow. Stamping only the
+     * former shipped a production console reporting its commit as "dev" — honest, but not the
+     * answer a released build should give, and I only caught it by reading FORGE_COMMIT off the
+     * running revision instead of trusting that the feature was done.
+     *
+     * Any future Dockerfile that serves the console must carry it too, so this asserts the
+     * property across all of them rather than naming one.
+     */
+    for (const [name, contents] of [
+      ['Dockerfile', DOCKERFILE],
+      ['Dockerfile.console', DOCKERFILE_CONSOLE],
+    ] as const) {
+      expect(codeOnly(contents), `${name} must accept FORGE_COMMIT`).toMatch(/ARG FORGE_COMMIT=""/);
+      expect(codeOnly(contents), `${name} must expose FORGE_COMMIT`).toMatch(
+        /ENV FORGE_COMMIT=\$FORGE_COMMIT/,
+      );
+    }
   });
 
   it('renders it in the UI', () => {

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.42.1] - 2026-08-16
+
+### Fixed
+
+- **The commit stamp went into the wrong Dockerfile.** `Dockerfile` is forge's own image;
+  forge-console in production is built from **`Dockerfile.console`** by dorinda-forge-console's
+  release workflow. Stamping only the former shipped a production console reporting its commit as
+  `dev` — honest, but not what a released build should say. Caught by reading `FORGE_COMMIT` off the
+  running revision rather than assuming the feature was done; the guard now asserts the stamp across
+  **every** Dockerfile that ships a console, not one named file.
+  - The `version` half was unaffected throughout: it is read from the package.json inside the image,
+    which is why that half needed no build plumbing and could not drift.
+
+
 ## [1.42.0] - 2026-08-16
 
 ### Added
