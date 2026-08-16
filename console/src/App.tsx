@@ -28,8 +28,6 @@ import { buildE2eTriagePrompt } from './lib/triage-prompt';
 import {
   fmtE2ePctOfCatalogue,
   fmtE2ePctOfRunnable,
-  fmtE2eFullScopeLabel,
-  fmtE2eRunDuration,
 } from './lib/e2e-format';
 import { fixtureForSelection } from './lib/seed-editor';
 import { FIXTURES } from './lib/fixtures';
@@ -4581,6 +4579,23 @@ interface E2EWorkflow {
   created_at: string;
 }
 
+/**
+ * One offerable workflow, as published by forge-hat and served by /api/e2e/catalogue.
+ *
+ * `requires` is the harness's OWN answer about which providers can run this workflow — computed by
+ * the same `providerRequirement` that builds the run plans. Deliberately not re-derived here from
+ * the workflow's host declaration: that would put the two halves of one rule in different
+ * repositories, and the picker would eventually grey out rows the runner happily executes.
+ */
+interface E2ECatalogueEntry {
+  workflow_id: string;
+  name: string;
+  requires: 'any' | 'openai' | 'anthropic' | 'both';
+  tags: string[];
+  suites: string[];
+  family: string | null;
+}
+
 interface E2ERunDetail {
   run: E2ERun;
   failures: E2EWorkflow[];
@@ -6086,6 +6101,33 @@ export interface E2ERunPrefill {
   provider?: string | null;
 }
 
+/**
+ * The run dialog.
+ *
+ * ⛔ IT USED TO BE A TEXT BOX, AND THAT IS WHY A RUN DIED.
+ *
+ * `Named workflows` accepted free text and validated nothing. On 2026-08-16 a run was triggered
+ * with `W-001:blocked` — a store row id copied out of the results table, because the labelled
+ * composite (`${workflow_id}:${planLabel}`) is the ONLY id this console ever puts on screen. The
+ * runner found no such workflow file, exited 2, and the whole run was dead in 16 seconds with
+ * nothing executed and the evidence buried in a Cloud Run job log.
+ *
+ * Two things changed, and the second is the one that matters:
+ *
+ *  1. Ids are CHOSEN, not typed. The catalogue arrives from `/api/e2e/catalogue`, published by
+ *     forge-hat on every run.
+ *  2. PROVIDER IS PICKED FIRST, and a workflow that cannot run on the selection has no enabled
+ *     checkbox. 10 of 76 workflows are pinned to openai and 3 are cross-host; selecting one of
+ *     those under `--provider anthropic` produces a blocked, useless run. The dialog now makes
+ *     that state unreachable rather than describing it afterwards.
+ *
+ * `requires` is forge-hat's own answer (providerRequirement) — the same function that builds the
+ * run plans. The picker greys out exactly what the runner would refuse because both read one rule,
+ * rather than this file re-deriving it from `ai:` in a different repository.
+ *
+ * The free-text field survives as a FALLBACK for the case where no run has published a catalogue
+ * yet. An empty picker and an empty catalogue must not look alike.
+ */
 function E2ERunModal({
   runs,
   prefill,
@@ -6097,48 +6139,89 @@ function E2ERunModal({
   onClose: () => void;
   onRun: () => void;
 }) {
-  const [scope, setScope] = useState<'full' | 'suite' | 'named'>(prefill ? 'named' : 'full');
-  const [suiteText, setSuiteText] = useState('');
-  const [namedText, setNamedText] = useState(prefill ? prefill.workflows.join(', ') : '');
-  // A prefill carries the lane its failures ran on; without one the dialog's own default stands.
+  // ── The catalogue ────────────────────────────────────────────────────────────────────────────
+  const catalogueApi = useApi<E2ECatalogueEntry[]>('/api/e2e/catalogue');
+  const cat: E2ECatalogueEntry[] = Array.isArray(catalogueApi.data) ? catalogueApi.data : [];
+  const hasCatalogue = cat.length > 0;
+
+  // The most recent run with results, for the "last run's ..." presets. Presets sourced from real
+  // rows are what finally replaces the per-row Re-run button, which set a "✓ queued" flag and
+  // POSTed nothing at all.
+  const lastRunId = runs.find((r) => r.status !== 'running')?.run_id ?? runs[0]?.run_id ?? null;
+  const lastDetail = useApi<E2ERunDetail>(lastRunId ? `/api/e2e/runs/${lastRunId}` : null, [lastRunId]);
+  const lastWorkflows: E2EWorkflow[] = lastDetail.data?.all_workflows ?? [];
+  /** Bare ids from a previous run's rows — the labelled composite is stripped HERE, at the source. */
+  const bareIdsWhere = (pred: (w: E2EWorkflow) => boolean): string[] => [
+    ...new Set(lastWorkflows.filter(pred).map((w) => w.workflow_id.split(':')[0]!).filter(Boolean)),
+  ];
+  const lastRejected = bareIdsWhere((w) => bucketOf(w) === 'fail');
+  const lastWithheld = bareIdsWhere((w) => bucketOf(w) === 'withheld');
+
+  // ── Provider (step 1) ────────────────────────────────────────────────────────────────────────
   const [openai, setOpenai] = useState(prefill?.provider ? prefill.provider.includes('openai') : true);
   const [anthropic, setAnthropic] = useState(
     prefill?.provider ? prefill.provider.includes('anthropic') : false,
   );
+  const providerValue: 'openai' | 'anthropic' | 'both' =
+    openai && anthropic ? 'both' : anthropic ? 'anthropic' : 'openai';
+
+  /**
+   * Can this workflow run on the CURRENT provider selection?
+   *
+   * The single question the whole dialog turns on. `both` means cross-host — it needs both
+   * providers selected, not either one.
+   */
+  const canRun = (e: E2ECatalogueEntry): boolean => {
+    if (e.requires === 'both') return openai && anthropic;
+    if (e.requires === 'any') return openai || anthropic;
+    return e.requires === 'openai' ? openai : anthropic;
+  };
+  const blocked = cat.filter((e) => !canRun(e));
+
+  // ── Scope (step 2) ───────────────────────────────────────────────────────────────────────────
+  type Preset = 'full' | 'critical' | 'release' | 'rejected' | 'withheld' | 'custom';
+  const [preset, setPreset] = useState<Preset>(prefill ? 'custom' : 'full');
+  const [picked, setPicked] = useState<Set<string>>(new Set(prefill?.workflows ?? []));
+  const [filter, setFilter] = useState('');
+  const [suiteText, setSuiteText] = useState('');
+  // The pre-catalogue fallback. Only reachable when nothing has published a catalogue yet.
+  const [namedText, setNamedText] = useState(prefill ? prefill.workflows.join(', ') : '');
+
   const [confirmed, setConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  // How many workflows a run covers is a property of the CATALOGUE, not of run history. Deriving
-  // it from the previous run is wrong twice: it is 0 before anything has ever published, and stale
-  // after the catalogue changes. With an empty store this modal read "Full catalogue — 0 workflows
-  // · Estimated spend $0.00" and asked the operator to confirm running "0 workflows" — for a job
-  // whose default command runs the full suite at roughly $1 (Mark, 2026-08-13). A cost estimate
-  // that is wrong toward zero is the dangerous direction.
-  //
-  // Note `?? ` does not help here: `0 ?? 75` is 0. Absence and zero must both read as UNKNOWN, and
-  // unknown must be shown as unknown — never as a number the operator can act on.
-  // ⛔ THE COMMENT ABOVE WAS RIGHT AND THE CODE BELOW IT WAS NOT. Until 2026-08-14 this read
-  //     const catalogue = runs[0]?.workflows_attempted
-  // — precisely the run-history inference the paragraph above condemns. It looked correct for weeks
-  // because the previous run was usually a full one; then two 2-workflow verification runs made the
-  // modal offer "Full catalogue — 2 workflows · Estimated spend $0.16" for a 76-workflow, ~$5,
-  // 75-minute run, above a checkbox reading "I confirm: spend approximately $0.16". The RUN itself
-  // was correct — "Full catalogue" posts `suite: "full"` and the count never enters the payload —
-  // so nothing downstream would have caught it. Only the operator's consent was wrong, which is the
-  // one thing this dialog exists to get right. Mark caught it on sight.
-  //
-  // The catalogue's size is now reported BY the catalogue: forge-hat counts suites/full.yaml and
-  // sends `catalogue_size` on every run, so any recent run carries a usable answer whatever scope it
-  // ran. Absent = genuinely unknown, and unknown is shown as unknown.
-  const catalogueFromMeta = runs
-    .map((r) => (r.meta as { catalogue_size?: unknown } | undefined)?.catalogue_size)
-    .find((v) => typeof v === 'number' && v > 0) as number | undefined;
-  const catalogue: number | null = typeof catalogueFromMeta === 'number' ? catalogueFromMeta : null;
 
-  // Price per workflow, from the most recent run that actually has both numbers — then scaled to the
-  // catalogue. Using a previous run's TOTAL spend as the full-catalogue estimate is the same
-  // history-inference error wearing different clothes: a 2-workflow run's $0.16 is not what 76
-  // workflows cost.
+  const presetIds = (p: Preset): string[] => {
+    if (p === 'critical') return cat.filter((e) => e.suites.includes('critical')).map((e) => e.workflow_id);
+    if (p === 'release') return cat.filter((e) => e.suites.includes('release')).map((e) => e.workflow_id);
+    if (p === 'rejected') return lastRejected;
+    if (p === 'withheld') return lastWithheld;
+    return [];
+  };
+
+  /** Ids this run will actually name — before compatibility is applied. */
+  const chosenIds: string[] = preset === 'custom' ? [...picked] : presetIds(preset);
+  const byId = new Map(cat.map((e) => [e.workflow_id, e]));
+  /**
+   * ⛔ What will REALLY run. A chosen workflow whose provider is not selected is planned ZERO
+   * times, so counting it would price and promise a run the executor never agreed to — the same
+   * arithmetic that made a `both` run promise twice the workflows it could execute.
+   */
+  const runnableIds = chosenIds.filter((id) => {
+    const e = byId.get(id);
+    return e ? canRun(e) : true; // unknown to the catalogue ⇒ let the API's validation speak
+  });
+  const droppedIds = chosenIds.filter((id) => !runnableIds.includes(id));
+
+  // "Full catalogue" still posts `suite: full` rather than 76 ids — the runner resolves the suite,
+  // and naming a suite is what makes the intent explicit rather than implied by a list's length.
+  const fullRunnable = cat.filter((e) => canRun(e)).length;
+  const selectionCount = preset === 'full' ? (hasCatalogue ? fullRunnable : null) : runnableIds.length;
+
+  // ── Estimate ─────────────────────────────────────────────────────────────────────────────────
+  // Price per workflow from the most recent run that has both numbers. Never a previous run's TOTAL:
+  // a 2-workflow run's $0.16 is not what 76 workflows cost, and an estimate wrong toward zero is the
+  // dangerous direction — it sits above a checkbox that calls itself consent.
   const priced = runs.find(
     (r) =>
       typeof r.spend_cents === 'number' &&
@@ -6147,68 +6230,45 @@ function E2ERunModal({
       r.workflows_attempted > 0,
   );
   const centsPerWorkflow: number | null = priced ? priced.spend_cents / priced.workflows_attempted : null;
-  // Measured wall clock per workflow — the honest basis for "how long will this take".
   const timed = runs.find(
-    (r) =>
-      r.started_at &&
-      r.completed_at &&
-      typeof r.workflows_attempted === 'number' &&
-      r.workflows_attempted > 0,
+    (r) => r.started_at && r.completed_at && typeof r.workflows_attempted === 'number' && r.workflows_attempted > 0,
   );
   const secsPerWorkflow: number | null = timed
     ? (new Date(timed.completed_at as string).getTime() - new Date(timed.started_at).getTime()) /
       1000 /
       (timed.workflows_attempted as number)
     : null;
-  const fullSpendCents: number | null =
-    centsPerWorkflow !== null && catalogue !== null ? Math.round(centsPerWorkflow * catalogue) : null;
 
-  const namedCount =
-    namedText
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean).length || 1;
-
-  // null = we genuinely do not know yet; the UI must say so rather than print a figure.
+  const namedFallbackCount =
+    namedText.split(',').map((s) => s.trim()).filter(Boolean).length || 0;
+  const effectiveCount: number | null = hasCatalogue ? selectionCount : namedFallbackCount || null;
   const costCents: number | null =
-    scope === 'full' ? fullSpendCents : scope === 'suite' ? 45 : namedCount * 8;
-  const wfCount: string =
-    scope === 'full'
-      ? catalogue !== null
-        ? String(catalogue)
-        : 'the full catalogue'
-      : scope === 'suite'
-        ? '~20'
-        : String(namedCount);
+    centsPerWorkflow !== null && effectiveCount !== null ? Math.round(centsPerWorkflow * effectiveCount) : null;
   const estimateKnown = costCents !== null;
-  const providers = [openai && 'openai', anthropic && 'anthropic'].filter(Boolean).join(', ') || 'openai';
-  // What the RUNNER accepts is exactly `openai` | `anthropic` | `both`. Sending the human-readable
-  // label meant ticking both boxes produced `provider: "openai, anthropic"` — not a provider, so the
-  // runner refuses the run rather than guessing which one was meant.
-  const providerValue: 'openai' | 'anthropic' | 'both' =
-    openai && anthropic ? 'both' : anthropic ? 'anthropic' : 'openai';
+
+  const nothingSelected = hasCatalogue
+    ? preset !== 'full' && runnableIds.length === 0
+    : namedFallbackCount === 0 && !suiteText.trim();
 
   const handleSubmit = async () => {
-    if (!confirmed || submitting) return;
+    if (!confirmed || submitting || nothingSelected) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
       const reqBody: Record<string, unknown> = {
-        reason: `manual · ${providers}`,
+        reason: `manual · ${[openai && 'openai', anthropic && 'anthropic'].filter(Boolean).join(', ') || 'openai'}`,
         provider: providerValue,
       };
-      // "Full catalogue" must NAME the full suite. Sending neither a suite nor a workflow list
-      // reads as "named nothing", which the runner refuses outright — an empty selection is a
-      // wiring bug far more often than a deliberate request to spend a full live run, so the
-      // intent has to be explicit rather than implied by absence.
-      if (scope === 'full') reqBody.suite = 'full';
-      if (scope === 'suite' && suiteText.trim()) reqBody.suite = suiteText.trim();
-      if (scope === 'named' && namedText.trim()) {
-        reqBody.workflows = namedText
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean);
-      }
+      if (preset === 'full') reqBody.suite = 'full';
+      else if (preset === 'critical' || preset === 'release') {
+        // Named ids rather than the suite name: the suite may contain workflows the selected
+        // provider cannot run, and sending the suite would resurrect the blocked-lane noise this
+        // dialog exists to prevent.
+        reqBody.workflows = runnableIds;
+      } else if (hasCatalogue) reqBody.workflows = runnableIds;
+      else if (suiteText.trim()) reqBody.suite = suiteText.trim();
+      else reqBody.workflows = namedText.split(',').map((s) => s.trim()).filter(Boolean);
+
       await mutate<{ run_id: string; state: string }>('/api/e2e/runs', reqBody);
       onRun();
     } catch (e) {
@@ -6216,6 +6276,52 @@ function E2ERunModal({
       setSubmitting(false);
     }
   };
+
+  // ── Styles (the console's own idiom) ─────────────────────────────────────────────────────────
+  const fs: React.CSSProperties = {
+    border: '1px solid var(--line)',
+    borderRadius: 7,
+    margin: '0 0 12px',
+    padding: '10px 12px',
+  };
+  const lg: React.CSSProperties = {
+    fontSize: 11.5,
+    letterSpacing: '.06em',
+    textTransform: 'uppercase',
+    color: 'var(--text-muted)',
+    padding: '0 4px',
+  };
+  const chk: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, padding: '3px 0' };
+
+  const presetTiles: Array<{ key: Preset; title: string; sub: string; disabled?: boolean }> = [
+    { key: 'full', title: 'Full catalogue', sub: hasCatalogue ? `${fullRunnable} runnable` : 'the whole suite' },
+    { key: 'critical', title: 'Critical', sub: `${presetIds('critical').length} workflows`, disabled: !hasCatalogue },
+    { key: 'release', title: 'Release gate', sub: `${presetIds('release').length} workflows`, disabled: !hasCatalogue },
+    {
+      key: 'rejected',
+      title: "Last run's rejections",
+      sub: lastDetail.loading ? 'loading…' : `${lastRejected.length} workflows`,
+      disabled: !lastRejected.length,
+    },
+    {
+      key: 'withheld',
+      title: "Last run's withheld",
+      sub: lastDetail.loading ? 'loading…' : `${lastWithheld.length} workflows`,
+      disabled: !lastWithheld.length,
+    },
+    { key: 'custom', title: 'Choose…', sub: hasCatalogue ? `from ${cat.length}` : 'type ids', },
+  ];
+
+  const visible = cat.filter((e) => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      e.workflow_id.toLowerCase().includes(q) ||
+      e.name.toLowerCase().includes(q) ||
+      e.tags.some((t) => t.toLowerCase().includes(q))
+    );
+  });
+  const families = [...new Set(visible.map((e) => e.family ?? 'other'))];
 
   return (
     <div
@@ -6241,8 +6347,10 @@ function E2ERunModal({
           background: 'var(--bg-surface)',
           border: '1px solid var(--line)',
           borderRadius: 10,
-          maxWidth: 520,
+          maxWidth: 640,
           width: '100%',
+          maxHeight: 'calc(100vh - 40px)',
+          overflowY: 'auto',
           padding: 20,
         }}
         onClick={(e) => e.stopPropagation()}
@@ -6250,226 +6358,433 @@ function E2ERunModal({
         <h2 id="run-modal-title" style={{ fontSize: 18, marginBottom: 14, fontWeight: 600 }}>
           Run remote tests
         </h2>
-        {/* Scope */}
-        <fieldset
-          style={{
-            border: '1px solid var(--line)',
-            borderRadius: 7,
-            margin: '0 0 12px',
-            padding: '10px 12px',
-          }}
-        >
-          <legend
-            style={{
-              fontSize: 11.5,
-              letterSpacing: '.06em',
-              textTransform: 'uppercase',
-              color: 'var(--text-muted)',
-              padding: '0 4px',
-            }}
-          >
-            Scope
-          </legend>
-          {(['full', 'suite', 'named'] as const).map((s) => (
-            <label
-              key={s}
-              style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, padding: '3px 0' }}
-            >
-              <input type="radio" name="e2e-scope" checked={scope === s} onChange={() => setScope(s)} />
-              {s === 'full' ? (
-                fmtE2eFullScopeLabel(catalogue)
-              ) : s === 'suite' ? (
-                <>
-                  Suite{' '}
-                  <input
-                    type="text"
-                    value={suiteText}
-                    onChange={(e) => setSuiteText(e.target.value)}
-                    placeholder="privacy-tier"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setScope('suite');
-                    }}
-                    style={{
-                      font: 'inherit',
-                      background: 'var(--bg-inset)',
-                      border: '1px solid var(--line)',
-                      borderRadius: 6,
-                      color: 'var(--text-primary)',
-                      padding: '4px 7px',
-                      maxWidth: 180,
-                      marginLeft: 8,
-                    }}
-                  />
-                </>
-              ) : (
-                <>
-                  Named workflows{' '}
-                  <input
-                    type="text"
-                    value={namedText}
-                    onChange={(e) => setNamedText(e.target.value)}
-                    placeholder="draft-approve-sent, h9-privacy-sweep"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setScope('named');
-                    }}
-                    style={{
-                      font: 'inherit',
-                      background: 'var(--bg-inset)',
-                      border: '1px solid var(--line)',
-                      borderRadius: 6,
-                      color: 'var(--text-primary)',
-                      padding: '4px 7px',
-                      marginLeft: 8,
-                      width: '100%',
-                    }}
-                  />
-                </>
-              )}
-            </label>
-          ))}
-        </fieldset>
-        {/* Provider */}
-        <fieldset
-          style={{
-            border: '1px solid var(--line)',
-            borderRadius: 7,
-            margin: '0 0 12px',
-            padding: '10px 12px',
-          }}
-        >
-          <legend
-            style={{
-              fontSize: 11.5,
-              letterSpacing: '.06em',
-              textTransform: 'uppercase',
-              color: 'var(--text-muted)',
-              padding: '0 4px',
-            }}
-          >
-            Provider
-          </legend>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, padding: '3px 0' }}>
-            <input type="checkbox" checked={openai} onChange={(e) => setOpenai(e.target.checked)} /> openai
-            (gpt-5.1)
+
+        {/* ── Step 1 · Provider ──────────────────────────────────────────────────────────────── */}
+        <fieldset style={fs}>
+          <legend style={lg}>{hasCatalogue ? 'Step 1 · Provider' : 'Provider'}</legend>
+          <label style={chk}>
+            <input type="checkbox" checked={openai} onChange={(e) => setOpenai(e.target.checked)} />
+            openai (gpt-5.1)
           </label>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, padding: '3px 0' }}>
-            <input type="checkbox" checked={anthropic} onChange={(e) => setAnthropic(e.target.checked)} />{' '}
+          <label style={chk}>
+            <input type="checkbox" checked={anthropic} onChange={(e) => setAnthropic(e.target.checked)} />
             anthropic (claude)
           </label>
+          {!openai && !anthropic && (
+            <div style={{ fontSize: 13, color: 'var(--crit-text)', marginTop: 6 }}>
+              Pick at least one provider — nothing can run.
+            </div>
+          )}
+          {hasCatalogue && blocked.length > 0 && (openai || anthropic) && (
+            <div
+              data-testid="provider-block-banner"
+              style={{
+                marginTop: 8,
+                padding: '8px 10px',
+                borderRadius: 6,
+                background: 'var(--warn-wash)',
+                border: '1px solid #4a3a12',
+                color: 'var(--warn-text)',
+                fontSize: 13,
+                lineHeight: 1.5,
+              }}
+            >
+              <strong>
+                {blocked.length} workflow{blocked.length === 1 ? '' : 's'} can&rsquo;t run on{' '}
+                {providerValue === 'both' ? 'this pair' : providerValue}
+              </strong>{' '}
+              — {blocked.some((b) => b.requires === 'both') && 'some are cross-host; '}
+              they assert host-specific behaviour. They stay visible below, unselectable, so it is clear
+              what is excluded and why.
+            </div>
+          )}
         </fieldset>
-        {/* Cost summary */}
+
+        {/* ── Step 2 · Scope ─────────────────────────────────────────────────────────────────── */}
+        <fieldset style={fs}>
+          <legend style={lg}>{hasCatalogue ? 'Step 2 · Scope' : 'Scope'}</legend>
+
+          {hasCatalogue ? (
+            <>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, 1fr)',
+                  gap: 7,
+                  marginBottom: 10,
+                }}
+              >
+                {presetTiles.map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    data-testid={`preset-${t.key}`}
+                    disabled={t.disabled}
+                    onClick={() => {
+                      setPreset(t.key);
+                      if (t.key !== 'custom') setPicked(new Set(presetIds(t.key)));
+                    }}
+                    style={{
+                      textAlign: 'left',
+                      padding: '9px 10px',
+                      borderRadius: 7,
+                      border: `1px solid ${preset === t.key ? 'var(--ember-core)' : 'var(--line-strong)'}`,
+                      background: preset === t.key ? 'var(--ember-wash)' : 'var(--bg-raised)',
+                      color: t.disabled ? 'var(--text-faint)' : 'var(--text-primary)',
+                      cursor: t.disabled ? 'not-allowed' : 'pointer',
+                      opacity: t.disabled ? 0.55 : 1,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 2,
+                    }}
+                  >
+                    <span style={{ fontSize: 13, fontWeight: 570 }}>{t.title}</span>
+                    <span className="mono" style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                      {t.sub}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              {droppedIds.length > 0 && (
+                <div
+                  data-testid="dropped-note"
+                  style={{ fontSize: 13, color: 'var(--warn-text)', marginBottom: 8 }}
+                >
+                  {droppedIds.length} selected workflow{droppedIds.length === 1 ? '' : 's'} can&rsquo;t run
+                  on {providerValue === 'both' ? 'this pair' : providerValue} and{' '}
+                  {droppedIds.length === 1 ? 'is' : 'are'} excluded: {droppedIds.join(', ')}
+                </div>
+              )}
+
+              {preset === 'custom' && (
+                <>
+                  <input
+                    type="text"
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
+                    placeholder="filter by id, name or tag…"
+                    data-testid="catalogue-filter"
+                    style={{
+                      width: '100%',
+                      background: 'var(--bg-inset)',
+                      border: '1px solid var(--line-strong)',
+                      borderRadius: 6,
+                      padding: '7px 10px',
+                      color: 'var(--text-primary)',
+                      fontSize: 13,
+                      marginBottom: 8,
+                    }}
+                  />
+                  <div
+                    data-testid="catalogue-list"
+                    style={{
+                      border: '1px solid var(--line)',
+                      borderRadius: 6,
+                      background: 'var(--bg-inset)',
+                      maxHeight: 260,
+                      overflowY: 'auto',
+                    }}
+                  >
+                    {families.map((fam) => {
+                      const rows = visible.filter((e) => (e.family ?? 'other') === fam);
+                      const selectable = rows.filter(canRun);
+                      return (
+                        <div key={fam}>
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              padding: '5px 10px',
+                              background: 'var(--neutral-wash)',
+                              borderBottom: '1px solid var(--line-faint)',
+                              fontSize: 11,
+                              letterSpacing: '.08em',
+                              textTransform: 'uppercase',
+                              color: 'var(--text-muted)',
+                            }}
+                          >
+                            <span>
+                              {fam} · {rows.length}
+                            </span>
+                            {selectable.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPicked((prev) => {
+                                    const next = new Set(prev);
+                                    const allOn = selectable.every((e) => next.has(e.workflow_id));
+                                    for (const e of selectable) {
+                                      if (allOn) next.delete(e.workflow_id);
+                                      else next.add(e.workflow_id);
+                                    }
+                                    return next;
+                                  })
+                                }
+                                style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  color: 'var(--ember-glow)',
+                                  cursor: 'pointer',
+                                  fontSize: 11,
+                                  textTransform: 'none',
+                                  letterSpacing: 0,
+                                  padding: 0,
+                                }}
+                              >
+                                {selectable.every((e) => picked.has(e.workflow_id))
+                                  ? 'Clear'
+                                  : `Select ${selectable.length}`}
+                              </button>
+                            )}
+                          </div>
+                          {rows.map((e) => {
+                            const ok = canRun(e);
+                            return (
+                              <label
+                                key={e.workflow_id}
+                                data-testid={`wf-${e.workflow_id}`}
+                                data-runnable={ok ? 'yes' : 'no'}
+                                style={{
+                                  display: 'flex',
+                                  gap: 9,
+                                  alignItems: 'center',
+                                  padding: '6px 10px',
+                                  borderBottom: '1px solid var(--line-faint)',
+                                  opacity: ok ? 1 : 0.45,
+                                  cursor: ok ? 'pointer' : 'not-allowed',
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  disabled={!ok}
+                                  checked={ok && picked.has(e.workflow_id)}
+                                  onChange={(ev) =>
+                                    setPicked((prev) => {
+                                      const next = new Set(prev);
+                                      if (ev.target.checked) next.add(e.workflow_id);
+                                      else next.delete(e.workflow_id);
+                                      return next;
+                                    })
+                                  }
+                                />
+                                <span className="mono" style={{ fontSize: 12, width: 52, color: 'var(--text-secondary)' }}>
+                                  {e.workflow_id}
+                                </span>
+                                <span
+                                  style={{
+                                    flex: 1,
+                                    minWidth: 0,
+                                    fontSize: 13,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    textDecoration: ok ? 'none' : 'line-through',
+                                  }}
+                                >
+                                  {e.name}
+                                </span>
+                                {e.requires !== 'any' && (
+                                  <span
+                                    className="mono"
+                                    style={{
+                                      fontSize: 10,
+                                      padding: '1px 5px',
+                                      borderRadius: 4,
+                                      background: e.requires === 'both' ? 'var(--warn-wash)' : 'var(--info-wash)',
+                                      color: e.requires === 'both' ? 'var(--warn-text)' : 'var(--info-text)',
+                                      border: `1px solid ${e.requires === 'both' ? '#4a3a12' : '#1d3a55'}`,
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    {e.requires === 'both' ? 'needs both' : `${e.requires} only`}
+                                  </span>
+                                )}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                    {visible.length === 0 && (
+                      <div style={{ padding: '12px 10px', fontSize: 13, color: 'var(--text-muted)' }}>
+                        Nothing matches “{filter}”.
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 6 }}>
+                    {runnableIds.length} selected
+                  </div>
+                </>
+              )}
+            </>
+          ) : (
+            /* ── Fallback: no catalogue has been published yet ──────────────────────────────── */
+            <>
+              <div
+                data-testid="no-catalogue-note"
+                style={{
+                  fontSize: 13,
+                  color: 'var(--text-muted)',
+                  marginBottom: 8,
+                  lineHeight: 1.5,
+                }}
+              >
+                {catalogueApi.loading
+                  ? 'Loading the catalogue…'
+                  : catalogueApi.error
+                    ? `The catalogue could not be loaded (${catalogueApi.error}). Type ids below.`
+                    : 'No run has published a catalogue yet, so workflows must be typed. They will be checked before anything starts.'}
+              </div>
+              <label style={{ ...chk, alignItems: 'flex-start', flexDirection: 'column', gap: 6 }}>
+                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Suite</span>
+                <input
+                  type="text"
+                  value={suiteText}
+                  onChange={(e) => setSuiteText(e.target.value)}
+                  placeholder="full"
+                  style={{
+                    width: '100%',
+                    background: 'var(--bg-inset)',
+                    border: '1px solid var(--line-strong)',
+                    borderRadius: 6,
+                    padding: '7px 10px',
+                    color: 'var(--text-primary)',
+                    fontSize: 13,
+                  }}
+                />
+              </label>
+              <label style={{ ...chk, alignItems: 'flex-start', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Named workflows</span>
+                <input
+                  type="text"
+                  value={namedText}
+                  onChange={(e) => setNamedText(e.target.value)}
+                  placeholder="W-001, W-004"
+                  data-testid="named-fallback"
+                  style={{
+                    width: '100%',
+                    background: 'var(--bg-inset)',
+                    border: '1px solid var(--line-strong)',
+                    borderRadius: 6,
+                    padding: '7px 10px',
+                    color: 'var(--text-primary)',
+                    fontSize: 13,
+                  }}
+                />
+              </label>
+            </>
+          )}
+        </fieldset>
+
+        {/* ── Estimate ───────────────────────────────────────────────────────────────────────── */}
         <div
           style={{
+            border: '1px solid var(--ember-deep)',
             background: 'var(--ember-wash)',
-            color: 'var(--ember-core)',
             borderRadius: 7,
             padding: '9px 12px',
+            marginBottom: 12,
             fontSize: 13.5,
-            fontWeight: 600,
-            marginBottom: 10,
+            color: 'var(--ember-glow)',
           }}
         >
           {estimateKnown ? (
             <>
               Estimated spend: <span className="num">{fmtE2eSpend(costCents!)}</span> ·{' '}
-              {fmtE2eRunDuration(scope, namedCount, catalogue, secsPerWorkflow)} · runs in Cloud Run, tenant
-              lock honored
+              {secsPerWorkflow !== null && effectiveCount !== null
+                ? `~${Math.max(1, Math.round((secsPerWorkflow * effectiveCount) / 60))} min · `
+                : ''}
+              runs in Cloud Run, tenant lock honored
             </>
           ) : (
             <>
-              Estimated spend: <span className="num">not known yet</span> — no run has published to the store,
-              so there is nothing to estimate from. As of 2026-08-14 the full catalogue is 76 workflows and
-              measured about $5 and 75 minutes. Runs in Cloud Run, tenant lock honored.
+              Estimated spend: <span className="num">not known yet</span> — no run has published to the
+              store, so there is no per-workflow price to scale from.
             </>
           )}
         </div>
-        {/* Explicit cost-confirm — required before the endpoint is called */}
+
+        {/* ── Confirm ────────────────────────────────────────────────────────────────────────── */}
         <label
           style={{
             display: 'flex',
-            gap: 8,
+            gap: 9,
             alignItems: 'flex-start',
-            fontSize: 13,
+            fontSize: 13.5,
             color: 'var(--text-muted)',
-            marginBottom: 10,
-            cursor: 'pointer',
+            marginBottom: 12,
           }}
         >
           <input
             type="checkbox"
             checked={confirmed}
             onChange={(e) => setConfirmed(e.target.checked)}
-            disabled={submitting}
-            style={{ marginTop: 2, flexShrink: 0 }}
+            style={{ marginTop: 3 }}
           />
           <span>
             {estimateKnown ? (
               <>
                 I confirm: spend approximately{' '}
                 <strong style={{ color: 'var(--text-primary)' }}>{fmtE2eSpend(costCents!)}</strong> and run{' '}
-                <strong style={{ color: 'var(--text-primary)' }}>{wfCount}</strong> in Cloud Run
+                <strong style={{ color: 'var(--text-primary)' }}>
+                  {effectiveCount ?? 'the full catalogue'}
+                </strong>{' '}
+                in Cloud Run
               </>
             ) : (
               <>
-                I confirm: run <strong style={{ color: 'var(--text-primary)' }}>{wfCount}</strong> in Cloud
-                Run at an <strong style={{ color: 'var(--text-primary)' }}>unknown cost</strong> — this spends
-                real provider credit and holds the tenant lock for the duration
+                I confirm: run{' '}
+                <strong style={{ color: 'var(--text-primary)' }}>
+                  {effectiveCount ?? 'the full catalogue'}
+                </strong>{' '}
+                in Cloud Run
               </>
             )}
           </span>
         </label>
+
         {submitError && (
-          <div
-            style={{
-              color: 'var(--crit-text)',
-              fontSize: 12.5,
-              marginBottom: 8,
-              padding: '6px 10px',
-              background: 'var(--crit-wash)',
-              borderRadius: 5,
-              wordBreak: 'break-word',
-            }}
-          >
+          <div style={{ fontSize: 13, color: 'var(--crit-text)', marginBottom: 10 }} data-testid="run-error">
             {submitError}
           </div>
         )}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <button
             onClick={onClose}
-            disabled={submitting}
             style={{
               padding: '7px 14px',
-              border: '1px solid var(--line)',
               borderRadius: 6,
-              background: 'var(--bg-surface)',
-              color: 'var(--text-primary)',
-              fontSize: 14,
-              opacity: submitting ? 0.6 : 1,
-              cursor: submitting ? 'not-allowed' : 'pointer',
+              border: '1px solid var(--line)',
+              background: 'var(--bg-raised)',
+              color: 'var(--text-secondary)',
+              cursor: 'pointer',
+              fontSize: 13.5,
             }}
           >
             Cancel
           </button>
           <button
-            disabled={!confirmed || submitting}
-            onClick={() => void handleSubmit()}
+            onClick={handleSubmit}
+            data-testid="run-submit"
+            disabled={!confirmed || submitting || nothingSelected || (!openai && !anthropic)}
             style={{
               padding: '7px 14px',
-              border: `1px solid ${confirmed && !submitting ? 'var(--ember-deep)' : 'var(--line)'}`,
               borderRadius: 6,
+              border: `1px solid ${confirmed && !submitting && !nothingSelected ? 'var(--ember-deep)' : 'var(--line)'}`,
               background:
-                confirmed && !submitting
-                  ? 'linear-gradient(180deg,var(--ember-glow),var(--ember-core) 55%,var(--ember-deep))'
-                  : 'var(--bg-surface)',
-              color: confirmed && !submitting ? '#1c1006' : 'var(--text-muted)',
+                confirmed && !submitting && !nothingSelected ? 'var(--ember-core)' : 'var(--bg-raised)',
+              color: confirmed && !submitting && !nothingSelected ? '#1c1006' : 'var(--text-muted)',
               fontWeight: 600,
-              fontSize: 14,
-              cursor: confirmed && !submitting ? 'pointer' : 'not-allowed',
+              fontSize: 13.5,
+              cursor: confirmed && !submitting && !nothingSelected ? 'pointer' : 'not-allowed',
             }}
           >
-            {submitting ? 'Starting…' : `Run ${wfCount} · ${providers}`}
+            {submitting
+              ? 'Starting…'
+              : `Run ${effectiveCount ?? 'all'} · ${providerValue}`}
           </button>
         </div>
       </div>
@@ -6577,8 +6892,6 @@ function Evals() {
   const [runModalOpen, setRunModalOpen] = useState(false);
   /** Set when the dialog was opened by "re-run these" — cleared on close so the next open is full. */
   const [runModalPrefill, setRunModalPrefill] = useState<E2ERunPrefill | null>(null);
-  const [rerunWfId, setRerunWfId] = useState<string | null>(null);
-  const [rerunFlash, setRerunFlash] = useState<string | null>(null);
   const [triageFlash, setTriageFlash] = useState(false);
   /** Which workflow's triage prompt was just copied — keyed so only the clicked row flashes. */
   const [wfTriageFlash, setWfTriageFlash] = useState<string | null>(null);
@@ -6787,17 +7100,6 @@ function Evals() {
         setTimeout(() => setTriageFlash(false), 2200);
       },
     );
-  };
-
-  const handleRerun = (wfId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (rerunWfId === wfId) {
-      setRerunWfId(null);
-      setRerunFlash(wfId);
-      setTimeout(() => setRerunFlash(null), 2500);
-    } else {
-      setRerunWfId(wfId);
-    }
   };
 
   const handleDownloadCassette = () => {
@@ -7950,8 +8252,6 @@ function Evals() {
               ) : (
                 pagedWorkflows.flatMap((wf) => {
                   const isExpanded = expandedWfId === wf.id;
-                  const isRerunPending = rerunWfId === wf.id;
-                  const isRerunQueued = rerunFlash === wf.id;
                   // Only the EXPANDED row has fetched evidence; a collapsed row renders no drawer,
                   // so null is honest there. Never synthesise `scenes: []` for a real workflow —
                   // that is indistinguishable from "we asked and there was none".
@@ -8072,61 +8372,44 @@ function Evals() {
                         </span>
                       </td>
                       <td style={{ ...cell, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {wf.verdict !== 'skip' &&
-                          (isRerunQueued ? (
-                            <span style={{ fontSize: 12.5, color: 'var(--ok-text)' }}>✓ queued</span>
-                          ) : isRerunPending ? (
-                            <>
-                              <button
-                                onClick={(e) => handleRerun(wf.id, e)}
-                                style={{
-                                  fontSize: 12,
-                                  padding: '3px 9px',
-                                  border: '1px solid var(--crit)',
-                                  borderRadius: 5,
-                                  color: 'var(--crit-text)',
-                                  background: 'var(--crit-wash)',
-                                  cursor: 'pointer',
-                                  marginRight: 4,
-                                }}
-                              >
-                                Confirm re-run
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setRerunWfId(null);
-                                }}
-                                style={{
-                                  fontSize: 12,
-                                  padding: '3px 6px',
-                                  border: '1px solid var(--line)',
-                                  borderRadius: 5,
-                                  background: 'var(--bg-surface)',
-                                  color: 'var(--text-muted)',
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                ✕
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              onClick={(e) => handleRerun(wf.id, e)}
-                              style={{
-                                fontSize: 12,
-                                padding: '3px 9px',
-                                border: '1px solid var(--line)',
-                                borderRadius: 5,
-                                color: 'var(--text-secondary)',
-                                background: 'var(--bg-surface)',
-                                cursor: 'pointer',
-                              }}
-                              title={`Re-run ${wf.workflow_id}`}
-                            >
-                              ↻ Re-run
-                            </button>
-                          ))}
+                        {/*
+                          ⛔ THIS BUTTON USED TO DO NOTHING.
+
+                          It toggled a local flag and rendered "✓ queued". There was no POST on the
+                          path at all — `rerunFlash` was read in exactly one place, to draw that
+                          label. An operator was told a run had been queued that was never queued.
+
+                          It now opens the run dialog pre-filled with this workflow, where the
+                          provider is chosen, compatibility is enforced, and the spend is confirmed
+                          before anything starts. The id is stripped of its plan label HERE, at the
+                          source: `W-001:blocked` is a store row id, and pasting one into the old
+                          free-text field is what killed an entire run on 2026-08-16.
+                        */}
+                        {wf.verdict !== 'skip' && (
+                          <button
+                            data-testid={`rerun-${wf.workflow_id}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRunModalPrefill({
+                                workflows: [wf.workflow_id.split(':')[0]!],
+                                provider: activeRun?.provider ?? null,
+                              });
+                              setRunModalOpen(true);
+                            }}
+                            style={{
+                              fontSize: 12,
+                              padding: '3px 9px',
+                              border: '1px solid var(--line)',
+                              borderRadius: 5,
+                              color: 'var(--text-secondary)',
+                              background: 'var(--bg-surface)',
+                              cursor: 'pointer',
+                            }}
+                            title={`Set up a re-run of ${wf.workflow_id.split(':')[0]}`}
+                          >
+                            ↻ Re-run…
+                          </button>
+                        )}
                       </td>
                     </tr>,
                     isExpanded ? (

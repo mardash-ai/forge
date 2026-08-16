@@ -167,6 +167,26 @@ export interface RunProgressPayload {
   /** Size of the FULL catalogue, independent of this run's scope — the run modal prices against it. */
   catalogue_size?: number;
   /**
+   * The FULL catalogue — every workflow the run dialog may offer, with the provider requirement
+   * that decides whether it can be picked at all.
+   *
+   * ⛔ Without this the console knew only the catalogue's SIZE, so the dialog offered a free-text
+   * box that validated nothing. On 2026-08-16 a run was triggered with `W-001:blocked` — a store
+   * row id copied out of the results table, the only id the console ever displays — and the runner
+   * aborted the entire run in 16 seconds having executed nothing.
+   *
+   * Sent on the first and terminal push, not on every one. Replaces the stored catalogue wholesale;
+   * an EMPTY array is ignored rather than applied (see replaceCatalogue).
+   */
+  catalogue?: Array<{
+    workflow_id: string;
+    name?: string;
+    requires?: 'any' | 'openai' | 'anthropic' | 'both';
+    tags?: string[];
+    suites?: string[];
+    family?: string | null;
+  }>;
+  /**
    * Per-workflow rows for the run's drilldown table.
    *
    * Without these the console shows a run with `attempted 1 · passed 1` above an EMPTY workflow
@@ -434,6 +454,25 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
         });
       }
 
+      // ── The catalogue ────────────────────────────────────────────────────────
+      // Independent of this run: it is the list the run dialog may offer, republished on every run.
+      // Non-fatal, because a run's own results matter more than the picker's freshness — but it
+      // REPORTS, in the response and in the log. A catch that swallows its cause is how the ingest
+      // route once rejected every workflow row and still answered `updated: true`.
+      let catalogueWritten = 0;
+      let catalogueError: string | null = null;
+      if (Array.isArray(body.catalogue) && body.catalogue.length) {
+        try {
+          catalogueWritten = await backends.cpResults.replaceCatalogue(body.catalogue);
+        } catch (err) {
+          catalogueError = err instanceof Error ? err.message : String(err);
+          console.error(
+            `[ingest] catalogue replace failed for run ${body.run_id}: ${catalogueError} — the ` +
+              `run dialog will keep offering the previous catalogue`,
+          );
+        }
+      }
+
       // ── Per-workflow rows ────────────────────────────────────────────────────
       // Best-effort and idempotent: a run reports repeatedly as it progresses, so the same workflow
       // arrives more than once. A row that fails to persist must not fail the whole report — the
@@ -658,6 +697,11 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
         workflows: workflowsWritten,
         scenes: scenesWritten,
         children: childrenWritten,
+        // Reported even when zero: "the picker is stale" must be visible in the response, not
+        // inferable only from a log line nobody reads.
+        ...(Array.isArray(body.catalogue) && body.catalogue.length
+          ? { catalogue: catalogueWritten, ...(catalogueError ? { catalogue_error: catalogueError } : {}) }
+          : {}),
         ...(childrenRejected > 0
           ? { children_rejected: childrenRejected, children_error: lastWorkflowError }
           : {}),

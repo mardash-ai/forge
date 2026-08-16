@@ -1,5 +1,40 @@
 # Changelog
 
+## [1.39.0] - 2026-08-16
+
+### Added
+
+- **The run dialog offers the catalogue instead of a text box.** `forge_cp_eval_catalogue` stores
+  every offerable workflow, republished wholesale by forge-hat on each run and served at
+  `GET /api/e2e/catalogue`. The dialog now asks for the **provider first** and disables any workflow
+  the selection cannot run — 10 workflows are pinned to openai and 3 are cross-host — with a banner
+  saying how many are excluded and why. Six presets cover the real intents, including
+  **Last run's rejections** and **Last run's withheld**, sourced from the previous run's actual rows.
+  Verified in a browser: 76 rows render, 13 disable under `--provider anthropic`, and zero blocked
+  rows carry an enabled checkbox.
+
+### Fixed
+
+- **⛔ A copied row id no longer buys a dead job.** Run `run-2026-08-16-00-16-54` was triggered with
+  `W-001:blocked` — a store row id, and the only id this console displays — and the runner exited 2
+  with nothing executed. `POST /api/e2e/runs` now strips the plan label, validates against the
+  catalogue, and answers `400 unknown_workflows` naming the ids. A bad selection costs a form error
+  rather than a job execution and a run an operator has to diagnose from `gcloud logging read`.
+- **⛔ The per-row Re-run button did nothing at all.** It set a local flag and rendered "✓ queued";
+  `rerunFlash` was read in exactly one place — to draw that label. There was no request on the path.
+  It reported an action it never performed, the same family as the fabricated transcript that once
+  sat in this screen. It now opens the run dialog pre-filled, where the provider is chosen,
+  compatibility is enforced and the spend is confirmed before anything starts.
+- The ingest route persists the catalogue and REPORTS the count (and any error) in its response
+  rather than swallowing a failure — a stale picker must be visible, not inferable from a log line.
+
+### Changed
+
+- Two run-modal guards were pinned to the old implementation's source text. Their properties are
+  unchanged — no prefill still defaults to the full catalogue, and spend still scales per workflow —
+  so they now assert the new mechanism, including that the multiplicand is what will actually RUN.
+
+
 ## [1.35.1] - 2026-08-14
 
 ### Fixed

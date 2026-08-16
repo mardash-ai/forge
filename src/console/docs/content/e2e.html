@@ -50,12 +50,43 @@ dorinda-prod surface and records per-workflow verdicts, timing, token spend, and
 the last 100 runs, newest first, with a sparkline of the pass-rate trend across the 10 most recent.</p>
 
 <h2>Triggering a run</h2>
-<p>Click <strong>↻ Re-run</strong> to open the run modal. Choose a scope:</p>
+<p>Click <strong>▶ Run</strong> to open the run dialog, or <strong>↻ Re-run…</strong> on any workflow row to
+open it pre-filled with that workflow. The dialog asks for the provider <em>first</em>, because the provider
+decides which workflows can run at all.</p>
+
+<h3>Step 1 · Provider</h3>
+<p>Tick <code>openai</code>, <code>anthropic</code>, or both. A banner then states how many workflows the
+selection excludes, and why. In the current catalogue <strong>10 are pinned to openai</strong> (they assert
+host-native ChatGPT behaviour) and <strong>3 are cross-host</strong> — those need both providers selected and
+run as a single spanning execution.</p>
+
+<h3>Step 2 · Scope</h3>
+<p>Six presets cover the common intents:</p>
 <ul>
-  <li><strong>Full suite</strong> — all registered workflows, all providers.</li>
-  <li><strong>Suite filter</strong> — a named suite subset (e.g. <code>smoke</code>).</li>
-  <li><strong>Named workflows</strong> — a comma-separated list of workflow IDs.</li>
+  <li><strong>Full catalogue</strong> — everything the selected provider can run.</li>
+  <li><strong>Critical</strong> / <strong>Release gate</strong> — the named suites.</li>
+  <li><strong>Last run's rejections</strong> / <strong>Last run's withheld</strong> — sourced from the most
+      recent run's actual rows. This is the normal triage path.</li>
+  <li><strong>Choose…</strong> — the whole catalogue as a filterable checkbox list, grouped by id family,
+      with per-group <em>Select all</em>.</li>
 </ul>
+<p>A workflow the provider selection cannot run is shown struck through with an <code>openai only</code> or
+<code>needs both</code> tag and its checkbox is <strong>disabled</strong>. If a preset includes one it is
+excluded by name rather than silently dropped, and the spend estimate counts only what will really run.</p>
+
+<div class="callout">
+<strong>Why you can no longer type workflow ids.</strong> The results table displays <em>row</em> ids such as
+<code>W-001:blocked</code> — the workflow id joined to its plan label. On 2026-08-16 one was pasted into the
+old free-text field; the runner found no matching workflow file, exited 2, and the whole run died in 16
+seconds having executed nothing. Ids are now chosen from the catalogue, the label is stripped wherever a
+stored row becomes a run target, and the API answers <code>400 unknown_workflows</code> naming the offending
+ids rather than spending a job execution on a selection that cannot run.
+</div>
+
+<p>The catalogue is published by forge-hat on <em>every</em> run (it already reads
+<code>suites/full.yaml</code>), so a one-workflow verification run refreshes the picker exactly as a full run
+does. If no run has ever published one, the dialog falls back to the text field and says so — an empty
+picker and an empty catalogue must not look alike.</p>
 <p>A <strong>reason</strong> (minimum 3 characters) is required — it is written into the audit log and stored
 in the run's metadata so that runs triggered at 3 am have a traceable rationale.</p>
 <p>Triggering starts a Cloud Run Job execution (<code>CONSOLE_E2E_JOB</code>) and pre-creates the run row in the

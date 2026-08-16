@@ -17,6 +17,8 @@ import type {
   EvalClaimInput,
   TenantLease,
   TenantLeaseInput,
+  CatalogueEntry,
+  CatalogueEntryInput,
 } from './types';
 
 // Control-plane-only Postgres results store.
@@ -297,6 +299,38 @@ export async function ensureCpResultsSchema(pool: Pool): Promise<void> {
     -- Going forward 'error' means "an unrecognised verdict the store refused to guess at" — exactly
     -- the rows a human most needs to see. An idempotent-looking UPDATE would quietly eat them on
     -- every restart. A marker makes "once" a fact rather than an assumption.
+    -- -----------------------------------------------------------------------
+    -- THE CATALOGUE — every workflow the console's run dialog may offer.
+    --
+    -- Not per-run. This is the catalogue itself, republished by forge-hat on every run (it already
+    -- reads suites/full.yaml for catalogue_size, so even a one-workflow verification run refreshes
+    -- it). Keyed by the BARE workflow id.
+    --
+    -- Why it exists: the console cannot read workflows/, so it knew only the catalogue's SIZE and
+    -- offered a free-text box that validated nothing. On 2026-08-16 a run was triggered with
+    -- "W-001:blocked" -- a store row id copied out of the results table, which is the only id the
+    -- console ever displays — and the runner aborted the whole run in 16 seconds having executed
+    -- nothing. Ids are now chosen from this table, never typed.
+    --
+    -- The requires column is forge-hat's own answer (providerRequirement), NOT a re-derivation of
+    -- the workflow's host declaration on this side. The picker greys out precisely what the runner
+    -- would refuse, because both read one rule.
+    -- -----------------------------------------------------------------------
+    CREATE TABLE IF NOT EXISTS forge_cp_eval_catalogue (
+      workflow_id text        PRIMARY KEY,
+      name        text        NOT NULL DEFAULT '',
+      requires    text        NOT NULL DEFAULT 'any'
+                    CHECK (requires IN ('any','openai','anthropic','both')),
+      tags        jsonb       NOT NULL DEFAULT '[]',
+      suites      jsonb       NOT NULL DEFAULT '[]',
+      family      text,
+      updated_at  timestamptz NOT NULL DEFAULT now()
+    );
+    -- ⛔ Any FUTURE column or constraint change to the table above must ALSO be an ALTER below.
+    -- CREATE TABLE IF NOT EXISTS is a no-op against a database where the table already exists, so a
+    -- column added only above ships as "column does not exist" on every write in production. That
+    -- is not hypothetical — it is exactly how the attempt column emptied every cassette 2026-08-14.
+
     CREATE TABLE IF NOT EXISTS forge_cp_migrations (
       name       text        PRIMARY KEY,
       applied_at timestamptz NOT NULL DEFAULT now()
@@ -971,6 +1005,66 @@ export class PgCpResultsBackend implements CpResultsBackend {
 
   // --- Test utilities ------------------------------------------------------
 
+  /**
+   * Replace the whole catalogue with the manifest forge-hat just published.
+   *
+   * REPLACE, not merge: the manifest is the complete catalogue by construction (forge-hat returns
+   * an empty array rather than a partial one), so a workflow absent from it has been deleted or
+   * renamed upstream and must stop being offered. Merging would leave retired workflows in the
+   * picker forever, and a retired id is a run that dies at resolve time.
+   *
+   * ⛔ An EMPTY manifest is ignored, not applied. "The catalogue is empty" and "we failed to read
+   * the catalogue" are indistinguishable in the payload, and only one of them should wipe the
+   * picker — so neither does.
+   *
+   * One transaction: a half-applied catalogue would offer some workflows and hide others with no
+   * way to tell which.
+   */
+  async replaceCatalogue(entries: CatalogueEntryInput[]): Promise<number> {
+    if (!entries.length) return 0;
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const e of entries) {
+        await client.query(
+          `INSERT INTO forge_cp_eval_catalogue (workflow_id, name, requires, tags, suites, family, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6, now())
+           ON CONFLICT (workflow_id) DO UPDATE SET
+             name = EXCLUDED.name, requires = EXCLUDED.requires, tags = EXCLUDED.tags,
+             suites = EXCLUDED.suites, family = EXCLUDED.family, updated_at = now()`,
+          [
+            e.workflow_id,
+            e.name ?? '',
+            e.requires ?? 'any',
+            JSON.stringify(e.tags ?? []),
+            JSON.stringify(e.suites ?? []),
+            e.family ?? null,
+          ],
+        );
+      }
+      // Retire anything the publisher no longer lists.
+      await client.query(`DELETE FROM forge_cp_eval_catalogue WHERE workflow_id <> ALL($1::text[])`, [
+        entries.map((e) => e.workflow_id),
+      ]);
+      await client.query('COMMIT');
+      return entries.length;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** The catalogue, ordered for display. */
+  async listCatalogue(): Promise<CatalogueEntry[]> {
+    const r = await this.pool.query(
+      `SELECT workflow_id, name, requires, tags, suites, family, updated_at
+         FROM forge_cp_eval_catalogue ORDER BY workflow_id`,
+    );
+    return r.rows as CatalogueEntry[];
+  }
+
   async __truncateAllForTests(): Promise<void> {
     // Order matters: children before parents (FK cascade would handle it, but explicit is cleaner).
     //
@@ -986,6 +1080,7 @@ export class PgCpResultsBackend implements CpResultsBackend {
                forge_cp_eval_scenes,
                forge_cp_eval_workflows,
                forge_cp_eval_runs,
+               forge_cp_eval_catalogue,
                forge_cp_tenant_lease
     `);
   }

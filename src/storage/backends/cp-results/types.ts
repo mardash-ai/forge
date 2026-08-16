@@ -274,7 +274,50 @@ export interface TenantLeaseInput {
 // Backend interface (the stable contract all tiers depend on)
 // ---------------------------------------------------------------------------
 
+/**
+ * One offerable workflow.
+ *
+ * `requires` is forge-hat's OWN answer about which providers can run it — computed by the same
+ * `providerRequirement` that `providerPlansFor` uses to build the run plans. It is deliberately NOT
+ * the raw `ai:` declaration: re-deriving that rule on this side would put the two halves of one
+ * contract in different repositories, which is where drift is hardest to see and most expensive.
+ *
+ *   'any'        runs on whichever providers are selected
+ *   'openai'     only on openai      (`ai: chatgpt`)
+ *   'anthropic'  only on anthropic   (`ai: claude`)
+ *   'both'       cross-host — needs BOTH selected, executes as one spanning plan
+ */
+export type CatalogueEntry = {
+  workflow_id: string;
+  name: string;
+  requires: 'any' | 'openai' | 'anthropic' | 'both';
+  tags: string[];
+  suites: string[];
+  family: string | null;
+  updated_at: Date;
+};
+
+export type CatalogueEntryInput = {
+  workflow_id: string;
+  name?: string;
+  requires?: 'any' | 'openai' | 'anthropic' | 'both';
+  tags?: string[];
+  suites?: string[];
+  family?: string | null;
+};
+
 export interface CpResultsBackend {
+  // --- The catalogue ------------------------------------------------------
+
+  /**
+   * Replace the whole catalogue with a freshly published manifest. Returns rows written.
+   * An EMPTY manifest is ignored — see the implementation for why that is deliberate.
+   */
+  replaceCatalogue(entries: CatalogueEntryInput[]): Promise<number>;
+
+  /** Every offerable workflow, ordered by id. */
+  listCatalogue(): Promise<CatalogueEntry[]>;
+
   // --- Run-level metrics --------------------------------------------------
 
   /** Insert or update a run row (idempotent on run_id). */

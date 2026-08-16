@@ -1610,12 +1610,20 @@ describe('the E2E action buttons say what they do', () => {
     // The dialog can now be opened pre-scoped by the detail view's "re-run these" control, so the
     // default is conditional. The PROPERTY that matters is unchanged and is what this asserts:
     // opened with no prefill, it still lands on the full catalogue.
-    expect(src).toMatch(/useState<'full' \| 'suite' \| 'named'>\(prefill \? 'named' : 'full'\)/);
+    // 2026-08-16: the scope vocabulary became presets (the free-text 'named' field is now only a
+    // fallback for a store with no published catalogue). The property is untouched — no prefill
+    // still lands on the full catalogue.
+    expect(src).toMatch(/useState<Preset>\(prefill \? 'custom' : 'full'\)/);
   });
 
   it('⛔ a pre-scoped dialog names workflows rather than silently running everything', () => {
     // The failure this guards: a prefill that set scope but not the list, or the list but not the
     // scope, would post `suite: full` — turning "re-run these 2" into a 76-workflow run.
+    //
+    // Both halves are asserted because either alone reintroduces it: the prefill must seed the
+    // SELECTION as well as the scope, and the fallback text field must still carry it for a store
+    // that has never published a catalogue.
+    expect(src).toMatch(/useState<Set<string>>\(new Set\(prefill\?\.workflows \?\? \[\]\)\)/);
     expect(src).toMatch(/useState\(prefill \? prefill\.workflows\.join\(', '\) : ''\)/);
   });
 });

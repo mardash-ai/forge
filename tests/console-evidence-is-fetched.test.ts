@@ -165,16 +165,28 @@ describe('the run modal prices the CATALOGUE, not the last run', () => {
     // modal — because a dev fixture contains `catalogue_size: 75`. A guard satisfied by sample data
     // certifies coverage it never looked at, which is the same failure as the completeness check
     // that skipped every column with a digit in it. Assert the actual binding, fixtures excluded.
+    //
+    // 2026-08-16: the source moved, and got BETTER. The size now comes from the CATALOGUE itself —
+    // the rows served by /api/e2e/catalogue and published by forge-hat on every run — rather than a
+    // `catalogue_size` number riding on a run's meta. The property is unchanged, so the guard
+    // follows it: the count comes from the catalogue, never from run history.
     const body = withoutFixtures(APP);
-    expect(body).toMatch(/catalogueFromMeta/);
-    expect(body).toMatch(/\.catalogue_size/);
+    expect(body).toMatch(/useApi<E2ECatalogueEntry\[\]>\('\/api\/e2e\/catalogue'\)/);
+    // What "Full catalogue" actually promises: counted from those rows and narrowed to what the
+    // selected provider can run, so the figure above the confirm checkbox is what will happen.
+    expect(body).toMatch(/const fullRunnable = cat\.filter\(\(e\) => canRun\(e\)\)\.length/);
   });
 
   it('scales spend per workflow rather than reusing a run’s total', () => {
     // A 2-workflow run's $0.16 is not what 76 workflows cost — the same inference error in a
     // different coat.
     expect(code).toMatch(/centsPerWorkflow/);
-    expect(code).toMatch(/centsPerWorkflow[^;]*\*\s*catalogue/);
+    expect(code).toMatch(/centsPerWorkflow \* effectiveCount/);
+    // ⛔ And the multiplicand is what will RUN, not what was clicked: a workflow the provider
+    // selection excludes is planned ZERO times, so pricing it would promise a run the executor
+    // never agreed to — the same arithmetic that made a `both` run promise twice its capacity.
+    expect(code).toMatch(/const effectiveCount/);
+    expect(code).toMatch(/runnableIds/);
   });
 
   it('⛔ shows unknown as unknown, never as a figure', () => {

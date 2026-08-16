@@ -1831,6 +1831,20 @@ export function buildServer(
     return envelope(await reconcileRunningRuns(store, runs as never[]));
   });
 
+  /**
+   * The catalogue the run dialog offers — every workflow, with the provider requirement that
+   * decides whether it can be picked.
+   *
+   * Published by forge-hat on every run, so it refreshes without a deploy. An EMPTY array is a
+   * real answer meaning "no run has published a catalogue yet"; the dialog falls back to its text
+   * field rather than presenting an empty picker as though the catalogue were empty.
+   */
+  app.get('/api/e2e/catalogue', async (_req, reply) => {
+    const store = await evalStoreGetter();
+    if (!store) return reply.code(501).send(NOT_CONFIGURED);
+    return envelope(await store.listCatalogue());
+  });
+
   app.get('/api/e2e/runs/:run_id', async (req, reply) => {
     const store = await evalStoreGetter();
     if (!store) return reply.code(501).send(NOT_CONFIGURED);
@@ -1916,6 +1930,58 @@ export function buildServer(
       });
     }
 
+    /**
+     * ⛔ NORMALISE AND VALIDATE THE IDS BEFORE THEY BECOME A JOB.
+     *
+     * 2026-08-16: `W-001:blocked` reached the runner, which found no such workflow file and exited
+     * 2 — the whole run dead in 16 seconds with nothing executed, and the only evidence a log line
+     * inside a Cloud Run job execution. `W-001:blocked` is not a typo: results are keyed
+     * `${workflowId}:${planLabel}` and that composite is the only id the console displays, so it is
+     * the id an operator copies.
+     *
+     * Two changes, and the second matters more than the first:
+     *   1. strip the label — a row id names the workflow it belongs to;
+     *   2. refuse an id the catalogue does not contain, HERE, with a 400 that names it. A bad id
+     *      should cost a form error, not a job execution and a dead run an operator has to go and
+     *      diagnose from `gcloud logging read`.
+     *
+     * Validation is skipped when the catalogue is empty — the store has not been populated by a run
+     * yet, and refusing everything would be worse than the status quo.
+     */
+    const rawWorkflows = Array.isArray(body.workflows) ? body.workflows : [];
+    const normalisedWorkflows = [
+      ...new Set(
+        rawWorkflows
+          .map((w) => String(w ?? '').trim())
+          .filter(Boolean)
+          .map((w) => (w.includes(':') ? w.slice(0, w.indexOf(':')) : w)),
+      ),
+    ];
+    if (normalisedWorkflows.length) {
+      let known: Set<string> | null = null;
+      try {
+        const store = await evalStoreGetter();
+        const cat = store ? await store.listCatalogue() : [];
+        known = cat.length ? new Set(cat.map((c: { workflow_id: string }) => c.workflow_id)) : null;
+      } catch {
+        known = null; // Unavailable ⇒ do not block a run on the picker's data source.
+      }
+      if (known) {
+        const unknown = normalisedWorkflows.filter((w) => !known.has(w));
+        if (unknown.length) {
+          return reply.code(400).send({
+            error: {
+              code: 'unknown_workflows',
+              message:
+                `not in the catalogue: ${unknown.join(', ')} — nothing was started. ` +
+                `Pick workflows from the list rather than typing ids.`,
+              unknown,
+            },
+          });
+        }
+      }
+    }
+
     // The job name must be configured — fail closed rather than silently doing nothing.
     const jobName = process.env.CONSOLE_E2E_JOB ?? '';
     if (!jobName) {
@@ -1941,7 +2007,7 @@ export function buildServer(
       E2E_REASON: body.reason.trim(),
     };
     if (body.suite) jobEnv['E2E_SUITE'] = body.suite;
-    if (body.workflows?.length) jobEnv['E2E_WORKFLOWS'] = body.workflows.join(',');
+    if (normalisedWorkflows.length) jobEnv['E2E_WORKFLOWS'] = normalisedWorkflows.join(',');
     if (body.provider) jobEnv['E2E_PROVIDER'] = body.provider;
 
     // Pre-create the run so it appears immediately in the tab (status: 'running').
