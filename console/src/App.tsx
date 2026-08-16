@@ -198,6 +198,15 @@ export default function App() {
   const [palette, setPalette] = useState(false);
   const [dense, setDense] = useState(() => document.documentElement.dataset['density'] === 'compact');
   const boot = useApi<Bootstrap>('/api/bootstrap');
+  /*
+   * Real counts for the rail. Only screens where a number MEANS something appear here — a badge
+   * reading 143 on Inventory is decoration, and a column you learn to ignore is how the 1-9
+   * shortcuts came to be misread as counts in the first place.
+   *
+   * An ABSENT key renders no badge (not known); a key of 0 renders no badge either (nothing needs
+   * you). Those are different facts and neither should draw the eye.
+   */
+  const navCounts = useApi<Record<string, number>>('/api/nav-counts');
 
   useEffect(() => {
     const u = new URL(location.href);
@@ -346,6 +355,32 @@ export default function App() {
                       element — it just did not look like one. Rendered only when a shortcut exists,
                       so screens past the ninth show nothing rather than a hint that does nothing.
                     */}
+                    {(() => {
+                      const n = navCounts.data?.[id];
+                      if (typeof n !== 'number' || n === 0) return null;
+                      const tone =
+                        id === 'alerts' || id === 'findings'
+                          ? { bg: 'var(--crit-wash)', fg: 'var(--crit-text)', br: '#5c2126' }
+                          : { bg: 'var(--warn-wash)', fg: 'var(--warn-text)', br: '#4a3a12' };
+                      return (
+                        <span
+                          data-testid={`nav-count-${id}`}
+                          title={`${n} item(s) needing attention`}
+                          style={{
+                            fontFamily: 'var(--mono)',
+                            fontSize: 9.5,
+                            lineHeight: 1,
+                            padding: '2px 5px',
+                            borderRadius: 99,
+                            background: tone.bg,
+                            color: tone.fg,
+                            border: `1px solid ${tone.br}`,
+                          }}
+                        >
+                          {n > 99 ? '99+' : n}
+                        </span>
+                      );
+                    })()}
                     {key && (
                       <kbd
                         aria-label={`keyboard shortcut ${key}`}

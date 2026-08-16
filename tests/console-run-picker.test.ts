@@ -207,3 +207,42 @@ describe('⛔ the nav numerals are shortcuts, and must not read as counts', () =
     expect(APP_CODE).toMatch(/\['1', '2', '3', '4', '5', '6', '7', '8', '9'\]\.indexOf\(e\.key\)/);
   });
 });
+
+describe('⛔ the nav badges are real counts, from one source', () => {
+  it('fetches counts rather than deriving them per screen', () => {
+    expect(APP_CODE).toMatch(/useApi<Record<string, number>>\('\/api\/nav-counts'\)/);
+    expect(APP_CODE).toMatch(/data-testid=\{`nav-count-\$\{id\}`\}/);
+  });
+
+  it('⛔ zero and unknown BOTH render no badge — and they are different facts', () => {
+    // 0 means nothing needs you; absent means the provider could not be asked. Neither should draw
+    // the eye, and neither may render as the other's number.
+    expect(APP_CODE).toMatch(/if \(typeof n !== 'number' \|\| n === 0\) return null;/);
+  });
+
+  it('⛔ the badge and the Findings screen share ONE computation', () => {
+    // Counting findings a second way for the badge would put two answers to "how many findings?"
+    // in one file — a tile and a table disagreeing is a defect this estate has already paid for.
+    expect(SERVER_CODE).toMatch(/const computeFindings = async \(\)/);
+    expect(SERVER_CODE).toMatch(/const \{ findings, sources \} = await computeFindings\(\);/);
+    expect(SERVER_CODE).toMatch(/value\['findings'\] = findings\.length;/);
+  });
+
+  it('one provider failing does not blank every badge', () => {
+    /*
+     * Each source is an independent try/catch inside one Promise.all, so a broken alerts provider
+     * cannot silently zero the findings badge — the key is simply absent, which renders nothing.
+     *
+     * ⛔ The first version of this asserted the string "leave absent", which lives ONLY in a
+     * comment — and codeOnly() strips comments, so it could never pass. A guard aimed at prose is
+     * a guard aimed at nothing.
+     */
+    const handler = SERVER_CODE.slice(
+      SERVER_CODE.indexOf("app.get('/api/nav-counts'"),
+      SERVER_CODE.indexOf("app.get('/api/cost'"),
+    );
+    expect(handler).toMatch(/await Promise\.all\(\[/);
+    // One catch per source: findings, alerts, drift, credentials.
+    expect((handler.match(/\} catch \{/g) ?? []).length).toBeGreaterThanOrEqual(4);
+  });
+});

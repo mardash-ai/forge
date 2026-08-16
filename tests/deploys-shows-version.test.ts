@@ -111,6 +111,25 @@ describe('the deploys screen names the running build', () => {
     expect(APP_CODE).toMatch(/r\.kind === 'compute\.service' \|\| r\.kind === 'compute\.job'/);
   });
 
+  it('⛔ a JOB shows its EXECUTION HISTORY, not just what runs next', () => {
+    /*
+     * Mark: "Why can't I see the e2e runner history … the last deployment (0.38.0) is completely
+     * gone." The first cut returned one synthetic "configured" row, so the job appeared in the
+     * console with no past at all.
+     *
+     * A job has no revisions, but every EXECUTION records the image it ran and the version stamped
+     * into it — the history existed and simply was not read. Executions are the more useful history
+     * here than a list of configurations: they answer "which version produced that result?".
+     */
+    expect(RUNTIME_CODE).toMatch(/jobs\/\$\{runtimeId\}\/executions/);
+    expect(RUNTIME_CODE).toMatch(/const history: Revision\[\] = executions\.map/);
+    // Configured row first, then history — an execution is never "what runs next".
+    expect(RUNTIME_CODE).toMatch(/\.\.\.history,/);
+    expect(RUNTIME_CODE).toMatch(/traffic_percent: 0,/);
+    // A failed executions read must not blank the job entirely.
+    expect(RUNTIME_CODE).toMatch(/\.catch\(\(\) => \[\] as RunExecution\[\]\)/);
+  });
+
   it('⛔ renders unknown rather than guessing, and keeps the digest beside it', () => {
     expect(APP_CODE).toMatch(/'Version', 'Digest'/);
     expect(APP_CODE).toMatch(/r\.image_version \?/);

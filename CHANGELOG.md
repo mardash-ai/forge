@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.45.0] - 2026-08-16
+
+### Added
+
+- **Real counts in the left nav.** `GET /api/nav-counts` returns attention counts — open findings,
+  firing alerts, drift (drifted stacks + unadopted pins), credentials expiring within 30 days —
+  rendered as tinted pills beside the shortcut keycap. Cached 60s because the rail renders on every
+  screen and each source fans out to providers.
+  - Only screens where a number MEANS something get one. A badge reading 143 on Inventory is
+    decoration, and a column you learn to ignore is how the shortcuts came to be misread as counts.
+  - **Zero and unknown both render nothing, and they are different facts**: 0 means nothing needs
+    you; an absent key means the provider could not be asked. Each source is an independent
+    try/catch, so one broken provider cannot silently zero another badge.
+  - The badge and the Findings screen share ONE computation (`computeFindings`), so a tile and a
+    table cannot disagree — a defect this estate has already paid for.
+- **A Cloud Run job shows its execution history.** The first cut returned one synthetic "configured"
+  row, so `e2e-runner` appeared with no past at all — Mark: *"the last deployment (0.38.0) is
+  completely gone."* A job has no revisions, but every EXECUTION records the image it ran and the
+  version stamped into it, so the history existed and simply was not read. Executions answer the
+  more useful question anyway: *which version produced that result?* Configured row first, then
+  history; a failed executions read degrades to the configured row rather than blanking the job.
+
+
 ## [1.44.0] - 2026-08-16
 
 ### Fixed

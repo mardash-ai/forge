@@ -87,6 +87,14 @@ interface RunRevision {
  */
 const JOB_NAMES: ReadonlySet<string> = new Set(['e2e-runner']);
 
+type RunExecution = {
+  name?: string;
+  createTime?: string;
+  startTime?: string;
+  succeededCount?: number;
+  template?: { containers?: Array<{ image?: string; env?: Array<{ name: string; value?: string }> }> };
+};
+
 type RunJob = {
   template?: {
     template?: { containers?: Array<{ image?: string; env?: Array<{ name: string; value?: string }> }> };
@@ -276,6 +284,43 @@ export function createCloudRunRuntimeProvider(opts: {
         const pick = (n: string) => env.find((e) => e.name === n)?.value ?? null;
         const commit = pick('HAT_COMMIT');
         const ready = job?.terminalCondition?.state === 'CONDITION_SUCCEEDED';
+        /*
+         * ⛔ AND ITS HISTORY. A job has no revisions, but every EXECUTION records the image it ran
+         * plus the version stamped into it — so the history exists, and the first cut of this
+         * simply did not read it. Mark: "the last deployment (0.38.0) is completely gone."
+         *
+         * Executions are what ACTUALLY RAN, which is the more useful history here than a list of
+         * configurations: it answers "which version produced that result?" for any past run.
+         */
+        const executions = await gcpPaged<RunExecution>(
+          `${RUN}/projects/${project}/locations/${region}/jobs/${runtimeId}/executions`,
+          (p) => p['executions'] as RunExecution[] | undefined,
+          { signal: ctx.signal, maxPages: 1 },
+        ).catch(() => [] as RunExecution[]);
+
+        const history: Revision[] = executions.map((x) => {
+          const ec = x.template?.containers?.[0];
+          const eimg = ec?.image ?? '';
+          const eenv = ec?.env ?? [];
+          const epick = (n: string) => eenv.find((e) => e.name === n)?.value ?? null;
+          const ecommit = epick('HAT_COMMIT');
+          return {
+            id:
+              String(x.name ?? '')
+                .split('/')
+                .pop() ?? '',
+            image_digest: eimg.includes('@') ? eimg.split('@')[1]! : '',
+            image_ref: eimg,
+            // An execution is history, never "what runs next" — that is the configured row above.
+            traffic_percent: 0,
+            ready: (x.succeededCount ?? 0) > 0,
+            created_at: x.createTime ?? x.startTime ?? '',
+            image_version: epick('HAT_VERSION'),
+            source_ref: ecommit,
+            changelog_url: changelogUrl(runtimeId, ecommit ?? ''),
+          };
+        });
+
         return [
           {
             id: `${runtimeId} (configured)`,
@@ -290,6 +335,7 @@ export function createCloudRunRuntimeProvider(opts: {
             source_ref: commit,
             changelog_url: changelogUrl(runtimeId, commit ?? ''),
           },
+          ...history,
         ];
       }
 

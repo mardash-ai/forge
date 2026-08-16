@@ -1239,7 +1239,18 @@ export function buildServer(
     });
   });
 
-  app.get('/api/findings', async () => {
+  /**
+   * The findings computation, extracted so the screen and the nav badge share ONE implementation.
+   *
+   * ⛔ Counting findings a second way for the badge would put two answers to "how many findings are
+   * there?" in one file — the defect shape this estate has paid for repeatedly (a tile counting from
+   * one source while a table filtered from another). The badge and the screen must agree because
+   * they are literally the same call.
+   */
+  const computeFindings = async (): Promise<{
+    findings: Finding[];
+    sources: Array<{ provider_id: string; ok: boolean; error?: string }>;
+  }> => {
     const c = ctx();
     const inv = registry.byKind('inventory', ENV) as InventoryProvider[];
     const pipes = registry.byKind('pipelines', ENV) as PipelinesProvider[];
@@ -1278,15 +1289,22 @@ export function buildServer(
       hostBackends: {},
     });
 
-    const findings: Finding[] = runFindings({
-      resources: invRes.items,
-      graph,
-      credentials: [...credRes.items, ...certCreds],
-      runs: runRes.items,
-      metricsIngesting: ingesting,
-      now: new Date(),
-    });
-    return envelope(findings, [...invRes.sources, ...runRes.sources]);
+    return {
+      findings: runFindings({
+        resources: invRes.items,
+        graph,
+        credentials: [...credRes.items, ...certCreds],
+        runs: runRes.items,
+        metricsIngesting: ingesting,
+        now: new Date(),
+      }),
+      sources: [...invRes.sources, ...runRes.sources],
+    };
+  };
+
+  app.get('/api/findings', async () => {
+    const { findings, sources } = await computeFindings();
+    return envelope(findings, sources);
   });
 
   app.get('/api/credentials', async () => {
@@ -1341,6 +1359,87 @@ export function buildServer(
       { stacks: items, latest_release: latest.find(Boolean) ?? null, pin_drift: pins },
       sources,
     );
+  });
+
+  /**
+   * ⛔ THE NAV BADGES — counts that mean "this needs you", not inventory totals.
+   *
+   * The rail's right-hand numerals were the 1-9 screen shortcuts, drawn as bare digits in the slot
+   * a count badge occupies. Mark read them as counts and asked for real ones: "yes, I want real
+   * counts in the leftnav, obviously."
+   *
+   * Only screens where a number MEANS something get one. A badge reading 143 on Inventory is not
+   * information, it is decoration, and a badge that means something vague is worse than none — it
+   * trains you to ignore the column, which is how the shortcuts came to be misread in the first
+   * place.
+   *
+   * Cached briefly because each of these fans out to providers, and the rail renders on every
+   * screen: without it, opening any page would re-run four aggregations.
+   */
+  let navCounts: { at: number; value: Record<string, number> } | null = null;
+  const NAV_COUNTS_TTL_MS = 60_000;
+
+  app.get('/api/nav-counts', async () => {
+    if (navCounts && Date.now() - navCounts.at < NAV_COUNTS_TTL_MS) {
+      return envelope(navCounts.value);
+    }
+    const c = ctx();
+    const value: Record<string, number> = {};
+
+    // Each source is independent: one provider failing must not blank every badge. An absent key
+    // renders as NO badge, which reads as "not known" rather than "zero".
+    await Promise.all([
+      (async () => {
+        try {
+          // The SAME computation the Findings screen renders — one implementation, two consumers.
+          const { findings } = await computeFindings();
+          value['findings'] = findings.length;
+        } catch {
+          /* leave absent */
+        }
+      })(),
+      (async () => {
+        try {
+          const provs = registry.byKind('alerts', ENV) as AlertsProvider[];
+          const firing = await aggregate(provs, (p) => p.listFiring(c));
+          value['alerts'] = firing.items.length;
+        } catch {
+          /* leave absent */
+        }
+      })(),
+      (async () => {
+        try {
+          const provs = registry.byKind('drift', ENV) as DriftProvider[];
+          const stacks = await aggregate(provs, (p) => p.listStacks(c));
+          const pins = (await Promise.all(provs.map((p) => p.listPinDrift(c).catch(() => [])))).flat();
+          // Both axes count: a drifted stack and an unadopted pin are each "something is behind".
+          const drifted = stacks.items.filter(
+            (x) =>
+              (x as { drifted?: boolean; status?: string }).drifted === true ||
+              (x as { status?: string }).status === 'drifted',
+          ).length;
+          value['drift'] = drifted + pins.length;
+        } catch {
+          /* leave absent */
+        }
+      })(),
+      (async () => {
+        try {
+          const provs = registry.byKind('credentials', ENV) as CredentialsProvider[];
+          const creds = await aggregate(provs, (p) => p.list(c));
+          const soon = Date.now() + 30 * 24 * 60 * 60 * 1000;
+          value['credentials'] = creds.items.filter((x) => {
+            const exp = (x as { expires_at?: string | null }).expires_at;
+            return Boolean(exp) && new Date(exp!).getTime() < soon;
+          }).length;
+        } catch {
+          /* leave absent */
+        }
+      })(),
+    ]);
+
+    navCounts = { at: Date.now(), value };
+    return envelope(value);
   });
 
   // ── Cost ──
