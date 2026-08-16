@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.44.0] - 2026-08-16
+
+### Fixed
+
+- **Starting a run now takes you to it.** The dialog discarded the `run_id` the API returns — `onRun`
+  took no arguments — so an operator was left on the page they triggered from and had to go back to
+  the list and hunt for their own run. Both mount sites navigate, asserted by counting them.
+- **The left-nav numerals no longer read as counts.** They are the 1–9 screen shortcuts and were
+  drawn as bare faint digits, right-aligned in a nav row: the universal position for a count badge.
+  Mark read them as counts and asked for them to be made accurate — he built this system, so if it
+  misreads for him it misreads. They are now drawn as **keycaps** (bordered, inset), rendered only
+  where a shortcut exists, so a screen past the ninth shows nothing rather than a hint that does
+  nothing. A guard asserts the advertised binding actually exists.
+
+
 ## [1.43.1] - 2026-08-16
 
 ### Fixed

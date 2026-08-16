@@ -332,16 +332,42 @@ export default function App() {
                       <Icon />
                     </span>
                     <span style={{ flex: 1, minWidth: 0 }}>{label}</span>
-                    <kbd
-                      style={{
-                        color: 'var(--text-faint)',
-                        fontSize: 10.5,
-                        fontFamily: 'var(--mono)',
-                        opacity: on ? 0.9 : 0.55,
-                      }}
-                    >
-                      {key}
-                    </kbd>
+                    {/*
+                      ⛔ A BARE NUMERAL HERE READS AS A COUNT.
+
+                      These are keyboard shortcuts — press 1-9 to switch screen — and they were
+                      rendered as plain faint digits, right-aligned in a nav row, which is the
+                      universal position for a count badge. Mark read them as counts and asked for
+                      them to be made accurate: "it seems every badge number in the left nav is
+                      wrong." He built this system, so if it misreads for him it misreads.
+                      Explaining what they are is not the fix; making them unmistakable is.
+
+                      Drawn as a KEYCAP: a bordered, inset cell. `<kbd>` was already the right
+                      element — it just did not look like one. Rendered only when a shortcut exists,
+                      so screens past the ninth show nothing rather than a hint that does nothing.
+                    */}
+                    {key && (
+                      <kbd
+                        aria-label={`keyboard shortcut ${key}`}
+                        title={`Press ${key} to open ${label}`}
+                        style={{
+                          color: 'var(--text-faint)',
+                          fontSize: 9.5,
+                          fontFamily: 'var(--mono)',
+                          lineHeight: 1,
+                          padding: '2px 4px',
+                          minWidth: 14,
+                          textAlign: 'center',
+                          border: '1px solid var(--line-strong)',
+                          borderBottomWidth: 2,
+                          borderRadius: 3,
+                          background: 'var(--bg-inset)',
+                          opacity: on ? 0.9 : 0.6,
+                        }}
+                      >
+                        {key}
+                      </kbd>
+                    )}
                   </button>
                 );
               })}
@@ -6259,7 +6285,14 @@ function E2ERunModal({
   runs: E2ERun[];
   prefill?: E2ERunPrefill | null;
   onClose: () => void;
-  onRun: () => void;
+  /**
+   * Called with the run that was just started.
+   *
+   * ⛔ It used to take no arguments, so the `run_id` the API returns was DISCARDED and the operator
+   * was left on the page they started from — having to go back to the list and hunt for the run
+   * they had just triggered. The id is the one thing the response exists to tell us.
+   */
+  onRun: (runId: string | null) => void;
 }) {
   // ── The catalogue ────────────────────────────────────────────────────────────────────────────
   const catalogueApi = useApi<E2ECataloguePayload>('/api/e2e/catalogue');
@@ -6434,8 +6467,8 @@ function E2ERunModal({
           .map((s) => s.trim())
           .filter(Boolean);
 
-      await mutate<{ run_id: string; state: string }>('/api/e2e/runs', reqBody);
-      onRun();
+      const started = await mutate<{ run_id: string; state: string }>('/api/e2e/runs', reqBody);
+      onRun(started?.run_id ?? null);
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : 'failed to start run');
       setSubmitting(false);
@@ -7979,10 +8012,13 @@ function Evals() {
               setRunModalOpen(false);
               setRunModalPrefill(null);
             }}
-            onRun={() => {
+            onRun={(runId) => {
               setRunModalOpen(false);
               setRunModalPrefill(null);
               runsApi.reload();
+              // Go to the run that was just started. Leaving the operator on the page they
+              // triggered from meant going back to the list and hunting for their own run.
+              if (runId) handleSelectRun(runId);
             }}
           />
         )}
@@ -8038,10 +8074,13 @@ function Evals() {
             setRunModalOpen(false);
             setRunModalPrefill(null);
           }}
-          onRun={() => {
+          onRun={(runId) => {
             setRunModalOpen(false);
             setRunModalPrefill(null);
             runsApi.reload();
+            // Same behaviour at BOTH mount sites. This dialog has two, and every time only one has
+            // been updated the other has silently kept the old behaviour.
+            if (runId) handleSelectRun(runId);
           }}
         />
       )}

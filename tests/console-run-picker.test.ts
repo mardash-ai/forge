@@ -171,3 +171,39 @@ describe('⛔ "Re-run" means THIS run again, not everything', () => {
     expect(cleared.length).toBeGreaterThanOrEqual(mounts.length * 2);
   });
 });
+
+describe('⛔ starting a run takes you to it', () => {
+  it('the modal hands back the run it started', () => {
+    // The API returns run_id and it used to be DISCARDED — onRun took no arguments — leaving the
+    // operator on the page they triggered from, to go back to the list and hunt for their own run.
+    expect(APP_CODE).toMatch(/onRun: \(runId: string \| null\) => void;/);
+    expect(APP_CODE).toMatch(/const started = await mutate<\{ run_id: string; state: string \}>/);
+    expect(APP_CODE).toMatch(/onRun\(started\?\.run_id \?\? null\)/);
+  });
+
+  it('⛔ BOTH mount sites navigate — not just the one that was noticed', () => {
+    const navigations = APP_CODE.match(/if \(runId\) handleSelectRun\(runId\);/g) ?? [];
+    const mounts = APP_CODE.match(/<E2ERunModal/g) ?? [];
+    expect(navigations.length).toBe(mounts.length);
+  });
+});
+
+describe('⛔ the nav numerals are shortcuts, and must not read as counts', () => {
+  it('renders them as a keycap, not a bare numeral', () => {
+    // Mark: "it seems every badge number in the left nav is wrong. Make these all accurate counts."
+    // They were never counts — they are the 1-9 screen shortcuts. He built this system, so if it
+    // misreads for him it misreads. The fix is the affordance, not an explanation.
+    expect(APP_CODE).toMatch(/aria-label=\{`keyboard shortcut \$\{key\}`\}/);
+    expect(APP_CODE).toMatch(/borderBottomWidth: 2/);
+  });
+
+  it('⛔ renders nothing at all when a screen has no shortcut', () => {
+    // Past the ninth screen there is no key. An empty keycap would be a hint that does nothing.
+    expect(APP_CODE).toMatch(/\{key && \(/);
+  });
+
+  it('the shortcut it advertises actually works', () => {
+    // A keycap for a binding that does not exist is worse than no keycap.
+    expect(APP_CODE).toMatch(/\['1', '2', '3', '4', '5', '6', '7', '8', '9'\]\.indexOf\(e\.key\)/);
+  });
+});
