@@ -197,6 +197,18 @@ export async function syncCatalogue(opts: {
     }));
 
     await opts.store.replaceCatalogue(rows);
+    // ⛔ Log the SUCCESS too, not only the failure.
+    //
+    // With errors alone, silence in the log means either "synced fine" or "never ran" — two facts
+    // that need different responses and had no way to be told apart. That is the same
+    // three-states-sharing-one-appearance defect this module guards against in the UI, one layer
+    // down, and it made the first production verification of this feature impossible.
+    console.log(
+      `[catalogue-sync] ok — ${repo}@${mainCommit.slice(0, 7)} (${mainRows.length} workflows) · ` +
+        `runner ${runner.version ? `v${runner.version} ` : ''}` +
+        `${runner.commit ? `@ ${runner.commit.slice(0, 7)}` : '(commit unknown)'}` +
+        `${runnerRows ? ` (${runnerRows.length} workflows)` : ''}`,
+    );
     const result: SyncResult = {
       ok: true,
       mainCommit,

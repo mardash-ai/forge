@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.40.1] - 2026-08-16
+
+### Fixed
+
+- **The catalogue sync logs its SUCCESS, not only its failures.** With errors alone, silence in the
+  log meant either "synced fine" or "never ran" — two facts needing different responses, with no
+  way to tell them apart. That is the same three-states-sharing-one-appearance defect this feature
+  guards against in the UI, one layer down, and it made the first production verification of the
+  sync impossible.
+
+### Changed
+
+- Documentation corrected to match the build: the automatic refresh is **read-triggered, not a
+  background interval**. The changelog for v1.40.0 claimed both. Cloud Run scales the console to
+  zero, so a timer would be dead exactly when nobody is looking, and the catalogue only matters
+  when someone opens the dialog.
+
+
 ## [1.40.0] - 2026-08-16
 
 ### Changed
@@ -37,8 +55,11 @@
   the automation token's guaranteed-401 visible. Operator-owned keys (`catalogue.repo`,
   `catalogue.ref`, `catalogue.sync_interval_seconds`) are audited writes, each with a working
   default — the pane changes a default, it never supplies something missing.
-- `POST /api/e2e/catalogue/sync` to force a refresh; background interval plus an opportunistic,
-  floored refresh on read, because Cloud Run can scale the console to zero.
+- `POST /api/e2e/catalogue/sync` to force a refresh. The automatic path is **read-triggered, not a
+  background interval**: Cloud Run scales the console to zero, so a timer would be dead exactly
+  when nobody is looking — and the catalogue only matters when someone opens the dialog. The
+  refresh runs when the stored snapshot is older than the configured interval, never blocks the
+  response, and is floored at 60s so a page poll cannot hammer GitHub.
 
 ### Removed
 
