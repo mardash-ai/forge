@@ -139,3 +139,35 @@ describe('⛔ the API refuses a bad id instead of spending a job on it', () => {
     expect(SERVER_CODE).toMatch(/app\.get\('\/api\/e2e\/catalogue'/);
   });
 });
+
+describe('⛔ "Re-run" means THIS run again, not everything', () => {
+  it('the detail-view Re-run seeds the workflows the run actually executed', () => {
+    // It opened the dialog with NO prefill, so scope fell through to Full catalogue. On a
+    // 2-workflow run that turned a re-run into all 76 — ~$3.41 and ~19 minutes, one click from a
+    // button labelled with the opposite intent. Mark caught it in the first minutes of using the
+    // new dialog (2026-08-16).
+    expect(APP_CODE).toMatch(/data-testid="rerun-this-run"/);
+    expect(APP_CODE).toMatch(
+      /const ran = \[\s*\.\.\.new Set\(allWorkflows\.map\(\(w\) => w\.workflow_id\.split\(':'\)\[0\]!\)/,
+    );
+    // …on the lane it ran on, not the dialog's default.
+    expect(APP_CODE).toMatch(/workflows: ran, provider: activeRun\?\.provider \?\? null/);
+  });
+
+  it('a run with no recorded workflows falls back to no prefill, not an empty selection', () => {
+    // An empty prefill would open the dialog on a selection that cannot start, with no way to see
+    // why. No prefill at all is the honest state.
+    expect(APP_CODE).toMatch(/ran\.length \? \{ workflows: ran/);
+  });
+
+  it('⛔ BOTH mount sites take prefill and BOTH clear it', () => {
+    // Two mounts of one dialog with only one updated is how the drilldown drawer shipped rendering
+    // a hardcoded empty payload from both call sites. Count them rather than trusting one.
+    const mounts = APP_CODE.match(/<E2ERunModal/g) ?? [];
+    const prefilled = APP_CODE.match(/prefill=\{runModalPrefill\}/g) ?? [];
+    expect(prefilled.length).toBe(mounts.length);
+    // Cleared on close AND on run, at every site: a stale prefill silently scopes the NEXT run.
+    const cleared = APP_CODE.match(/setRunModalPrefill\(null\)/g) ?? [];
+    expect(cleared.length).toBeGreaterThanOrEqual(mounts.length * 2);
+  });
+});

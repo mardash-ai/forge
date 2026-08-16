@@ -7876,12 +7876,25 @@ function Evals() {
             );
           })()}
 
+        {/*
+          ⛔ The SECOND mount site. It must behave identically to the one in the detail view.
+
+          This one took neither `prefill` nor cleared it on close, so any control that pre-scoped
+          the dialog was silently ignored here — and a prefill set elsewhere could survive. Two
+          mount sites of one dialog, only one of them updated, is exactly how the drilldown drawer
+          shipped rendering a hardcoded empty payload from both of its call sites.
+        */}
         {runModalOpen && (
           <E2ERunModal
+            prefill={runModalPrefill}
             runs={runs}
-            onClose={() => setRunModalOpen(false)}
+            onClose={() => {
+              setRunModalOpen(false);
+              setRunModalPrefill(null);
+            }}
             onRun={() => {
               setRunModalOpen(false);
+              setRunModalPrefill(null);
               runsApi.reload();
             }}
           />
@@ -7999,8 +8012,35 @@ function Evals() {
         >
           {triageFlash ? '✓ copied' : '⧉ Triage with Claude'}
         </button>
+        {/*
+          ⛔ RE-RUN MEANS "THIS RUN AGAIN", NOT "EVERYTHING".
+
+          This opened the dialog with NO prefill, so the scope fell through to its default: Full
+          catalogue. On a 2-workflow run that turned a re-run into all 76 — a ~$3.41, ~19-minute
+          run, one click from a button labelled with the opposite intent, behind a confirm step
+          showing a figure the operator had no reason to doubt. Mark caught it on sight
+          (2026-08-16), in the first minutes of using the new dialog.
+
+          The estimate was honest and the dialog was working exactly as built; the defect was that
+          a control said one thing and seeded another. It now names precisely the workflows this run
+          executed, on the lane it executed them on. Row ids (`W-002:anthropic`) are reduced to the
+          ids the trigger accepts and de-duplicated, so a workflow that ran on two lanes is sent
+          once.
+        */}
         <button
-          onClick={() => setRunModalOpen(true)}
+          data-testid="rerun-this-run"
+          onClick={() => {
+            const ran = [...new Set(allWorkflows.map((w) => w.workflow_id.split(':')[0]!).filter(Boolean))];
+            // Nothing to name (a run that died before recording any workflow) ⇒ no prefill, so the
+            // dialog opens on its own default rather than on an empty selection that cannot start.
+            setRunModalPrefill(ran.length ? { workflows: ran, provider: activeRun?.provider ?? null } : null);
+            setRunModalOpen(true);
+          }}
+          title={
+            allWorkflows.length
+              ? `Re-run the ${new Set(allWorkflows.map((w) => w.workflow_id.split(':')[0])).size} workflow(s) this run executed`
+              : 'Open the run dialog'
+          }
           style={{
             padding: '5px 12px',
             border: '1px solid var(--ember-deep)',

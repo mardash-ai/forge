@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.40.2] - 2026-08-16
+
+### Fixed
+
+- **⛔ "Re-run" on a run scoped to the FULL CATALOGUE.** The detail view's `↻ Re-run` opened the
+  dialog with no prefill, so scope fell through to its default. On a 2-workflow run that made a
+  re-run into all 76 — ~$3.41 and ~19 minutes, one click from a button labelled with the opposite
+  intent, behind a confirm step showing a figure the operator had no reason to doubt. The estimate
+  was honest and the dialog worked as built; the defect was a control that said one thing and seeded
+  another. It now names exactly the workflows the run executed, on the lane it executed them on.
+- **Both mount sites of the run dialog now behave identically.** One took `prefill` and cleared it;
+  the other did neither, so any pre-scoped open was silently ignored there and a stale prefill could
+  survive. Two mounts of one dialog with only one updated is precisely how the drilldown drawer
+  shipped rendering a hardcoded empty payload from both of its call sites — the guard now counts the
+  mounts rather than trusting either.
+
+
 ## [1.40.1] - 2026-08-16
 
 ### Fixed
