@@ -4591,7 +4591,45 @@ interface E2ECatalogueEntry {
   tags: string[];
   suites: string[];
   family: string | null;
+  /** Present in the repo at the configured ref — "this workflow exists". */
+  in_main: boolean;
+  /**
+   * Present at the commit the running e2e-runner image was built from — "this can execute now".
+   *
+   * ⛔ TRI-STATE. `null` is undetermined (the job carries no HAT_COMMIT, or a read failed) and is
+   * rendered as selectable-with-a-caveat. Treating null as false would block every workflow the
+   * moment one job spec became unreadable — worse than the bug this replaced.
+   */
+  in_runner: boolean | null;
 }
+
+/** Where the catalogue came from, and whether the last attempt to refresh it worked. */
+interface E2ECatalogueSync {
+  repo: string | null;
+  main_ref: string | null;
+  main_commit: string | null;
+  runner_commit: string | null;
+  runner_version: string | null;
+  workflows_main: number | null;
+  workflows_runner: number | null;
+  synced_at: string | null;
+  error: string | null;
+}
+
+interface E2ECataloguePayload {
+  workflows: E2ECatalogueEntry[];
+  sync: E2ECatalogueSync | null;
+}
+
+/**
+ * Why a workflow cannot be picked right now. `null` means it can.
+ *
+ * ⛔ The two reasons have different remedies and must never be conflated: a provider mismatch is
+ * fixed by ticking the other provider, a missing-from-runner is fixed by rolling the runner image.
+ * Showing "openai only" for a workflow that is actually just newer than the deployed runner sends
+ * an operator to change the wrong thing.
+ */
+type BlockReason = 'provider' | 'not-in-runner' | null;
 
 interface E2ERunDetail {
   run: E2ERun;
@@ -6137,9 +6175,14 @@ function E2ERunModal({
   onRun: () => void;
 }) {
   // ── The catalogue ────────────────────────────────────────────────────────────────────────────
-  const catalogueApi = useApi<E2ECatalogueEntry[]>('/api/e2e/catalogue');
-  const cat: E2ECatalogueEntry[] = Array.isArray(catalogueApi.data) ? catalogueApi.data : [];
+  const catalogueApi = useApi<E2ECataloguePayload>('/api/e2e/catalogue');
+  const cat: E2ECatalogueEntry[] = catalogueApi.data?.workflows ?? [];
+  const sync = catalogueApi.data?.sync ?? null;
   const hasCatalogue = cat.length > 0;
+  /** Workflows that exist on main but are not in the deployed runner image. */
+  const aheadOfRunner = cat.filter((e) => e.in_main && e.in_runner === false);
+  /** True when we could not determine what the runner has — a real state, rendered honestly. */
+  const runnerUnknown = hasCatalogue && cat.every((e) => e.in_runner === null);
 
   // The most recent run with results, for the "last run's ..." presets. Presets sourced from real
   // rows are what finally replaces the per-row Re-run button, which set a "✓ queued" flag and
@@ -6173,18 +6216,38 @@ function E2ERunModal({
    * The single question the whole dialog turns on. `both` means cross-host — it needs both
    * providers selected, not either one.
    */
-  const canRun = (e: E2ECatalogueEntry): boolean => {
+  /** Does the PROVIDER selection allow this workflow? One of the two independent gates. */
+  const providerAllows = (e: E2ECatalogueEntry): boolean => {
     if (e.requires === 'both') return openai && anthropic;
     if (e.requires === 'any') return openai || anthropic;
     return e.requires === 'openai' ? openai : anthropic;
   };
-  const blocked = cat.filter((e) => !canRun(e));
+
+  /**
+   * Why this workflow cannot be picked — or null if it can.
+   *
+   * Order matters. `not-in-runner` is checked FIRST because it is the more actionable fact: a
+   * workflow the deployed image does not contain cannot run on any provider, so reporting a
+   * provider mismatch would send the operator to tick a checkbox that changes nothing.
+   *
+   * `in_runner === null` (undetermined) deliberately does NOT block. If we cannot tell what the
+   * runner has, refusing every run is a worse failure than letting the runner answer for itself.
+   */
+  const blockedBecause = (e: E2ECatalogueEntry): BlockReason => {
+    if (e.in_runner === false) return 'not-in-runner';
+    if (!providerAllows(e)) return 'provider';
+    return null;
+  };
+  const canRun = (e: E2ECatalogueEntry): boolean => blockedBecause(e) === null;
+  const blocked = cat.filter((e) => blockedBecause(e) === 'provider');
 
   // ── Scope (step 2) ───────────────────────────────────────────────────────────────────────────
   type Preset = 'full' | 'critical' | 'release' | 'rejected' | 'withheld' | 'custom';
   const [preset, setPreset] = useState<Preset>(prefill ? 'custom' : 'full');
   const [picked, setPicked] = useState<Set<string>>(new Set(prefill?.workflows ?? []));
   const [filter, setFilter] = useState('');
+  /** Drift view: show only what main has and the runner does not. */
+  const [showOnlyAhead, setShowOnlyAhead] = useState(false);
   const [suiteText, setSuiteText] = useState('');
   // The pre-catalogue fallback. Only reachable when nothing has published a catalogue yet.
   const [namedText, setNamedText] = useState(prefill ? prefill.workflows.join(', ') : '');
@@ -6348,6 +6411,7 @@ function E2ERunModal({
   ];
 
   const visible = cat.filter((e) => {
+    if (showOnlyAhead && !(e.in_main && e.in_runner === false)) return false;
     const q = filter.trim().toLowerCase();
     if (!q) return true;
     return (
@@ -6438,6 +6502,83 @@ function E2ERunModal({
         {/* ── Step 2 · Scope ─────────────────────────────────────────────────────────────────── */}
         <fieldset style={fs}>
           <legend style={lg}>{hasCatalogue ? 'Step 2 · Scope' : 'Scope'}</legend>
+
+          {/*
+            ⛔ PROVENANCE. The picker is only trustworthy if you can see where it came from.
+            Three states that must never share an appearance:
+              - never synced        → no strip, the fallback field explains itself
+              - synced, drift       → runner vs main, with the ahead-count
+              - LAST SYNC FAILED    → these rows are stale, and it says so rather than looking fresh
+            A two-days-stale image pin went unnoticed on 2026-08-16 precisely because nothing on
+            screen reported what was actually deployed.
+          */}
+          {sync && (
+            <div
+              data-testid="catalogue-provenance"
+              style={{
+                fontSize: 12,
+                marginBottom: 10,
+                padding: '7px 10px',
+                borderRadius: 6,
+                border: `1px solid ${sync.error ? 'var(--crit)' : 'var(--line)'}`,
+                background: sync.error ? 'var(--crit-wash)' : 'var(--bg-inset)',
+                color: sync.error ? 'var(--crit-text)' : 'var(--text-muted)',
+                lineHeight: 1.5,
+              }}
+            >
+              {sync.error ? (
+                <>
+                  <strong>Catalogue is stale</strong> — the last sync failed: {sync.error}. The list below is
+                  the previous snapshot
+                  {sync.synced_at ? ` from ${new Date(sync.synced_at).toLocaleString()}` : ''}.
+                </>
+              ) : (
+                <>
+                  <span className="mono">
+                    runner {sync.runner_version ? `v${sync.runner_version} ` : ''}
+                    {sync.runner_commit ? `@ ${sync.runner_commit.slice(0, 7)}` : '(commit unknown)'}
+                  </span>
+                  {' · '}
+                  <span className="mono">
+                    {sync.main_ref ?? 'main'} {sync.main_commit ? `@ ${sync.main_commit.slice(0, 7)}` : ''}
+                  </span>
+                  {aheadOfRunner.length > 0 && (
+                    <>
+                      {' · '}
+                      <button
+                        type="button"
+                        data-testid="drift-filter"
+                        onClick={() => {
+                          setPreset('custom');
+                          setFilter('');
+                          setShowOnlyAhead((v) => !v);
+                        }}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          padding: 0,
+                          font: 'inherit',
+                          color: 'var(--unknown-text)',
+                          cursor: 'pointer',
+                          textDecoration: 'underline',
+                        }}
+                      >
+                        {aheadOfRunner.length} not in the runner
+                      </button>
+                    </>
+                  )}
+                  {runnerUnknown && (
+                    <>
+                      {' · '}
+                      <span style={{ color: 'var(--warn-text)' }}>
+                        cannot tell what the runner has — nothing is blocked on that basis
+                      </span>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          )}
 
           {hasCatalogue ? (
             <>
@@ -6623,9 +6764,35 @@ function E2ERunModal({
                                 >
                                   {e.name}
                                 </span>
-                                {e.requires !== 'any' && (
+                                {/*
+                                  Two different blocks, two different remedies. "not in runner" is
+                                  fixed by rolling the image; a provider mismatch is fixed by
+                                  ticking a box. Labelling the first as the second sends an
+                                  operator to change the thing that cannot help.
+                                */}
+                                {e.in_runner === false ? (
                                   <span
                                     className="mono"
+                                    data-testid={`tag-${e.workflow_id}`}
+                                    title={`On ${sync?.main_ref ?? 'main'} but not in runner ${
+                                      sync?.runner_version ? `v${sync.runner_version}` : 'image'
+                                    } — roll the runner to include it`}
+                                    style={{
+                                      fontSize: 10,
+                                      padding: '1px 5px',
+                                      borderRadius: 4,
+                                      background: 'var(--unknown-wash)',
+                                      color: 'var(--unknown-text)',
+                                      border: '1px solid var(--unknown-line)',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    not in runner
+                                  </span>
+                                ) : e.requires !== 'any' ? (
+                                  <span
+                                    className="mono"
+                                    data-testid={`tag-${e.workflow_id}`}
                                     style={{
                                       fontSize: 10,
                                       padding: '1px 5px',
@@ -6639,7 +6806,7 @@ function E2ERunModal({
                                   >
                                     {e.requires === 'both' ? 'needs both' : `${e.requires} only`}
                                   </span>
-                                )}
+                                ) : null}
                               </label>
                             );
                           })}

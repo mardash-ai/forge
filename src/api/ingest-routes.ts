@@ -167,16 +167,16 @@ export interface RunProgressPayload {
   /** Size of the FULL catalogue, independent of this run's scope — the run modal prices against it. */
   catalogue_size?: number;
   /**
-   * The FULL catalogue — every workflow the run dialog may offer, with the provider requirement
-   * that decides whether it can be picked at all.
+   * The runner's own view of the catalogue.
    *
-   * ⛔ Without this the console knew only the catalogue's SIZE, so the dialog offered a free-text
-   * box that validated nothing. On 2026-08-16 a run was triggered with `W-001:blocked` — a store
-   * row id copied out of the results table, the only id the console ever displays — and the runner
-   * aborted the entire run in 16 seconds having executed nothing.
+   * ⛔ ACCEPTED AND IGNORED. It briefly populated the run picker, which made the runner the
+   * publisher of a fact it merely consumes: a workflow added to the repo was invisible until
+   * something ran, and running it required selecting it. The repo is the source of truth, read at
+   * two commits by the console's background sync.
    *
-   * Sent on the first and terminal push, not on every one. Replaces the stored catalogue wholesale;
-   * an EMPTY array is ignored rather than applied (see replaceCatalogue).
+   * The field stays in the contract so a runner already in flight does not start failing its
+   * report because a key became unwelcome. It is echoed back as `catalogue_received` and stored
+   * nowhere.
    */
   catalogue?: Array<{
     workflow_id: string;
@@ -454,24 +454,20 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
         });
       }
 
-      // ── The catalogue ────────────────────────────────────────────────────────
-      // Independent of this run: it is the list the run dialog may offer, republished on every run.
-      // Non-fatal, because a run's own results matter more than the picker's freshness — but it
-      // REPORTS, in the response and in the log. A catch that swallows its cause is how the ingest
-      // route once rejected every workflow row and still answered `updated: true`.
-      let catalogueWritten = 0;
-      let catalogueError: string | null = null;
-      if (Array.isArray(body.catalogue) && body.catalogue.length) {
-        try {
-          catalogueWritten = await backends.cpResults.replaceCatalogue(body.catalogue);
-        } catch (err) {
-          catalogueError = err instanceof Error ? err.message : String(err);
-          console.error(
-            `[ingest] catalogue replace failed for run ${body.run_id}: ${catalogueError} — the ` +
-              `run dialog will keep offering the previous catalogue`,
-          );
-        }
-      }
+      // ── The catalogue: NO LONGER WRITTEN HERE ────────────────────────────────
+      // The repo is the source of truth, read at two commits by the console's background sync
+      // (src/console/catalogue-sync.ts). This route used to replace the catalogue wholesale from
+      // whatever the runner happened to be carrying, which made the runner the publisher of a fact
+      // it merely consumes — and produced a dead end: a newly added workflow was invisible in the
+      // picker, and running it was the only way to make it appear, which required selecting it.
+      //
+      // ⛔ The write was removed in the SAME change that added the sync, deliberately. Two writers
+      // of one table, one of them stale by construction, is a race whose loser is whichever ran
+      // last — and it would have been invisible until a picker disagreed with the repo.
+      //
+      // `body.catalogue` is still ACCEPTED and ignored: an older runner in flight must not start
+      // failing its report because a field became unwelcome.
+      const catalogueReported = Array.isArray(body.catalogue) ? body.catalogue.length : 0;
 
       // ── Per-workflow rows ────────────────────────────────────────────────────
       // Best-effort and idempotent: a run reports repeatedly as it progresses, so the same workflow
@@ -699,9 +695,8 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
         children: childrenWritten,
         // Reported even when zero: "the picker is stale" must be visible in the response, not
         // inferable only from a log line nobody reads.
-        ...(Array.isArray(body.catalogue) && body.catalogue.length
-          ? { catalogue: catalogueWritten, ...(catalogueError ? { catalogue_error: catalogueError } : {}) }
-          : {}),
+        // Echoed so a runner can see its manifest arrived, without implying it was stored.
+        ...(catalogueReported ? { catalogue_received: catalogueReported } : {}),
         ...(childrenRejected > 0
           ? { children_rejected: childrenRejected, children_error: lastWorkflowError }
           : {}),

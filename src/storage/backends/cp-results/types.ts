@@ -294,8 +294,33 @@ export type CatalogueEntry = {
   tags: string[];
   suites: string[];
   family: string | null;
+  /** Present in the repo at the configured ref — "this workflow exists". */
+  in_main: boolean;
+  /**
+   * Present at the commit the running e2e-runner image was built from — "this can execute now".
+   *
+   * ⛔ TRI-STATE. `null` means undetermined (the job carries no HAT_COMMIT, or a read failed), and
+   * the picker treats that as selectable-with-a-caveat. Collapsing null into false would block
+   * every workflow the moment one job spec became unreadable.
+   */
+  in_runner: boolean | null;
   updated_at: Date;
 };
+
+/** What the last catalogue sync saw. One row; `error` set means it failed and the rows are stale. */
+export type CatalogueSync = {
+  repo: string | null;
+  main_ref: string | null;
+  main_commit: string | null;
+  runner_commit: string | null;
+  runner_version: string | null;
+  workflows_main: number | null;
+  workflows_runner: number | null;
+  synced_at: Date | null;
+  error: string | null;
+};
+
+export type CatalogueSyncInput = Partial<Omit<CatalogueSync, 'synced_at'>>;
 
 export type CatalogueEntryInput = {
   workflow_id: string;
@@ -304,6 +329,9 @@ export type CatalogueEntryInput = {
   tags?: string[];
   suites?: string[];
   family?: string | null;
+  in_main?: boolean;
+  /** Omit (undefined) for "undetermined" — deliberately distinct from false. */
+  in_runner?: boolean;
 };
 
 export interface CpResultsBackend {
@@ -317,6 +345,16 @@ export interface CpResultsBackend {
 
   /** Every offerable workflow, ordered by id. */
   listCatalogue(): Promise<CatalogueEntry[]>;
+
+  /** What the last sync saw; null when none has ever run. */
+  getCatalogueSync(): Promise<CatalogueSync | null>;
+
+  /** Record a sync outcome — including a failure, which must be visible rather than silent. */
+  setCatalogueSync(s: CatalogueSyncInput): Promise<void>;
+
+  /** Operator-owned settings only. Provisioned values come from the environment, read-only. */
+  getSettings(): Promise<Record<string, string>>;
+  setSetting(key: string, value: string, updatedBy: string): Promise<void>;
 
   // --- Run-level metrics --------------------------------------------------
 

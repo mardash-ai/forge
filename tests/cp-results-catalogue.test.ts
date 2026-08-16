@@ -48,7 +48,20 @@ describe.skipIf(!HAS_PG)('the catalogue store', () => {
       `SELECT column_name FROM information_schema.columns WHERE table_name = 'forge_cp_eval_catalogue'`,
     );
     const cols = r.rows.map((x) => x.column_name).sort();
-    expect(cols).toEqual(['family', 'name', 'requires', 'suites', 'tags', 'updated_at', 'workflow_id']);
+    // in_main / in_runner arrived with the repo-as-source-of-truth redesign. This assertion is a
+    // completeness check on the table shape, so it is SUPPOSED to fail when a column is added —
+    // that is how a column added to the CREATE block but not ALTERed gets noticed.
+    expect(cols).toEqual([
+      'family',
+      'in_main',
+      'in_runner',
+      'name',
+      'requires',
+      'suites',
+      'tags',
+      'updated_at',
+      'workflow_id',
+    ]);
   });
 
   it('stores a manifest and reads it back with its provider requirement intact', async () => {
@@ -139,5 +152,69 @@ describe.skipIf(!HAS_PG)('the catalogue store', () => {
       .catch(() => undefined);
     const after = await backend.listCatalogue();
     expect(after.map((r) => r.workflow_id)).toEqual(before.map((r) => r.workflow_id));
+  });
+});
+
+describe.skipIf(!HAS_PG)('⛔ upgrading a catalogue table that predates in_main / in_runner', () => {
+  // Production created this table at the v1.39.0 shape. CREATE TABLE IF NOT EXISTS is a NO-OP
+  // against it, columns included — so a column added only to the CREATE block ships as
+  // "column does not exist" on every write. That is exactly how `attempt` emptied every cassette
+  // on 2026-08-14, and the reason these arrive as ALTERs.
+  let pool: Pool;
+  let backend: PgCpResultsBackend;
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: process.env.FORGE_DB_URL });
+    await pool.query('DROP TABLE IF EXISTS forge_cp_eval_catalogue');
+    // The PREVIOUS shape, exactly as v1.39.0 created it.
+    await pool.query(`
+      CREATE TABLE forge_cp_eval_catalogue (
+        workflow_id text        PRIMARY KEY,
+        name        text        NOT NULL DEFAULT '',
+        requires    text        NOT NULL DEFAULT 'any'
+                      CHECK (requires IN ('any','openai','anthropic','both')),
+        tags        jsonb       NOT NULL DEFAULT '[]',
+        suites      jsonb       NOT NULL DEFAULT '[]',
+        family      text,
+        updated_at  timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(
+      `INSERT INTO forge_cp_eval_catalogue (workflow_id, name, requires) VALUES ('W-900','legacy','any')`,
+    );
+    await ensureCpResultsSchema(pool);
+    backend = new PgCpResultsBackend(pool);
+  });
+
+  afterAll(async () => {
+    await pool?.query('DELETE FROM forge_cp_eval_catalogue').catch(() => undefined);
+    await pool?.end().catch(() => undefined);
+  });
+
+  it('adds both columns to the existing table', async () => {
+    const r = await pool.query(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'forge_cp_eval_catalogue' AND column_name IN ('in_main','in_runner')`,
+    );
+    expect(r.rows.map((x) => x.column_name).sort()).toEqual(['in_main', 'in_runner']);
+  });
+
+  it('a row written before the columns existed reads as in_main=true, in_runner=NULL', async () => {
+    // The defaults must leave legacy rows SELECTABLE. in_runner defaulting to false would have
+    // blocked every pre-existing workflow the moment this shipped.
+    const rows = await backend.listCatalogue();
+    const legacy = rows.find((x) => x.workflow_id === 'W-900');
+    expect(legacy?.in_main).toBe(true);
+    expect(legacy?.in_runner).toBeNull();
+  });
+
+  it('⛔ a write with the new columns succeeds against the upgraded table', async () => {
+    // The thing production actually does. This fails with the real Postgres error, not a mock's.
+    await backend.replaceCatalogue([
+      { workflow_id: 'W-901', name: 'new', requires: 'any', in_main: true, in_runner: false },
+    ]);
+    const rows = await backend.listCatalogue();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.in_runner).toBe(false);
   });
 });

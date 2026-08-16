@@ -41,7 +41,29 @@ const SERVER_CODE = codeOnly(SERVER);
 
 describe('the run dialog offers choices instead of a text box', () => {
   it('⛔ fetches the catalogue rather than inventing one', () => {
-    expect(APP_CODE).toMatch(/useApi<E2ECatalogueEntry\[\]>\('\/api\/e2e\/catalogue'\)/);
+    expect(APP_CODE).toMatch(/useApi<E2ECataloguePayload>\('\/api\/e2e\/catalogue'\)/);
+  });
+
+  it('⛔ blocks for the RIGHT reason — runner-missing is not a provider mismatch', () => {
+    // The two have different remedies: roll the image vs tick a checkbox. Reporting one as the
+    // other sends an operator to change the thing that cannot help.
+    expect(APP_CODE).toMatch(/const blockedBecause = /);
+    expect(APP_CODE).toMatch(/if \(e\.in_runner === false\) return 'not-in-runner';/);
+    // Order matters: not-in-runner is checked first, because it cannot be fixed by any provider.
+    expect(APP_CODE.indexOf("return 'not-in-runner'")).toBeLessThan(APP_CODE.indexOf("return 'provider'"));
+  });
+
+  it('⛔ an UNDETERMINED runner state does not block anything', () => {
+    // in_runner === null means we could not tell. Refusing every run on that basis would be a
+    // worse failure than the one this replaced — one unreadable job spec bricking the console.
+    expect(APP_CODE).not.toMatch(/in_runner !== true/);
+    expect(APP_CODE).toMatch(/e\.in_runner === false/);
+  });
+
+  it('shows where the catalogue came from, and says so when the sync FAILED', () => {
+    // Three states that must never share an appearance: never-synced, synced, sync-failed.
+    expect(APP_CODE).toMatch(/data-testid="catalogue-provenance"/);
+    expect(APP_CODE).toMatch(/Catalogue is stale/);
   });
 
   it("⛔ decides selectability from `requires`, the harness's own answer", () => {

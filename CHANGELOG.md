@@ -1,5 +1,53 @@
 # Changelog
 
+## [1.40.0] - 2026-08-16
+
+### Changed
+
+- **⛔ The repo is now the source of truth for the run picker, not run history.** The catalogue is
+  read from forge-hat's committed `catalogue.json` at TWO commits and the answers are kept apart:
+  `in_main` ("this workflow exists", from the configured ref) and `in_runner` ("this can execute
+  right now", from the commit the deployed e2e-runner image was built from). They differ whenever
+  the runner is behind main — the normal state right after someone adds a workflow.
+  - A workflow on main but not in the runner is **blocked-and-explained** (`not in runner`,
+    disabled, with a distinct tag), not absent. Blocking it as a *provider* mismatch would send an
+    operator to tick a checkbox that cannot help; the remedy is to roll the runner.
+  - **`in_runner` is TRI-STATE.** `null` means undetermined and does NOT block: if we cannot tell
+    what the runner has, refusing every run is worse than letting the runner answer for itself.
+  - A **provenance strip** shows `runner v0.35.0 @ abc1234 · main @ def5678 · N not in the runner`,
+    with the count clickable to filter to exactly those. Nothing on screen reported the deployed
+    version before, which is how a two-days-stale image pin went unnoticed on 2026-08-16.
+  - `POST /api/e2e/runs` answers `400 not_in_runner` naming the runner version and the remedy —
+    distinct from `unknown_workflows`, because the workflow is not unknown.
+
+### Fixed
+
+- **⛔ The dead end is gone.** A newly added workflow used to be invisible in the picker, and
+  running it was the only way to make it appear — which required selecting it. It now appears
+  within one sync, blocked with a stated reason and a stated fix.
+
+### Added
+
+- `forge_cp_catalogue_sync` — both commits, counts, last sync time, and last error, so
+  never-synced / synced-and-empty / sync-FAILED never share an appearance. A failed sync keeps the
+  previous catalogue and says it is stale; a GitHub outage must not empty the picker.
+- `forge_cp_settings` + `GET/POST /api/settings` — provisioned values (project, region, job, auth
+  mode) read-only with provenance; secrets reported as **shape, never value**
+  (`set · 45 bytes · ⚠ trailing whitespace`), which is precisely the report that would have made
+  the automation token's guaranteed-401 visible. Operator-owned keys (`catalogue.repo`,
+  `catalogue.ref`, `catalogue.sync_interval_seconds`) are audited writes, each with a working
+  default — the pane changes a default, it never supplies something missing.
+- `POST /api/e2e/catalogue/sync` to force a refresh; background interval plus an opportunistic,
+  floored refresh on read, because Cloud Run can scale the console to zero.
+
+### Removed
+
+- The ingest route no longer writes the catalogue. The field is still accepted and echoed as
+  `catalogue_received` so a runner in flight does not start failing, but it is stored nowhere. The
+  write was removed in the SAME change that added the sync — two writers of one table, one stale by
+  construction, is a race whose loser is whichever ran last.
+
+
 ## [1.39.0] - 2026-08-16
 
 ### Added

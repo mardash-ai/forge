@@ -19,6 +19,8 @@ import type {
   TenantLeaseInput,
   CatalogueEntry,
   CatalogueEntryInput,
+  CatalogueSync,
+  CatalogueSyncInput,
 } from './types';
 
 // Control-plane-only Postgres results store.
@@ -330,6 +332,62 @@ export async function ensureCpResultsSchema(pool: Pool): Promise<void> {
     -- CREATE TABLE IF NOT EXISTS is a no-op against a database where the table already exists, so a
     -- column added only above ships as "column does not exist" on every write in production. That
     -- is not hypothetical — it is exactly how the attempt column emptied every cassette 2026-08-14.
+
+    -- ⛔ ALTERs, not edits to the CREATE above. This table already exists in production (v1.39.0),
+    -- and CREATE TABLE IF NOT EXISTS is a no-op against an existing table — columns included. A
+    -- column added only to the CREATE block ships as "column does not exist" on every write.
+    --
+    -- in_main / in_runner answer two DIFFERENT questions, and collapsing them is the bug this
+    -- redesign exists to fix:
+    --   in_main   = the workflow exists in the repo at the configured ref
+    --   in_runner = the workflow exists at the commit the running e2e-runner image was built from
+    -- They differ whenever the runner is behind main, which is the normal state right after
+    -- someone adds a workflow.
+    --
+    -- in_runner is deliberately TRI-STATE. NULL means "we could not determine what the runner
+    -- has" (no HAT_COMMIT on the job, or the job/GitHub read failed). Collapsing NULL into false
+    -- would block every workflow the moment one job spec became unreadable — a worse failure than
+    -- the one being fixed. The picker treats NULL as selectable-with-a-caveat.
+    ALTER TABLE forge_cp_eval_catalogue
+      ADD COLUMN IF NOT EXISTS in_main   boolean NOT NULL DEFAULT true;
+    ALTER TABLE forge_cp_eval_catalogue
+      ADD COLUMN IF NOT EXISTS in_runner boolean;
+
+    -- -----------------------------------------------------------------------
+    -- One row. What the last catalogue sync saw, and whether it worked.
+    --
+    -- Exists so the UI can tell three states apart that must never share an appearance:
+    -- never synced / synced-and-empty / sync failed. The last one keeping the PREVIOUS catalogue
+    -- on screen is deliberate: a GitHub outage must not empty the picker.
+    -- -----------------------------------------------------------------------
+    CREATE TABLE IF NOT EXISTS forge_cp_catalogue_sync (
+      id               smallint    PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+      repo             text,
+      main_ref         text,
+      main_commit      text,
+      runner_commit    text,
+      runner_version   text,
+      workflows_main   int,
+      workflows_runner int,
+      synced_at        timestamptz,
+      error            text
+    );
+
+    -- -----------------------------------------------------------------------
+    -- Operator-owned settings. Provisioned values (project, region, job name, secrets) are NOT
+    -- here — they come from the environment and are read-only by construction. Two sources of
+    -- truth for one setting is a contract with two halves wearing a friendly UI.
+    --
+    -- ⛔ Every key here must have a working DEFAULT in code. This table changes a default; it must
+    -- never be the thing that makes the product work, or "visit settings first" becomes the fix —
+    -- which is the same defect as the free-text field it replaced.
+    -- -----------------------------------------------------------------------
+    CREATE TABLE IF NOT EXISTS forge_cp_settings (
+      key        text        PRIMARY KEY,
+      value      text        NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      updated_by text
+    );
 
     CREATE TABLE IF NOT EXISTS forge_cp_migrations (
       name       text        PRIMARY KEY,
@@ -1027,11 +1085,13 @@ export class PgCpResultsBackend implements CpResultsBackend {
       await client.query('BEGIN');
       for (const e of entries) {
         await client.query(
-          `INSERT INTO forge_cp_eval_catalogue (workflow_id, name, requires, tags, suites, family, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6, now())
+          `INSERT INTO forge_cp_eval_catalogue
+             (workflow_id, name, requires, tags, suites, family, in_main, in_runner, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now())
            ON CONFLICT (workflow_id) DO UPDATE SET
              name = EXCLUDED.name, requires = EXCLUDED.requires, tags = EXCLUDED.tags,
-             suites = EXCLUDED.suites, family = EXCLUDED.family, updated_at = now()`,
+             suites = EXCLUDED.suites, family = EXCLUDED.family,
+             in_main = EXCLUDED.in_main, in_runner = EXCLUDED.in_runner, updated_at = now()`,
           [
             e.workflow_id,
             e.name ?? '',
@@ -1039,6 +1099,10 @@ export class PgCpResultsBackend implements CpResultsBackend {
             JSON.stringify(e.tags ?? []),
             JSON.stringify(e.suites ?? []),
             e.family ?? null,
+            e.in_main ?? true,
+            // undefined => NULL => "we could not determine what the runner has". Distinct from
+            // false, which means "determined, and it is NOT there".
+            e.in_runner === undefined ? null : e.in_runner,
           ],
         );
       }
@@ -1059,10 +1123,57 @@ export class PgCpResultsBackend implements CpResultsBackend {
   /** The catalogue, ordered for display. */
   async listCatalogue(): Promise<CatalogueEntry[]> {
     const r = await this.pool.query(
-      `SELECT workflow_id, name, requires, tags, suites, family, updated_at
+      `SELECT workflow_id, name, requires, tags, suites, family, in_main, in_runner, updated_at
          FROM forge_cp_eval_catalogue ORDER BY workflow_id`,
     );
     return r.rows as CatalogueEntry[];
+  }
+
+  /** What the last sync saw. Null when none has ever run — distinct from one that ran and failed. */
+  async getCatalogueSync(): Promise<CatalogueSync | null> {
+    const r = await this.pool.query(`SELECT * FROM forge_cp_catalogue_sync WHERE id = 1`);
+    return (r.rows[0] as CatalogueSync | undefined) ?? null;
+  }
+
+  /** Record the outcome of a sync — including a failed one, which must be visible, not silent. */
+  async setCatalogueSync(s: CatalogueSyncInput): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO forge_cp_catalogue_sync
+         (id, repo, main_ref, main_commit, runner_commit, runner_version,
+          workflows_main, workflows_runner, synced_at, error)
+       VALUES (1,$1,$2,$3,$4,$5,$6,$7, now(), $8)
+       ON CONFLICT (id) DO UPDATE SET
+         repo = EXCLUDED.repo, main_ref = EXCLUDED.main_ref, main_commit = EXCLUDED.main_commit,
+         runner_commit = EXCLUDED.runner_commit, runner_version = EXCLUDED.runner_version,
+         workflows_main = EXCLUDED.workflows_main, workflows_runner = EXCLUDED.workflows_runner,
+         synced_at = now(), error = EXCLUDED.error`,
+      [
+        s.repo ?? null,
+        s.main_ref ?? null,
+        s.main_commit ?? null,
+        s.runner_commit ?? null,
+        s.runner_version ?? null,
+        s.workflows_main ?? null,
+        s.workflows_runner ?? null,
+        s.error ?? null,
+      ],
+    );
+  }
+
+  /** Operator-owned settings. Provisioned values never live here — see the schema comment. */
+  async getSettings(): Promise<Record<string, string>> {
+    const r = await this.pool.query(`SELECT key, value FROM forge_cp_settings`);
+    return Object.fromEntries(r.rows.map((x: { key: string; value: string }) => [x.key, x.value]));
+  }
+
+  async setSetting(key: string, value: string, updatedBy: string): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO forge_cp_settings (key, value, updated_at, updated_by)
+       VALUES ($1,$2, now(), $3)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(),
+                                       updated_by = EXCLUDED.updated_by`,
+      [key, value, updatedBy],
+    );
   }
 
   async __truncateAllForTests(): Promise<void> {

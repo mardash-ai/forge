@@ -20,6 +20,7 @@ import { join, normalize, extname } from 'node:path';
 import { timingSafeEqual, createHmac, randomBytes, createVerify, createPublicKey } from 'node:crypto';
 
 import { envelope, type Finding, type MetricIntent, type QuotaGauge, type Revision } from './domain';
+import { syncCatalogue, CATALOGUE_DEFAULTS, MIN_REFRESH_SECONDS } from './catalogue-sync';
 import { registerIngestRoutes } from '../api/ingest-routes';
 import { cancelExecution } from '../plugins/console-gcp/jobs';
 import {
@@ -538,6 +539,12 @@ export const WRITE_ROUTES = [
   '/api/e2e/runs/:run_id',
   // Stopping a run is a spend control and an audited write — who killed which run, and when.
   '/api/e2e/runs/:run_id/stop',
+  // ── Forcing a catalogue sync. Refreshes a cache from the repo; changes no stored fact of its
+  // own, but it is a POST and every mutating verb is declared here by construction.
+  '/api/e2e/catalogue/sync',
+  // ── Operator-owned settings. Which repo the catalogue is read from decides what the run dialog
+  // will offer, so it is audited like any other write: who changed it, when, and to what.
+  '/api/settings',
   // ── The Data section. Every one of these changes a real account or a real tenant's data, so
   // every one of them is audited BY CONSTRUCTION: this list is what the guard test checks a
   // mutating route against, and an unlisted POST/DELETE fails the build rather than shipping.
@@ -1817,6 +1824,66 @@ export function buildServer(
     },
   };
 
+  // ── Catalogue sync driver ──────────────────────────────────────────────────────────────────
+  /** Guards against overlapping syncs and against a busy screen hammering GitHub. */
+  let catalogueSyncing = false;
+  let lastCatalogueSyncAt = 0;
+
+  const catalogueSettings = async (store: PgCpResultsBackend) => {
+    // Defaults that WORK. Settings change them; they never supply something missing — a picker
+    // that needs someone to visit a settings page first is the same defect as the text field it
+    // replaced, in a new location.
+    let s: Record<string, string> = {};
+    try {
+      s = await store.getSettings();
+    } catch {
+      /* settings table unreachable ⇒ defaults, not a failure */
+    }
+    return {
+      repo: s['catalogue.repo'] || CATALOGUE_DEFAULTS.repo,
+      ref: s['catalogue.ref'] || CATALOGUE_DEFAULTS.ref,
+      intervalSeconds: Number(s['catalogue.sync_interval_seconds']) || CATALOGUE_DEFAULTS.intervalSeconds,
+    };
+  };
+
+  const runCatalogueSync = async (store: PgCpResultsBackend) => {
+    if (catalogueSyncing) return { ok: false, error: 'a sync is already running' };
+    catalogueSyncing = true;
+    try {
+      const cfg = await catalogueSettings(store);
+      const result = await syncCatalogue({
+        store,
+        token: process.env.CONSOLE_GITHUB_TOKEN ?? '',
+        repo: cfg.repo,
+        ref: cfg.ref,
+        project: process.env.CONSOLE_GCP_PROJECT ?? process.env.GCP_PROJECT ?? 'dorinda-prod',
+        region: process.env.CONSOLE_GCP_REGION ?? 'us-east1',
+        job: process.env.CONSOLE_E2E_JOB || 'e2e-runner',
+      });
+      lastCatalogueSyncAt = Date.now();
+      return result;
+    } finally {
+      catalogueSyncing = false;
+    }
+  };
+
+  /** Refresh when the snapshot is older than the configured interval. Never awaited by a request. */
+  const refreshCatalogueIfStale = async (store: PgCpResultsBackend): Promise<void> => {
+    try {
+      const sinceLocal = (Date.now() - lastCatalogueSyncAt) / 1000;
+      // MIN_REFRESH_SECONDS is the floor regardless of configuration — a misconfigured interval of
+      // 0 would otherwise turn every page poll into a pair of GitHub requests.
+      if (sinceLocal < MIN_REFRESH_SECONDS) return;
+      const cfg = await catalogueSettings(store);
+      const sync = await store.getCatalogueSync();
+      const age = sync?.synced_at ? (Date.now() - new Date(sync.synced_at).getTime()) / 1000 : Infinity;
+      if (age < cfg.intervalSeconds) return;
+      await runCatalogueSync(store);
+    } catch (err) {
+      console.error(`[catalogue-sync] opportunistic refresh failed: ${String(err)}`);
+    }
+  };
+
   app.get('/api/e2e/runs', async (req, reply) => {
     const store = await evalStoreGetter();
     if (!store) return reply.code(501).send(NOT_CONFIGURED);
@@ -1832,17 +1899,117 @@ export function buildServer(
   });
 
   /**
-   * The catalogue the run dialog offers — every workflow, with the provider requirement that
-   * decides whether it can be picked.
+   * The catalogue the run dialog offers, plus the provenance an operator needs to trust it.
    *
-   * Published by forge-hat on every run, so it refreshes without a deploy. An EMPTY array is a
-   * real answer meaning "no run has published a catalogue yet"; the dialog falls back to its text
-   * field rather than presenting an empty picker as though the catalogue were empty.
+   * Rows carry `in_main` (it exists) and `in_runner` (it can execute now). `sync` carries both
+   * commits, the runner version, when it last synced, and whether the last attempt FAILED. Those
+   * three states must never share an appearance on screen: never-synced, synced-and-empty, and
+   * sync-failed-so-these-rows-are-stale are different facts with different remedies.
+   *
+   * The refresh is opportunistic and NEVER blocks the response — Cloud Run can scale the console
+   * to zero, so a background interval alone is not a guarantee that any sync ever runs.
    */
   app.get('/api/e2e/catalogue', async (_req, reply) => {
     const store = await evalStoreGetter();
     if (!store) return reply.code(501).send(NOT_CONFIGURED);
-    return envelope(await store.listCatalogue());
+    void refreshCatalogueIfStale(store);
+    const [workflows, sync] = await Promise.all([store.listCatalogue(), store.getCatalogueSync()]);
+    return envelope({ workflows, sync });
+  });
+
+  /** Force a sync now. Refreshes a cache from the repo; stores no fact of its own. */
+  app.post('/api/e2e/catalogue/sync', async (_req, reply) => {
+    const store = await evalStoreGetter();
+    if (!store) return reply.code(501).send(NOT_CONFIGURED);
+    const result = await runCatalogueSync(store);
+    return envelope(result);
+  });
+
+  /**
+   * Settings — the split that keeps this safe.
+   *
+   * `provisioned` is READ-ONLY and comes from the environment (Terraform / Secret Manager). It is
+   * displayed so an operator can see what the console is actually pointed at without reaching for
+   * gcloud — including the runner's pinned identity, which is how a two-days-stale image pin went
+   * unnoticed on 2026-08-16.
+   *
+   * ⛔ Secrets report SHAPE, never value. `set · 45 bytes · trailing newline` is exactly the
+   * report that would have made the automation token's guaranteed-401 visible instead of invisible.
+   *
+   * `settings` is the small operator-owned set, each with a working default in code. Nothing here
+   * may be required for the product to function — a picker that needs someone to visit this screen
+   * first is the same defect as the free-text field it replaced.
+   */
+  app.get('/api/settings', async (_req, reply) => {
+    const store = await evalStoreGetter();
+    const stored: Record<string, string> = store
+      ? await store.getSettings().catch(() => ({}) as Record<string, string>)
+      : {};
+    const shape = (name: string): string => {
+      const v = process.env[name];
+      if (!v) return 'not set';
+      const notes = [`${v.length} bytes`];
+      if (/\s$/.test(v)) notes.push('⚠ trailing whitespace');
+      return `set · ${notes.join(' · ')}`;
+    };
+    return envelope({
+      provisioned: {
+        project: process.env.CONSOLE_GCP_PROJECT ?? process.env.GCP_PROJECT ?? null,
+        region: process.env.CONSOLE_GCP_REGION ?? 'us-east1',
+        e2e_job: process.env.CONSOLE_E2E_JOB ?? null,
+        auth_mode: process.env.CONSOLE_GOOGLE_CLIENT_ID ? 'google-oidc' : 'closed',
+      },
+      secrets: {
+        CONSOLE_GITHUB_TOKEN: shape('CONSOLE_GITHUB_TOKEN'),
+        CONSOLE_AUTOMATION_TOKEN: shape('CONSOLE_AUTOMATION_TOKEN'),
+      },
+      settings: {
+        'catalogue.repo': stored['catalogue.repo'] ?? CATALOGUE_DEFAULTS.repo,
+        'catalogue.ref': stored['catalogue.ref'] ?? CATALOGUE_DEFAULTS.ref,
+        'catalogue.sync_interval_seconds':
+          stored['catalogue.sync_interval_seconds'] ?? String(CATALOGUE_DEFAULTS.intervalSeconds),
+      },
+      defaults: {
+        'catalogue.repo': CATALOGUE_DEFAULTS.repo,
+        'catalogue.ref': CATALOGUE_DEFAULTS.ref,
+        'catalogue.sync_interval_seconds': String(CATALOGUE_DEFAULTS.intervalSeconds),
+      },
+    });
+  });
+
+  /** Only the writable keys. An unknown key is refused rather than silently stored and ignored. */
+  const WRITABLE_SETTINGS = new Set(['catalogue.repo', 'catalogue.ref', 'catalogue.sync_interval_seconds']);
+
+  app.post('/api/settings', async (req, reply) => {
+    const store = await evalStoreGetter();
+    if (!store) return reply.code(501).send(NOT_CONFIGURED);
+    const body = req.body as { key?: string; value?: string };
+    const key = String(body?.key ?? '');
+    const value = String(body?.value ?? '');
+    if (!WRITABLE_SETTINGS.has(key)) {
+      return reply.code(400).send({
+        error: {
+          code: 'not_writable',
+          message:
+            `"${key}" is not an operator-owned setting. Provisioned values come from the ` +
+            `environment and are read-only here — changing one in two places is how they drift.`,
+        },
+      });
+    }
+    if (!value.trim()) {
+      // Clearing to empty would silently fall back to the default while the screen showed blank.
+      return reply.code(400).send({
+        error: { code: 'empty_value', message: `${key} cannot be empty — omit it to use the default` },
+      });
+    }
+    const actor = actorOf(req);
+    await audited(actor, 'settings.set', key, async () => {
+      await store.setSetting(key, value.trim(), actor);
+      return { key, value: value.trim() };
+    });
+    // A repo/ref change must take effect now, not in five minutes.
+    if (key === 'catalogue.repo' || key === 'catalogue.ref') void runCatalogueSync(store);
+    return envelope({ key, value: value.trim() });
   });
 
   app.get('/api/e2e/runs/:run_id', async (req, reply) => {
@@ -1959,10 +2126,18 @@ export function buildServer(
     ];
     if (normalisedWorkflows.length) {
       let known: Set<string> | null = null;
+      let notRunnable = new Set<string>();
+      let catalogueSyncRow: Promise<Awaited<ReturnType<PgCpResultsBackend['getCatalogueSync']>>> =
+        Promise.resolve(null);
       try {
         const store = await evalStoreGetter();
         const cat = store ? await store.listCatalogue() : [];
-        known = cat.length ? new Set(cat.map((c: { workflow_id: string }) => c.workflow_id)) : null;
+        known = cat.length ? new Set(cat.map((c) => c.workflow_id)) : null;
+        // in_runner === false means DETERMINED and absent. `null` (undetermined) must not block:
+        // if we cannot tell what the runner has, refusing every run is worse than letting the
+        // runner answer for itself.
+        notRunnable = new Set(cat.filter((c) => c.in_runner === false).map((c) => c.workflow_id));
+        catalogueSyncRow = store ? store.getCatalogueSync() : Promise.resolve(null);
       } catch {
         known = null; // Unavailable ⇒ do not block a run on the picker's data source.
       }
@@ -1976,6 +2151,31 @@ export function buildServer(
                 `not in the catalogue: ${unknown.join(', ')} — nothing was started. ` +
                 `Pick workflows from the list rather than typing ids.`,
               unknown,
+            },
+          });
+        }
+        // ⛔ Known to the repo, but NOT in the image the runner is pinned to. The runner would
+        // exit 2 on the whole selection. Refusing here costs a form error; letting it through
+        // costs a job execution and a dead run diagnosed from `gcloud logging read`.
+        //
+        // The message names the REMEDY. "unknown workflow" would be wrong twice over: the
+        // workflow is not unknown, and the fix is to roll the runner, not to correct the id.
+        const notInRunner = normalisedWorkflows.filter((w) => notRunnable.has(w));
+        if (notInRunner.length) {
+          const sync = await catalogueSyncRow;
+          const runner = sync?.runner_version
+            ? `runner v${sync.runner_version}${sync.runner_commit ? ` @ ${sync.runner_commit.slice(0, 7)}` : ''}`
+            : 'the deployed runner image';
+          return reply.code(400).send({
+            error: {
+              code: 'not_in_runner',
+              message:
+                `${notInRunner.join(', ')} ${notInRunner.length === 1 ? 'exists' : 'exist'} in the ` +
+                `repo but not in ${runner} — nothing was started. Roll the runner to include ` +
+                `${notInRunner.length === 1 ? 'it' : 'them'}.`,
+              not_in_runner: notInRunner,
+              runner_version: sync?.runner_version ?? null,
+              runner_commit: sync?.runner_commit ?? null,
             },
           });
         }

@@ -171,7 +171,7 @@ describe('the run modal prices the CATALOGUE, not the last run', () => {
     // `catalogue_size` number riding on a run's meta. The property is unchanged, so the guard
     // follows it: the count comes from the catalogue, never from run history.
     const body = withoutFixtures(APP);
-    expect(body).toMatch(/useApi<E2ECatalogueEntry\[\]>\('\/api\/e2e\/catalogue'\)/);
+    expect(body).toMatch(/useApi<E2ECataloguePayload>\('\/api\/e2e\/catalogue'\)/);
     // What "Full catalogue" actually promises: counted from those rows and narrowed to what the
     // selected provider can run, so the figure above the confirm checkbox is what will happen.
     expect(body).toMatch(/const fullRunnable = cat\.filter\(\(e\) => canRun\(e\)\)\.length/);
