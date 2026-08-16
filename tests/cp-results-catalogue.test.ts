@@ -53,9 +53,30 @@ describe.skipIf(!HAS_PG)('the catalogue store', () => {
 
   it('stores a manifest and reads it back with its provider requirement intact', async () => {
     const written = await backend.replaceCatalogue([
-      { workflow_id: 'W-002', name: 'Memory is grounded', requires: 'any', tags: ['p0'], suites: ['full', 'critical'], family: 'W-0xx' },
-      { workflow_id: 'W-001', name: 'Session binds', requires: 'openai', tags: ['p0'], suites: ['full'], family: 'W-0xx' },
-      { workflow_id: 'W-210', name: 'Phone brain, laptop brain', requires: 'both', tags: [], suites: ['full'], family: 'W-2xx' },
+      {
+        workflow_id: 'W-002',
+        name: 'Memory is grounded',
+        requires: 'any',
+        tags: ['p0'],
+        suites: ['full', 'critical'],
+        family: 'W-0xx',
+      },
+      {
+        workflow_id: 'W-001',
+        name: 'Session binds',
+        requires: 'openai',
+        tags: ['p0'],
+        suites: ['full'],
+        family: 'W-0xx',
+      },
+      {
+        workflow_id: 'W-210',
+        name: 'Phone brain, laptop brain',
+        requires: 'both',
+        tags: [],
+        suites: ['full'],
+        family: 'W-2xx',
+      },
     ]);
     expect(written).toBe(3);
 

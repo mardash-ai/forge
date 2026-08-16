@@ -25,10 +25,7 @@ import {
 import { ExternalGlyph, LogoMark, RAIL_ICON, StatusGlyph, SvgDefs, Wordmark } from './ui/icons';
 import { duration, relative, useApi } from './lib/api';
 import { buildE2eTriagePrompt } from './lib/triage-prompt';
-import {
-  fmtE2ePctOfCatalogue,
-  fmtE2ePctOfRunnable,
-} from './lib/e2e-format';
+import { fmtE2ePctOfCatalogue, fmtE2ePctOfRunnable } from './lib/e2e-format';
 import { fixtureForSelection } from './lib/seed-editor';
 import { FIXTURES } from './lib/fixtures';
 
@@ -6152,7 +6149,12 @@ function E2ERunModal({
   const lastWorkflows: E2EWorkflow[] = lastDetail.data?.all_workflows ?? [];
   /** Bare ids from a previous run's rows — the labelled composite is stripped HERE, at the source. */
   const bareIdsWhere = (pred: (w: E2EWorkflow) => boolean): string[] => [
-    ...new Set(lastWorkflows.filter(pred).map((w) => w.workflow_id.split(':')[0]!).filter(Boolean)),
+    ...new Set(
+      lastWorkflows
+        .filter(pred)
+        .map((w) => w.workflow_id.split(':')[0]!)
+        .filter(Boolean),
+    ),
   ];
   const lastRejected = bareIdsWhere((w) => bucketOf(w) === 'fail');
   const lastWithheld = bareIdsWhere((w) => bucketOf(w) === 'withheld');
@@ -6231,7 +6233,11 @@ function E2ERunModal({
   );
   const centsPerWorkflow: number | null = priced ? priced.spend_cents / priced.workflows_attempted : null;
   const timed = runs.find(
-    (r) => r.started_at && r.completed_at && typeof r.workflows_attempted === 'number' && r.workflows_attempted > 0,
+    (r) =>
+      r.started_at &&
+      r.completed_at &&
+      typeof r.workflows_attempted === 'number' &&
+      r.workflows_attempted > 0,
   );
   const secsPerWorkflow: number | null = timed
     ? (new Date(timed.completed_at as string).getTime() - new Date(timed.started_at).getTime()) /
@@ -6240,10 +6246,15 @@ function E2ERunModal({
     : null;
 
   const namedFallbackCount =
-    namedText.split(',').map((s) => s.trim()).filter(Boolean).length || 0;
+    namedText
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean).length || 0;
   const effectiveCount: number | null = hasCatalogue ? selectionCount : namedFallbackCount || null;
   const costCents: number | null =
-    centsPerWorkflow !== null && effectiveCount !== null ? Math.round(centsPerWorkflow * effectiveCount) : null;
+    centsPerWorkflow !== null && effectiveCount !== null
+      ? Math.round(centsPerWorkflow * effectiveCount)
+      : null;
   const estimateKnown = costCents !== null;
 
   const nothingSelected = hasCatalogue
@@ -6267,7 +6278,11 @@ function E2ERunModal({
         reqBody.workflows = runnableIds;
       } else if (hasCatalogue) reqBody.workflows = runnableIds;
       else if (suiteText.trim()) reqBody.suite = suiteText.trim();
-      else reqBody.workflows = namedText.split(',').map((s) => s.trim()).filter(Boolean);
+      else
+        reqBody.workflows = namedText
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
 
       await mutate<{ run_id: string; state: string }>('/api/e2e/runs', reqBody);
       onRun();
@@ -6291,12 +6306,32 @@ function E2ERunModal({
     color: 'var(--text-muted)',
     padding: '0 4px',
   };
-  const chk: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, padding: '3px 0' };
+  const chk: React.CSSProperties = {
+    display: 'flex',
+    gap: 8,
+    alignItems: 'center',
+    fontSize: 14,
+    padding: '3px 0',
+  };
 
   const presetTiles: Array<{ key: Preset; title: string; sub: string; disabled?: boolean }> = [
-    { key: 'full', title: 'Full catalogue', sub: hasCatalogue ? `${fullRunnable} runnable` : 'the whole suite' },
-    { key: 'critical', title: 'Critical', sub: `${presetIds('critical').length} workflows`, disabled: !hasCatalogue },
-    { key: 'release', title: 'Release gate', sub: `${presetIds('release').length} workflows`, disabled: !hasCatalogue },
+    {
+      key: 'full',
+      title: 'Full catalogue',
+      sub: hasCatalogue ? `${fullRunnable} runnable` : 'the whole suite',
+    },
+    {
+      key: 'critical',
+      title: 'Critical',
+      sub: `${presetIds('critical').length} workflows`,
+      disabled: !hasCatalogue,
+    },
+    {
+      key: 'release',
+      title: 'Release gate',
+      sub: `${presetIds('release').length} workflows`,
+      disabled: !hasCatalogue,
+    },
     {
       key: 'rejected',
       title: "Last run's rejections",
@@ -6309,7 +6344,7 @@ function E2ERunModal({
       sub: lastDetail.loading ? 'loading…' : `${lastWithheld.length} workflows`,
       disabled: !lastWithheld.length,
     },
-    { key: 'custom', title: 'Choose…', sub: hasCatalogue ? `from ${cat.length}` : 'type ids', },
+    { key: 'custom', title: 'Choose…', sub: hasCatalogue ? `from ${cat.length}` : 'type ids' },
   ];
 
   const visible = cat.filter((e) => {
@@ -6394,8 +6429,8 @@ function E2ERunModal({
                 {providerValue === 'both' ? 'this pair' : providerValue}
               </strong>{' '}
               — {blocked.some((b) => b.requires === 'both') && 'some are cross-host; '}
-              they assert host-specific behaviour. They stay visible below, unselectable, so it is clear
-              what is excluded and why.
+              they assert host-specific behaviour. They stay visible below, unselectable, so it is clear what
+              is excluded and why.
             </div>
           )}
         </fieldset>
@@ -6451,8 +6486,8 @@ function E2ERunModal({
                   data-testid="dropped-note"
                   style={{ fontSize: 13, color: 'var(--warn-text)', marginBottom: 8 }}
                 >
-                  {droppedIds.length} selected workflow{droppedIds.length === 1 ? '' : 's'} can&rsquo;t run
-                  on {providerValue === 'both' ? 'this pair' : providerValue} and{' '}
+                  {droppedIds.length} selected workflow{droppedIds.length === 1 ? '' : 's'} can&rsquo;t run on{' '}
+                  {providerValue === 'both' ? 'this pair' : providerValue} and{' '}
                   {droppedIds.length === 1 ? 'is' : 'are'} excluded: {droppedIds.join(', ')}
                 </div>
               )}
@@ -6569,7 +6604,10 @@ function E2ERunModal({
                                     })
                                   }
                                 />
-                                <span className="mono" style={{ fontSize: 12, width: 52, color: 'var(--text-secondary)' }}>
+                                <span
+                                  className="mono"
+                                  style={{ fontSize: 12, width: 52, color: 'var(--text-secondary)' }}
+                                >
                                   {e.workflow_id}
                                 </span>
                                 <span
@@ -6592,7 +6630,8 @@ function E2ERunModal({
                                       fontSize: 10,
                                       padding: '1px 5px',
                                       borderRadius: 4,
-                                      background: e.requires === 'both' ? 'var(--warn-wash)' : 'var(--info-wash)',
+                                      background:
+                                        e.requires === 'both' ? 'var(--warn-wash)' : 'var(--info-wash)',
                                       color: e.requires === 'both' ? 'var(--warn-text)' : 'var(--info-text)',
                                       border: `1px solid ${e.requires === 'both' ? '#4a3a12' : '#1d3a55'}`,
                                       whiteSpace: 'nowrap',
@@ -6655,7 +6694,9 @@ function E2ERunModal({
                   }}
                 />
               </label>
-              <label style={{ ...chk, alignItems: 'flex-start', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+              <label
+                style={{ ...chk, alignItems: 'flex-start', flexDirection: 'column', gap: 6, marginTop: 8 }}
+              >
                 <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Named workflows</span>
                 <input
                   type="text"
@@ -6700,8 +6741,8 @@ function E2ERunModal({
             </>
           ) : (
             <>
-              Estimated spend: <span className="num">not known yet</span> — no run has published to the
-              store, so there is no per-workflow price to scale from.
+              Estimated spend: <span className="num">not known yet</span> — no run has published to the store,
+              so there is no per-workflow price to scale from.
             </>
           )}
         </div>
@@ -6782,9 +6823,7 @@ function E2ERunModal({
               cursor: confirmed && !submitting && !nothingSelected ? 'pointer' : 'not-allowed',
             }}
           >
-            {submitting
-              ? 'Starting…'
-              : `Run ${effectiveCount ?? 'all'} · ${providerValue}`}
+            {submitting ? 'Starting…' : `Run ${effectiveCount ?? 'all'} · ${providerValue}`}
           </button>
         </div>
       </div>
