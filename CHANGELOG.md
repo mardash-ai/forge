@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.43.1] - 2026-08-16
+
+### Fixed
+
+- Deploys labels caught up with v1.43.0: the selector is "Service or job" rather than "Service", the
+  empty state says "no Cloud Run services or jobs", and the subhead notes that a job shows the
+  single template its next execution will run — it has no revisions to roll back to. Small, but a
+  control that describes only half of what it contains is how a screen starts lying quietly.
+
+
 ## [1.43.0] - 2026-08-16
 
 ### Added

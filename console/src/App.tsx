@@ -2305,18 +2305,21 @@ function Deploys() {
       <Head
         screen="deploys"
         title="Deploys"
-        sub="What is serving right now, by digest — and every revision you could roll back to."
+        sub="What is serving right now, by digest — and every revision you could roll back to. Jobs show the single template their next execution will run."
       />
       <Toolbar>
         {services.length > 0 ? (
           <Segmented
-            ariaLabel="Service"
+            // Jobs sit alongside services here now, so the control is no longer "Service".
+            ariaLabel="Service or job"
             value={active}
             onChange={setSvc}
             options={services.map((s) => [s, s] as const)}
           />
         ) : (
-          <Note>{inv.loading ? 'finding services…' : 'no Cloud Run services in inventory'}</Note>
+          <Note>
+            {inv.loading ? 'finding services and jobs…' : 'no Cloud Run services or jobs in inventory'}
+          </Note>
         )}
       </Toolbar>
 
