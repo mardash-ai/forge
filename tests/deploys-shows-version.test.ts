@@ -43,7 +43,8 @@ describe('the deploys screen names the running build', () => {
   it('resolves the serving digest back to a registry tag', () => {
     expect(RUNTIME_CODE).toMatch(/export async function resolveImageVersion\(/);
     expect(RUNTIME_CODE).toMatch(/artifactregistry\.googleapis\.com/);
-    expect(RUNTIME_CODE).toMatch(/image_version: versions\.get\(image\) \?\? null/);
+    // (the assignment now prefers the resolved semver — asserted in the semver test below)
+    expect(RUNTIME_CODE).toMatch(/image_version: semvers\.get\(image\)/);
   });
 
   it('⛔ accepts a COMMIT-SHA tag, not only semver — most services here use one', () => {
@@ -75,6 +76,39 @@ describe('the deploys screen names the running build', () => {
   it('resolves each unique image once, in parallel', () => {
     expect(RUNTIME_CODE).toMatch(/const uniqueImages = \[\.\.\.new Set\(/);
     expect(RUNTIME_CODE).toMatch(/await Promise\.all\(/);
+  });
+
+  it('⛔ resolves the SEMVER that matches the changelog, not just the registry tag', () => {
+    /*
+     * dorinda-api / -web / -site cut no git tags, so their images are tagged with a COMMIT SHA.
+     * `8d588a8` names the build but cannot be looked up in a CHANGELOG. The semver exists in
+     * package.json AT that commit — the same file the changelog entry is written against — so it
+     * is resolved from the repo. Verified live: 8d588a8 → 0.85.6, 02a68aa → 0.42.7, 12b488d → 0.6.3.
+     */
+    expect(RUNTIME_CODE).toMatch(/async function semverAtCommit\(/);
+    expect(RUNTIME_CODE).toMatch(/const PACKAGE_PATHS = \['package\.json', 'app\/package\.json'\]/);
+    // A semver tag (forge-*) short-circuits — no lookup for something already correct.
+    expect(RUNTIME_CODE).toMatch(
+      /if \(tag && \/\^v\?\\d\+\\\.\\d\+\\\.\\d\+\/\.test\(tag\)\) return \[img, tag\]/,
+    );
+    // Falls back to the registry tag, so a GitHub outage names the build rather than blanking.
+    expect(RUNTIME_CODE).toMatch(
+      /image_version: semvers\.get\(image\) \?\? versions\.get\(image\) \?\? null/,
+    );
+  });
+
+  it('⛔ links to the changelog PINNED to the deployed commit', () => {
+    expect(RUNTIME_CODE).toMatch(/export function changelogUrl\(/);
+    expect(RUNTIME_CODE).toMatch(/blob\/\$\{ref\}\/CHANGELOG\.md/);
+    expect(APP_CODE).toMatch(/href=\{r\.changelog_url\}/);
+  });
+
+  it('⛔ a Cloud Run JOB appears too — the runner was invisible in this console', () => {
+    // e2e-runner executes every acceptance run. The deploys screen enumerated services only, so
+    // "the runner is live on v0.38.0" was a claim only gcloud could check.
+    expect(RUNTIME_CODE).toMatch(/const JOB_NAMES: ReadonlySet<string> = new Set\(\['e2e-runner'\]\)/);
+    expect(RUNTIME_CODE).toMatch(/pick\('HAT_VERSION'\)/);
+    expect(APP_CODE).toMatch(/r\.kind === 'compute\.service' \|\| r\.kind === 'compute\.job'/);
   });
 
   it('⛔ renders unknown rather than guessing, and keeps the digest beside it', () => {

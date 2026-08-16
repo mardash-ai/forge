@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.43.0] - 2026-08-16
+
+### Added
+
+- **The Version column shows the semver that matches the CHANGELOG, and links to it.**
+  dorinda-api, -web and -site cut no git tags, so their images are tagged with a commit sha —
+  `8d588a8` names the build but cannot be looked up in a changelog. The semver exists in
+  `package.json` **at that commit**, which is the same file the changelog entry is written against,
+  so it is resolved from the repo. Verified live: `8d588a8 → 0.85.6`, `02a68aa → 0.42.7`,
+  `12b488d → 0.6.3`. Works retroactively for every image already in production and needs no change
+  to three separate release pipelines.
+  - The version links to `CHANGELOG.md` **pinned to the deployed commit**, so the file reads exactly
+    as it did at that deploy. Confirmed reachable for all five services at their live refs.
+  - A semver tag (the forge services) short-circuits — nothing already correct is looked up.
+  - On failure it falls back to the registry tag, so a GitHub outage degrades to naming the build
+    rather than blanking the column.
+- **Cloud Run JOBS appear on Deploys.** The screen enumerated services only, so `e2e-runner` — the
+  job that executes every acceptance run — was absent from the console entirely, and "the runner is
+  live on v0.38.0" was a claim only `gcloud` could check. A job has no traffic or revision history,
+  so it renders its single configured template: the image the next execution will run, with the
+  `HAT_VERSION`/`HAT_COMMIT` the release stamped into it.
+
+
 ## [1.42.1] - 2026-08-16
 
 ### Fixed

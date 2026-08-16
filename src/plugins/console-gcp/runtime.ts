@@ -73,6 +73,99 @@ interface RunRevision {
  * or when the image carries no version-shaped tag. The UI renders that as unknown, because a
  * version display that can be WRONG is worse than none.
  */
+/**
+ * Which repository a service is built from.
+ *
+ * Convention: the service is named after its repo. The forge-* services are the exception — both
+ * are built from the forge monorepo, so they are named explicitly rather than left to a convention
+ * that would silently look up repositories that do not exist.
+ */
+/**
+ * Cloud Run JOBS in this project. Named explicitly rather than probed: a 404-driven
+ * service-then-job fallback would turn every genuine "service not found" into a second request and
+ * a confusing error, and this list changes about once a year.
+ */
+const JOB_NAMES: ReadonlySet<string> = new Set(['e2e-runner']);
+
+type RunJob = {
+  template?: {
+    template?: { containers?: Array<{ image?: string; env?: Array<{ name: string; value?: string }> }> };
+  };
+  terminalCondition?: { state?: string };
+  createTime?: string;
+  updateTime?: string;
+};
+
+const SERVICE_REPO: Record<string, string> = {
+  'forge-console': 'mardash-ai/forge',
+  'forge-data-plane': 'mardash-ai/forge',
+  'e2e-runner': 'mardash-ai/forge-hat',
+};
+const repoForService = (service: string): string => SERVICE_REPO[service] ?? `mardash-ai/${service}`;
+
+/** package.json is at the repo root in most services and under app/ in dorinda-api. */
+const PACKAGE_PATHS = ['package.json', 'app/package.json'] as const;
+
+const semverCache = new Map<string, string | null>();
+
+/**
+ * ⛔ THE VERSION THAT MATCHES THE CHANGELOG — not the tag that happens to be on the image.
+ *
+ * dorinda-api, dorinda-web and dorinda-site publish images tagged with the COMMIT SHA: those repos
+ * cut no git tags at all. So the deploys screen could name the build (`8d588a8`) but not the
+ * release, and `8d588a8` cannot be looked up in a CHANGELOG.
+ *
+ * The semver does exist — in `package.json`, at that very commit, which is the same file the
+ * CHANGELOG entry is written against. So resolve it from the repo at the deployed sha. This works
+ * retroactively for every image already in production and needs no change to three separate
+ * release pipelines.
+ *
+ * Returns null on any failure. The caller then falls back to the registry tag, so a GitHub outage
+ * degrades to today's behaviour rather than to a blank column.
+ */
+async function semverAtCommit(
+  service: string,
+  sha: string,
+  ctx: { signal?: AbortSignal },
+): Promise<string | null> {
+  const token = process.env.CONSOLE_GITHUB_TOKEN ?? '';
+  if (!token || !sha) return null;
+  const repo = repoForService(service);
+  const key = `${repo}@${sha}`;
+  if (semverCache.has(key)) return semverCache.get(key)!;
+
+  for (const path of PACKAGE_PATHS) {
+    try {
+      const res = await fetch(
+        `https://api.github.com/repos/${repo}/contents/${path}?ref=${encodeURIComponent(sha)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/vnd.github.raw',
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
+          ...(ctx.signal ? { signal: ctx.signal } : {}),
+        },
+      );
+      if (!res.ok) continue;
+      const version = (JSON.parse(await res.text()) as { version?: string }).version ?? null;
+      if (version) {
+        semverCache.set(key, version);
+        return version;
+      }
+    } catch {
+      // Try the next path; a transient failure is not cached, so it can recover.
+    }
+  }
+  return null;
+}
+
+/** Where to read what changed in this build. The sha pins the file to the deployed commit. */
+export function changelogUrl(service: string, ref: string): string | null {
+  if (!ref) return null;
+  return `https://github.com/${repoForService(service)}/blob/${ref}/CHANGELOG.md`;
+}
+
 const versionCache = new Map<string, string | null>();
 
 export async function resolveImageVersion(
@@ -160,6 +253,46 @@ export function createCloudRunRuntimeProvider(opts: {
     },
 
     async listRevisions(runtimeId: string, ctx: ProviderContext): Promise<Revision[]> {
+      /*
+       * ⛔ A JOB IS NOT A SERVICE. It runs to completion: no traffic split, no revision history,
+       * one configured template that the next execution will run.
+       *
+       * Handled here because the deploys screen enumerated services only, so `e2e-runner` — the
+       * thing that executes every acceptance run — appeared nowhere in the console. On 2026-08-16
+       * "the runner is live on v0.38.0" was a claim only `gcloud` could check, which is exactly the
+       * gap the version column exists to close.
+       *
+       * Its version needs no registry lookup: the release that rolls the job stamps HAT_VERSION and
+       * HAT_COMMIT into it, in the same step that sets the digest.
+       */
+      if (JOB_NAMES.has(runtimeId)) {
+        const job = await gcpJson<RunJob>({
+          url: `${RUN}/projects/${project}/locations/${region}/jobs/${runtimeId}`,
+          signal: ctx.signal,
+        });
+        const c = job?.template?.template?.containers?.[0];
+        const image = c?.image ?? '';
+        const env = c?.env ?? [];
+        const pick = (n: string) => env.find((e) => e.name === n)?.value ?? null;
+        const commit = pick('HAT_COMMIT');
+        const ready = job?.terminalCondition?.state === 'CONDITION_SUCCEEDED';
+        return [
+          {
+            id: `${runtimeId} (configured)`,
+            image_digest: image.includes('@') ? image.split('@')[1]! : '',
+            image_ref: image,
+            // Jobs carry no traffic. 100 says "this is what the next execution runs", which is the
+            // question the column answers for a service too.
+            traffic_percent: 100,
+            ready,
+            created_at: job?.updateTime ?? job?.createTime ?? '',
+            image_version: pick('HAT_VERSION') ?? (await resolveImageVersion(image, ctx)),
+            source_ref: commit,
+            changelog_url: changelogUrl(runtimeId, commit ?? ''),
+          },
+        ];
+      }
+
       const parent = `${RUN}/projects/${project}/locations/${region}/services/${runtimeId}`;
 
       // Traffic first: a revision list without traffic shares cannot answer "what is serving?", which
@@ -181,6 +314,26 @@ export function createCloudRunRuntimeProvider(opts: {
           uniqueImages.map(async (img) => [img, await resolveImageVersion(img, ctx)] as const),
         ),
       );
+      /*
+       * The registry tag is a COMMIT SHA for dorinda-api / -web / -site (those repos cut no git
+       * tags), and a semver for the forge services. Mark needs the version that matches the
+       * CHANGELOG, so where the tag is a sha, resolve the semver from package.json AT that commit —
+       * the same file the changelog entry is written against.
+       *
+       * The sha is kept either way: it is the precise identity, and it is what the changelog link
+       * pins to so the file is read exactly as it was at this deploy.
+       */
+      const semvers = new Map<string, string | null>(
+        await Promise.all(
+          uniqueImages.map(async (img) => {
+            const tag = versions.get(img);
+            // Already semver (forge-*) — nothing to resolve.
+            if (tag && /^v?\d+\.\d+\.\d+/.test(tag)) return [img, tag] as const;
+            const sha = tag ?? '';
+            return [img, await semverAtCommit(runtimeId, sha, ctx)] as const;
+          }),
+        ),
+      );
 
       return revisions
         .map((r) => {
@@ -192,8 +345,15 @@ export function createCloudRunRuntimeProvider(opts: {
             // The digest is the identity. A tag is a label someone can move.
             image_digest: image.includes('@') ? image.split('@')[1]! : '',
             image_ref: image,
-            // null = we could not resolve one. Rendered as unknown, never guessed.
-            image_version: versions.get(image) ?? null,
+            /*
+             * Prefer the semver that matches the CHANGELOG; fall back to the registry tag (a
+             * commit sha) when it cannot be resolved, so a GitHub outage degrades to naming the
+             * build rather than to a blank column. null only when neither is known.
+             */
+            image_version: semvers.get(image) ?? versions.get(image) ?? null,
+            /** The registry tag as-published — a sha for most services, a semver for forge-*. */
+            source_ref: versions.get(image) ?? null,
+            changelog_url: changelogUrl(runtimeId, versions.get(image) ?? ''),
             created_at: r.createTime ?? '',
             traffic_percent: traffic.get(short) ?? 0,
             ready: ready?.state === 'CONDITION_SUCCEEDED',

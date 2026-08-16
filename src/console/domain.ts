@@ -24,6 +24,14 @@ export type Scope = 'global' | 'regional' | 'zonal';
  */
 export type ResourceKind =
   | 'compute.service' // Cloud Run service, ECS service…
+  /**
+   * A Cloud Run JOB — runs to completion, no traffic, no revisions.
+   *
+   * ⛔ Added because the deploys screen enumerated services only, so `e2e-runner` — the thing that
+   * executes every acceptance run, and whose version mattered most on 2026-08-16 — could not be
+   * seen anywhere in the console. "It's live on v0.38.0" was a claim only gcloud could check.
+   */
+  | 'compute.job'
   | 'compute.instance'
   | 'compute.instance_group'
   | 'db.instance'
@@ -132,6 +140,10 @@ export interface Revision {
    * it is rendered as unknown and never guessed.
    */
   image_version?: string | null;
+  /** The registry tag as published — a commit sha for most services, a semver for forge-*. */
+  source_ref?: string | null;
+  /** Where to read what changed, pinned to the deployed commit. */
+  changelog_url?: string | null;
   created_at: string;
   traffic_percent: number;
   ready: boolean;

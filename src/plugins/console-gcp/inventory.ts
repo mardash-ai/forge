@@ -157,6 +157,49 @@ export function createGcpInventoryProvider(opts: {
         ],
 
         [
+          'cloud-run-jobs',
+          async () => {
+            // A job has ONE configured template rather than a set of revisions, so its image is
+            // read straight off the job. That configured image IS what the next execution runs.
+            const items = await gcpPaged<Record<string, any>>(
+              `https://run.googleapis.com/v2/projects/${project}/locations/${region}/jobs`,
+              (p) => p['jobs'] as Record<string, any>[] | undefined,
+              { signal: s },
+            );
+            return items.map((x) => {
+              const name = String(x['name']).split('/').pop()!;
+              const c = x['template']?.template?.containers?.[0] ?? {};
+              const env: Array<{ name: string; value?: string }> = c['env'] ?? [];
+              const pick = (n: string) => env.find((e) => e.name === n)?.value ?? null;
+              return R({
+                kind: 'compute.job',
+                native_type: 'run.googleapis.com/Job',
+                external_id: String(x['name']),
+                name,
+                scope: 'regional',
+                location: region,
+                labels: x['labels'] ?? {},
+                state:
+                  x['terminalCondition']?.type === 'Ready' &&
+                  x['terminalCondition']?.state === 'CONDITION_SUCCEEDED'
+                    ? 'Ready'
+                    : (x['terminalCondition']?.state ?? 'unknown'),
+                created_at: x['createTime'],
+                attributes: {
+                  image: c['image'] ?? null,
+                  // Stamped by the release that rolled the job, so the console can name what it
+                  // will actually run without resolving anything.
+                  version: pick('HAT_VERSION'),
+                  commit: pick('HAT_COMMIT'),
+                  service_account: x['template']?.template?.serviceAccount ?? null,
+                },
+                link: `${CONSOLE}/run/jobs/details/${region}/${name}?project=${project}`,
+              });
+            });
+          },
+        ],
+
+        [
           'cloud-sql',
           async () => {
             const p = await gcpJson<{ items?: Record<string, any>[] }>({

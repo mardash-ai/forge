@@ -2266,6 +2266,10 @@ interface Rev {
   image_ref: string;
   /** Release the digest was published as. null ⇒ unresolvable; shown as unknown, never guessed. */
   image_version?: string | null;
+  /** The registry tag as published — a commit sha for most services, a semver for forge-*. */
+  source_ref?: string | null;
+  /** Where to read what changed, pinned to the deployed commit. */
+  changelog_url?: string | null;
   created_at: string;
   traffic_percent: number;
   ready: boolean;
@@ -2276,7 +2280,11 @@ interface Rev {
 
 function Deploys() {
   const inv = useApi<Resource[]>('/api/inventory');
-  const services = (inv.data ?? []).filter((r) => r.kind === 'compute.service').map((r) => r.name);
+  // ⛔ Jobs too. `e2e-runner` executes every acceptance run and appeared nowhere in this console,
+  // so "the runner is on v0.38.0" was a claim only gcloud could check.
+  const services = (inv.data ?? [])
+    .filter((r) => r.kind === 'compute.service' || r.kind === 'compute.job')
+    .map((r) => r.name);
   const [svc, setSvc] = useState<string>(() => new URLSearchParams(location.search).get('svc') ?? '');
   const active = svc || services[0] || '';
   const revs = useApi<Rev[]>(active ? `/api/runtime/revisions?service=${encodeURIComponent(active)}` : null, [
@@ -2407,9 +2415,23 @@ function Deploys() {
                     */}
                     <Td mono>
                       {r.image_version ? (
-                        <span style={{ color: 'var(--text-primary)' }} title={r.image_ref}>
-                          {r.image_version}
-                        </span>
+                        r.changelog_url ? (
+                          // Pinned to the deployed commit, so the changelog reads exactly as it was
+                          // at this deploy — the release's own entry sits at the top.
+                          <a
+                            href={r.changelog_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{ color: 'var(--ember-glow)' }}
+                            title={`${r.image_version} — changelog at ${r.source_ref ?? 'this build'}`}
+                          >
+                            {r.image_version}
+                          </a>
+                        ) : (
+                          <span style={{ color: 'var(--text-primary)' }} title={r.image_ref}>
+                            {r.image_version}
+                          </span>
+                        )
                       ) : (
                         <span
                           style={{ color: 'var(--text-faint)' }}
