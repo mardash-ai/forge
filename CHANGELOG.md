@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.46.0] - 2026-08-16
+
+### Fixed
+
+- **⛔ The E2E diff counted a WITHHELD verdict as a REGRESSION.** `queryDiffRuns` bucketed on
+  `verdict !== 'pass'`, so a row where the RIG failed and nothing was tested was reported as a
+  product failure — through `diff_e2e_runs`, straight to a triage agent. `WorkflowVerdict`'s own
+  declaration carried the rule it broke. A fully-withheld run now reports **zero** regressions.
+- **⛔ `error` was treated as a graded verdict.** `toStoreVerdict` assigns it when the sender uses a
+  word the receiver does not know — "an unknown word is not a licence to guess" — so counting it red
+  reported a broken runner↔store contract as a product regression. (`queryGetRun` still counts it
+  among a run's failures; moving run failure counts is a separate decision, filed not silently made.)
+- **⛔ Diff keys were bare `workflow_id`**, collapsing a dual-provider run so an anthropic regression
+  could hide behind an openai pass. Keys are now provider-qualified.
+- **The baseline is derived once, server-side.** `baseline_run_id` is optional and defaults to the
+  most recent run started strictly BEFORE this one. The console derived its own over a DESC list, so
+  any run but the newest compared against a run that happened LATER while labelled "previous
+  nightly". With no earlier run the answer is `no_baseline`, never an invented pair.
+
+### Added
+
+- **Run-over-run diff surfaces on the E2E tab**: a diff panel in the previously empty cell beside the
+  duration chart (trusted reds, then flippers hatched and de-emphasised, then recovered, then
+  withheld with the rule on screen); a chip strip that filters the workflow table; and a `Δ vs prev`
+  column in run history.
+- **Per-workflow instability** — flip rate over the last N runs, used as a noise floor so a known
+  coin-flipper does not read as news. Withheld verdicts are dropped from the series; fewer than two
+  graded samples is `known: false`, never "stable".
+- **Tool-surface attribution** — `/api/e2e/diff` returns a `manifest_delta`, so a red can be
+  attributed to the MCP surface moving rather than the product. ⚠️ Reads *unknown* until forge-hat
+  v0.43.0 is tagged and reports a manifest.
+
 ## [1.45.0] - 2026-08-16
 
 ### Added
