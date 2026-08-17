@@ -194,12 +194,7 @@ describe('⛔ the sender and the receiver are two halves of one contract', () =>
     // excludes `.hat/`, so the three recorded hashes are absent in the Cloud Run job. It is derived
     // live from the run's own tools/list. This assertion is the checklist — a field declared on the
     // payload with no persister fails the build.
-    expect(declared).toEqual([
-      'contract_hash',
-      'guidance_hash',
-      'instructions_hash',
-      'served_tools_hash',
-    ]);
+    expect(declared).toEqual(['contract_hash', 'guidance_hash', 'instructions_hash', 'served_tools_hash']);
 
     // ...and the update mapping names each one, storing them under meta.manifest.
     const mapping = src.slice(src.indexOf('const metaUpdate'), src.indexOf('update.meta = metaUpdate'));

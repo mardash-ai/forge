@@ -302,7 +302,13 @@ export function e2eDeltaSegments(counts: E2EDeltaCounts | null | undefined): E2E
   if (counts.recovered > 0)
     segs.push({ kind: 'newly-green', glyph: '▼', count: counts.recovered, tone: 'ok', label: 'recovered' });
   if (counts.withheld > 0)
-    segs.push({ kind: 'became-withheld', glyph: '⊘', count: counts.withheld, tone: 'info', label: 'withheld' });
+    segs.push({
+      kind: 'became-withheld',
+      glyph: '⊘',
+      count: counts.withheld,
+      tone: 'info',
+      label: 'withheld',
+    });
   return segs;
 }
 

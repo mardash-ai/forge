@@ -189,10 +189,7 @@ describe('instabilityOf', () => {
     expect(first.unstable).toBe(false);
     expect(first.flipRate).toBe(0);
 
-    const blind = instabilityOf(
-      'W-001',
-      series(['withheld', 'withheld', 'withheld', 'withheld', 'fail']),
-    );
+    const blind = instabilityOf('W-001', series(['withheld', 'withheld', 'withheld', 'withheld', 'fail']));
     expect(blind.samples).toEqual(['fail']);
     expect(blind.withheldRuns).toBe(4);
     expect(blind.known).toBe(false);

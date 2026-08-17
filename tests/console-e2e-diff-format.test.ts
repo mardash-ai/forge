@@ -54,9 +54,21 @@ const MIXED: E2EDiffPayload = {
   ],
   instability: {
     // Steady: nine graded runs, never flipped until now.
-    'W-004': { key: 'W-004', samples: ['pass', 'pass', 'pass', 'fail'], flips: 1, known: true, unstable: false },
+    'W-004': {
+      key: 'W-004',
+      samples: ['pass', 'pass', 'pass', 'fail'],
+      flips: 1,
+      known: true,
+      unstable: false,
+    },
     // A coin flip. Its red is weak evidence.
-    'W-016': { key: 'W-016', samples: ['pass', 'fail', 'pass', 'fail'], flips: 3, known: true, unstable: true },
+    'W-016': {
+      key: 'W-016',
+      samples: ['pass', 'fail', 'pass', 'fail'],
+      flips: 3,
+      known: true,
+      unstable: true,
+    },
     'W-003:anthropic': {
       key: 'W-003:anthropic',
       samples: ['pass', 'pass', 'pass'],
@@ -227,9 +239,7 @@ describe('the flip-history label', () => {
     expect(fmtE2eFlipHistory({ known: true, flips: 0, samples: ['pass', 'pass', 'pass'] })).toBe(
       '0 flips in 3 runs',
     );
-    expect(fmtE2eFlipHistory({ known: true, flips: 1, samples: ['pass', 'fail'] })).toBe(
-      '1 flip in 2 runs',
-    );
+    expect(fmtE2eFlipHistory({ known: true, flips: 1, samples: ['pass', 'fail'] })).toBe('1 flip in 2 runs');
   });
 
   it('carries the withheld-run context beside the flips', () => {
@@ -262,7 +272,9 @@ describe('the verdict sparkline shows only what the data records', () => {
 
   it('keeps the most recent marks when the series is longer than the sparkline', () => {
     const samples = ['pass', 'pass', 'pass', 'fail'];
-    expect(e2eSparkSeries({ samples }, { max: 2 })).toEqual(['pass', 'fail'].map((v) => (v === 'pass' ? 'ok' : 'red')));
+    expect(e2eSparkSeries({ samples }, { max: 2 })).toEqual(
+      ['pass', 'fail'].map((v) => (v === 'pass' ? 'ok' : 'red')),
+    );
   });
 
   it('renders nothing rather than a stub when there is no history', () => {

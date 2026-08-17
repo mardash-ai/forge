@@ -477,7 +477,12 @@ export function registerIngestRoutes(app: FastifyInstance, opts?: RegisterIngest
       // compare equal and report "unchanged" about something nobody looked at.
       if (body.manifest && typeof body.manifest === 'object') {
         const hashes: Record<string, string> = {};
-        for (const key of ['contract_hash', 'guidance_hash', 'instructions_hash', 'served_tools_hash'] as const) {
+        for (const key of [
+          'contract_hash',
+          'guidance_hash',
+          'instructions_hash',
+          'served_tools_hash',
+        ] as const) {
           const value = body.manifest[key];
           if (typeof value === 'string' && value.trim()) hashes[key] = value;
         }

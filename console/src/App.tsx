@@ -6368,8 +6368,7 @@ function E2ESparkline({ marks, label }: { marks: E2ESparkMark[]; label: string }
             borderRadius: 1,
             height: m === 'held' ? 5 : 13,
             opacity: m === 'held' ? 0.6 : 0.85,
-            background:
-              m === 'ok' ? 'var(--ok)' : m === 'red' ? 'var(--crit)' : 'var(--info)',
+            background: m === 'ok' ? 'var(--ok)' : m === 'red' ? 'var(--crit)' : 'var(--info)',
           }}
         />
       ))}
@@ -6399,7 +6398,10 @@ function E2EDiffRow({
   // The AFTER trial fraction comes from this run's own row. There is no BEFORE fraction to show:
   // the diff carries the baseline's verdict, not its trial counts — so the arrow is deliberately
   // asymmetric rather than inventing `3/3` for the left-hand side.
-  const after = fmtE2eDiffVerdict(change.after, wf ? { passed: wf.trials_passed, total: wf.trials_total } : null);
+  const after = fmtE2eDiffVerdict(
+    change.after,
+    wf ? { passed: wf.trials_passed, total: wf.trials_total } : null,
+  );
   const before = fmtE2eDiffVerdict(change.before);
   const marks = e2eSparkSeries(instability, { trailingWithheld: withheldNow });
   const history = fmtE2eFlipHistory(instability);
@@ -6673,8 +6675,8 @@ function E2ERunDiffPanel({
   if (httpStatus === 501) {
     return quiet(
       <>
-        <strong style={{ color: 'var(--text-secondary)' }}>Results store not configured.</strong> No
-        run history is being recorded, so there is nothing to compare this run against.
+        <strong style={{ color: 'var(--text-secondary)' }}>Results store not configured.</strong> No run
+        history is being recorded, so there is nothing to compare this run against.
       </>,
     );
   }
@@ -6682,8 +6684,8 @@ function E2ERunDiffPanel({
   if (errorCode === 'no_baseline' || httpStatus === 404) {
     return quiet(
       <>
-        No earlier run to compare against — <span className="mono">{run.run_id}</span> is the first
-        run on record, so every result in it is new information.
+        No earlier run to compare against — <span className="mono">{run.run_id}</span> is the first run on
+        record, so every result in it is new information.
       </>,
     );
   }
@@ -6960,7 +6962,12 @@ function useE2ERunDeltas(runs: E2ERun[], enabled: boolean): Map<string, E2EDelta
 /** The `Δ vs prev` cell. Every state is named; none of them is a blank. */
 function E2EDeltaCell({ entry }: { entry: E2EDeltaEntry | undefined }) {
   const faint: React.CSSProperties = { color: 'var(--text-faint)', fontSize: 12 };
-  if (!entry) return <span style={{ ...faint }} title="not computed for older runs">—</span>;
+  if (!entry)
+    return (
+      <span style={{ ...faint }} title="not computed for older runs">
+        —
+      </span>
+    );
   if (entry.state === 'loading') return <span style={faint}>…</span>;
   if (entry.state === 'none')
     return (
@@ -8127,8 +8134,7 @@ function Evals() {
     diffApi.data && activeRunId && diffApi.data.run_id === activeRunId ? diffApi.data : null;
   const diffKindByKey = new Map<string, E2EDiffKind>();
   for (const c of diff?.changes ?? []) diffKindByKey.set(c.key, c.kind);
-  const diffKindOf = (w: E2EWorkflow): E2EDiffKind | null =>
-    diffKindByKey.get(e2eDiffRowKey(w)) ?? null;
+  const diffKindOf = (w: E2EWorkflow): E2EDiffKind | null => diffKindByKey.get(e2eDiffRowKey(w)) ?? null;
 
   /**
    * The chip strip's counts — taken from the ROWS the table will render, exactly like the verdict
@@ -8292,7 +8298,11 @@ function Evals() {
 
   /** A diff-panel row → that workflow's row in the table below, expanded. */
   const handleOpenDiffRow = (change: E2EDiffChange) => {
-    showDeltaKind(change.kind === 'newly-red' || change.kind === 'newly-green' || change.kind === 'became-withheld' ? change.kind : null);
+    showDeltaKind(
+      change.kind === 'newly-red' || change.kind === 'newly-green' || change.kind === 'became-withheld'
+        ? change.kind
+        : null,
+    );
     const wf = allWorkflows.find((w) => e2eDiffRowKey(w) === change.key);
     setExpandedWfId(wf ? wf.id : null);
   };

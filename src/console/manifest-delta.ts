@@ -62,7 +62,13 @@ export function manifestDelta(
   after: RunManifest | null | undefined,
 ): ManifestDelta {
   if (!before || !after) {
-    return { contract_hash: false, guidance_hash: false, instructions_hash: false, served_tools_hash: false, known: false };
+    return {
+      contract_hash: false,
+      guidance_hash: false,
+      instructions_hash: false,
+      served_tools_hash: false,
+      known: false,
+    };
   }
 
   // ⛔ A field present on one side and absent on the other is UNKNOWN for that field, not changed.
@@ -77,7 +83,7 @@ export function manifestDelta(
   // it is the shape a defaulted `{}` takes, and that must not certify a comparison.
   const known = Boolean(
     (before.contract_hash || before.guidance_hash || before.instructions_hash || before.served_tools_hash) &&
-      (after.contract_hash || after.guidance_hash || after.instructions_hash || after.served_tools_hash),
+    (after.contract_hash || after.guidance_hash || after.instructions_hash || after.served_tools_hash),
   );
 
   return {

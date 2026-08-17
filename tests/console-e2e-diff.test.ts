@@ -62,8 +62,15 @@ describe('the verdict algebra', () => {
 
   it('⛔ isRegression admits exactly one kind', () => {
     const kinds = [
-      'newly-red', 'newly-green', 'still-red', 'still-green',
-      'became-withheld', 'became-graded', 'withheld-both', 'added', 'removed',
+      'newly-red',
+      'newly-green',
+      'still-red',
+      'still-green',
+      'became-withheld',
+      'became-graded',
+      'withheld-both',
+      'added',
+      'removed',
     ] as const;
     expect(kinds.filter((k) => isRegression(k))).toEqual(['newly-red']);
   });
@@ -143,12 +150,12 @@ describe('queryDiffRuns', () => {
   it('separates every category and counts each row exactly once', async () => {
     const baseline = [wf('W-001', 'pass'), wf('W-002', 'pass'), wf('W-003', 'fail'), wf('W-004', 'withheld')];
     const run = [
-      wf('W-001', 'fail'),      // newly-red
-      wf('W-002', 'withheld'),  // became-withheld — NOT a regression
-      wf('W-003', 'pass'),      // newly-green
-      wf('W-004', 'pass'),      // became-graded
-      wf('W-005', 'fail'),      // added, graded failing
-      wf('W-006', 'withheld'),  // added, but nothing was tested
+      wf('W-001', 'fail'), // newly-red
+      wf('W-002', 'withheld'), // became-withheld — NOT a regression
+      wf('W-003', 'pass'), // newly-green
+      wf('W-004', 'pass'), // became-graded
+      wf('W-005', 'fail'), // added, graded failing
+      wf('W-006', 'withheld'), // added, but nothing was tested
     ];
 
     const d = await queryDiffRuns(fakeStore(baseline, run), 'r', 'base');
