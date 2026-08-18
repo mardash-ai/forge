@@ -28,9 +28,19 @@ export type { EvalRun, EvalWorkflow, EvalScene, EvalTurn, EvalMcpCall, EvalClaim
 /** Run top-line + failure list — the "run detail" view. */
 export interface RunDetail {
   run: EvalRun;
-  /** Workflows where verdict is 'fail' or 'error', ordered by created_at. */
+  /**
+   * Workflows the product actually FAILED (verdict = 'fail'), ordered by created_at.
+   *
+   * ⛔ Until 2026-08-18 this also carried `error` rows, which made a run summary disagree with the
+   * diff about the same rows: `toStoreVerdict` assigns `error` when the SENDER used a word the
+   * receiver does not know — a broken runner↔store contract, not a product verdict (Mark's ruling
+   * 2026-08-18: error ≠ failure, one rule everywhere). Those rows now ride `errors` below.
+   */
   failures: EvalWorkflow[];
   failure_count: number;
+  /** Rows whose verdict word the store could not parse — a rig/contract alarm, its own bucket. */
+  errors: EvalWorkflow[];
+  error_count: number;
   /** All workflows in the run (ordered by creation), including passes and skips. */
   all_workflows: EvalWorkflow[];
 }
@@ -180,8 +190,19 @@ export async function queryGetRun(store: PgCpResultsBackend, runId: string): Pro
   const run = await store.getRun(runId);
   if (!run) return null;
   const allWorkflows = await store.listWorkflows(runId);
-  const failures = allWorkflows.filter((w) => w.verdict === 'fail' || w.verdict === 'error');
-  return { run, failures, failure_count: failures.length, all_workflows: allWorkflows };
+  // error ≠ failure (Mark, 2026-08-18): `error` is a broken runner↔store contract, never a product
+  // verdict — the same rule the diff already applies. Each bucket is visible; neither hides in the
+  // other, so a run summary and its diff can no longer disagree about the same rows.
+  const failures = allWorkflows.filter((w) => w.verdict === 'fail');
+  const errors = allWorkflows.filter((w) => w.verdict === 'error');
+  return {
+    run,
+    failures,
+    failure_count: failures.length,
+    errors,
+    error_count: errors.length,
+    all_workflows: allWorkflows,
+  };
 }
 
 export async function queryGetWorkflow(
@@ -299,7 +320,10 @@ SEQUENCE:
 2. diff_e2e_runs — compare the failing run against the last clean baseline
    (status=completed, pass_rate=1.0) to isolate regressions from pre-existing failures.
 3. get_e2e_run — read the top-line for the failing run: pass_rate, withheld_count,
-   rejected_count, failure_count, and canonical_url.
+   rejected_count, failure_count, error_count, and canonical_url.
+   ⛔ failures[] and errors[] are DIFFERENT facts: a failure is the product failing a bar;
+   an error is the store refusing the runner's verdict word — a broken runner↔store
+   contract. Never file a product bug from errors[]; escalate those to forge-hat.
 4. get_workflow_result — for each workflow where verdict != 'pass': read integrity_class
    BEFORE drawing conclusions.
 
@@ -354,8 +378,10 @@ export const E2E_MCP_TOOLS = [
   {
     name: 'get_e2e_run',
     description:
-      'Get a single e2e run by run_id: top-line metrics plus the full list of failing workflows ' +
-      '(verdict = fail or error). This is the starting point for diagnosing a specific run. ' +
+      'Get a single e2e run by run_id: top-line metrics plus failures[] (verdict = fail — the ' +
+      "product failed) and errors[] (verdict = error — the store could not parse the runner's " +
+      'verdict word: a broken runner↔store contract, NEVER a product bug; escalate to forge-hat ' +
+      'instead of filing product bugs from it). This is the starting point for diagnosing a run. ' +
       'Read integrity_class on each failing workflow BEFORE drawing conclusions: ' +
       'corrupted means an eval infrastructure failure, not a product bug. ' +
       'canonical_url is the stable link for this run — include it in any report.',
@@ -379,7 +405,7 @@ export const E2E_MCP_TOOLS = [
       'every MCP tool call and response (tool_name, request, response, duration_ms, error), ' +
       'and all extracted claims with their cassette content. ' +
       'Use this to understand exactly what the model did and why it failed. ' +
-      'The workflow row id comes from get_e2e_run failures[].id.',
+      'The workflow row id comes from get_e2e_run failures[].id (or errors[].id).',
     inputSchema: {
       type: 'object',
       properties: {

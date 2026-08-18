@@ -295,7 +295,13 @@ describe('queryGetRun', () => {
     expect(await queryGetRun(store, 'missing')).toBeNull();
   });
 
-  it('returns run + all failures (verdict fail or error)', async () => {
+  it('⛔ failures carries FAIL only; error is its own bucket (Mark ruled 2026-08-18: error ≠ failure)', async () => {
+    /*
+     * `toStoreVerdict` assigns `error` when the sender used a verdict word the receiver does not
+     * know — a broken runner↔store contract, never a product verdict. Counting it among failures
+     * made the run summary disagree with the diff about the same rows, and told a triage agent
+     * (via get_e2e_run) to file product bugs from a rig defect.
+     */
     const run = makeRun();
     const pass = makeWorkflow({ id: 'wf_pass', workflow_id: 'case_pass', verdict: 'pass' });
     const fail = makeWorkflow({ id: 'wf_fail', workflow_id: 'case_fail', verdict: 'fail' });
@@ -308,9 +314,20 @@ describe('queryGetRun', () => {
     const detail = await queryGetRun(store, 'run_001');
     expect(detail).not.toBeNull();
     expect(detail!.run.run_id).toBe('run_001');
-    expect(detail!.failures).toHaveLength(2);
-    expect(detail!.failure_count).toBe(2);
-    expect(detail!.failures.map((f) => f.id).sort()).toEqual(['wf_err', 'wf_fail'].sort());
+    expect(detail!.failures.map((f) => f.id)).toEqual(['wf_fail']);
+    expect(detail!.failure_count).toBe(1);
+    expect(detail!.errors.map((f) => f.id)).toEqual(['wf_err']);
+    expect(detail!.error_count).toBe(1);
+    // Neither bucket hides the other's rows, and skip stays out of both.
+    expect(detail!.all_workflows).toHaveLength(4);
+  });
+
+  it('⛔ the get_e2e_run tool description teaches the split — agents act on these words', () => {
+    const tool = E2E_MCP_TOOLS.find((t) => t.name === 'get_e2e_run')!;
+    expect(tool.description).toMatch(/errors\[\]/);
+    expect(tool.description).toMatch(/NEVER a product bug/i);
+    expect(TRIAGE_INSTRUCTIONS).toMatch(/error_count/);
+    expect(TRIAGE_INSTRUCTIONS).toMatch(/Never file a product bug from errors/i);
   });
 
   it('returns failure_count = 0 when all workflows pass', async () => {

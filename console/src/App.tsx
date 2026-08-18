@@ -4803,8 +4803,16 @@ type BlockReason = 'provider' | 'not-in-runner' | null;
 
 interface E2ERunDetail {
   run: E2ERun;
+  /** verdict = 'fail' only — the product failing a bar. */
   failures: E2EWorkflow[];
   failure_count: number;
+  /**
+   * verdict = 'error' — the store refused the runner's verdict word: a broken runner↔store
+   * contract, never a product bug (Mark's ruling 2026-08-18). Optional so a console deployed
+   * against an older API still parses.
+   */
+  errors?: E2EWorkflow[];
+  error_count?: number;
   all_workflows: E2EWorkflow[];
 }
 
@@ -5131,8 +5139,11 @@ const E2E_FIXTURE_WORKFLOWS: E2EWorkflow[] = [
 
 const E2E_FIXTURE_RUN_DETAIL: E2ERunDetail = {
   run: E2E_FIXTURE_RUNS[0]!,
-  failures: E2E_FIXTURE_WORKFLOWS.filter((w) => w.verdict === 'fail' || w.verdict === 'error'),
-  failure_count: E2E_FIXTURE_WORKFLOWS.filter((w) => w.verdict === 'fail' || w.verdict === 'error').length,
+  // Mirrors queryGetRun exactly: error is its own bucket, never inside failures.
+  failures: E2E_FIXTURE_WORKFLOWS.filter((w) => w.verdict === 'fail'),
+  failure_count: E2E_FIXTURE_WORKFLOWS.filter((w) => w.verdict === 'fail').length,
+  errors: E2E_FIXTURE_WORKFLOWS.filter((w) => w.verdict === 'error'),
+  error_count: E2E_FIXTURE_WORKFLOWS.filter((w) => w.verdict === 'error').length,
   all_workflows: E2E_FIXTURE_WORKFLOWS,
 };
 

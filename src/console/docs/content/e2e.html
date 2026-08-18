@@ -107,7 +107,8 @@ filters:</p>
 <tr><th>Tile</th><th>Meaning</th></tr>
 <tr><td>Attempted</td><td>Total workflows the runner started (filter: all).</td></tr>
 <tr><td>Accepted</td><td>Workflows where the judge returned <code>pass</code>.</td></tr>
-<tr><td>Failed</td><td>Workflows with verdict <code>fail</code> or <code>error</code>.</td></tr>
+<tr><td>Failed</td><td>Workflows with verdict <code>fail</code> — the product failed a bar.</td></tr>
+<tr><td>Error</td><td>Workflows whose verdict word the store could not parse — a broken runner↔store contract, <strong>never a product bug</strong> (route to forge-hat). Reported in its own bucket since 2026-08-18; it no longer hides inside Failed.</td></tr>
 <tr><td>Withheld</td><td>Workflows budget-capped, timed out, or provider-errored before the judge ran. NOT product failures unless the product caused them.</td></tr>
 <tr><td>Spend</td><td>Total token spend in USD cents across all workflows.</td></tr>
 <tr><td>p50</td><td>Median workflow wall-clock duration.</td></tr>

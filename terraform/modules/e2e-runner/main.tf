@@ -665,6 +665,56 @@ resource "google_project_iam_member" "runner_sql_client" {
 # image: placeholder at first apply; the release workflow updates it digest-pinned,
 # same as the service module. ignore_changes keeps TF from fighting the release CI.
 
+# ---------------------------------------------------------------------------
+# The artifacts store — a GCS bucket FUSE-mounted at /app/artifacts
+# ---------------------------------------------------------------------------
+# ⛔ Until 2026-08-18 the job had NO volume, so artifacts/ lived and died inside each execution:
+# `index.jsonl` held only the current run, and `hat diff` / instability — features whose whole
+# point is HISTORY — could never work in the container (handoff 2026-08-17, defect 1; the
+# Dockerfile carried an aspirational comment recommending exactly this mount, never implemented).
+# Mark ruled 2026-08-18: mount it. Executions now accumulate real history run over run.
+#
+# Versioning is ON: the store is append-mostly (per-run dirs + an appended index), and a bad
+# deploy that truncates the index must be recoverable. Lifecycle keeps 30 noncurrent days.
+
+resource "google_storage_bucket" "artifacts" {
+  project  = var.project_id
+  location = var.region
+  name     = "${var.project_id}-${var.name}-artifacts"
+
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+
+  versioning {
+    enabled = true
+  }
+
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      num_newer_versions = 5
+      days_since_noncurrent_time = 30
+      with_state = "ARCHIVED"
+    }
+  }
+
+  labels = {
+    managed-by = "terraform"
+    stack      = "forge"
+    purpose    = "e2e-runner-artifacts"
+  }
+}
+
+# The runner reads AND writes (per-run dirs, index append, spend ledger). objectAdmin on THIS
+# bucket only — never project-level.
+resource "google_storage_bucket_iam_member" "runner_artifacts" {
+  bucket = google_storage_bucket.artifacts.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.runner.email}"
+}
+
 resource "google_cloud_run_v2_job" "runner" {
   project  = var.project_id
   location = var.region
@@ -929,6 +979,21 @@ resource "google_cloud_run_v2_job" "runner" {
         env {
           name  = "E2E_MODEL"
           value = var.e2e_model
+        }
+
+        # The artifacts store — see google_storage_bucket.artifacts above. The image's own
+        # Dockerfile documents this exact mount point (VOLUME ["/app/artifacts"]).
+        volume_mounts {
+          name       = "artifacts"
+          mount_path = "/app/artifacts"
+        }
+      }
+
+      volumes {
+        name = "artifacts"
+        gcs {
+          bucket    = google_storage_bucket.artifacts.name
+          read_only = false
         }
       }
     }
