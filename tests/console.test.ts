@@ -2990,3 +2990,27 @@ describe('automation token — auth and read-only enforcement', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------- token whitespace (2026-08-18)
+
+describe('⛔ a secret is a VALUE, not a file — whitespace never changes the credential', () => {
+  /*
+   * The production automation token was seeded with a trailing newline (the classic
+   * `echo x | gcloud secrets versions add` artifact), so the injected env var and a correctly
+   * pasted client token differed by one invisible byte and every call 401'd. The 401 pointed at
+   * the client; the client was right. Trimming at the read sites kills the class — any future
+   * re-seed with stray whitespace is harmless. Proven RED against the pre-fix compare.
+   */
+  it('a stored token with a trailing newline still authenticates', () => {
+    expect(checkBearerToken('Bearer tok-123', 'tok-123\n')).toBe(true);
+  });
+  it('a presented token with stray whitespace still authenticates', () => {
+    expect(checkBearerToken('Bearer tok-123 ', 'tok-123')).toBe(true);
+    expect(checkBearerToken('Bearer tok-123\n', 'tok-123\n')).toBe(true);
+  });
+  it('trimming is not loosening: a WRONG token still fails, and empty never matches empty', () => {
+    expect(checkBearerToken('Bearer tok-124', 'tok-123\n')).toBe(false);
+    expect(checkBearerToken('Bearer  ', '  \n')).toBe(false);
+    expect(checkBearerToken('Bearer ', '')).toBe(false);
+  });
+});

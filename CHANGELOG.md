@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.47.0] - 2026-08-18
+
+### Fixed
+
+- **`error` ≠ failure, everywhere** (Mark's ruling, milestone 6.2). `queryGetRun` counted `error`
+  rows among a run's `failures`, disagreeing with the diff classifier about the same rows and
+  teaching a triage agent (via `get_e2e_run`) to file product bugs from a broken runner↔store
+  contract. `failures[]` is now fail-only; `errors[]`/`error_count` is its own visible bucket; the
+  MCP tool description, `TRIAGE_INSTRUCTIONS`, the SPA, and the in-app help doc all teach the split.
+- **The automation token survives whitespace** (Mark's ruling, milestone 6.3). The production secret
+  was seeded with a trailing newline — the classic `echo | gcloud secrets versions add` artifact —
+  so the injected env var and a correctly pasted client token differed by one invisible byte and
+  timingSafeEqual said 401. Both compare sides now `.trim()` (proven RED against the pre-fix
+  compare; a wrong token still fails, empty never matches empty), and the secret was re-seeded
+  clean (version 2, 44 bytes). A secret is a value, not a file.
+- **Instability is a flip RATE with a sample floor** — mirrored with forge-hat v0.44.x (measured on
+  the real store: the absolute rule silenced 31% of the catalogue; the rate brands 9%, exactly the
+  true flappers). Each repo's pinning test names the counterpart file.
+
+### Added
+
+- **The e2e-runner's persistent artifacts store** (Mark's ruling, milestone 6.1):
+  `terraform/modules/e2e-runner` now creates GCS bucket `dorinda-prod-e2e-runner-artifacts`
+  (versioned, uniform access, runner-SA-only objectAdmin) and FUSE-mounts it read-write at
+  `/app/artifacts`. Until now `artifacts/` lived and died inside each execution, so `index.jsonl`
+  held only the current run and `hat diff`/instability — features whose whole point is history —
+  could never work in the container. Verified live on the job after apply.
+
 ## [1.46.0] - 2026-08-16
 
 ### Fixed

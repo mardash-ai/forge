@@ -443,9 +443,12 @@ export function _resetRevokedSessions(): void {
  */
 export function checkBearerToken(authHeader: string, expected: string): boolean {
   if (!authHeader.startsWith('Bearer ')) return false;
-  const presented = authHeader.slice(7); // everything after "Bearer "
-  if (!presented) return false;
-  const eBuf = Buffer.from(expected, 'utf8');
+  // Trimmed on BOTH sides: a pasted token with stray whitespace and a secret seeded with a
+  // trailing newline are the same defect class, and neither is a different credential.
+  const presented = authHeader.slice(7).trim(); // everything after "Bearer "
+  const expectedClean = expected.trim();
+  if (!presented || !expectedClean) return false;
+  const eBuf = Buffer.from(expectedClean, 'utf8');
   const gBuf = Buffer.from(presented, 'utf8');
   // timingSafeEqual requires equal-length buffers; mismatched lengths means they can't be equal.
   if (gBuf.length !== eBuf.length) return false;
@@ -475,7 +478,16 @@ export function checkBearerToken(authHeader: string, expected: string): boolean 
 export function createAuth(): ConsoleAuth {
   // Automation token — loaded from the environment (Secret Manager injects it at startup).
   // Empty string means unconfigured; the path is disabled entirely (fail closed).
-  const automationToken = process.env.CONSOLE_AUTOMATION_TOKEN ?? '';
+  /*
+   * ⛔ TRIMMED, because a secret is a VALUE, not a file (2026-08-18, Mark's ruling on the
+   * trailing-newline 401). The production secret was seeded with a trailing \n — the classic
+   * `echo x | gcloud secrets versions add` artifact — so the injected env var and any correctly
+   * pasted client token differed by one byte and timingSafeEqual said no. The 401 pointed at the
+   * client, the client was right, and nothing on either side could show the invisible byte.
+   * Trimming at the READ SITE kills the whole class: any future re-seed with stray whitespace is
+   * harmless. (The presented side is trimmed in checkBearerToken for the same reason.)
+   */
+  const automationToken = (process.env.CONSOLE_AUTOMATION_TOKEN ?? '').trim();
 
   // OIDC mode: the sole interactive authenticated path.
   const googleClientId = process.env.CONSOLE_GOOGLE_CLIENT_ID ?? '';
