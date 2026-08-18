@@ -445,8 +445,21 @@ export const E2E_MCP_TOOLS = [
  */
 export const DEFAULT_INSTABILITY_WINDOW = 10;
 
-/** A workflow that flipped at least this often in the window is treated as noise, not signal. */
-export const UNSTABLE_AT_FLIPS = 2;
+/**
+ * ⛔ "Unstable" is a flip RATE with a sample floor, not an absolute count (retuned 2026-08-18
+ * against the acceptance machine's real store — the first version was `flips >= 2` regardless of
+ * sample count). Measured on 88 known remote-lane workflows the absolute rule branded 27 (31%)
+ * unstable; since unstable suppresses a row's regression trust, a real regression in a third of
+ * the catalogue was silenced. At rate ≥ 0.4 with ≥ 4 graded samples the same history brands
+ * 8/88 (9%) — exactly the genuine flappers.
+ *
+ * ⛔ MIRRORED in forge-hat/src/results/instability.ts (the CLI-side classifier — the duplication is
+ * an accepted cost, constant drift is not). Change them TOGETHER; the counterpart's pinning test
+ * names this file right back.
+ */
+export const UNSTABLE_AT_FLIP_RATE = 0.4;
+/** Below this many graded samples a flip rate is an anecdote, not a measurement. */
+export const UNSTABLE_MIN_SAMPLES = 4;
 
 export interface Instability {
   /** Provider-qualified, keyed exactly as `diffRowKey` keys a diff row, so the two join directly. */
@@ -491,8 +504,8 @@ export function countFlips(samples: WorkflowVerdict[]): number {
  * noise on no data, because that would suppress exactly the reds nobody has ever seen before.
  */
 export function isUnstable(flips: number, gradedSamples: number): boolean {
-  if (gradedSamples < 2) return false;
-  return flips >= UNSTABLE_AT_FLIPS;
+  if (gradedSamples < UNSTABLE_MIN_SAMPLES) return false;
+  return flips / (gradedSamples - 1) >= UNSTABLE_AT_FLIP_RATE;
 }
 
 /**

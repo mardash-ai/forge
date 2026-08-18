@@ -23,7 +23,8 @@ import { describe, it, expect } from 'vitest';
 
 import {
   DEFAULT_INSTABILITY_WINDOW,
-  UNSTABLE_AT_FLIPS,
+  UNSTABLE_AT_FLIP_RATE,
+  UNSTABLE_MIN_SAMPLES,
   countFlips,
   describeInstability,
   instabilityOf,
@@ -148,10 +149,29 @@ describe('isUnstable', () => {
     expect(isUnstable(5, 1)).toBe(false);
   });
 
-  it('trips at the declared threshold and not before', () => {
-    expect(isUnstable(UNSTABLE_AT_FLIPS - 1, 10)).toBe(false);
-    expect(isUnstable(UNSTABLE_AT_FLIPS, 10)).toBe(true);
-    expect(UNSTABLE_AT_FLIPS).toBe(2);
+  it('trips at the declared RATE with the sample floor, and not before', () => {
+    // The exact boundary, both sides. 10 graded samples ⇒ 9 pairs; 40% of 9 is 3.6, so 3 flips is
+    // trusted and 4 is noise.
+    expect(isUnstable(3, 10)).toBe(false);
+    expect(isUnstable(4, 10)).toBe(true);
+    // Below the sample floor nothing is unstable, at any flip count.
+    expect(isUnstable(2, 3)).toBe(false);
+    expect(isUnstable(2, 4)).toBe(true); // 2/3 ≈ 67%
+  });
+
+  it('⛔ the constants are PINNED, and mirrored in forge-hat — change them together', () => {
+    /*
+     * Retuned 2026-08-18 against the acceptance machine's real store: the old absolute rule
+     * (flips >= 2 in the window) branded 27 of 88 known workflows (31%) unstable — silencing a
+     * third of the catalogue's regressions. Rate ≥ 0.4 with ≥ 4 graded samples brands 8/88 (9%),
+     * exactly the genuine flappers (W-991 at 100%, W-104 at 71%, W-046 at 56%).
+     *
+     * ⛔ forge-hat/src/results/instability.ts carries the SAME rule for the CLI classifier. If this
+     * assertion just failed on a deliberate retune, retune forge-hat's copy in the same change —
+     * its own pinning test names this file right back.
+     */
+    expect(UNSTABLE_AT_FLIP_RATE).toBe(0.4);
+    expect(UNSTABLE_MIN_SAMPLES).toBe(4);
     expect(DEFAULT_INSTABILITY_WINDOW).toBe(10);
   });
 });
