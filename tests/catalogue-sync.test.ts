@@ -26,6 +26,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from
 import { Pool } from 'pg';
 import { PgCpResultsBackend, ensureCpResultsSchema } from '../src/storage/backends/cp-results/pg';
 import { syncCatalogue } from '../src/console/catalogue-sync';
+import { resetCredentialCache } from '../src/plugins/console-gcp/http';
 
 const HAS_PG = process.env.FORGE_CP_RESULTS_BACKEND === 'postgres' && Boolean(process.env.FORGE_DB_URL);
 
@@ -52,6 +53,25 @@ function installFetch(cfg: FetchStub): void {
     const url = String(input);
     const json = (body: unknown, status = 200) =>
       new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+    /*
+     * ⛔ The GCP TOKEN layer — answered FIRST, because `gcpJson` calls `accessToken()` before it
+     * ever fetches the API URL. This mock originally answered only the API URLs, so on a
+     * credential-less runner (CI) accessToken exhausted every real path — metadata server, ADC
+     * file, gcloud — and THREW before the mocked API fetch was consulted. readRunnerIdentity
+     * caught it and returned null, and the assertion failed.
+     *
+     * The test passed on the acceptance machine (real ADC on disk) and failed on every CI run —
+     * red on EVERY forge commit for days, which is a check people learn to skip. A test's
+     * environment must be closed: if the code under test talks to N services, the mock answers
+     * all N, not the N-1 that happened to exist on the author's machine.
+     */
+    if (url.includes('metadata.google.internal') || url.includes('metadata/computeMetadata')) {
+      return json({ access_token: 'test-token', expires_in: 3600 });
+    }
+    if (url.includes('oauth2.googleapis.com')) {
+      return json({ access_token: 'test-token', expires_in: 3600 });
+    }
 
     // The Cloud Run job — where the runner's identity comes from.
     if (url.includes('run.googleapis.com')) {
@@ -80,6 +100,10 @@ describe.skipIf(!HAS_PG)('the catalogue sync', () => {
   const realFetch = globalThis.fetch;
 
   const run = (cfg: FetchStub) => {
+    // Token state is module-level and cached. Reset it so (a) a REAL token cached by an earlier
+    // test on a credentialed machine cannot mask a broken mock, and (b) a negative-cache entry
+    // from a credential-less machine cannot outlive the mock that would have answered.
+    resetCredentialCache();
     installFetch(cfg);
     return syncCatalogue({
       store,
