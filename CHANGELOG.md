@@ -2,6 +2,15 @@
 
 ## [1.48.2] - 2026-08-19
 
+### Added
+
+- **Stripe mode-consistency guard (C33)**: On boot and in the release-verify path, the billing plugin retrieves exactly one catalog price from Stripe and compares its `livemode` flag against the secret-key prefix (`sk_live_` → livemode true, `sk_test_` → livemode false). A mismatch (live key + test price IDs, or test key + live price IDs) turns `GET /health/deep` unavailable (HTTP 503) with a specific error message naming both the key mode and the price mode. When billing is not configured (no `STRIPE_SECRET_KEY`), the guard is a no-op. The data-plane also logs a loud `STRIPE MODE MISMATCH` on startup. Adds `src/billing/mode-guard.ts`.
+- **`GET /billing/mode-check`** endpoint (public, no auth): returns `{ configured, ok, keyMode?, priceMode?, priceId?, detail? }` — the mode-consistency check result for the sidecar's configured app.
+- **`GET /health/deep`** on control and data planes: runs the billing mode guard for all apps with billing configured; a mismatch makes the status `unavailable` (HTTP 503).
+- **`forge verify --check-billing-mode`**: the verify capability (C14) gains `check_billing_mode` and `billing_app_name` inputs. When enabled, `runContractChecks` probes `GET /billing/mode-check` and adds a `billing-mode` assertion to the report.
+- **`tax_enabled` in `GET /billing/catalog`**: the catalog response includes `tax_enabled: boolean` (default `true`; set `STRIPE_TAX_ENABLED=false/0/off/no` to disable Stripe Tax).
+- **`retrievePrice` on `StripeClient`**: new method returning `{ id, livemode } | null` — used exclusively by the mode guard.
+
 ### Fixed
 
 - **productionize (nextjs-compose): the runner stage strips the bundled npm CLI** (`rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx`). The base image ships npm with vendored node_modules carrying fix-available CVEs; the runtime never invokes npm/npx (`CMD ["node", "server.js"]`). Found by dorinda-api's first Trivy-gated release (2026-08-19, 18 HIGH/CRITICAL, all under `/usr/local/lib/node_modules/npm`). Guard: `tests/productionize.test.ts` "runner ships no npm CLI" — proven RED against the pre-fix template.
