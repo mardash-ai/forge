@@ -36,6 +36,10 @@ export interface McpBackend {
   // OAuth clients
   putClient(appId: string, client: OAuthClient): Promise<OAuthClient>;
   getClient(appId: string, clientId: string): Promise<OAuthClient | null>;
+  listClients(appId: string): Promise<OAuthClient[]>;
+  deleteClient(appId: string, clientId: string): Promise<boolean>;
+  /** Returns client_ids that have at least one consent record (used by DCR GC). */
+  listConsentedClientIds(appId: string): Promise<string[]>;
 
   // consent
   putConsent(appId: string, consent: Consent): Promise<Consent>;

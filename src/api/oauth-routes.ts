@@ -31,6 +31,11 @@ import {
 } from '../mcp/oauth';
 import type { OAuthClient, OAuthGrant, Consent, TokenEndpointAuthMethod } from '../mcp/types';
 import { startSpan } from '../plugins/otel/index';
+import {
+  checkRoute,
+  clientIp,
+  ROUTE_RATE,
+} from '../shared/rate-limit';
 
 // C23 — the OAuth 2.1 AUTHORIZATION SERVER. The consuming app becomes an OAuth provider: it registers
 // clients (RFC 7591 dynamic registration), runs the authorize + consent flow (PKCE mandatory), and mints
@@ -153,6 +158,17 @@ export function registerOAuthRoutes(
 
   // === dynamic client registration (RFC 7591) ====================================================
   app.post('/oauth/register', async (req, reply) => {
+    // Per-IP rate limit on DCR — prevent mass client registration from a single source.
+    const ip = clientIp(req);
+    const dcrCfg = ROUTE_RATE.dcr();
+    const dcrRl = checkRoute(ip, 'POST /oauth/register', 'ip', dcrCfg.windowMs, dcrCfg.ceiling);
+    if (dcrRl.should_reject) {
+      return reply
+        .status(429)
+        .header('Retry-After', String(dcrRl.retry_after))
+        .send({ error: 'rate_limited', retry_after: dcrRl.retry_after });
+    }
+
     const b = (req.body ?? {}) as {
       app?: string;
       client_name?: string;
@@ -175,10 +191,14 @@ export function registerOAuthRoutes(
       return reply.status(404).send(unknownApp);
     }
     span.setAttribute('mcp.app', app_.name);
-    const redirectUris = Array.isArray(b.redirect_uris)
-      ? b.redirect_uris.filter((u): u is string => typeof u === 'string' && /^https?:\/\//.test(u))
-      : [];
-    if (redirectUris.length === 0) {
+
+    // redirect_uri class fix: REJECT if any provided URI is not an absolute http(s) URI.
+    // Previously, non-http(s) URIs were silently FILTERED: the 201 returned the filtered
+    // list, but the raw set the caller passed differed from what was stored — a "201 that
+    // drops entries." The rule now: every URI in the request must be valid, or the whole
+    // registration fails with 400. This guarantees stored == echoed == sent.
+    const rawUris = Array.isArray(b.redirect_uris) ? b.redirect_uris : [];
+    if (rawUris.length === 0) {
       outcome('invalid_redirect_uri');
       return oauthError(
         reply,
@@ -187,6 +207,19 @@ export function registerOAuthRoutes(
         'at least one absolute http(s) `redirect_uris` entry is required.',
       );
     }
+    const invalidUris = rawUris.filter(
+      (u) => typeof u !== 'string' || !/^https?:\/\//.test(u),
+    );
+    if (invalidUris.length > 0) {
+      outcome('invalid_redirect_uri');
+      return oauthError(
+        reply,
+        400,
+        'invalid_redirect_uri',
+        `all redirect_uris must be absolute http(s) URIs; invalid: ${invalidUris.map(String).join(', ')}`,
+      );
+    }
+    const redirectUris = rawUris as string[];
     const method: TokenEndpointAuthMethod =
       b.token_endpoint_auth_method === 'client_secret_basic' ||
       b.token_endpoint_auth_method === 'client_secret_post'
@@ -228,6 +261,14 @@ export function registerOAuthRoutes(
 
   // === authorization endpoint =====================================================================
   app.get('/oauth/authorize', async (req, reply) => {
+    const authzCfg = ROUTE_RATE.authorize();
+    const authzRl = checkRoute(clientIp(req), 'GET /oauth/authorize', 'ip', authzCfg.windowMs, authzCfg.ceiling);
+    if (authzRl.should_reject) {
+      return reply
+        .status(429)
+        .header('Retry-After', String(authzRl.retry_after))
+        .send({ error: 'rate_limited', retry_after: authzRl.retry_after });
+    }
     const q = req.query as Record<string, string>;
     const app_ = await resolveAppId(req);
     const theme = await themeFor(app_?.id);
@@ -312,6 +353,14 @@ export function registerOAuthRoutes(
 
   // === consent decision → mint an authorization code =============================================
   app.post('/oauth/authorize/decision', async (req, reply) => {
+    const authzDecCfg = ROUTE_RATE.authorize();
+    const authzDecRl = checkRoute(clientIp(req), 'POST /oauth/authorize/decision', 'ip', authzDecCfg.windowMs, authzDecCfg.ceiling);
+    if (authzDecRl.should_reject) {
+      return reply
+        .status(429)
+        .header('Retry-After', String(authzDecRl.retry_after))
+        .send({ error: 'rate_limited', retry_after: authzDecRl.retry_after });
+    }
     const b = (req.body ?? {}) as Record<string, string>;
     // C36 — the consent DECISION gets a span (`oauth.authorize_decision`): approve/deny (or the error that
     // preempted it) + the PUBLIC client_id. NEVER the authorization code, PKCE values, or any token.
@@ -409,6 +458,14 @@ export function registerOAuthRoutes(
 
   // === token endpoint =============================================================================
   app.post('/oauth/token', async (req, reply) => {
+    const tokenCfg = ROUTE_RATE.token();
+    const tokenRl = checkRoute(clientIp(req), 'POST /oauth/token', 'ip', tokenCfg.windowMs, tokenCfg.ceiling);
+    if (tokenRl.should_reject) {
+      return reply
+        .status(429)
+        .header('Retry-After', String(tokenRl.retry_after))
+        .send({ error: 'rate_limited', retry_after: tokenRl.retry_after });
+    }
     const b = (req.body ?? {}) as Record<string, string>;
     const grantType = b.grant_type;
     // C36 — every token-endpoint outcome gets a span (`oauth.token`): grant_type, the PUBLIC client_id,

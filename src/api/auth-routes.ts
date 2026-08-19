@@ -41,6 +41,14 @@ import {
 } from '../plugins/auth-identity/index';
 import { resolveEmailConfig } from '../plugins/email-smtp/index';
 import { hasValidServiceToken } from '../shared/service-auth';
+import {
+  checkRoute,
+  clientIp,
+  ROUTE_RATE,
+  recordLoginFailure,
+  clearLoginFailures,
+  loginBackoffSeconds,
+} from '../shared/rate-limit';
 import * as authStore from '../plugins/auth-identity/store';
 import { resolveThemeForApp } from './theme-context';
 import {
@@ -565,6 +573,18 @@ export function registerAuthRoutes(
 
   app.post('/auth/login', async (req, reply) => {
     const b = body(req);
+
+    // Per-IP rate limit: prevent credential stuffing from a single source.
+    const ip = clientIp(req);
+    const loginCfg = ROUTE_RATE.login();
+    const loginRl = checkRoute(ip, 'POST /auth/login', 'ip', loginCfg.windowMs, loginCfg.ceiling);
+    if (loginRl.should_reject) {
+      return reply
+        .status(429)
+        .header('Retry-After', String(loginRl.retry_after))
+        .send({ error: 'rate_limited', retry_after: loginRl.retry_after });
+    }
+
     const app_ = await resolveAppId(req);
     if (!app_)
       return htmlReply(reply, 404, page({ title: 'Sign in', bodyHtml: `<p class="err">Unknown app.</p>` }));
@@ -580,13 +600,50 @@ export function registerAuthRoutes(
     if (!cfg.sessionSecret) return htmlReply(reply, 503, notConfiguredPage(theme));
 
     const email = String(b.email ?? '');
+
+    // Per-account escalating backoff: check BEFORE attempting the login, so rotating IPs
+    // cannot bypass it. Only tracks failed attempts (recordLoginFailure is called below on
+    // failure; clearLoginFailures on success).
+    const backoff = loginBackoffSeconds(email);
+    if (backoff > 0) {
+      const accountRl = checkRoute(email, 'POST /auth/login', 'account', loginCfg.windowMs, loginCfg.ceiling);
+      // Always log the per-account backoff; in enforce mode, reject immediately.
+      if (accountRl.should_reject || backoff > 0) {
+        const eff = Math.max(backoff, accountRl.retry_after);
+        // eslint-disable-next-line no-console
+        console.log(
+          JSON.stringify({
+            event: 'rate_limit',
+            route: 'POST /auth/login',
+            key_class: 'account',
+            key: email,
+            would_throttle: true,
+            mode: process.env.FORGE_RATE_LIMIT_MODE === 'enforce' ? 'enforce' : 'dry-run',
+            retry_after_seconds: eff,
+          }),
+        );
+        if (process.env.FORGE_RATE_LIMIT_MODE === 'enforce') {
+          return reply
+            .status(429)
+            .header('Retry-After', String(eff))
+            .send({ error: 'rate_limited', retry_after: eff });
+        }
+      }
+    }
+
     const password = String(b.password ?? '');
     const user = await authStore.findByEmail(app_.id, email);
     // Constant-ish message: never reveal whether the email exists.
     const ok = user
       ? await verifyPassword(password, user.password_hash)
       : await verifyPassword(password, undefined);
-    if (!user || !ok) return fail('Incorrect email or password.');
+    if (!user || !ok) {
+      // Record the failure for per-account escalation BEFORE returning the error page.
+      recordLoginFailure(email);
+      return fail('Incorrect email or password.');
+    }
+    // Successful auth — clear any accumulated backoff for this account.
+    clearLoginFailures(email);
     if (!user.email_verified) {
       return htmlReply(
         reply,
@@ -633,6 +690,15 @@ export function registerAuthRoutes(
 
   app.post('/auth/signup', async (req, reply) => {
     const b = body(req);
+    // Per-IP rate limit on signup — prevent mass account creation.
+    const signupCfg = ROUTE_RATE.signup();
+    const signupRl = checkRoute(clientIp(req), 'POST /auth/signup', 'ip', signupCfg.windowMs, signupCfg.ceiling);
+    if (signupRl.should_reject) {
+      return reply
+        .status(429)
+        .header('Retry-After', String(signupRl.retry_after))
+        .send({ error: 'rate_limited', retry_after: signupRl.retry_after });
+    }
     const app_ = await resolveAppId(req);
     if (!app_)
       return htmlReply(reply, 404, page({ title: 'Sign up', bodyHtml: `<p class="err">Unknown app.</p>` }));
@@ -757,6 +823,15 @@ export function registerAuthRoutes(
 
   app.post('/auth/forgot', async (req, reply) => {
     const b = body(req);
+    // Per-IP rate limit on forgot-password — prevent email spam / enumeration.
+    const forgotCfg = ROUTE_RATE.forgot();
+    const forgotRl = checkRoute(clientIp(req), 'POST /auth/forgot', 'ip', forgotCfg.windowMs, forgotCfg.ceiling);
+    if (forgotRl.should_reject) {
+      return reply
+        .status(429)
+        .header('Retry-After', String(forgotRl.retry_after))
+        .send({ error: 'rate_limited', retry_after: forgotRl.retry_after });
+    }
     const app_ = await resolveAppId(req);
     const theme = await themeFor(app_?.id);
     if (!app_) return htmlReply(reply, 404, forgotPage({ error: 'Unknown app.', theme }));

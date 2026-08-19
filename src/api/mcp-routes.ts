@@ -28,6 +28,12 @@ import {
   recordToolCallMetric,
   recordMcpRegistrationMetric,
 } from '../plugins/otel/index';
+import {
+  checkRoute,
+  clientIp,
+  ROUTE_RATE,
+} from '../shared/rate-limit';
+import { gcStaleClients } from '../shared/dcr-gc';
 
 // C23 — the REMOTE MCP SERVER the platform hosts for a consuming app, plus the app-facing management
 // surface. `POST /mcp` speaks JSON-RPC 2.0 over the Streamable-HTTP transport (request/response), and
@@ -95,6 +101,8 @@ type SseWriter = (frame: string) => void;
 /** One attached server→client stream, with the identity needed to report it on the operator dashboard. */
 interface StreamSubscriber {
   write: SseWriter;
+  /** DCR-registered OAuth client_id — used for per-client SSE concurrency cap. */
+  clientId: string;
   /** DCR-registered client name ("Claude"/"ChatGPT") — WHICH AI is holding the channel. */
   clientName: string;
   /**
@@ -112,10 +120,11 @@ const toolListSubscribers = new Map<string, Set<StreamSubscriber>>();
 /** Attach a server→client stream for `appId`. Returns an unsubscribe fn (call on connection close). */
 export function subscribeToolListChanged(
   appId: string,
-  sub: { write: SseWriter; clientName?: string; userAgent?: string },
+  sub: { write: SseWriter; clientId?: string; clientName?: string; userAgent?: string },
 ): () => void {
   const entry: StreamSubscriber = {
     write: sub.write,
+    clientId: sub.clientId ?? 'unknown',
     clientName: sub.clientName ?? 'unknown',
     userAgent: sub.userAgent ?? '',
     openedAt: Date.now(),
@@ -133,6 +142,7 @@ export function subscribeToolListChanged(
 
 /** One attached stream as reported to the operator dashboard. */
 export interface ToolListStreamInfo {
+  client_id: string;
   client_name: string;
   user_agent: string;
   opened_at: string;
@@ -147,6 +157,7 @@ export interface ToolListStreamInfo {
 export function toolListStreamSnapshot(appId: string): ToolListStreamInfo[] {
   const now = Date.now();
   return [...(toolListSubscribers.get(appId) ?? [])].map((s) => ({
+    client_id: s.clientId,
     client_name: s.clientName,
     user_agent: s.userAgent,
     opened_at: new Date(s.openedAt).toISOString(),
@@ -198,6 +209,15 @@ export function broadcastToolListChanged(appId: string): number {
 /** Test-only: how many streams are currently attached for an app. */
 export function toolListSubscriberCount(appId: string): number {
   return toolListSubscribers.get(appId)?.size ?? 0;
+}
+
+/** Count streams currently open for a specific (appId, clientId) pair — used by the SSE concurrency cap. */
+function countClientSseStreams(appId: string, clientId: string): number {
+  let n = 0;
+  for (const sub of toolListSubscribers.get(appId) ?? []) {
+    if (sub.clientId === clientId) n++;
+  }
+  return n;
 }
 
 // ── C23 timeline projection ──────────────────────────────────────────────────────────────────────
@@ -433,6 +453,14 @@ export function registerMcpRoutes(
 
   // === the MCP endpoint (Streamable-HTTP, JSON-RPC 2.0) ============================================
   app.post('/mcp', async (req, reply) => {
+    const mcpCfg = ROUTE_RATE.mcp();
+    const mcpRl = checkRoute(clientIp(req), 'POST /mcp', 'ip', mcpCfg.windowMs, mcpCfg.ceiling);
+    if (mcpRl.should_reject) {
+      return reply
+        .status(429)
+        .header('Retry-After', String(mcpRl.retry_after))
+        .send({ error: 'rate_limited', retry_after: mcpRl.retry_after });
+    }
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
 
@@ -839,6 +867,16 @@ export function registerMcpRoutes(
   // connected client re-fetches `tools/list` the moment the surface changes — no user reconnect. Same
   // OAuth gate as POST /mcp (it is the same protected resource). Carries NO request/response traffic.
   app.get('/mcp', async (req, reply) => {
+    // Per-IP rate limit on SSE connections — separate from the per-client concurrency cap below.
+    const sseCfg = ROUTE_RATE.mcp();
+    const sseRl = checkRoute(clientIp(req), 'GET /mcp', 'ip', sseCfg.windowMs, sseCfg.ceiling);
+    if (sseRl.should_reject) {
+      return reply
+        .status(429)
+        .header('Retry-After', String(sseRl.retry_after))
+        .send({ error: 'rate_limited', retry_after: sseRl.retry_after });
+    }
+
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
 
@@ -860,6 +898,36 @@ export function registerMcpRoutes(
           error: 'invalid_token',
           error_description: 'a valid OAuth access token is required.',
         });
+    }
+
+    // Per-client SSE concurrency cap: prevent a single AI client from holding unbounded streams.
+    // This is a CONCURRENCY cap (live open connections), not a rate cap (requests/min).
+    const sseCap = ROUTE_RATE.ssePerClient();
+    const liveStreams = countClientSseStreams(app_.id, verified.clientId);
+    if (liveStreams >= sseCap) {
+      // eslint-disable-next-line no-console
+      console.log(
+        JSON.stringify({
+          event: 'rate_limit',
+          route: 'GET /mcp (SSE)',
+          key_class: 'client',
+          key: verified.clientId,
+          would_throttle: true,
+          mode: process.env.FORGE_RATE_LIMIT_MODE === 'enforce' ? 'enforce' : 'dry-run',
+          live_streams: liveStreams,
+          cap: sseCap,
+        }),
+      );
+      if (process.env.FORGE_RATE_LIMIT_MODE === 'enforce') {
+        return reply
+          .status(429)
+          .header('Retry-After', '30')
+          .send({
+            error: 'too_many_streams',
+            message: `Maximum ${sseCap} concurrent SSE streams per client.`,
+            retry_after: 30,
+          });
+      }
     }
 
     // Take over the socket — this is a long-lived stream, not a buffered Fastify reply.
@@ -884,6 +952,7 @@ export function registerMcpRoutes(
     const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '';
     const unsubscribe = subscribeToolListChanged(app_.id, {
       write: (frame) => res.write(frame),
+      clientId: verified.clientId,
       clientName,
       userAgent,
     });
@@ -1173,6 +1242,60 @@ export function registerMcpRoutes(
     return {
       revoked: await (await mcp()).revokeConsent(app_.id, client_id, q.owner),
     };
+  });
+
+  // === DCR client management (operator surface) ====================================================
+
+  // GET /mcp/clients — lists all registered OAuth clients, surfacing the total count and the
+  // count of never-consented clients (the "stale" population that the GC targets). Service-token gated.
+  // This is the OPERATOR-FACING view: an operator monitoring the platform looks here to understand
+  // how many clients are registered, which have live consents, and whether the GC is keeping pace.
+  app.get('/mcp/clients', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await requireServiceToken(req, reply, app_.id))) return;
+
+    const store_ = await mcp();
+    const [clients, consentedIds] = await Promise.all([
+      store_.listClients(app_.id),
+      store_.listConsentedClientIds(app_.id),
+    ]);
+    const consented = new Set(consentedIds);
+    const never_consented = clients.filter((c) => !consented.has(c.client_id));
+
+    return reply.status(200).send({
+      total: clients.length,
+      consented: consented.size,
+      never_consented: never_consented.length,
+      clients: clients.map((c) => ({
+        client_id: c.client_id,
+        client_name: c.client_name,
+        created_at: c.created_at,
+        has_consent: consented.has(c.client_id),
+      })),
+      observed_at: nowIso(),
+    });
+  });
+
+  // POST /mcp/clients/gc — run the DCR garbage collector for this app.
+  // Deletes OAuth clients that were registered but never consented to, and are older than
+  // DCR_GC_MAX_AGE_DAYS (default 30). Consented clients are NEVER touched. Service-token gated.
+  app.post('/mcp/clients/gc', async (req, reply) => {
+    const b = (req.body ?? {}) as { app?: string; max_age_days?: number };
+    const app_ = await resolveAppId(req, b.app);
+    if (!app_) return reply.status(404).send(unknownApp);
+    if (!(await requireServiceToken(req, reply, app_.id))) return;
+
+    const store_ = await mcp();
+    const result = await gcStaleClients(app_.id, store_, {
+      ...(typeof b.max_age_days === 'number' ? { maxAgeDays: b.max_age_days } : {}),
+    });
+    mcpLog({
+      event: 'mcp.dcr_gc',
+      app: app_.name,
+      ...result,
+    });
+    return reply.status(200).send({ gc: result, app: app_.name });
   });
 }
 

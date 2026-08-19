@@ -153,6 +153,27 @@ export class PgMcpBackend implements McpBackend, MigratableMcpBackend {
     );
     return r.rows[0]?.data ?? null;
   }
+  async listClients(appId: string): Promise<OAuthClient[]> {
+    const r = await this.pool.query<DataRow<OAuthClient>>(
+      'SELECT data FROM forge_mcp_clients WHERE app_id=$1 ORDER BY created_at ASC',
+      [appId],
+    );
+    return r.rows.map((row) => row.data);
+  }
+  async deleteClient(appId: string, clientId: string): Promise<boolean> {
+    const r = await this.pool.query(
+      'DELETE FROM forge_mcp_clients WHERE app_id=$1 AND client_id=$2',
+      [appId, clientId],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+  async listConsentedClientIds(appId: string): Promise<string[]> {
+    const r = await this.pool.query<{ client_id: string }>(
+      'SELECT DISTINCT client_id FROM forge_mcp_consents WHERE app_id=$1',
+      [appId],
+    );
+    return r.rows.map((row) => row.client_id);
+  }
 
   // --- consent --------------------------------------------------------------
   async putConsent(appId: string, consent: Consent): Promise<Consent> {

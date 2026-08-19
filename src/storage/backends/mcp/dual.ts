@@ -39,6 +39,12 @@ export class DualWriteMcpBackend implements McpBackend {
   getClient(appId: string, clientId: string): Promise<OAuthClient | null> {
     return this.primary.getClient(appId, clientId);
   }
+  listClients(appId: string): Promise<OAuthClient[]> {
+    return this.primary.listClients(appId);
+  }
+  listConsentedClientIds(appId: string): Promise<string[]> {
+    return this.primary.listConsentedClientIds(appId);
+  }
   getConsent(appId: string, clientId: string, owner: string): Promise<Consent | null> {
     return this.primary.getConsent(appId, clientId, owner);
   }
@@ -73,6 +79,11 @@ export class DualWriteMcpBackend implements McpBackend {
     const c = await this.primary.putClient(appId, client);
     await this.secondary.putClient(appId, client);
     return c;
+  }
+  async deleteClient(appId: string, clientId: string): Promise<boolean> {
+    const ok = await this.primary.deleteClient(appId, clientId);
+    await this.secondary.deleteClient(appId, clientId);
+    return ok;
   }
   async putConsent(appId: string, consent: Consent): Promise<Consent> {
     const c = await this.primary.putConsent(appId, consent);
