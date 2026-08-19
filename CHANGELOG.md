@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.48.2] - 2026-08-19
+
+### Fixed
+
+- **productionize (nextjs-compose): the runner stage strips the bundled npm CLI** (`rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx`). The base image ships npm with vendored node_modules carrying fix-available CVEs; the runtime never invokes npm/npx (`CMD ["node", "server.js"]`). Found by dorinda-api's first Trivy-gated release (2026-08-19, 18 HIGH/CRITICAL, all under `/usr/local/lib/node_modules/npm`). Guard: `tests/productionize.test.ts` "runner ships no npm CLI" — proven RED against the pre-fix template.
+
 ## [1.48.1] - 2026-08-19
 
 ### Fixed
