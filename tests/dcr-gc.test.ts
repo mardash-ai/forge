@@ -20,11 +20,10 @@ const APP = 'app_gc_test';
 
 function makeClient(overrides: Partial<OAuthClient> & { client_id: string }): OAuthClient {
   return {
-    client_id: overrides.client_id,
-    client_name: overrides.client_name ?? 'Test Client',
+    client_name: 'Test Client',
     redirect_uris: ['https://example.com/cb'],
     token_endpoint_auth_method: 'none',
-    created_at: overrides.created_at ?? nowIso(),
+    created_at: nowIso(),
     ...overrides,
   };
 }
