@@ -88,7 +88,11 @@ const CATALOG_WITH_TEST_PRICE = makeCatalog([
   { plan_key: 'free', is_default: true },
   {
     plan_key: 'pro',
-    prices: { stripe: { price_id: 'price_test_123', currency: 'usd' }, apple: { product_id: null }, google: { product_id: null } },
+    prices: {
+      stripe: { price_id: 'price_test_123', currency: 'usd' },
+      apple: { product_id: null },
+      google: { product_id: null },
+    },
     is_default: false,
   },
 ]);
@@ -97,7 +101,11 @@ const CATALOG_WITH_LIVE_PRICE = makeCatalog([
   { plan_key: 'free', is_default: true },
   {
     plan_key: 'pro',
-    prices: { stripe: { price_id: 'price_live_123', currency: 'usd' }, apple: { product_id: null }, google: { product_id: null } },
+    prices: {
+      stripe: { price_id: 'price_live_123', currency: 'usd' },
+      apple: { product_id: null },
+      google: { product_id: null },
+    },
     is_default: false,
   },
 ]);
@@ -286,12 +294,20 @@ describe('checkStripeModeConsistency', () => {
       { plan_key: 'free', is_default: true },
       {
         plan_key: 'month',
-        prices: { stripe: { price_id: 'price_a', currency: 'usd' }, apple: { product_id: null }, google: { product_id: null } },
+        prices: {
+          stripe: { price_id: 'price_a', currency: 'usd' },
+          apple: { product_id: null },
+          google: { product_id: null },
+        },
         is_default: false,
       },
       {
         plan_key: 'year',
-        prices: { stripe: { price_id: 'price_b', currency: 'usd' }, apple: { product_id: null }, google: { product_id: null } },
+        prices: {
+          stripe: { price_id: 'price_b', currency: 'usd' },
+          apple: { product_id: null },
+          google: { product_id: null },
+        },
         is_default: false,
       },
     ]);
@@ -330,7 +346,11 @@ describe('GET /billing/mode-check', () => {
             plan_key: 'free',
             display: { name: 'Free' },
             interval: 'month',
-            prices: { stripe: { price_id: null, currency: null }, apple: { product_id: null }, google: { product_id: null } },
+            prices: {
+              stripe: { price_id: null, currency: null },
+              apple: { product_id: null },
+              google: { product_id: null },
+            },
             entitlements: {},
             is_default: true,
           },
@@ -338,7 +358,11 @@ describe('GET /billing/mode-check', () => {
             plan_key: 'pro',
             display: { name: 'Pro' },
             interval: 'month',
-            prices: { stripe: { price_id: 'price_test_123', currency: 'usd' }, apple: { product_id: null }, google: { product_id: null } },
+            prices: {
+              stripe: { price_id: 'price_test_123', currency: 'usd' },
+              apple: { product_id: null },
+              google: { product_id: null },
+            },
             entitlements: {},
             is_default: false,
           },
@@ -347,7 +371,12 @@ describe('GET /billing/mode-check', () => {
     });
     const res = await server.inject({ method: 'GET', url: '/billing/mode-check' });
     expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body) as { configured: boolean; ok: boolean; keyMode: string; priceMode: string };
+    const body = JSON.parse(res.body) as {
+      configured: boolean;
+      ok: boolean;
+      keyMode: string;
+      priceMode: string;
+    };
     expect(body.configured).toBe(true);
     expect(body.ok).toBe(true);
     expect(body.keyMode).toBe('test');
@@ -367,7 +396,11 @@ describe('GET /billing/mode-check', () => {
             plan_key: 'free',
             display: { name: 'Free' },
             interval: 'month',
-            prices: { stripe: { price_id: null, currency: null }, apple: { product_id: null }, google: { product_id: null } },
+            prices: {
+              stripe: { price_id: null, currency: null },
+              apple: { product_id: null },
+              google: { product_id: null },
+            },
             entitlements: {},
             is_default: true,
           },
@@ -375,7 +408,11 @@ describe('GET /billing/mode-check', () => {
             plan_key: 'pro',
             display: { name: 'Pro' },
             interval: 'month',
-            prices: { stripe: { price_id: 'price_test_123', currency: 'usd' }, apple: { product_id: null }, google: { product_id: null } },
+            prices: {
+              stripe: { price_id: 'price_test_123', currency: 'usd' },
+              apple: { product_id: null },
+              google: { product_id: null },
+            },
             entitlements: {},
             is_default: false,
           },
@@ -384,7 +421,13 @@ describe('GET /billing/mode-check', () => {
     });
     const res = await server.inject({ method: 'GET', url: '/billing/mode-check' });
     expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body) as { configured: boolean; ok: boolean; keyMode: string; priceMode: string; detail: string };
+    const body = JSON.parse(res.body) as {
+      configured: boolean;
+      ok: boolean;
+      keyMode: string;
+      priceMode: string;
+      detail: string;
+    };
     expect(body.configured).toBe(true);
     expect(body.ok).toBe(false);
     expect(body.keyMode).toBe('live');
