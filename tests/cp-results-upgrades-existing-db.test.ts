@@ -260,3 +260,69 @@ describe.skipIf(!HAS_PG)("a failing trial's scenes survive the store", () => {
     expect(scenes.filter((s) => s.trial === 3 && s.scene_index === 0)).toHaveLength(1);
   });
 });
+
+describe.skipIf(!HAS_PG)(
+  'cp-results schema upgrade — workflows gains the drilldown columns (2026-08-19)',
+  () => {
+    // Same bug class as turns.attempt above, seven columns at once: prompt, duration_ms,
+    // started_at, completed_at, input_tokens, output_tokens, provider existed only in the
+    // CREATE IF NOT EXISTS. Against a pre-existing table, insertWorkflow failed with
+    // `column "prompt" ... does not exist`. This test creates the OLD shape, runs the
+    // initialiser, and then does what production does: a full insertWorkflow round trip.
+    let pool3: Pool;
+    beforeAll(async () => {
+      pool3 = new Pool({ connectionString: process.env.FORGE_DB_URL });
+      await pool3.query('DROP TABLE IF EXISTS forge_cp_eval_workflows CASCADE');
+      await pool3.query(`
+      CREATE TABLE forge_cp_eval_workflows (
+        id              text PRIMARY KEY,
+        run_id          text NOT NULL,
+        workflow_id     text NOT NULL,
+        tenant_id       text NOT NULL,
+        verdict         text NOT NULL CHECK (verdict IN ('pass','fail','error','skip')),
+        integrity_class text,
+        meta            jsonb NOT NULL DEFAULT '{}',
+        created_at      timestamptz NOT NULL DEFAULT now(),
+        updated_at      timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+      await ensureCpResultsSchema(pool3);
+    });
+    afterAll(async () => {
+      // Leave the database at the TRUE schema. Two leaks otherwise reach later test FILES:
+      // (1) the synthetic old-shape workflows table (no columns/FK the real CREATE has), and
+      // (2) subtler: DROP TABLE workflows CASCADE also drops the CHILD tables' FK constraints
+      // (scenes/turns/mcp_calls/claims reference workflows), and CREATE IF NOT EXISTS never
+      // restores a constraint on an existing table — so ON DELETE CASCADE dies silently and
+      // pg-cp-results' FK-cascade test fails. Reset the whole cp family, then re-ensure.
+      await pool3.query(
+        'DROP TABLE IF EXISTS forge_cp_eval_claims, forge_cp_eval_mcp_calls, forge_cp_eval_scenes, forge_cp_eval_turns, forge_cp_eval_workflows, forge_cp_eval_runs CASCADE',
+      );
+      await ensureCpResultsSchema(pool3);
+      await pool3?.end().catch(() => undefined);
+    });
+
+    it('insertWorkflow with prompt/duration/tokens/provider succeeds against the upgraded table', async () => {
+      const backend3 = new PgCpResultsBackend(pool3);
+      await pool3.query(
+        `INSERT INTO forge_cp_eval_runs (run_id, tenant_id) VALUES ('run_upg_wf','t')
+       ON CONFLICT DO NOTHING`,
+      );
+      const wf = await backend3.insertWorkflow({
+        id: 'wf_upg_cols',
+        run_id: 'run_upg_wf',
+        workflow_id: 'W-000',
+        tenant_id: 't',
+        verdict: 'pass',
+        prompt: 'Use Dorinda.',
+        duration_ms: 1234,
+        provider: 'openai',
+      });
+      expect(wf).toBeTruthy();
+      const r = await pool3.query(
+        `SELECT prompt, provider FROM forge_cp_eval_workflows WHERE id='wf_upg_cols'`,
+      );
+      expect(r.rows[0]?.prompt).toBe('Use Dorinda.');
+    });
+  },
+);

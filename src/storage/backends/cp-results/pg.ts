@@ -227,7 +227,20 @@ export async function ensureCpResultsSchema(pool: Pool): Promise<void> {
       ADD COLUMN IF NOT EXISTS lanes         text[]  NOT NULL DEFAULT '{}',
       ADD COLUMN IF NOT EXISTS trials_total  int     NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS trials_passed int     NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS failing_bar   text;
+      ADD COLUMN IF NOT EXISTS failing_bar   text,
+      -- ⛔ 2026-08-19: the SAME add-only-in-CREATE mistake as turns.attempt (see the test header
+      -- in cp-results-upgrades-existing-db.test.ts) for SEVEN columns at once. A database whose
+      -- workflows table predates them made every insertWorkflow fail with: column "prompt" of
+      -- relation "forge_cp_eval_workflows" does not exist — found because the upgrade test
+      -- leaves an old-shape table behind and pg-cp-results then runs against it. Every column in
+      -- the CREATE must ALSO appear here, or the upgrade path silently diverges from fresh.
+      ADD COLUMN IF NOT EXISTS prompt        text,
+      ADD COLUMN IF NOT EXISTS duration_ms   bigint,
+      ADD COLUMN IF NOT EXISTS started_at    timestamptz,
+      ADD COLUMN IF NOT EXISTS completed_at  timestamptz,
+      ADD COLUMN IF NOT EXISTS input_tokens  bigint  NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS output_tokens bigint  NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS provider      text;
 
     ALTER TABLE forge_cp_eval_runs
       ADD COLUMN IF NOT EXISTS spend_cents bigint NOT NULL DEFAULT 0;
