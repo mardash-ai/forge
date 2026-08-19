@@ -28,11 +28,7 @@ import {
   recordToolCallMetric,
   recordMcpRegistrationMetric,
 } from '../plugins/otel/index';
-import {
-  checkRoute,
-  clientIp,
-  ROUTE_RATE,
-} from '../shared/rate-limit';
+import { checkRoute, clientIp, ROUTE_RATE } from '../shared/rate-limit';
 import { gcStaleClients } from '../shared/dcr-gc';
 
 // C23 — the REMOTE MCP SERVER the platform hosts for a consuming app, plus the app-facing management

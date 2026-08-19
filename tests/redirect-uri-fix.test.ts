@@ -52,8 +52,7 @@ const seedApp = async (): Promise<void> => {
 
 const post = (url: string, payload: unknown) =>
   server.inject({ method: 'POST', url, payload: payload as object });
-const get = (url: string, query?: Record<string, string>) =>
-  server.inject({ method: 'GET', url, query });
+const get = (url: string, query?: Record<string, string>) => server.inject({ method: 'GET', url, query });
 
 beforeEach(async () => {
   prevDir = process.env.FORGE_STATE_DIR;

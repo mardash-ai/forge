@@ -31,11 +31,7 @@ import {
 } from '../mcp/oauth';
 import type { OAuthClient, OAuthGrant, Consent, TokenEndpointAuthMethod } from '../mcp/types';
 import { startSpan } from '../plugins/otel/index';
-import {
-  checkRoute,
-  clientIp,
-  ROUTE_RATE,
-} from '../shared/rate-limit';
+import { checkRoute, clientIp, ROUTE_RATE } from '../shared/rate-limit';
 
 // C23 — the OAuth 2.1 AUTHORIZATION SERVER. The consuming app becomes an OAuth provider: it registers
 // clients (RFC 7591 dynamic registration), runs the authorize + consent flow (PKCE mandatory), and mints
@@ -207,9 +203,7 @@ export function registerOAuthRoutes(
         'at least one absolute http(s) `redirect_uris` entry is required.',
       );
     }
-    const invalidUris = rawUris.filter(
-      (u) => typeof u !== 'string' || !/^https?:\/\//.test(u),
-    );
+    const invalidUris = rawUris.filter((u) => typeof u !== 'string' || !/^https?:\/\//.test(u));
     if (invalidUris.length > 0) {
       outcome('invalid_redirect_uri');
       return oauthError(
@@ -262,7 +256,13 @@ export function registerOAuthRoutes(
   // === authorization endpoint =====================================================================
   app.get('/oauth/authorize', async (req, reply) => {
     const authzCfg = ROUTE_RATE.authorize();
-    const authzRl = checkRoute(clientIp(req), 'GET /oauth/authorize', 'ip', authzCfg.windowMs, authzCfg.ceiling);
+    const authzRl = checkRoute(
+      clientIp(req),
+      'GET /oauth/authorize',
+      'ip',
+      authzCfg.windowMs,
+      authzCfg.ceiling,
+    );
     if (authzRl.should_reject) {
       return reply
         .status(429)
@@ -354,7 +354,13 @@ export function registerOAuthRoutes(
   // === consent decision → mint an authorization code =============================================
   app.post('/oauth/authorize/decision', async (req, reply) => {
     const authzDecCfg = ROUTE_RATE.authorize();
-    const authzDecRl = checkRoute(clientIp(req), 'POST /oauth/authorize/decision', 'ip', authzDecCfg.windowMs, authzDecCfg.ceiling);
+    const authzDecRl = checkRoute(
+      clientIp(req),
+      'POST /oauth/authorize/decision',
+      'ip',
+      authzDecCfg.windowMs,
+      authzDecCfg.ceiling,
+    );
     if (authzDecRl.should_reject) {
       return reply
         .status(429)

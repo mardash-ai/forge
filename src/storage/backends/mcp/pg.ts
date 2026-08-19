@@ -161,10 +161,10 @@ export class PgMcpBackend implements McpBackend, MigratableMcpBackend {
     return r.rows.map((row) => row.data);
   }
   async deleteClient(appId: string, clientId: string): Promise<boolean> {
-    const r = await this.pool.query(
-      'DELETE FROM forge_mcp_clients WHERE app_id=$1 AND client_id=$2',
-      [appId, clientId],
-    );
+    const r = await this.pool.query('DELETE FROM forge_mcp_clients WHERE app_id=$1 AND client_id=$2', [
+      appId,
+      clientId,
+    ]);
     return (r.rowCount ?? 0) > 0;
   }
   async listConsentedClientIds(appId: string): Promise<string[]> {

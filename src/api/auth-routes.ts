@@ -692,7 +692,13 @@ export function registerAuthRoutes(
     const b = body(req);
     // Per-IP rate limit on signup — prevent mass account creation.
     const signupCfg = ROUTE_RATE.signup();
-    const signupRl = checkRoute(clientIp(req), 'POST /auth/signup', 'ip', signupCfg.windowMs, signupCfg.ceiling);
+    const signupRl = checkRoute(
+      clientIp(req),
+      'POST /auth/signup',
+      'ip',
+      signupCfg.windowMs,
+      signupCfg.ceiling,
+    );
     if (signupRl.should_reject) {
       return reply
         .status(429)
@@ -825,7 +831,13 @@ export function registerAuthRoutes(
     const b = body(req);
     // Per-IP rate limit on forgot-password — prevent email spam / enumeration.
     const forgotCfg = ROUTE_RATE.forgot();
-    const forgotRl = checkRoute(clientIp(req), 'POST /auth/forgot', 'ip', forgotCfg.windowMs, forgotCfg.ceiling);
+    const forgotRl = checkRoute(
+      clientIp(req),
+      'POST /auth/forgot',
+      'ip',
+      forgotCfg.windowMs,
+      forgotCfg.ceiling,
+    );
     if (forgotRl.should_reject) {
       return reply
         .status(429)
