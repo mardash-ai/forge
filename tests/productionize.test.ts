@@ -919,3 +919,15 @@ describe('generateProdDockerfile — the runtime user must own .next (acceptance
     expect(chown).toBeLessThan(user);
   });
 });
+
+describe('generateProdDockerfile — the runner ships no npm CLI (image-scan finding, 2026-08-19)', () => {
+  // The base image bundles npm with vendored deps that carry fix-available CVEs; the runtime
+  // never invokes npm/npx (CMD is `node server.js`). The generator must strip it from the
+  // runner stage — 18 HIGH/CRITICAL findings on dorinda-api's first Trivy-gated release trace
+  // here. Removal must land in the RUNNER stage (after the last FROM), not a build stage.
+  it('emits the npm-removal line in the runner stage', () => {
+    const df = generateProdDockerfile({ appName: 'acme', port: 3000 });
+    const runner = df.slice(df.lastIndexOf('FROM '));
+    expect(runner).toContain('rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx');
+  });
+});

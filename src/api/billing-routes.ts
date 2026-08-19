@@ -26,6 +26,7 @@ import {
   deleteCustomer,
 } from '../billing/service';
 import { resolveBillingConfig } from '../billing/config';
+import { checkStripeModeConsistency } from '../billing/mode-guard';
 
 // C33 — the billing HTTP surface. The app proxies the browser-facing ops SAME-ORIGIN to this sidecar (like
 // `/auth/*`, `/connect/*`), so the C10 session cookie rides along and the SUBSCRIBER is ALWAYS derived from
@@ -201,11 +202,28 @@ export function registerBillingRoutes(
   // is provisioned on THIS sidecar) — the app reads it to decide whether plans are actually purchasable,
   // rather than inferring from its own env. When false, checkout/portal degrade to 503, so the app can
   // hide/disable purchase CTAs instead of surfacing plans whose checkout would fail.
+  // `tax_enabled` reflects STRIPE_TAX_ENABLED (default ON; set to false/0/off/no to disable Stripe Tax).
   app.get('/billing/catalog', async (req, reply) => {
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
     const [catalog, cfg] = await Promise.all([getCatalog(app_.id), resolveBillingConfig(app_.id)]);
-    return reply.status(200).send({ ...catalog, configured: cfg.configured });
+    return reply.status(200).send({ ...catalog, configured: cfg.configured, tax_enabled: cfg.taxEnabled });
+  });
+
+  // Stripe mode-consistency guard (C33) — key-mode ↔ catalog-price-mode check.
+  // Returns { configured, ok, keyMode?, priceMode?, priceId?, detail? }. Public — no auth
+  // needed (the key is read server-side; no secrets are returned). Used by /health/deep and
+  // the release-verify gate (forge verify --check-billing-mode).
+  // When billing is not configured (STRIPE_SECRET_KEY absent): { configured: false, ok: true }.
+  app.get('/billing/mode-check', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.status(200).send({ configured: false, ok: true });
+    const catalog = await getCatalog(app_.id);
+    try {
+      return reply.status(200).send(await checkStripeModeConsistency(app_.id, catalog));
+    } catch (e) {
+      return errorReply(reply, e);
+    }
   });
 
   // Catalog WRITE is an admin op (the app populates it server-side) — gated behind the C10 service token so

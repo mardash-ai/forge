@@ -95,6 +95,8 @@ const stubStripe: StripeClient = {
   },
   cancelSubscription: async () => ({ canceled: true }),
   deleteCustomer: async () => ({ deleted: true }),
+  // The mode-guard calls retrievePrice; the main billing tests don't exercise it — return null.
+  retrievePrice: async () => null,
 };
 
 function stripeSub(overrides: Partial<StripeSubscription> = {}): StripeSubscription {

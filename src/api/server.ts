@@ -27,6 +27,8 @@ import { registerTenantRoutes } from './tenant-routes';
 import { registerIngestRoutes } from './ingest-routes';
 import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
+import { aggregateHealth } from '../shared/health';
+import { runBillingDeepChecks } from '../shared/billing-health';
 
 // The Forge HTTP API. Capability APIs perform behavior; Resource/Event APIs
 // expose state and facts. Humans and agents use these SAME contracts.
@@ -71,6 +73,15 @@ app.setErrorHandler((err, _req, reply) => {
 });
 
 app.get('/health', async () => ({ status: 'ok', service: 'forge', state_dir: store.stateDir() }));
+
+// Deep health check (C33) — extends the liveness probe with platform-level readiness checks.
+// Currently: Stripe key-mode ↔ catalog-price-mode consistency for all apps with billing configured.
+// Returns the standard C6 health response (status + checks[]); a required-check failure → 503.
+app.get('/health/deep', async (_req, reply) => {
+  const results = await runBillingDeepChecks();
+  const { body, httpStatus } = aggregateHealth('forge', results);
+  return reply.status(httpStatus).send(body);
+});
 
 // Discovery — agents must be able to discover Forge.
 app.get('/capabilities', async () => ({ capabilities: describeCapabilities() }));

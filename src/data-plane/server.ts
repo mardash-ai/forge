@@ -32,6 +32,11 @@ import { registerBillingRoutes } from '../api/billing-routes';
 import { registerTenantRoutes } from '../api/tenant-routes';
 import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
+import { checkStripeModeConsistency } from '../billing/mode-guard';
+import { getCatalog } from '../billing/service';
+import { aggregateHealth } from '../shared/health';
+import { runBillingDeepChecks } from '../shared/billing-health';
+import type { PlanDef } from '../billing/types';
 
 // The Forge DATA PLANE server — the production/runtime counterpart to the control
 // plane. It ships in a SLIM image (no Docker CLI, no build/test/lint, no dev deps)
@@ -88,6 +93,15 @@ app.get('/health', async () => ({
   // every handler died with handler_status_error, and both /health probes stayed green.
   app_callback: await appCallbackBase(store).catch(() => null),
 }));
+
+// Deep health check (C33) — extends the liveness probe with platform-level readiness checks.
+// Currently: Stripe key-mode ↔ catalog-price-mode consistency for all apps with billing configured.
+// Returns the standard C6 health response (status + checks[]); a required-check failure → 503.
+app.get('/health/deep', async (_req, reply) => {
+  const results = await runBillingDeepChecks();
+  const { body, httpStatus } = aggregateHealth('forge-data-plane', results);
+  return reply.status(httpStatus).send(body);
+});
 
 // Discovery — only the data-plane capabilities.
 app.get('/capabilities', async () => ({
@@ -331,6 +345,34 @@ async function main() {
       String((e as Error)?.message ?? e),
     );
   }
+  // C33 — boot-time Stripe mode-consistency guard. On a live/test key+price mismatch checkout
+  // sessions are accepted by Stripe but no real charge fires — log loudly so the operator sees
+  // it immediately on startup rather than discovering it through silent revenue loss.
+  try {
+    const catalogResult: { plans: PlanDef[] } = await getCatalog(seedApp.id).catch(() => ({ plans: [] }));
+    const modeCheck = await checkStripeModeConsistency(seedApp.id, catalogResult);
+    if (modeCheck.configured && !modeCheck.ok) {
+      // eslint-disable-next-line no-console
+      console.error(`forge data-plane: STRIPE MODE MISMATCH — ${modeCheck.detail}`);
+      // eslint-disable-next-line no-console
+      console.error(
+        'forge data-plane: Checkout sessions will be accepted by Stripe but NO real charge fires. Fix this before going live.',
+      );
+    } else if (modeCheck.configured && modeCheck.ok) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `forge data-plane: Stripe mode guard OK — key=${modeCheck.keyMode}, price=${modeCheck.priceMode ?? 'n/a'} (${modeCheck.priceId ?? 'no price IDs'})`,
+      );
+    }
+  } catch (e) {
+    // Non-fatal: a guard check failure must never prevent the sidecar from booting.
+    // eslint-disable-next-line no-console
+    console.error(
+      'forge data-plane: billing mode-guard boot check failed (non-fatal):',
+      String((e as Error)?.message ?? e),
+    );
+  }
+
   startScheduler(store, {
     tickMs: process.env.FORGE_SCHEDULER_TICK_MS ? Number(process.env.FORGE_SCHEDULER_TICK_MS) : undefined,
   });

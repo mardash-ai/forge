@@ -36,6 +36,12 @@ const inputSchema = z.object({
   expect_password_signup: z.boolean().default(false),
   // Also probe POST /auth/refresh with no cookies (expected 401).
   check_refresh: z.boolean().default(false),
+  // C33 — Stripe mode-consistency guard: probe GET /billing/mode-check on the base URL
+  // (the app proxies /billing/* to the forge sidecar). A live-key/test-price mismatch
+  // fails the assertion. No-op when billing is not configured.
+  check_billing_mode: z.boolean().default(false),
+  // App name to pass to the billing mode check (overrides the sidecar's FORGE_APP_NAME default).
+  billing_app_name: z.string().optional(),
   // Per-request timeout (ms).
   timeout_ms: z.number().int().positive().optional(),
   // Post-deploy WARM-UP wait (ms). When > 0, `verify` first polls the health endpoint with a
@@ -88,6 +94,8 @@ export const verify: Capability<Input, Verification> = {
       cronPath: input.cron_path,
       expect,
       checkRefresh: input.check_refresh,
+      checkBillingMode: input.check_billing_mode,
+      ...(input.billing_app_name ? { billingAppName: input.billing_app_name } : {}),
       timeoutMs: input.timeout_ms,
       readinessTimeoutMs: input.readiness_timeout_ms,
       ...(input.readiness_interval_ms ? { readinessIntervalMs: input.readiness_interval_ms } : {}),

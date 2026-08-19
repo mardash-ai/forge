@@ -95,6 +95,12 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=${port}
 ENV HOSTNAME=0.0.0.0
+# The runtime never runs npm/npx (CMD is \`node server.js\`), but the base image bundles the
+# npm CLI with its own vendored node_modules — which carry fix-available CVEs the image scan
+# gate rightly blocks on (first seen 2026-08-19: 18 HIGH/CRITICAL, all under
+# /usr/local/lib/node_modules/npm). Removing the unused tool removes the findings AND shrinks
+# the attack surface; this is the generator-level fix (never hand-edit the emitted Dockerfile).
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 # Run as a non-root user.
 RUN groupadd --system --gid 1001 nodejs \\
  && useradd --system --uid 1001 --gid nodejs nextjs

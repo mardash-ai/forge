@@ -71,6 +71,7 @@ const stubStripe: StripeClient = {
     deletedCustomers.push(id);
     return { deleted: true };
   },
+  retrievePrice: async () => null,
 };
 
 const ROLES: RoleDef[] = [

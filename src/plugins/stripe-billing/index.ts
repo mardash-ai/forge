@@ -105,6 +105,9 @@ export interface StripeClient {
   // Delete a customer at the payment provider (removes its saved payment methods + cancels its
   // subscriptions provider-side). Idempotent — an already-deleted / unknown (404) customer ⇒ `{ deleted: false }`.
   deleteCustomer(secretKey: string, customerId: string): Promise<{ deleted: boolean }>;
+  // Retrieve a price by ID — used by the mode-consistency guard to compare the price's livemode flag
+  // against the secret-key prefix. Returns null when the price does not exist (404), throws on other errors.
+  retrievePrice(secretKey: string, priceId: string): Promise<{ id: string; livemode: boolean } | null>;
 }
 
 // --- Stripe → canonical status mapping ----------------------------------------------------------------
@@ -349,6 +352,18 @@ export const sdkStripeClient: StripeClient = {
       // Already deleted / unknown customer (404) → treat as done (idempotent teardown), not an error.
       if (err instanceof Stripe.errors.StripeInvalidRequestError && err.statusCode === 404)
         return { deleted: false };
+      throw err;
+    }
+  },
+
+  // Mode-consistency guard: retrieve a price and return its livemode flag. Used by
+  // checkStripeModeConsistency to catch live-key/test-price (or test-key/live-price) pairs.
+  async retrievePrice(secretKey, priceId) {
+    try {
+      const price = await stripeApi(secretKey).prices.retrieve(priceId);
+      return { id: price.id, livemode: Boolean(price.livemode) };
+    } catch (err) {
+      if (err instanceof Stripe.errors.StripeInvalidRequestError && err.statusCode === 404) return null;
       throw err;
     }
   },

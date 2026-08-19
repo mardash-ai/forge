@@ -161,6 +161,7 @@ describe('C33+C21 — webhook fires the notification on a real transition (idemp
       subs.has(subscriptionId) ? subs.get(subscriptionId)! : defaultSub,
     cancelSubscription: async () => ({ canceled: true }),
     deleteCustomer: async () => ({ deleted: true }),
+    retrievePrice: async () => null,
   };
 
   function stripeSub(over: Partial<StripeSubscription> = {}): StripeSubscription {

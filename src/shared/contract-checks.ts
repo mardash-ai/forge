@@ -72,6 +72,13 @@ export interface ContractCheckOptions {
   // failure green: if the app never warms up, the health assertion below still fails.
   readinessTimeoutMs?: number;
   readinessIntervalMs?: number;
+  // C33 — Stripe mode-consistency guard: probe GET /billing/mode-check on the base URL
+  // (the app proxies /billing/* to the forge sidecar). When true, a live-key/test-price
+  // (or test-key/live-price) mismatch fails the assertion. No-op when billing is not
+  // configured on the sidecar. Pass `billingAppName` when the app name differs from the
+  // forge sidecar's FORGE_APP_NAME env default.
+  checkBillingMode?: boolean;
+  billingAppName?: string;
 }
 
 export interface ContractReport {
@@ -404,7 +411,88 @@ export async function checkAuthConfig(
   };
 }
 
-// 6. C10 /auth/refresh (optional): a cookie-less refresh is 401.
+// 6. C33 billing mode-consistency (optional): GET /billing/mode-check must report ok:true.
+// The app proxies /billing/* to the forge sidecar; the sidecar checks the secret-key
+// prefix against the catalog price's livemode flag and returns a JSON result. A mismatch
+// (live key + test price, or test key + live price) means checkout silently no-ops.
+export async function checkBillingMode(
+  baseUrl: string,
+  appName: string | undefined,
+  timeoutMs: number,
+): Promise<Assertion> {
+  const appParam = appName ? `?app=${encodeURIComponent(appName)}` : '';
+  const target = `GET /billing/mode-check${appParam}`;
+  const expected = 'Stripe key mode matches catalog price mode (or billing not configured)';
+  const r = await httpProbe(`${baseUrl}/billing/mode-check${appParam}`, {
+    redirect: 'manual',
+    timeoutMs,
+    headers: { accept: 'application/json' },
+  });
+  if (!r.reachable) {
+    return {
+      name: 'billing-mode',
+      title: 'C33 Stripe mode consistency',
+      status: 'fail',
+      target,
+      expected,
+      actual: `unreachable (${r.error})`,
+    };
+  }
+  if (r.status !== 200) {
+    return {
+      name: 'billing-mode',
+      title: 'C33 Stripe mode consistency',
+      status: 'fail',
+      target,
+      expected,
+      actual: `HTTP ${r.status}`,
+    };
+  }
+  let result: { configured: boolean; ok: boolean; detail?: string; keyMode?: string; priceMode?: string };
+  try {
+    result = JSON.parse(r.body ?? '{}') as typeof result;
+  } catch {
+    return {
+      name: 'billing-mode',
+      title: 'C33 Stripe mode consistency',
+      status: 'fail',
+      target,
+      expected,
+      actual: 'HTTP 200 but body is not valid JSON',
+    };
+  }
+  if (!result.configured) {
+    return {
+      name: 'billing-mode',
+      title: 'C33 Stripe mode consistency',
+      status: 'pass',
+      target,
+      expected,
+      actual: 'billing not configured (guard is a no-op)',
+    };
+  }
+  if (result.ok) {
+    const modeStr = result.keyMode ? `, mode=${result.keyMode}` : '';
+    return {
+      name: 'billing-mode',
+      title: 'C33 Stripe mode consistency',
+      status: 'pass',
+      target,
+      expected,
+      actual: `configured, key mode and price mode agree${modeStr}`,
+    };
+  }
+  return {
+    name: 'billing-mode',
+    title: 'C33 Stripe mode consistency',
+    status: 'fail',
+    target,
+    expected,
+    actual: result.detail ?? `key mode "${result.keyMode}" does not match price mode "${result.priceMode}"`,
+  };
+}
+
+// 7. C10 /auth/refresh (optional): a cookie-less refresh is 401.
 export async function checkRefresh(baseUrl: string, timeoutMs: number): Promise<Assertion> {
   const target = 'POST /auth/refresh';
   const expected = '401 (no cookies)';
@@ -501,6 +589,10 @@ export async function runContractChecks(opts: ContractCheckOptions): Promise<Con
 
   if (opts.checkRefresh) {
     assertions.push(await checkRefresh(baseUrl, timeoutMs));
+  }
+
+  if (opts.checkBillingMode) {
+    assertions.push(await checkBillingMode(baseUrl, opts.billingAppName, timeoutMs));
   }
 
   const failed = assertions.filter((a) => a.status === 'fail').length;
