@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { store } from '../src/storage/store';
 import { registerOAuthRoutes } from '../src/api/oauth-routes';
-import { FsMcpBackend } from '../src/storage/backends/mcp/fs';
+import { getBackends } from '../src/storage/backends';
 import { nowIso } from '../src/shared/time';
 import type { Application } from '../src/resources/types';
 
@@ -30,7 +30,6 @@ let dir: string;
 let prevDir: string | undefined;
 let prevSecret: string | undefined;
 let server: FastifyInstance;
-let backend: FsMcpBackend;
 
 const seedApp = async (): Promise<void> => {
   const now = nowIso();
@@ -65,7 +64,6 @@ beforeEach(async () => {
   server = Fastify({ logger: false });
   registerOAuthRoutes(server, { defaultApp: () => APP });
   await server.ready();
-  backend = new FsMcpBackend();
 });
 
 afterEach(async () => {
@@ -150,8 +148,11 @@ describe('DCR redirect_uri validation (POST /oauth/register)', () => {
     expect(res.statusCode).toBe(201);
     const { client_id } = res.json<{ client_id: string }>();
 
-    // Verify via direct backend read — stored list MUST equal the sent list exactly
-    const stored = await backend.getClient(APP_ID, client_id);
+    // Verify via the ACTIVE backend (FS or PG, whichever the route used) — stored list MUST equal
+    // the sent list exactly. Using getBackends().mcp mirrors what the route wrote to, so the
+    // check works on both the filesystem and Postgres backends.
+    const activeMcp = (await getBackends()).mcp;
+    const stored = await activeMcp.getClient(APP_ID, client_id);
     expect(stored?.redirect_uris).toEqual(uris);
   });
 });
@@ -213,8 +214,10 @@ describe('register → authorize round-trip (FS backend)', () => {
     expect(regRes.statusCode).toBe(201);
     const { client_id } = regRes.json<{ client_id: string }>();
 
-    // CRITICAL: the backend list must not be empty or different from what was sent
-    const stored = await backend.getClient(APP_ID, client_id);
+    // CRITICAL: the backend list must not be empty or different from what was sent.
+    // Read from the ACTIVE backend (same one the route wrote to — FS or PG depending on env).
+    const activeMcp = (await getBackends()).mcp;
+    const stored = await activeMcp.getClient(APP_ID, client_id);
     expect(stored?.redirect_uris).toEqual([redirectUri]);
   });
 
