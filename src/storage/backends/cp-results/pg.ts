@@ -293,6 +293,59 @@ export async function ensureCpResultsSchema(pool: Pool): Promise<void> {
       ADD CONSTRAINT forge_cp_eval_workflows_verdict_check
       CHECK (verdict IN ('pass','fail','error','skip','withheld'));
 
+    -- ⛔ THE INITIALISER MUST CONVERGE FOREIGN KEYS TOO, NOT ONLY COLUMNS (the "cascade
+    -- order-red", 2026-08-18 → resolved 2026-08-20).
+    --
+    -- Every FK below also exists inline in the CREATEs above — and CREATE TABLE IF NOT EXISTS
+    -- is a no-op against an existing table, CONSTRAINTS INCLUDED. Worse, an FK can be severed
+    -- from a DISTANCE: DROP TABLE forge_cp_eval_workflows CASCADE silently drops the
+    -- workflow_id FKs on scenes/turns/mcp_calls/claims — four tables nobody touched — and
+    -- nothing ever restored them. That is exactly the state the upgrade suite
+    -- (cp-results-upgrades-existing-db.test.ts) kept leaving the local gate database in:
+    -- run→workflows still cascaded, workflows→scenes did not, and pg-cp-results' FK-cascade
+    -- guard went red for a reason invisible in the test itself. On such a database, DELETEing
+    -- a run leaks its children — the turns transcript included, which is a privacy problem,
+    -- not just a leak.
+    --
+    -- NOT VALID is deliberate: a validated ADD CONSTRAINT scans existing rows and FAILS on
+    -- pre-existing orphans — and this whole initialiser is one implicit transaction, so that
+    -- failure would roll back every migration above and take boot down with it. NOT VALID
+    -- skips only the scan of rows that already exist; new writes are checked and ON DELETE
+    -- CASCADE fires either way — and the cascade is the contract being repaired. A constraint
+    -- with the right name but the wrong delete rule is repaired too, not just an absent one.
+    DO $$
+    DECLARE
+      fk record;
+    BEGIN
+      FOR fk IN
+        SELECT * FROM (VALUES
+          ('forge_cp_eval_workflows', 'forge_cp_eval_workflows_run_id_fkey',      'run_id',      'forge_cp_eval_runs',      'run_id'),
+          ('forge_cp_eval_scenes',    'forge_cp_eval_scenes_workflow_id_fkey',    'workflow_id', 'forge_cp_eval_workflows', 'id'),
+          ('forge_cp_eval_turns',     'forge_cp_eval_turns_workflow_id_fkey',     'workflow_id', 'forge_cp_eval_workflows', 'id'),
+          ('forge_cp_eval_mcp_calls', 'forge_cp_eval_mcp_calls_workflow_id_fkey', 'workflow_id', 'forge_cp_eval_workflows', 'id'),
+          ('forge_cp_eval_claims',    'forge_cp_eval_claims_workflow_id_fkey',    'workflow_id', 'forge_cp_eval_workflows', 'id')
+        ) AS t(tbl, con, col, reftbl, refcol)
+      LOOP
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+           WHERE conname = fk.con
+             AND conrelid = fk.tbl::regclass
+             AND contype = 'f'
+             AND confdeltype = 'c'
+        ) THEN
+          EXECUTE format('ALTER TABLE %I DROP CONSTRAINT IF EXISTS %I', fk.tbl, fk.con);
+          EXECUTE format(
+            'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (%I) REFERENCES %I(%I) ON DELETE CASCADE NOT VALID',
+            fk.tbl,
+            fk.con,
+            fk.col,
+            fk.reftbl,
+            fk.refcol
+          );
+        END IF;
+      END LOOP;
+    END $$;
+
     -- One-time backfill: every historical 'error' row IS a withheld workflow.
     --
     -- This is provable rather than inferred. forge-hat's verdict type is exactly

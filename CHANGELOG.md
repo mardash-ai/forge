@@ -6,9 +6,9 @@
 
 - **cp-results: the workflows upgrade path gains its seven missing columns** (`prompt`, `duration_ms`, `started_at`, `completed_at`, `input_tokens`, `output_tokens`, `provider` — `ADD COLUMN IF NOT EXISTS`). They existed only in `CREATE TABLE IF NOT EXISTS`, so any database whose workflows table predates them failed every `insertWorkflow` with *column "prompt" does not exist* — the same add-only-in-CREATE class as `turns.attempt` (2026-08-14), seven columns at once. Found because the upgrade suite leaves an old-shape table behind for `pg-cp-results.test.ts`; this red bounced two orchestrator worker gates on 2026-08-18/19 before diagnosis. Guard: new upgrade-suite describe (old shape → ensure → full `insertWorkflow` round trip), proven RED against the pre-fix initialiser.
 
-### Known issue (documented, not fixed — needs fresh eyes)
+### Known issue (RESOLVED 2026-08-20 — see `changelog.d/cascade-order-red.md`, folds into the next release)
 
-- `pg-cp-results` "FK cascade" fails when run AFTER the upgrade suite even against a fully re-ensured schema: `run→workflows` cascades, `workflows→scenes` does not. Ruled out: file parallelism (already disabled), `session_replication_role`, missing FK in CREATE, stale tables (full-family drop+re-ensure in the new suite's afterAll doesn't cure it). Pre-existing before 2026-08-18's changes. Until fixed, forge's LOCAL full-suite gate is red in this file order; CI (fresh DB per run) is unaffected.
+- `pg-cp-results` "FK cascade" fails when run AFTER the upgrade suite even against a fully re-ensured schema: `run→workflows` cascades, `workflows→scenes` does not. Ruled out: file parallelism (already disabled), `session_replication_role`, missing FK in CREATE, stale tables (full-family drop+re-ensure in the new suite's afterAll doesn't cure it). Pre-existing before 2026-08-18's changes. Until fixed, forge's LOCAL full-suite gate is red in this file order; CI (fresh DB per run) is unaffected. *Resolution: "fully re-ensured" was the wrong ruling-out — the upgrade suite's `DROP TABLE … CASCADE` severs sibling FKs and `ensureCpResultsSchema` (CREATE IF NOT EXISTS) could never restore a constraint on an existing table, so the damage persisted in the LOCAL database across runs while CI's fresh DB re-created FKs from scratch. The initialiser now converges FKs like columns.*
 
 ## [1.48.2] - 2026-08-19
 

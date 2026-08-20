@@ -58,6 +58,20 @@ describe.skipIf(!HAS_PG)('cp-results schema — upgrading a database that alread
     // Now run the initialiser exactly as production does, against that older database.
     await ensureCpResultsSchema(pool);
     backend = new PgCpResultsBackend(pool);
+
+    // The initialiser now repairs missing FKs (the cascade order-red fix), so the upgraded turns
+    // table enforces workflow_id on NEW writes — exactly like production. Write the parents the
+    // way production does: run first, then workflow, then turns.
+    await pool.query(
+      `INSERT INTO forge_cp_eval_runs (run_id, tenant_id) VALUES ($1, 't')
+       ON CONFLICT DO NOTHING`,
+      [RUN_ID],
+    );
+    await pool.query(
+      `INSERT INTO forge_cp_eval_workflows (id, run_id, workflow_id, tenant_id, verdict)
+       VALUES ($1, $2, 'W-upgrade', 't', 'pass') ON CONFLICT DO NOTHING`,
+      [WF_ID, RUN_ID],
+    );
   });
 
   afterAll(async () => {
@@ -144,6 +158,13 @@ describe.skipIf(!HAS_PG)('withheld becomes a first-class verdict on an existing 
               ('old_fail','r','W-002','t','fail',      timestamptz '2026-08-14T19:53:00Z')`,
     );
     await ensureCpResultsSchema(pool2);
+    // Post-ensure the repaired run_id FK is live on new writes, so the runs the tests below
+    // insert workflows under must exist — as they always do in production, where the ingest
+    // route writes the run before its workflows.
+    await pool2.query(
+      `INSERT INTO forge_cp_eval_runs (run_id, tenant_id) VALUES ('r','t'), ('r2','t'), ('r3','t')
+       ON CONFLICT DO NOTHING`,
+    );
   });
 
   afterAll(async () => {
@@ -212,6 +233,18 @@ describe.skipIf(!HAS_PG)("a failing trial's scenes survive the store", () => {
     `);
     await ensureCpResultsSchema(pool3);
     backend3 = new PgCpResultsBackend(pool3);
+
+    // The repaired workflow_id FK is live on new writes, so the scenes inserted below need
+    // their parent workflow (and its parent run) — the order production always writes in.
+    await pool3.query(
+      `INSERT INTO forge_cp_eval_runs (run_id, tenant_id) VALUES ('r','t')
+       ON CONFLICT DO NOTHING`,
+    );
+    await pool3.query(
+      `INSERT INTO forge_cp_eval_workflows (id, run_id, workflow_id, tenant_id, verdict)
+       VALUES ($1, 'r', 'W-004', 't', 'fail') ON CONFLICT DO NOTHING`,
+      [WF],
+    );
   });
 
   afterAll(async () => {
@@ -323,6 +356,89 @@ describe.skipIf(!HAS_PG)(
         `SELECT prompt, provider FROM forge_cp_eval_workflows WHERE id='wf_upg_cols'`,
       );
       expect(r.rows[0]?.prompt).toBe('Use Dorinda.');
+    });
+  },
+);
+
+describe.skipIf(!HAS_PG)(
+  'a severed FK is re-established by the initialiser (the cascade order-red, 2026-08-18)',
+  () => {
+    // The bug this guards: `DROP TABLE forge_cp_eval_workflows CASCADE` — which THIS file does to
+    // synthesize old shapes — silently drops the workflow_id FKs on scenes/turns/mcp_calls/claims,
+    // and `CREATE TABLE IF NOT EXISTS` can never put a constraint back on an existing table. The
+    // local gate database stayed in that state across runs: run→workflows cascaded,
+    // workflows→scenes did not, and pg-cp-results' FK-cascade guard went red for a cause invisible
+    // in the test itself, whenever it ran after this suite. The initialiser now converges FKs the
+    // same way it converges columns; this describe severs one on purpose and proves the repair.
+    let pool5: Pool;
+    let backend5: PgCpResultsBackend;
+    const RUN = 'run_fk_repair';
+    const WF = 'wf_fk_repair';
+
+    beforeAll(async () => {
+      pool5 = new Pool({ connectionString: process.env.FORGE_DB_URL });
+      await ensureCpResultsSchema(pool5); // start from the true schema
+      // Sever exactly what a sibling's DROP ... CASCADE severs. Both hops of the chain, so the
+      // repair is proven per-table rather than assumed transitive.
+      await pool5.query(
+        'ALTER TABLE forge_cp_eval_scenes DROP CONSTRAINT IF EXISTS forge_cp_eval_scenes_workflow_id_fkey',
+      );
+      await pool5.query(
+        'ALTER TABLE forge_cp_eval_workflows DROP CONSTRAINT IF EXISTS forge_cp_eval_workflows_run_id_fkey',
+      );
+      // Production's only remediation path is the initialiser running at boot. Run it.
+      await ensureCpResultsSchema(pool5);
+      backend5 = new PgCpResultsBackend(pool5);
+    });
+
+    afterAll(async () => {
+      await pool5?.query('DELETE FROM forge_cp_eval_runs WHERE run_id = $1', [RUN]).catch(() => undefined);
+      await pool5?.end().catch(() => undefined);
+    });
+
+    it('⛔ re-adds every dropped FK with ON DELETE CASCADE', async () => {
+      const r = await pool5.query(
+        `SELECT conrelid::regclass::text AS tbl, confdeltype
+           FROM pg_constraint
+          WHERE contype = 'f'
+            AND conname IN ('forge_cp_eval_scenes_workflow_id_fkey', 'forge_cp_eval_workflows_run_id_fkey')
+          ORDER BY 1`,
+      );
+      expect(
+        r.rows.map((x) => `${x.tbl}:${x.confdeltype}`),
+        'ensureCpResultsSchema left a severed FK unrepaired — the next DROP ... CASCADE in any ' +
+          'test file makes the FK-cascade guard red for a reason no reader of that test can see',
+      ).toEqual(['forge_cp_eval_scenes:c', 'forge_cp_eval_workflows:c']);
+    });
+
+    it('⛔ deleting a run once again cascades through workflows INTO scenes', async () => {
+      // The observed order-red symptom, exactly: run→workflows cascaded, workflows→scenes did not.
+      await pool5.query(
+        `INSERT INTO forge_cp_eval_runs (run_id, tenant_id) VALUES ($1, 't') ON CONFLICT DO NOTHING`,
+        [RUN],
+      );
+      await pool5.query(
+        `INSERT INTO forge_cp_eval_workflows (id, run_id, workflow_id, tenant_id, verdict)
+         VALUES ($1, $2, 'W-fk', 't', 'pass') ON CONFLICT DO NOTHING`,
+        [WF, RUN],
+      );
+      await backend5.insertScene({
+        id: `${WF}:s0`,
+        workflow_id: WF,
+        run_id: RUN,
+        scene_index: 0,
+        scene_name: 'must not survive the run',
+        passed: true,
+      });
+
+      await pool5.query('DELETE FROM forge_cp_eval_runs WHERE run_id = $1', [RUN]);
+
+      const wfs = await pool5.query('SELECT 1 FROM forge_cp_eval_workflows WHERE id = $1', [WF]);
+      expect(wfs.rowCount, 'run→workflows cascade broken').toBe(0);
+      const scenes = await backend5.listScenes(WF);
+      expect(scenes, 'workflows→scenes cascade broken — deleted runs leak their scene evidence').toHaveLength(
+        0,
+      );
     });
   },
 );
