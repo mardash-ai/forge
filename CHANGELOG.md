@@ -1,12 +1,18 @@
 # Changelog
 
+## [1.48.4] - 2026-08-20
+
+### Fixed
+
+- **cp-results: `ensureCpResultsSchema` now converges FOREIGN KEYs, closing the "cascade order-red" known issue (1.48.3)**. Root cause: `DROP TABLE forge_cp_eval_workflows CASCADE` — which the upgrade suite does to synthesize old table shapes — silently drops the `workflow_id` FKs on scenes/turns/mcp_calls/claims (four tables nobody touched), and `CREATE TABLE IF NOT EXISTS` can never restore a constraint on an existing table. The local gate database stayed severed across runs, so pg-cp-results' FK-cascade guard went red (`run→workflows` cascaded, `workflows→scenes` did not) for a cause invisible in the test, whenever it ran after the upgrade suite — while CI's fresh database never showed it. The initialiser now repairs all five FKs the same way it repairs columns: an idempotent migration re-adds any missing (or wrong-delete-rule) FK as `ON DELETE CASCADE NOT VALID` — NOT VALID so pre-existing orphans can't roll back the whole boot-time ensure, while new writes are checked and the delete cascade (the contract being repaired) fires either way. Beyond the test estate, this closes a real leak: on any database with a severed FK, deleting a run orphaned its children — the turns transcript included. Guard: new "severed FK is re-established by the initialiser" describe in `tests/cp-results-upgrades-existing-db.test.ts`, proven RED against the pre-fix initialiser (severed FK left unrepaired; deleted run leaked workflows and scenes). Upgrade-suite fixtures now write parent rows (run → workflow → children) since the repaired FKs enforce new writes mid-file, exactly as production's ingest order does.
+
 ## [1.48.3] - 2026-08-19
 
 ### Fixed
 
 - **cp-results: the workflows upgrade path gains its seven missing columns** (`prompt`, `duration_ms`, `started_at`, `completed_at`, `input_tokens`, `output_tokens`, `provider` — `ADD COLUMN IF NOT EXISTS`). They existed only in `CREATE TABLE IF NOT EXISTS`, so any database whose workflows table predates them failed every `insertWorkflow` with *column "prompt" does not exist* — the same add-only-in-CREATE class as `turns.attempt` (2026-08-14), seven columns at once. Found because the upgrade suite leaves an old-shape table behind for `pg-cp-results.test.ts`; this red bounced two orchestrator worker gates on 2026-08-18/19 before diagnosis. Guard: new upgrade-suite describe (old shape → ensure → full `insertWorkflow` round trip), proven RED against the pre-fix initialiser.
 
-### Known issue (RESOLVED 2026-08-20 — see `changelog.d/cascade-order-red.md`, folds into the next release)
+### Known issue (RESOLVED 2026-08-20 — fixed in 1.48.4)
 
 - `pg-cp-results` "FK cascade" fails when run AFTER the upgrade suite even against a fully re-ensured schema: `run→workflows` cascades, `workflows→scenes` does not. Ruled out: file parallelism (already disabled), `session_replication_role`, missing FK in CREATE, stale tables (full-family drop+re-ensure in the new suite's afterAll doesn't cure it). Pre-existing before 2026-08-18's changes. Until fixed, forge's LOCAL full-suite gate is red in this file order; CI (fresh DB per run) is unaffected. *Resolution: "fully re-ensured" was the wrong ruling-out — the upgrade suite's `DROP TABLE … CASCADE` severs sibling FKs and `ensureCpResultsSchema` (CREATE IF NOT EXISTS) could never restore a constraint on an existing table, so the damage persisted in the LOCAL database across runs while CI's fresh DB re-created FKs from scratch. The initialiser now converges FKs like columns.*
 
