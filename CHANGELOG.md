@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.49.6] - 2026-08-21
+
+### Added
+
+- **message-microsoft plugin** (`src/plugins/message-microsoft/`): sends outbound email via Microsoft Graph `POST /me/sendMail`; registered as `email:microsoft` in the send-message senders table alongside `email:google`. Graph returns 202 with an empty body — the plugin synthesises a `crypto.randomUUID()` as the local `message_id` on the persisted `EmailDelivery`.
+- **Microsoft connector provider descriptor** (`src/connectors/providers.ts`): default scopes `openid email offline_access Mail.Read Mail.Send Calendars.ReadWrite`, PKCE, and `account_label_claims: ['email', 'preferred_username']` — personal MSA accounts lack `email` but always have `preferred_username`.
+- **`accountLabelFrom` preferred_username fallback** (`src/connectors/oauth-client.ts`): iterates the descriptor's `account_label_claims` list in order; work/school accounts resolve via `email`, personal MSA accounts fall back to `preferred_username`.
+- **Scope-narrowing guard** (`src/connectors/service.ts`): `completeConnect` uses `unionScopes(existing, incoming)` instead of overwriting — prevents a partial Microsoft re-consent (Microsoft has no `include_granted_scopes`) from silently revoking already-granted capabilities such as `Mail.Send`.
+- **Productionize secret catalog** (`src/plugins/productionize-nextjs-compose/secret-catalog.ts`): `MICROSOFT_CONNECT_CLIENT_ID` and `MICROSOFT_CONNECT_CLIENT_SECRET` entries with Azure Portal provisioning instructions.
+- **Test suite** (`tests/message-microsoft.test.ts`): 30 tests covering `buildGraphSendBody`, `sanitizeError`, senders dispatch, `accountLabelFrom` fallback, `unionScopes`, scope-narrowing guard (proves partial re-consent cannot narrow stored scopes), and C25 send-message via Microsoft.
+
 ## [1.49.5] - 2026-08-21
 
 ### Added
