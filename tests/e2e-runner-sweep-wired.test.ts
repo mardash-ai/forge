@@ -71,7 +71,7 @@ describe('the job can outlive a full catalogue run', () => {
     expect(m, 'job_timeout default not found — test needs updating').toBeTruthy();
     const timeoutS = Number(m![1]);
 
-    const WORKFLOWS = 82; // suites/full.yaml (76 + six Outlook/SMS workflows, 2026-08-20)
+    const WORKFLOWS = 83; // suites/full.yaml (76 + six Outlook/SMS workflows + Microsoft openid/email scope fix, 2026-08-21)
     const MEASURED_WALL_S_PER_WORKFLOW = 58; // mean of six runs, 2026-08-14
     const projected = WORKFLOWS * MEASURED_WALL_S_PER_WORKFLOW;
 
@@ -95,6 +95,6 @@ describe('the job can outlive a full catalogue run', () => {
     const entries = readFileSync(suitePath, 'utf8')
       .split('\n')
       .filter((l) => /^\s*-\s/.test(l)).length;
-    expect(entries).toBeLessThanOrEqual(82);
+    expect(entries).toBeLessThanOrEqual(83);
   });
 });
