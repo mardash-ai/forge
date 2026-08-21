@@ -252,9 +252,9 @@ describe('unionScopes', () => {
     const existing = ['Mail.Read', 'Mail.Send', 'Calendars.ReadWrite', 'openid'];
     const incoming = ['Mail.Read', 'openid']; // Mail.Send + Calendars.ReadWrite dropped
     const result = unionScopes(existing, incoming);
-    expect(result).toContain('Mail.Send');           // preserved — never lost
+    expect(result).toContain('Mail.Send'); // preserved — never lost
     expect(result).toContain('Calendars.ReadWrite'); // preserved
-    expect(result).toContain('Mail.Read');           // still present
+    expect(result).toContain('Mail.Read'); // still present
   });
 
   it('handles empty existing gracefully', () => {
@@ -382,10 +382,10 @@ describe('scope-narrowing guard — completeConnect must preserve the superset',
 
     // THE GUARD: the stored scope list MUST be the SUPERSET — not the narrower incoming set.
     // Mail.Send and Calendars.ReadWrite were in the first grant and must still be stored.
-    expect(result2.connection.scopes).toContain('Mail.Send');           // preserved from grant 1
+    expect(result2.connection.scopes).toContain('Mail.Send'); // preserved from grant 1
     expect(result2.connection.scopes).toContain('Calendars.ReadWrite'); // preserved from grant 1
-    expect(result2.connection.scopes).toContain('Mail.Read');           // present in both grants
-    expect(result2.connection.scopes).toContain('openid');              // present in both grants
+    expect(result2.connection.scopes).toContain('Mail.Read'); // present in both grants
+    expect(result2.connection.scopes).toContain('openid'); // present in both grants
 
     // Sanity check: the narrower grant string alone would have lost Mail.Send
     const naiveOverwrite = NARROW_SCOPE_STR.split(' ');
@@ -426,13 +426,20 @@ describe('C25 send-message capability via email:microsoft', () => {
 
   // Write a Connection with a valid (unexpired) access token directly into the connections
   // backend — skipping the full OAuth round-trip so we test only the broker + send path.
-  async function seedMicrosoftConnection(opts: {
-    scopes?: string[];
-    expiresInSeconds?: number;
-    accountLabel?: string;
-  } = {}): Promise<void> {
+  async function seedMicrosoftConnection(
+    opts: {
+      scopes?: string[];
+      expiresInSeconds?: number;
+      accountLabel?: string;
+    } = {},
+  ): Promise<void> {
     const scopes = opts.scopes ?? [
-      'Calendars.ReadWrite', 'Mail.Read', 'Mail.Send', 'email', 'offline_access', 'openid',
+      'Calendars.ReadWrite',
+      'Mail.Read',
+      'Mail.Send',
+      'email',
+      'offline_access',
+      'openid',
     ];
     const now = nowIso();
     const expiresAt = new Date(Date.now() + (opts.expiresInSeconds ?? 3600) * 1000).toISOString();
@@ -525,7 +532,11 @@ describe('C25 send-message capability via email:microsoft', () => {
     await seedApp();
     await seedMicrosoftConnection();
 
-    setGraphMailSender({ async send() { return { id: 'graph-msg-id-002' }; } });
+    setGraphMailSender({
+      async send() {
+        return { id: 'graph-msg-id-002' };
+      },
+    });
 
     await executeCapability(
       'send-message',
@@ -632,7 +643,11 @@ describe('C25 send-message capability via email:microsoft', () => {
     // Seed a connection WITHOUT Mail.Send scope
     await seedMicrosoftConnection({ scopes: ['openid', 'email', 'offline_access', 'Mail.Read'] });
 
-    setGraphMailSender({ async send() { return { id: 'should-not-be-called' }; } });
+    setGraphMailSender({
+      async send() {
+        return { id: 'should-not-be-called' };
+      },
+    });
 
     await expect(
       executeCapability(
