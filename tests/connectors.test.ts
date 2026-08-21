@@ -12,11 +12,12 @@ import { signSessionToken } from '../src/shared/session';
 import {
   setOutboundOAuthClient,
   resetOutboundOAuthClient,
+  accountLabelFrom,
   type OutboundOAuthClient,
   type TokenSet,
 } from '../src/connectors/oauth-client';
 import { resolveProvider, availableProviders } from '../src/connectors/config';
-import { getFreshAccessToken } from '../src/connectors/service';
+import { getFreshAccessToken, unionScopes } from '../src/connectors/service';
 import { connectionsFile } from '../src/shared/paths';
 import { nowIso } from '../src/shared/time';
 import type { Application } from '../src/resources/types';
@@ -93,6 +94,11 @@ const configureGoogle = async (): Promise<void> => {
   await setSecret(APP_ID, 'GOOGLE_CONNECT_CLIENT_SECRET', 'google-connect-secret');
 };
 
+const configureMicrosoft = async (): Promise<void> => {
+  await setSecret(APP_ID, 'MICROSOFT_CONNECT_CLIENT_ID', 'ms-connect-client');
+  await setSecret(APP_ID, 'MICROSOFT_CONNECT_CLIENT_SECRET', 'ms-connect-secret');
+};
+
 beforeEach(async () => {
   prevDir = process.env.FORGE_STATE_DIR;
   prevKey = process.env.FORGE_SECRETS_KEY;
@@ -152,6 +158,32 @@ async function connect(cookie: string, opts: { scopes?: string; return_to?: stri
     headers: { cookie },
   });
   return { start, state, cb, authorizeUrl: loc };
+}
+
+// Generic connect helper for any provider (used by Microsoft tests).
+async function connectProvider(provider: string, cookie: string) {
+  const start = await server.inject({
+    method: 'GET',
+    url: `/connect/${provider}/start`,
+    headers: { cookie },
+  });
+  expect(start.statusCode).toBe(302);
+  const loc = new URL(start.headers.location as string);
+  const state = loc.searchParams.get('state')!;
+  const cb = await server.inject({
+    method: 'GET',
+    url: `/connect/${provider}/callback?code=auth-code-ms&state=${encodeURIComponent(state)}`,
+    headers: { cookie },
+  });
+  return { start, state, cb, authorizeUrl: loc };
+}
+
+// Build a fake (unsigned) OIDC id_token with the given claims — used to unit-test accountLabelFrom
+// without a real issuer. The function only base64-decodes the payload, so signature is irrelevant.
+function fakeIdToken(claims: Record<string, unknown>): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
+  return `${header}.${payload}.fake_sig`;
 }
 
 describe('C24 — provider registry + credential resolution', () => {
@@ -638,5 +670,209 @@ describe('C24 — encryption at rest on the filesystem vault', () => {
     expect(raw).not.toContain('google-access-1');
     expect(raw).not.toContain('google-refresh-1');
     expect(raw).toContain('access_sealed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C24 — accountLabelFrom: preferred_username fallback for Microsoft personal
+// accounts (MSA). Work/school accounts carry the `email` claim in the OIDC
+// id_token; personal MSA accounts only have `preferred_username`. The provider
+// descriptor's account_label_claims chain handles both.
+// ---------------------------------------------------------------------------
+describe('C24 — accountLabelFrom: preferred_username fallback for personal Microsoft accounts', () => {
+  // Use the real Microsoft descriptor shape (just the claims list matters).
+  const msDescriptor = { account_label_claims: ['email', 'preferred_username'] } as Parameters<
+    typeof accountLabelFrom
+  >[0];
+  const googleDescriptor = { account_label_claims: ['email'] } as Parameters<
+    typeof accountLabelFrom
+  >[0];
+
+  it('returns the email claim for work/school accounts (email is present)', () => {
+    const token = fakeIdToken({ email: 'user@company.com', preferred_username: 'user@company.com' });
+    expect(accountLabelFrom(msDescriptor, token)).toBe('user@company.com');
+  });
+
+  it('falls back to preferred_username when the email claim is absent (personal MSA account)', () => {
+    // Personal Microsoft accounts omit the `email` claim in the id_token — only preferred_username is set.
+    const token = fakeIdToken({ preferred_username: 'user@outlook.com' });
+    expect(accountLabelFrom(msDescriptor, token)).toBe('user@outlook.com');
+  });
+
+  it('returns undefined when neither email nor preferred_username is present', () => {
+    const token = fakeIdToken({ sub: 'abc123', name: 'Alice' });
+    expect(accountLabelFrom(msDescriptor, token)).toBeUndefined();
+  });
+
+  it('Google descriptor only checks email — preferred_username alone yields undefined', () => {
+    // A Google descriptor has no preferred_username fallback; a token without email returns nothing.
+    const token = fakeIdToken({ preferred_username: 'user@gmail.com' });
+    expect(accountLabelFrom(googleDescriptor, token)).toBeUndefined();
+  });
+
+  it('returns undefined when no id_token is supplied', () => {
+    expect(accountLabelFrom(msDescriptor, undefined)).toBeUndefined();
+  });
+
+  it('takes the FIRST non-empty claim in order (email wins when both present)', () => {
+    const token = fakeIdToken({ email: 'work@corp.test', preferred_username: 'personal@outlook.com' });
+    // email is tried first per the chain — it wins.
+    expect(accountLabelFrom(msDescriptor, token)).toBe('work@corp.test');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C24 — unionScopes helper: the heart of the scope narrowing guard.
+// ---------------------------------------------------------------------------
+describe('C24 — unionScopes (scope-narrowing guard helper)', () => {
+  it('returns the union — scopes present in EITHER list survive', () => {
+    const result = unionScopes(
+      ['openid', 'email', 'Mail.Send', 'Calendars.ReadWrite'],
+      ['openid', 'email', 'Mail.Read'],
+    );
+    // Mail.Send and Calendars.ReadWrite must survive even though they were absent from `incoming`.
+    expect(result).toContain('Mail.Send');
+    expect(result).toContain('Calendars.ReadWrite');
+    expect(result).toContain('Mail.Read');
+    expect(result).toEqual(['Calendars.ReadWrite', 'Mail.Read', 'Mail.Send', 'email', 'openid']);
+  });
+
+  it('is a no-op when incoming is a superset of existing', () => {
+    expect(unionScopes(['openid'], ['openid', 'Mail.Send'])).toEqual(['Mail.Send', 'openid']);
+  });
+
+  it('handles empty existing (first connect — no prior scopes to preserve)', () => {
+    expect(unionScopes([], ['openid', 'Mail.Send'])).toEqual(['Mail.Send', 'openid']);
+  });
+
+  it('handles empty incoming (degrades gracefully — existing scopes fully preserved)', () => {
+    expect(unionScopes(['openid', 'Mail.Send'], [])).toEqual(['Mail.Send', 'openid']);
+  });
+
+  it('deduplicates — a scope present in both lists appears once', () => {
+    const result = unionScopes(['openid', 'email'], ['openid', 'email']);
+    expect(result).toHaveLength(2);
+    expect(result).toEqual(['email', 'openid']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C24 — Microsoft connector: connect flow, no-revoke disconnect, and the
+// SCOPE NARROWING GUARD (partial re-consent CANNOT shrink stored scopes).
+//
+// Microsoft has no `include_granted_scopes` equivalent: a user who re-consents
+// to a SUBSET of previously-granted scopes returns a callback whose `scope`
+// response field contains only the newly-granted scopes. Overwriting the stored
+// list with the callback's list would silently revoke already-granted capabilities
+// (e.g. losing Mail.Send after a Mail.Read-only re-consent). The C24
+// completeConnect MUST union old + new scopes — this test would FAIL against
+// the naive overwrite.
+// ---------------------------------------------------------------------------
+describe('C24 — Microsoft connector: connect flow + scope narrowing guard', () => {
+  it('Microsoft connect redirects to the Microsoft authorization endpoint', async () => {
+    await configureMicrosoft();
+    const { cookie } = await signIn('ms-user@demo.test');
+    const start = await server.inject({
+      method: 'GET',
+      url: '/connect/microsoft/start',
+      headers: { cookie },
+    });
+    expect(start.statusCode).toBe(302);
+    const loc = new URL(start.headers.location as string);
+    expect(loc.origin + loc.pathname).toBe(
+      'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+    );
+    // Default scopes include the full Microsoft scope set.
+    const scope = loc.searchParams.get('scope') ?? '';
+    expect(scope).toContain('Mail.Send');
+    expect(scope).toContain('Calendars.ReadWrite');
+    expect(scope).toContain('offline_access');
+  });
+
+  it('Microsoft callback stores a sealed connection and labels it with account_label', async () => {
+    await configureMicrosoft();
+    const { userId, cookie } = await signIn('ms-user2@demo.test');
+    nextExchange = {
+      access_token: 'ms-access-1',
+      refresh_token: 'ms-refresh-1',
+      expires_in: 3600,
+      scope: 'openid email offline_access Mail.Read Mail.Send Calendars.ReadWrite',
+      account_label: 'user@outlook.test',
+    };
+    const { cb } = await connectProvider('microsoft', cookie);
+    expect(cb.statusCode).toBe(302);
+    expect(cb.headers.location).toContain('connected=microsoft');
+
+    const conn = (await (await getBackends()).connections.getConnection(APP_ID, userId, 'microsoft'))!;
+    expect(conn.status).toBe('connected');
+    expect(conn.account_label).toBe('user@outlook.test');
+    // Tokens are sealed at rest.
+    expect(JSON.stringify(conn)).not.toContain('ms-access-1');
+    expect(await openValue(conn.access_sealed)).toBe('ms-access-1');
+  });
+
+  it('Microsoft disconnect drops stored tokens WITHOUT a provider revoke call (no revoke_endpoint)', async () => {
+    await configureMicrosoft();
+    const { userId, cookie } = await signIn('ms-user3@demo.test');
+    nextExchange = {
+      access_token: 'ms-access-x',
+      refresh_token: 'ms-refresh-x',
+      expires_in: 3600,
+      scope: 'openid email offline_access Mail.Read Mail.Send',
+      account_label: 'user@outlook.test',
+    };
+    await connectProvider('microsoft', cookie);
+    revokes = [];
+
+    const res = await server.inject({ method: 'DELETE', url: '/connect/microsoft', headers: { cookie } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().disconnected).toBe(true);
+    // Microsoft has no revoke_endpoint — NO revoke call must be made.
+    expect(revokes).toHaveLength(0);
+    // Tokens are gone locally.
+    expect(await (await getBackends()).connections.getConnection(APP_ID, userId, 'microsoft')).toBeNull();
+  });
+
+  it('a partial Microsoft re-consent CANNOT narrow the stored scope list (union preserved)', async () => {
+    // This test would FAIL if completeConnect used a naive scope overwrite instead of unionScopes.
+    await configureMicrosoft();
+    const { userId, cookie } = await signIn('ms-scope-guard@demo.test');
+
+    // --- First connect: full scope grant ------------------------------------------
+    nextExchange = {
+      access_token: 'ms-access-full',
+      refresh_token: 'ms-refresh-full',
+      expires_in: 3600,
+      scope: 'openid email offline_access Mail.Read Mail.Send Calendars.ReadWrite',
+      account_label: 'user@outlook.test',
+    };
+    await connectProvider('microsoft', cookie);
+
+    const b = (await getBackends()).connections;
+    const conn1 = (await b.getConnection(APP_ID, userId, 'microsoft'))!;
+    expect(conn1.scopes).toContain('Mail.Send');
+    expect(conn1.scopes).toContain('Calendars.ReadWrite');
+
+    // --- Second connect: PARTIAL re-consent (user only approved Mail.Read) ----------
+    // Microsoft's callback returns ONLY the newly-consented scope — NOT the previously-granted ones.
+    // A naive overwrite would destroy Mail.Send and Calendars.ReadWrite.
+    nextExchange = {
+      access_token: 'ms-access-partial',
+      refresh_token: 'ms-refresh-partial',
+      expires_in: 3600,
+      scope: 'openid email offline_access Mail.Read', // Mail.Send + Calendars.ReadWrite ABSENT
+      account_label: 'user@outlook.test',
+    };
+    await connectProvider('microsoft', cookie);
+
+    const conn2 = (await b.getConnection(APP_ID, userId, 'microsoft'))!;
+    // The UNION must be stored — previously-granted scopes survive the partial re-consent.
+    expect(conn2.scopes).toContain('Mail.Send'); // MUST survive
+    expect(conn2.scopes).toContain('Calendars.ReadWrite'); // MUST survive
+    expect(conn2.scopes).toContain('Mail.Read'); // newly granted
+    // Exact union (sorted, no duplicates).
+    expect(conn2.scopes).toEqual(
+      ['Calendars.ReadWrite', 'Mail.Read', 'Mail.Send', 'email', 'offline_access', 'openid'],
+    );
   });
 });

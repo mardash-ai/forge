@@ -20,6 +20,13 @@ import {
   type GmailSender,
   type OutboundMessage,
 } from '../src/plugins/message-gmail/index';
+import {
+  setGraphMailSender,
+  resetGraphMailSender,
+  buildGraphSendBody,
+  MSGRAPH_SEND_SCOPE,
+  type GraphMailSender,
+} from '../src/plugins/message-microsoft/index';
 import type { Application, EmailDelivery } from '../src/resources/types';
 import type { Connection } from '../src/connectors/types';
 import { nowIso } from '../src/shared/time';
@@ -75,6 +82,34 @@ async function seedConnection(
     scopes: opts.scopes ?? ['openid', 'email', GMAIL_SEND_SCOPE],
     status: 'connected',
     account_label: 'alice@gmail.test',
+    connected_at: now.toISOString(),
+    updated_at: now.toISOString(),
+  };
+  await (await getBackends()).connections.putConnection(APP_ID, conn);
+}
+
+// Seed a Microsoft connection with the Graph send scope — mirrors the shape the real connect flow stores.
+async function seedMicrosoftConnection(
+  opts: { owner?: string; scopes?: string[]; expiresInSec?: number } = {},
+): Promise<void> {
+  const owner = opts.owner ?? OWNER;
+  const now = new Date();
+  const conn: Connection = {
+    owner,
+    provider: 'microsoft',
+    access_sealed: await sealValue('ms-access-token-live'),
+    refresh_sealed: await sealValue('ms-refresh-token'),
+    access_expires_at: new Date(now.getTime() + (opts.expiresInSec ?? 3600) * 1000).toISOString(),
+    scopes: opts.scopes ?? [
+      'openid',
+      'email',
+      'offline_access',
+      MSGRAPH_SEND_SCOPE, // 'Mail.Send'
+      'Mail.Read',
+      'Calendars.ReadWrite',
+    ],
+    status: 'connected',
+    account_label: 'alice@outlook.test',
     connected_at: now.toISOString(),
     updated_at: now.toISOString(),
   };
@@ -347,5 +382,219 @@ describe('C25 — POST /connect/:provider/send (authenticated route)', () => {
     });
     expect(res.statusCode).toBe(404);
     expect(res.json().error.code).toBe('not_found');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C25 — SendMessage: Microsoft Graph send (email:microsoft)
+//
+// Exercises the `email:microsoft` registry entry end-to-end — broker → Graph
+// stub → persist. Uses the same stub-injection pattern as the Gmail tests so
+// no socket is opened in the test suite.
+// ---------------------------------------------------------------------------
+describe('C25 — SendMessage: Microsoft Graph send (email:microsoft)', () => {
+  let graphSent: Array<{ message: OutboundMessage; token: string }>;
+
+  beforeEach(() => {
+    graphSent = [];
+    const stub: GraphMailSender = {
+      async send(message, token) {
+        graphSent.push({ message, token });
+        // Graph POST /me/sendMail returns 202 with no body — plugin synthesizes a UUID.
+        return { id: 'ms-synth-uuid-1' };
+      },
+    };
+    setGraphMailSender(stub);
+  });
+
+  afterEach(() => {
+    resetGraphMailSender();
+  });
+
+  it('brokers a fresh token, sends via Graph, and persists a sent EmailDelivery record', async () => {
+    await seedMicrosoftConnection();
+    const { resource } = await send({
+      provider: 'microsoft',
+      subject: 'From Graph',
+      body: 'Hello from Microsoft Graph',
+    });
+    const d = resource as EmailDelivery;
+
+    expect(d.type).toBe('EmailDelivery');
+    expect(d.status).toBe('sent');
+    expect(d.owner).toBe(OWNER);
+    expect(d.channel).toBe('email');
+    expect(d.provider).toBe('microsoft');
+    expect(d.implementation).toBe('message-microsoft');
+    // The synthesized UUID returned by the stub.
+    expect(d.message_id).toBe('ms-synth-uuid-1');
+    // Recipient redacted at rest.
+    expect(d.to).toBe('b***@example.test');
+    // No body or token in the persisted record.
+    const json = JSON.stringify(d);
+    expect(json).not.toContain('Hello from Microsoft Graph');
+    expect(json).not.toContain('ms-access-token-live');
+
+    // The stub received the fresh broker token and the composed message.
+    expect(graphSent).toHaveLength(1);
+    expect(graphSent[0]!.token).toBe('ms-access-token-live');
+    expect(graphSent[0]!.message.to).toEqual(['bob@example.test']);
+    expect(graphSent[0]!.message.subject).toBe('From Graph');
+    // From is the connected account_label (alice@outlook.test from seedMicrosoftConnection).
+    expect(graphSent[0]!.message.from).toBe('alice@outlook.test');
+  });
+
+  it('emits a MessageSent event on success', async () => {
+    await seedMicrosoftConnection();
+    const { resource } = await send({ provider: 'microsoft' });
+    const events = await store.listEvents({ resource_id: (resource as EmailDelivery).id });
+    expect(events.map((e) => e.type)).toContain('MessageSent');
+  });
+
+  it('insufficient Mail.Send scope → insufficient_scope (no Graph call)', async () => {
+    // Connection seeded WITHOUT Mail.Send — the broker must reject before calling the sender.
+    await seedMicrosoftConnection({ scopes: ['openid', 'email', 'offline_access', 'Mail.Read'] });
+    await expect(send({ provider: 'microsoft' })).rejects.toMatchObject({
+      code: 'insufficient_scope',
+      status: 403,
+    });
+    expect(graphSent).toHaveLength(0);
+  });
+
+  it('no Microsoft connection → not_found (even when a Google connection exists)', async () => {
+    await seedConnection(); // only Google
+    await expect(send({ provider: 'microsoft' })).rejects.toMatchObject({
+      code: 'not_found',
+      status: 404,
+    });
+    expect(graphSent).toHaveLength(0);
+  });
+
+  it('Graph sender failure is RECORDED (status:failed + MessageFailed), never silently dropped', async () => {
+    await seedMicrosoftConnection();
+    setGraphMailSender({
+      async send() {
+        // Simulate Graph returning an error that echoes an email address — must be scrubbed.
+        throw new Error('graph mail send failed: 400 invalid recipient bob@example.test');
+      },
+    });
+    const { resource } = await send({ provider: 'microsoft' });
+    const d = resource as EmailDelivery;
+    expect(d.status).toBe('failed');
+    expect(d.error).toContain('graph mail send failed');
+    // PII (recipient address) must be scrubbed from the persisted error.
+    expect(d.error).not.toContain('bob@example.test');
+    const events = await store.listEvents({ resource_id: d.id });
+    expect(events.map((e) => e.type)).toContain('MessageFailed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C25 — buildGraphSendBody (pure Graph body composition)
+//
+// Unit-tests the body builder in isolation — no network, no broker, no store.
+// Mirrors the buildGmailMime unit tests.
+// ---------------------------------------------------------------------------
+describe('C25 — buildGraphSendBody (pure Graph request-body composition)', () => {
+  it('maps recipients, subject, and a plain-text body to the Graph shape', () => {
+    const msg: OutboundMessage = {
+      from: 'alice@outlook.test',
+      to: ['a@x.test', 'b@y.test'],
+      subject: 'Hello',
+      body: 'Hi there',
+      contentType: 'text',
+    };
+    const body = buildGraphSendBody(msg);
+    expect(body.message.subject).toBe('Hello');
+    expect(body.message.body.contentType).toBe('Text');
+    expect(body.message.body.content).toBe('Hi there');
+    expect(body.message.toRecipients).toHaveLength(2);
+    expect(body.message.toRecipients[0]).toEqual({ emailAddress: { address: 'a@x.test' } });
+    expect(body.message.toRecipients[1]).toEqual({ emailAddress: { address: 'b@y.test' } });
+    // No cc/bcc/conversationId/internetMessageHeaders when absent.
+    expect(body.message.ccRecipients).toBeUndefined();
+    expect(body.message.bccRecipients).toBeUndefined();
+    expect(body.message.conversationId).toBeUndefined();
+    expect(body.message.internetMessageHeaders).toBeUndefined();
+  });
+
+  it('sets contentType: HTML for html messages', () => {
+    const body = buildGraphSendBody({
+      from: 'a@test',
+      to: ['b@test'],
+      subject: 's',
+      body: '<b>hi</b>',
+      contentType: 'html',
+    });
+    expect(body.message.body.contentType).toBe('HTML');
+  });
+
+  it('maps cc and bcc recipients', () => {
+    const body = buildGraphSendBody({
+      from: 'a@test',
+      to: ['b@test'],
+      cc: ['c@test'],
+      bcc: ['d@test'],
+      subject: 's',
+      body: 'x',
+      contentType: 'text',
+    });
+    expect(body.message.ccRecipients).toEqual([{ emailAddress: { address: 'c@test' } }]);
+    expect(body.message.bccRecipients).toEqual([{ emailAddress: { address: 'd@test' } }]);
+  });
+
+  it('sets conversationId from threadId (threads a Graph reply)', () => {
+    const body = buildGraphSendBody({
+      from: 'a@test',
+      to: ['b@test'],
+      subject: 's',
+      body: 'x',
+      contentType: 'text',
+      threadId: 'graph-conv-id-123',
+    });
+    expect(body.message.conversationId).toBe('graph-conv-id-123');
+  });
+
+  it('sets Internet-Message-Headers from inReplyTo + references', () => {
+    const body = buildGraphSendBody({
+      from: 'a@test',
+      to: ['b@test'],
+      subject: 's',
+      body: 'x',
+      contentType: 'text',
+      inReplyTo: '<orig-1@mail.test>',
+      references: '<orig-1@mail.test> <earlier@mail.test>',
+    });
+    const headers = body.message.internetMessageHeaders!;
+    expect(headers).toBeDefined();
+    expect(headers.find((h) => h.name === 'In-Reply-To')?.value).toBe('<orig-1@mail.test>');
+    expect(headers.find((h) => h.name === 'References')?.value).toBe('<orig-1@mail.test> <earlier@mail.test>');
+  });
+
+  it('defaults References to In-Reply-To when no explicit references chain is given', () => {
+    const body = buildGraphSendBody({
+      from: 'a@test',
+      to: ['b@test'],
+      subject: 's',
+      body: 'x',
+      contentType: 'text',
+      inReplyTo: '<orig-1@mail.test>',
+    });
+    const headers = body.message.internetMessageHeaders!;
+    expect(headers.find((h) => h.name === 'In-Reply-To')?.value).toBe('<orig-1@mail.test>');
+    expect(headers.find((h) => h.name === 'References')?.value).toBe('<orig-1@mail.test>');
+  });
+
+  it('parses Display Name <addr> format into Graph emailAddress shape', () => {
+    const body = buildGraphSendBody({
+      from: 'a@test',
+      to: ['Alice Smith <alice@example.test>'],
+      subject: 's',
+      body: 'x',
+      contentType: 'text',
+    });
+    expect(body.message.toRecipients[0]).toEqual({
+      emailAddress: { name: 'Alice Smith', address: 'alice@example.test' },
+    });
   });
 });
