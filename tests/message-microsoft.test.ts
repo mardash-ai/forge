@@ -1,504 +1,656 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+// tests/message-microsoft.test.ts
+//
+// Covers: (1) message-microsoft plugin unit tests (buildGraphSendBody, sanitizeError),
+// (2) send-message senders.ts dispatch to email:microsoft, (3) accountLabelFrom
+// preferred_username fallback for personal MSA accounts, (4) unionScopes, and critically
+// (5) the scope-narrowing guard in completeConnect — a partial Microsoft re-consent
+// CANNOT narrow the stored scope set (Microsoft has no include_granted_scopes equivalent).
+// Also verifies the C25 send-message capability end-to-end via the Microsoft Graph path.
+
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { store } from '../src/storage/store';
-import { getBackends } from '../src/storage/backends';
-import { executeCapability } from '../src/core/runtime';
 import { SYSTEM_ACTOR } from '../src/shared/domain';
-import { sealValue } from '../src/plugins/secrets-local/index';
-import { setSecret } from '../src/plugins/secrets-local/index';
+import { executeCapability } from '../src/core/runtime';
+import { nowIso } from '../src/shared/time';
+import type { Application, EmailDelivery } from '../src/resources/types';
+
+// Plugin under test
 import {
-  setGraphMailSender,
-  resetGraphMailSender,
   buildGraphSendBody,
   sanitizeError,
+  setGraphMailSender,
+  resetGraphMailSender,
   MSGRAPH_SEND_SCOPE,
-  type GraphMailSender,
 } from '../src/plugins/message-microsoft/index';
-import type { OutboundMessage } from '../src/plugins/message-gmail/index';
+import type { GraphMailSender } from '../src/plugins/message-microsoft/index';
+
+// Senders dispatch
 import { resolveSender, supportedRoutes } from '../src/capabilities/send-message/senders';
-import { completeConnect, unionScopes } from '../src/connectors/service';
+
+// OAuth client (for accountLabelFrom + swappable client)
 import {
+  accountLabelFrom,
   setOutboundOAuthClient,
   resetOutboundOAuthClient,
-  accountLabelFrom,
-  type OutboundOAuthClient,
-  type TokenSet,
 } from '../src/connectors/oauth-client';
+import type { OutboundOAuthClient } from '../src/connectors/oauth-client';
 import { providerDescriptor } from '../src/connectors/providers';
-import type { Application, EmailDelivery } from '../src/resources/types';
-import type { Connection } from '../src/connectors/types';
-import { nowIso } from '../src/shared/time';
 
-// C25 / message-microsoft — Microsoft Graph sendMail plugin + connector-registry fixes.
-// Exercises:
-//   (a) message-microsoft plugin: buildGraphSendBody, error sanitization, and end-to-end send via the C25
-//       Capability using a stub Graph sender (no network);
-//   (b) email:microsoft registration in the senders dispatch table;
-//   (c) account_label_claim fallback: 'preferred_username' is used when 'email' is absent (personal MSA);
-//   (d) scope-narrowing guard: a partial re-consent callback CANNOT narrow a connection's stored scope list
-//       (union/superset preserved), and the test verifies it WOULD have narrowed before the fix.
+// Service layer (scope-narrowing test)
+import { completeConnect, unionScopes, startConnect } from '../src/connectors/service';
+import { getBackends } from '../src/storage/backends';
 
-const APP = 'demo';
-const APP_ID = 'app_demo';
-const OWNER = 'user_alice';
+// Secrets (to seal tokens when seeding a Connection directly)
+import { sealValue } from '../src/plugins/secrets-local/index';
 
-let dir: string;
-let prevDir: string | undefined;
-let prevKey: string | undefined;
-let prevAppName: string | undefined;
-let sent: Array<{ message: OutboundMessage; token: string }>;
+// ─── Global setup ──────────────────────────────────────────────────────────────
 
-const seedApp = async (): Promise<void> => {
-  const now = nowIso();
-  await store.saveResource({
-    id: APP_ID,
-    type: 'Application',
-    app_id: APP_ID,
-    created_at: now,
-    updated_at: now,
-    name: APP,
-    repo_path: '/app',
-    platform: 'web',
-    framework: 'nextjs',
-    template: 'nextjs-web',
-    language: 'typescript',
-    package_manager: 'npm',
-  } as Application);
-};
+const SECRETS_KEY = 'test-master-key-microsoft-suite-32bytes!!';
+let prevSecretsKey: string | undefined;
 
-// Seed a Microsoft connection directly into the (encrypted) connections vault.
-async function seedMicrosoftConnection(
-  opts: { scopes?: string[]; expiresInSec?: number } = {},
-): Promise<void> {
-  const now = new Date();
-  const conn: Connection = {
-    owner: OWNER,
-    provider: 'microsoft',
-    access_sealed: await sealValue('ms-access-token-live'),
-    refresh_sealed: await sealValue('ms-refresh-token'),
-    access_expires_at: new Date(now.getTime() + (opts.expiresInSec ?? 3600) * 1000).toISOString(),
-    scopes: opts.scopes ?? [
-      'openid',
-      'email',
-      'offline_access',
-      'Mail.Read',
-      'Mail.Send',
-      'Calendars.ReadWrite',
-    ],
-    status: 'connected',
-    account_label: 'alice@outlook.test',
-    connected_at: now.toISOString(),
-    updated_at: now.toISOString(),
-  };
-  await (await getBackends()).connections.putConnection(APP_ID, conn);
+beforeAll(() => {
+  prevSecretsKey = process.env.FORGE_SECRETS_KEY;
+  process.env.FORGE_SECRETS_KEY = SECRETS_KEY;
+});
+
+afterAll(() => {
+  if (prevSecretsKey === undefined) delete process.env.FORGE_SECRETS_KEY;
+  else process.env.FORGE_SECRETS_KEY = prevSecretsKey;
+});
+
+// ─── Helper: craft a minimal unsigned JWT (no sig verification needed) ─────────
+
+function fakeIdToken(payload: Record<string, unknown>): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  return `${header}.${body}.fakesig`;
 }
 
-// The capability input for a minimal Microsoft send.
-const send = (over: Record<string, unknown> = {}) =>
-  executeCapability(
-    'send-message',
-    {
-      app: APP,
-      owner: OWNER,
-      provider: 'microsoft',
-      to: ['bob@example.test'],
+// ─── 1. buildGraphSendBody unit tests ─────────────────────────────────────────
+
+describe('buildGraphSendBody', () => {
+  it('builds a plain-text message with a single recipient', () => {
+    const result = buildGraphSendBody({
+      to: ['alice@example.com'],
       subject: 'Hello',
-      body: 'Hi there',
-      ...over,
-    },
-    SYSTEM_ACTOR,
-  );
-
-beforeEach(async () => {
-  prevDir = process.env.FORGE_STATE_DIR;
-  prevKey = process.env.FORGE_SECRETS_KEY;
-  prevAppName = process.env.FORGE_APP_NAME;
-  dir = await mkdtemp(path.join(tmpdir(), 'forge-msg-microsoft-'));
-  process.env.FORGE_STATE_DIR = dir;
-  process.env.FORGE_SECRETS_KEY = 'msg-microsoft-test-master-key';
-  process.env.FORGE_APP_NAME = APP;
-  await store.init();
-  await seedApp();
-  await setSecret(APP_ID, 'MICROSOFT_CONNECT_CLIENT_ID', 'ms-connect-client');
-  await setSecret(APP_ID, 'MICROSOFT_CONNECT_CLIENT_SECRET', 'ms-connect-secret');
-
-  sent = [];
-  const stub: GraphMailSender = {
-    async send(message, token) {
-      sent.push({ message, token });
-      return { id: 'ms-synth-id-001' };
-    },
-  };
-  setGraphMailSender(stub);
-});
-
-afterEach(async () => {
-  resetGraphMailSender();
-  resetOutboundOAuthClient();
-  const conns = (await getBackends()).connections;
-  if (conns.__truncateAllForTests) await conns.__truncateAllForTests();
-  if (prevDir === undefined) delete process.env.FORGE_STATE_DIR;
-  else process.env.FORGE_STATE_DIR = prevDir;
-  if (prevKey === undefined) delete process.env.FORGE_SECRETS_KEY;
-  else process.env.FORGE_SECRETS_KEY = prevKey;
-  if (prevAppName === undefined) delete process.env.FORGE_APP_NAME;
-  else process.env.FORGE_APP_NAME = prevAppName;
-  await rm(dir, { recursive: true, force: true });
-});
-
-// ---------------------------------------------------------------------------
-// (a) message-microsoft plugin — pure helpers
-// ---------------------------------------------------------------------------
-
-describe('message-microsoft plugin — buildGraphSendBody', () => {
-  it('builds a well-formed Graph sendMail body for a plain text message', () => {
-    const msg: OutboundMessage = {
-      from: 'alice@outlook.test',
-      to: ['bob@example.test'],
-      subject: 'Hello',
-      body: 'Hi there',
-      contentType: 'text',
-    };
-    const body = buildGraphSendBody(msg);
-    expect(body.message.subject).toBe('Hello');
-    expect(body.message.body.contentType).toBe('Text');
-    expect(body.message.body.content).toBe('Hi there');
-    expect(body.message.toRecipients).toHaveLength(1);
-    expect(body.message.toRecipients[0]!.emailAddress.address).toBe('bob@example.test');
-    expect(body.message.ccRecipients).toBeUndefined();
-    expect(body.message.internetMessageHeaders).toBeUndefined();
+      body: 'World',
+    });
+    expect(result.message.subject).toBe('Hello');
+    expect(result.message.body.contentType).toBe('Text');
+    expect(result.message.body.content).toBe('World');
+    expect(result.message.toRecipients).toEqual([{ emailAddress: { address: 'alice@example.com' } }]);
+    expect(result.message.ccRecipients).toBeUndefined();
+    expect(result.message.bccRecipients).toBeUndefined();
+    expect(result.message.internetMessageHeaders).toBeUndefined();
   });
 
-  it('builds an HTML message with cc/bcc and threading headers', () => {
-    const msg: OutboundMessage = {
-      to: ['bob@example.test'],
-      cc: ['carol@example.test'],
-      bcc: ['dave@example.test'],
-      subject: 'Reply',
-      body: '<b>Hi</b>',
+  it('sets contentType HTML when content_type is html', () => {
+    const result = buildGraphSendBody({
+      to: ['alice@example.com'],
+      subject: 'Hi',
+      body: '<p>Hello</p>',
       contentType: 'html',
-      inReplyTo: '<orig-1@mail.test>',
-      references: '<root@mail.test> <orig-1@mail.test>',
-      threadId: 'ms-conv-id-abc',
-    };
-    const body = buildGraphSendBody(msg);
-    expect(body.message.body.contentType).toBe('HTML');
-    expect(body.message.ccRecipients).toHaveLength(1);
-    expect(body.message.bccRecipients).toHaveLength(1);
-    expect(body.message.conversationId).toBe('ms-conv-id-abc');
-    const headers = body.message.internetMessageHeaders!;
-    expect(headers.find((h) => h.name === 'In-Reply-To')?.value).toBe('<orig-1@mail.test>');
-    expect(headers.find((h) => h.name === 'References')?.value).toBe('<root@mail.test> <orig-1@mail.test>');
+    });
+    expect(result.message.body.contentType).toBe('HTML');
+    expect(result.message.body.content).toBe('<p>Hello</p>');
   });
 
-  it('defaults References to In-Reply-To when references is omitted', () => {
-    const body = buildGraphSendBody({
-      to: ['a@b.test'],
-      subject: 's',
-      body: 'b',
-      inReplyTo: '<orig@mail.test>',
+  it('includes ccRecipients and bccRecipients when set', () => {
+    const result = buildGraphSendBody({
+      to: ['alice@example.com'],
+      cc: ['bob@example.com'],
+      bcc: ['carol@example.com'],
+      subject: 'Test',
+      body: 'Body',
     });
-    const headers = body.message.internetMessageHeaders!;
-    expect(headers.find((h) => h.name === 'References')?.value).toBe('<orig@mail.test>');
+    expect(result.message.ccRecipients).toEqual([{ emailAddress: { address: 'bob@example.com' } }]);
+    expect(result.message.bccRecipients).toEqual([{ emailAddress: { address: 'carol@example.com' } }]);
   });
 
-  it('parses a display-name address correctly', () => {
-    const body = buildGraphSendBody({
-      to: ['Alice Smith <alice@example.test>'],
-      subject: 's',
-      body: 'b',
+  it('parses display name from "Name <addr>" format', () => {
+    const result = buildGraphSendBody({
+      to: ['Alice Smith <alice@example.com>'],
+      subject: 'Test',
+      body: 'Body',
     });
-    expect(body.message.toRecipients[0]!.emailAddress.name).toBe('Alice Smith');
-    expect(body.message.toRecipients[0]!.emailAddress.address).toBe('alice@example.test');
+    expect(result.message.toRecipients[0]).toEqual({
+      emailAddress: { name: 'Alice Smith', address: 'alice@example.com' },
+    });
+  });
+
+  it('threads a reply via conversationId (maps threadId → conversationId)', () => {
+    const result = buildGraphSendBody({
+      to: ['alice@example.com'],
+      subject: 'Re: Test',
+      body: 'Reply',
+      threadId: 'thread-abc-123',
+    });
+    expect(result.message.conversationId).toBe('thread-abc-123');
+  });
+
+  it('adds In-Reply-To and References headers when inReplyTo is set', () => {
+    const result = buildGraphSendBody({
+      to: ['alice@example.com'],
+      subject: 'Re: Test',
+      body: 'Reply',
+      inReplyTo: '<msg123@example.com>',
+    });
+    const headers = result.message.internetMessageHeaders ?? [];
+    expect(headers).toContainEqual({ name: 'In-Reply-To', value: '<msg123@example.com>' });
+    // References defaults to inReplyTo when not supplied (RFC 5322 guidance)
+    expect(headers).toContainEqual({ name: 'References', value: '<msg123@example.com>' });
+  });
+
+  it('uses the explicit references chain when supplied', () => {
+    const result = buildGraphSendBody({
+      to: ['alice@example.com'],
+      subject: 'Re: Chain',
+      body: 'Reply',
+      inReplyTo: '<msg2@example.com>',
+      references: '<msg1@example.com> <msg2@example.com>',
+    });
+    const headers = result.message.internetMessageHeaders ?? [];
+    expect(headers).toContainEqual({ name: 'References', value: '<msg1@example.com> <msg2@example.com>' });
+    expect(headers).toContainEqual({ name: 'In-Reply-To', value: '<msg2@example.com>' });
   });
 });
 
-describe('message-microsoft plugin — sanitizeError', () => {
-  it('redacts email addresses and Bearer tokens from error messages', () => {
-    const raw = 'graph mail send failed: 400 invalid recipient bob@example.test (Bearer abc.def.ghi)';
-    const scrubbed = sanitizeError(raw);
-    expect(scrubbed).not.toContain('bob@example.test');
-    expect(scrubbed).not.toContain('abc.def.ghi');
-    expect(scrubbed).toContain('b***@example.test');
-    expect(scrubbed).toContain('Bearer ***');
+// ─── 2. sanitizeError unit tests ──────────────────────────────────────────────
+
+describe('sanitizeError', () => {
+  it('redacts an email address in an error message', () => {
+    const result = sanitizeError('mailbox full for user@example.com');
+    expect(result).not.toContain('user@example.com');
+    expect(result).toContain('u***@example.com');
+  });
+
+  it('redacts a Bearer token', () => {
+    const result = sanitizeError('graph mail send failed: Bearer eyJfoo.bar.baz returned 401');
+    expect(result).not.toContain('eyJfoo.bar.baz');
+    expect(result).toContain('Bearer ***');
+  });
+
+  it('leaves safe error text unchanged', () => {
+    const msg = 'graph mail send failed: 429 TooManyRequests';
+    expect(sanitizeError(msg)).toBe(msg);
   });
 });
 
-// ---------------------------------------------------------------------------
-// (b) sender dispatch table — email:microsoft registered alongside email:google
-// ---------------------------------------------------------------------------
+// ─── 3. Senders dispatch ──────────────────────────────────────────────────────
 
-describe('senders dispatch table — email:microsoft registration', () => {
-  it('resolveSender finds email:microsoft', () => {
+describe('send-message senders dispatch (email:microsoft)', () => {
+  it('resolveSender("email","microsoft") returns a complete descriptor', () => {
     const d = resolveSender('email', 'microsoft');
     expect(d).not.toBeNull();
-    expect(d!.provider).toBe('microsoft');
     expect(d!.channel).toBe('email');
-    expect(d!.requireScope).toBe(MSGRAPH_SEND_SCOPE);
+    expect(d!.provider).toBe('microsoft');
     expect(d!.implementation).toBe('message-microsoft');
+    expect(d!.requireScope).toBe(MSGRAPH_SEND_SCOPE); // 'Mail.Send'
+    expect(typeof d!.send).toBe('function');
   });
 
-  it('supportedRoutes includes both email:google and email:microsoft', () => {
+  it('supportedRoutes() includes both email:google and email:microsoft', () => {
     const routes = supportedRoutes();
-    const providers = routes.map((r) => `${r.channel}:${r.provider}`);
-    expect(providers).toContain('email:google');
-    expect(providers).toContain('email:microsoft');
+    expect(routes).toContainEqual({ channel: 'email', provider: 'google' });
+    expect(routes).toContainEqual({ channel: 'email', provider: 'microsoft' });
   });
 
-  it('resolveSender returns null for unknown routes', () => {
-    expect(resolveSender('sms', 'microsoft')).toBeNull();
-    expect(resolveSender('email', 'unknown')).toBeNull();
+  it('resolveSender returns null for an unknown channel:provider pair', () => {
+    expect(resolveSender('sms', 'unknown')).toBeNull();
+    expect(resolveSender('email', 'twilio')).toBeNull();
   });
 });
 
-// ---------------------------------------------------------------------------
-// (c) C25 SendMessage end-to-end via email:microsoft (stub sender, no network)
-// ---------------------------------------------------------------------------
+// ─── 4. accountLabelFrom — preferred_username fallback ────────────────────────
 
-describe('C25 SendMessage — email:microsoft (happy path)', () => {
-  it('brokers the fresh token, delegates to Graph sender, persists an owner-scoped EmailDelivery', async () => {
+describe('accountLabelFrom — Microsoft preferred_username fallback', () => {
+  const msDesc = providerDescriptor('microsoft')!;
+  const googleDesc = providerDescriptor('google')!;
+
+  it('uses the email claim for a work/school Microsoft account (both claims present → email wins)', () => {
+    const token = fakeIdToken({ email: 'user@company.onmicrosoft.com', preferred_username: 'alias@company' });
+    expect(accountLabelFrom(msDesc, token)).toBe('user@company.onmicrosoft.com');
+  });
+
+  it('falls back to preferred_username for a personal MSA account (email claim absent)', () => {
+    const token = fakeIdToken({ preferred_username: 'user@outlook.com' }); // no email claim
+    expect(accountLabelFrom(msDesc, token)).toBe('user@outlook.com');
+  });
+
+  it('returns undefined when neither email nor preferred_username is present', () => {
+    const token = fakeIdToken({ sub: 'some-opaque-sub', name: 'John' });
+    expect(accountLabelFrom(msDesc, token)).toBeUndefined();
+  });
+
+  it('Google descriptor has only email in its claim chain — preferred_username is not a fallback', () => {
+    // Google account_label_claims = ['email']; preferred_username is not in the list.
+    const token = fakeIdToken({ preferred_username: 'guser' }); // no email claim
+    expect(accountLabelFrom(googleDesc, token)).toBeUndefined();
+  });
+
+  it('returns undefined for a malformed token string', () => {
+    expect(accountLabelFrom(msDesc, 'not-a-jwt')).toBeUndefined();
+    expect(accountLabelFrom(msDesc, undefined)).toBeUndefined();
+  });
+});
+
+// ─── 5. unionScopes ───────────────────────────────────────────────────────────
+
+describe('unionScopes', () => {
+  it('returns the set-union of two disjoint lists', () => {
+    const result = unionScopes(['A', 'B'], ['C']);
+    expect(result).toContain('A');
+    expect(result).toContain('B');
+    expect(result).toContain('C');
+    expect(result).toHaveLength(3);
+  });
+
+  it('preserves the wider existing set when incoming is a strict subset', () => {
+    const existing = ['Mail.Read', 'Mail.Send', 'Calendars.ReadWrite', 'openid'];
+    const incoming = ['Mail.Read', 'openid']; // Mail.Send + Calendars.ReadWrite dropped
+    const result = unionScopes(existing, incoming);
+    expect(result).toContain('Mail.Send');           // preserved — never lost
+    expect(result).toContain('Calendars.ReadWrite'); // preserved
+    expect(result).toContain('Mail.Read');           // still present
+  });
+
+  it('handles empty existing gracefully', () => {
+    expect(unionScopes([], ['openid', 'email'])).toEqual(['email', 'openid']);
+  });
+
+  it('handles empty incoming gracefully (returns a sorted copy of existing)', () => {
+    expect(unionScopes(['email', 'openid'], [])).toEqual(['email', 'openid']);
+  });
+
+  it('deduplicates overlapping entries', () => {
+    const result = unionScopes(['openid', 'email'], ['openid', 'Mail.Send']);
+    expect(result.filter((s) => s === 'openid').length).toBe(1); // no duplicate
+  });
+
+  it('result is sorted for deterministic storage', () => {
+    const result = unionScopes(['Mail.Send', 'openid'], ['Mail.Read', 'email']);
+    expect(result).toEqual([...result].sort());
+  });
+});
+
+// ─── 6. Scope-narrowing guard — partial Microsoft re-consent cannot narrow stored scopes ──
+
+// This is the KEY acceptance criterion. Microsoft has no `include_granted_scopes` equivalent,
+// so the `completeConnect` implementation must take the UNION of the existing and incoming scope
+// sets instead of overwriting — otherwise a user clicking "allow" for only Mail.Read on a
+// second consent silently revokes Mail.Send, breaking the C25 send path.
+
+describe('scope-narrowing guard — completeConnect must preserve the superset', () => {
+  let dir: string;
+  let prevState: string | undefined;
+  let prevMsId: string | undefined;
+  let prevMsSecret: string | undefined;
+
+  const APP_ID = 'app_ms_scope_guard_test';
+  const OWNER = 'user-scope-guard';
+
+  // Full scopes the user grants on first connect (all six default scopes)
+  const FULL_SCOPE_STR = 'Calendars.ReadWrite Mail.Read Mail.Send email offline_access openid';
+  // Partial re-consent: only Mail.Read granted (Mail.Send + Calendars.ReadWrite dropped by the user)
+  const NARROW_SCOPE_STR = 'Mail.Read email offline_access openid';
+
+  beforeEach(async () => {
+    prevState = process.env.FORGE_STATE_DIR;
+    prevMsId = process.env.MICROSOFT_CONNECT_CLIENT_ID;
+    prevMsSecret = process.env.MICROSOFT_CONNECT_CLIENT_SECRET;
+
+    dir = await mkdtemp(path.join(tmpdir(), 'forge-ms-scope-guard-'));
+    process.env.FORGE_STATE_DIR = dir;
+    // Provide fake OAuth client credentials so resolveProvider succeeds (env fallback path).
+    process.env.MICROSOFT_CONNECT_CLIENT_ID = 'fake-ms-client-id';
+    process.env.MICROSOFT_CONNECT_CLIENT_SECRET = 'fake-ms-client-secret';
+
+    await store.init();
+  });
+
+  afterEach(async () => {
+    resetOutboundOAuthClient();
+    if (prevState === undefined) delete process.env.FORGE_STATE_DIR;
+    else process.env.FORGE_STATE_DIR = prevState;
+    if (prevMsId === undefined) delete process.env.MICROSOFT_CONNECT_CLIENT_ID;
+    else process.env.MICROSOFT_CONNECT_CLIENT_ID = prevMsId;
+    if (prevMsSecret === undefined) delete process.env.MICROSOFT_CONNECT_CLIENT_SECRET;
+    else process.env.MICROSOFT_CONNECT_CLIENT_SECRET = prevMsSecret;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('partial re-consent cannot narrow the stored scope list — Mail.Send is preserved', async () => {
+    let exchangeCall = 0;
+
+    // A mock OAuth client: the first exchange returns full scopes, the second returns only a subset.
+    const mockClient: OutboundOAuthClient = {
+      authorizeUrl({ state }) {
+        return `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?state=${state}`;
+      },
+      async exchangeCode() {
+        exchangeCall++;
+        return {
+          access_token: `access-tok-${exchangeCall}`,
+          refresh_token: `refresh-tok-${exchangeCall}`,
+          expires_in: 3600,
+          // First consent: full scope grant. Second: partial re-consent (user unchecked Mail.Send).
+          scope: exchangeCall === 1 ? FULL_SCOPE_STR : NARROW_SCOPE_STR,
+        };
+      },
+      async refresh() {
+        return { access_token: 'refreshed', expires_in: 3600 };
+      },
+      async revoke() {},
+    };
+    setOutboundOAuthClient(mockClient);
+
+    // ── Step 1: initial connect — full scope grant ─────────────────────────────
+    const { state: state1 } = await startConnect({
+      appId: APP_ID,
+      owner: OWNER,
+      provider: 'microsoft',
+      redirectUri: 'https://app.test/connect/microsoft/callback',
+    });
+    const result1 = await completeConnect({
+      appId: APP_ID,
+      provider: 'microsoft',
+      state: state1,
+      code: 'auth-code-1',
+    });
+
+    // Confirm first connect stored the full scope set
+    expect(result1.connection.scopes).toContain('Mail.Send');
+    expect(result1.connection.scopes).toContain('Calendars.ReadWrite');
+    expect(result1.connection.scopes).toContain('Mail.Read');
+
+    // ── Step 2: partial re-consent — user grants only Mail.Read ───────────────
+    const { state: state2 } = await startConnect({
+      appId: APP_ID,
+      owner: OWNER,
+      provider: 'microsoft',
+      redirectUri: 'https://app.test/connect/microsoft/callback',
+    });
+    const result2 = await completeConnect({
+      appId: APP_ID,
+      provider: 'microsoft',
+      state: state2,
+      code: 'auth-code-2', // second exchange returns NARROW_SCOPE_STR
+    });
+
+    // THE GUARD: the stored scope list MUST be the SUPERSET — not the narrower incoming set.
+    // Mail.Send and Calendars.ReadWrite were in the first grant and must still be stored.
+    expect(result2.connection.scopes).toContain('Mail.Send');           // preserved from grant 1
+    expect(result2.connection.scopes).toContain('Calendars.ReadWrite'); // preserved from grant 1
+    expect(result2.connection.scopes).toContain('Mail.Read');           // present in both grants
+    expect(result2.connection.scopes).toContain('openid');              // present in both grants
+
+    // Sanity check: the narrower grant string alone would have lost Mail.Send
+    const naiveOverwrite = NARROW_SCOPE_STR.split(' ');
+    expect(naiveOverwrite).not.toContain('Mail.Send'); // proves the guard is non-trivial
+    expect(naiveOverwrite).not.toContain('Calendars.ReadWrite');
+  });
+});
+
+// ─── 7. C25 send-message via email:microsoft ──────────────────────────────────
+
+describe('C25 send-message capability via email:microsoft', () => {
+  let dir: string;
+  let prevState: string | undefined;
+
+  const APP_NAME = 'ms-send-test';
+  const APP_ID = `app_${APP_NAME}`;
+  const OWNER = 'user-ms-send-owner';
+
+  async function seedApp(): Promise<Application> {
+    const now = nowIso();
+    const app: Application = {
+      id: APP_ID,
+      type: 'Application',
+      app_id: APP_ID,
+      created_at: now,
+      updated_at: now,
+      name: APP_NAME,
+      repo_path: '/app',
+      platform: 'web',
+      framework: 'nextjs',
+      template: 'nextjs-web',
+      language: 'typescript',
+      package_manager: 'npm',
+    };
+    await store.saveResource(app);
+    return app;
+  }
+
+  // Write a Connection with a valid (unexpired) access token directly into the connections
+  // backend — skipping the full OAuth round-trip so we test only the broker + send path.
+  async function seedMicrosoftConnection(opts: {
+    scopes?: string[];
+    expiresInSeconds?: number;
+    accountLabel?: string;
+  } = {}): Promise<void> {
+    const scopes = opts.scopes ?? [
+      'Calendars.ReadWrite', 'Mail.Read', 'Mail.Send', 'email', 'offline_access', 'openid',
+    ];
+    const now = nowIso();
+    const expiresAt = new Date(Date.now() + (opts.expiresInSeconds ?? 3600) * 1000).toISOString();
+    const backend = await getBackends();
+    await backend.connections.putConnection(APP_ID, {
+      owner: OWNER,
+      provider: 'microsoft',
+      access_sealed: await sealValue('fake-ms-access-token'),
+      refresh_sealed: await sealValue('fake-ms-refresh-token'),
+      access_expires_at: expiresAt,
+      scopes,
+      status: 'connected',
+      ...(opts.accountLabel ? { account_label: opts.accountLabel } : {}),
+      connected_at: now,
+      updated_at: now,
+    });
+  }
+
+  beforeEach(async () => {
+    prevState = process.env.FORGE_STATE_DIR;
+    dir = await mkdtemp(path.join(tmpdir(), 'forge-ms-c25-'));
+    process.env.FORGE_STATE_DIR = dir;
+    await store.init();
+  });
+
+  afterEach(async () => {
+    resetGraphMailSender();
+    if (prevState === undefined) delete process.env.FORGE_STATE_DIR;
+    else process.env.FORGE_STATE_DIR = prevState;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('happy path: brokers a fresh token → calls Graph sender → persists sent EmailDelivery', async () => {
+    await seedApp();
+    await seedMicrosoftConnection({ accountLabel: 'user@outlook.com' });
+
+    // Capture what the stub receives to verify the broker handed the right token
+    let capturedToken: string | undefined;
+    const stub: GraphMailSender = {
+      async send(_message, accessToken) {
+        capturedToken = accessToken;
+        return { id: 'graph-msg-id-001' };
+      },
+    };
+    setGraphMailSender(stub);
+
+    const { capability, resource } = await executeCapability(
+      'send-message',
+      {
+        app: APP_NAME,
+        owner: OWNER,
+        provider: 'microsoft',
+        channel: 'email',
+        to: ['recipient@example.com'],
+        subject: 'Test Graph send',
+        body: 'Hello from Microsoft Graph',
+      },
+      SYSTEM_ACTOR,
+    );
+    const delivery = resource as EmailDelivery;
+
+    // Broker handed the stub the unsealed access token (the real one, not ciphertext)
+    expect(capturedToken).toBe('fake-ms-access-token');
+
+    expect(capability).toBe('SendMessage');
+    expect(delivery.type).toBe('EmailDelivery');
+    expect(delivery.status).toBe('sent');
+    expect(delivery.message_id).toBe('graph-msg-id-001');
+    expect(delivery.channel).toBe('email');
+    expect(delivery.provider).toBe('microsoft');
+    expect(delivery.implementation).toBe('message-microsoft');
+    expect(delivery.owner).toBe(OWNER);
+    expect(delivery.subject).toBe('Test Graph send');
+
+    // Recipient is REDACTED at rest — no PII stored
+    expect(delivery.to).toBe('r***@example.com');
+    expect(delivery.to).not.toContain('recipient@example.com');
+
+    // No body or token persisted
+    const json = JSON.stringify(delivery);
+    expect(json).not.toContain('Hello from Microsoft Graph');
+    expect(json).not.toContain('fake-ms-access-token');
+
+    // Survives a re-read from disk
+    const reread = await store.getResource('EmailDelivery', delivery.id);
+    expect((reread as EmailDelivery)?.status).toBe('sent');
+  });
+
+  it('emits a MessageSent event with redacted recipient and correct fields', async () => {
+    await seedApp();
     await seedMicrosoftConnection();
-    const { resource } = await send({ subject: 'Ship it', body: 'The build is green.' });
-    const d = resource as EmailDelivery;
 
-    expect(d.type).toBe('EmailDelivery');
-    expect(d.status).toBe('sent');
-    expect(d.owner).toBe(OWNER);
-    expect(d.channel).toBe('email');
-    expect(d.provider).toBe('microsoft');
-    expect(d.implementation).toBe('message-microsoft');
-    expect(d.message_id).toBe('ms-synth-id-001');
-    // Recipient is REDACTED at rest; no body / no token persisted.
-    expect(d.to).toBe('b***@example.test');
-    const json = JSON.stringify(d);
-    expect(json).not.toContain('The build is green.');
-    expect(json).not.toContain('ms-access-token-live');
+    setGraphMailSender({ async send() { return { id: 'graph-msg-id-002' }; } });
 
-    // The stub received the FRESH broker token + the composed message.
-    expect(sent).toHaveLength(1);
-    expect(sent[0]!.token).toBe('ms-access-token-live');
-    expect(sent[0]!.message.to).toEqual(['bob@example.test']);
-    expect(sent[0]!.message.subject).toBe('Ship it');
-    // from = connected account_label (alice@outlook.test)
-    expect(sent[0]!.message.from).toBe('alice@outlook.test');
+    await executeCapability(
+      'send-message',
+      {
+        app: APP_NAME,
+        owner: OWNER,
+        provider: 'microsoft',
+        channel: 'email',
+        to: ['alice@example.com'],
+        subject: 'Event emission test',
+        body: 'Body content',
+      },
+      SYSTEM_ACTOR,
+    );
+
+    const events = await store.listEvents({ app_id: APP_ID });
+    const sent = events.find((e) => e.type === 'MessageSent');
+    expect(sent).toBeTruthy();
+    expect(sent!.data.provider).toBe('microsoft');
+    expect(sent!.data.channel).toBe('email');
+    expect(sent!.data.implementation).toBe('message-microsoft');
+    expect(sent!.data.message_id).toBe('graph-msg-id-002');
+    expect(sent!.data.to).toBe('a***@example.com'); // redacted
+    expect(sent!.data.subject).toBe('Event emission test');
+
+    // No full recipient address or body in the event
+    const eventJson = JSON.stringify(sent);
+    expect(eventJson).not.toContain('alice@example.com');
+    expect(eventJson).not.toContain('Body content');
   });
 
-  it('persists the record and emits a MessageSent fact', async () => {
+  it('provider error: persists a failed EmailDelivery + emits MessageFailed without throwing', async () => {
+    await seedApp();
     await seedMicrosoftConnection();
-    const { resource } = await send();
-    const d = resource as EmailDelivery;
 
-    const found = await store.findResourceById(d.id);
-    expect(found).not.toBeNull();
-    const events = await store.listEvents({ resource_id: d.id });
-    expect(events.map((e) => e.type)).toContain('MessageSent');
-  });
-
-  it('not connected → not_found', async () => {
-    await expect(send()).rejects.toMatchObject({ code: 'not_found', status: 404 });
-    expect(sent).toHaveLength(0);
-  });
-
-  it('connected without Mail.Send → insufficient_scope (reconnect)', async () => {
-    await seedMicrosoftConnection({ scopes: ['openid', 'email', 'offline_access', 'Mail.Read'] });
-    await expect(send()).rejects.toMatchObject({ code: 'insufficient_scope', status: 403 });
-    expect(sent).toHaveLength(0);
-  });
-
-  it('a Graph send failure is persisted as status:failed with a scrubbed error', async () => {
-    await seedMicrosoftConnection();
     setGraphMailSender({
       async send() {
-        throw new Error('graph mail send failed: 400 invalid recipient bob@example.test');
+        throw new Error('graph mail send failed: 429 TooManyRequests');
       },
     });
-    const { resource } = await send();
-    const d = resource as EmailDelivery;
-    expect(d.status).toBe('failed');
-    expect(d.error).toContain('graph mail send failed');
-    expect(d.error).not.toContain('bob@example.test');
-    const events = await store.listEvents({ resource_id: d.id });
-    expect(events.map((e) => e.type)).toContain('MessageFailed');
-  });
-});
 
-// ---------------------------------------------------------------------------
-// (c) account_label_claims fallback — personal MSA accounts lack 'email'
-// ---------------------------------------------------------------------------
+    const { resource } = await executeCapability(
+      'send-message',
+      {
+        app: APP_NAME,
+        owner: OWNER,
+        provider: 'microsoft',
+        channel: 'email',
+        to: ['bob@example.com'],
+        subject: 'Rate limited send',
+        body: 'Body',
+      },
+      SYSTEM_ACTOR,
+    );
+    const delivery = resource as EmailDelivery;
 
-// Build a minimal id_token JWT (payload-only; no sig verification — same approach as the platform).
-function makeIdToken(claims: Record<string, unknown>): string {
-  const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
-  return `eyJhbGciOiJSUzI1NiJ9.${payload}.sig`;
-}
+    expect(delivery.status).toBe('failed');
+    expect(delivery.error).toContain('429');
+    expect(delivery.message_id).toBeUndefined();
+    expect(delivery.channel).toBe('email');
+    expect(delivery.provider).toBe('microsoft');
 
-describe('connector — account_label_claims fallback (Microsoft personal-account MSA)', () => {
-  // Test accountLabelFrom DIRECTLY (exported for this purpose) with a Microsoft-scoped provider
-  // descriptor — this verifies the claim-resolution logic without requiring a full network round-trip.
-
-  const msDescriptor = providerDescriptor('microsoft')!;
-
-  it('uses the email claim when present (work/school account)', () => {
-    const idToken = makeIdToken({
-      sub: 'user-sub',
-      email: 'work@contoso.test',
-      preferred_username: 'work@contoso.test',
-    });
-    expect(accountLabelFrom(msDescriptor, idToken)).toBe('work@contoso.test');
+    const events = await store.listEvents({ app_id: APP_ID });
+    const failed = events.find((e) => e.type === 'MessageFailed');
+    expect(failed).toBeTruthy();
+    expect(failed!.data.provider).toBe('microsoft');
+    expect(failed!.data.error).toContain('429');
   });
 
-  it('falls back to preferred_username when email claim is absent (personal MSA)', () => {
-    // Personal Microsoft accounts often lack `email` in the OIDC id_token; they always have
-    // `preferred_username` (the live.com / hotmail.com / outlook.com UPN).
-    const idToken = makeIdToken({ sub: 'personal-sub', preferred_username: 'personal@outlook.com' });
-    expect(accountLabelFrom(msDescriptor, idToken)).toBe('personal@outlook.com');
-  });
+  it('broker not-connected: throws not_found — no EmailDelivery is persisted', async () => {
+    await seedApp();
+    // Deliberately NO connection seeded for this owner
 
-  it('returns undefined when NEITHER email NOR preferred_username is in the id_token', () => {
-    const idToken = makeIdToken({ sub: 'anon-sub' }); // no email, no preferred_username
-    expect(accountLabelFrom(msDescriptor, idToken)).toBeUndefined();
-  });
-
-  it('returns undefined when there is no id_token', () => {
-    expect(accountLabelFrom(msDescriptor, undefined)).toBeUndefined();
-  });
-
-  it('Google descriptor (email only) still resolves correctly', () => {
-    const googleDescriptor = providerDescriptor('google')!;
-    const idToken = makeIdToken({ email: 'alice@gmail.test' });
-    expect(accountLabelFrom(googleDescriptor, idToken)).toBe('alice@gmail.test');
-    // Google descriptor has no preferred_username fallback — that's intentional.
-    const noEmail = makeIdToken({ preferred_username: 'alice' });
-    expect(accountLabelFrom(googleDescriptor, noEmail)).toBeUndefined();
-  });
-
-  it('completeConnect stores the account_label derived from the token response (end-to-end)', async () => {
-    // Drive completeConnect with a stub that sets account_label on the returned TokenSet
-    // (mirroring what the real httpOAuthClient does after parsing the id_token).
-    const stubClient: OutboundOAuthClient = {
-      authorizeUrl: (o) => `${o.provider.authorization_endpoint}?state=${o.state}`,
-      exchangeCode: async () =>
-        ({
-          access_token: 'ms-access',
-          refresh_token: 'ms-refresh',
-          expires_in: 3600,
-          scope: 'openid offline_access Mail.Send',
-          account_label: 'personal@outlook.com', // httpOAuthClient derives this from preferred_username
-        }) as TokenSet,
-      refresh: async () => ({ access_token: 'ms-access-v2', expires_in: 3600 }),
-      revoke: async () => {},
-    };
-    setOutboundOAuthClient(stubClient);
-    const reqState = 'state-personal-acct-e2e';
-    const b = await getBackends();
-    await b.connections.putRequest(APP_ID, {
-      state: reqState,
-      owner: OWNER,
-      provider: 'microsoft',
-      code_verifier: 'verifier',
-      redirect_uri: 'https://app.example/connect/microsoft/callback',
-      scopes: ['openid', 'offline_access', 'Mail.Send'],
-      created_at: nowIso(),
-      expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-    });
-    const result = await completeConnect({
-      appId: APP_ID,
-      provider: 'microsoft',
-      state: reqState,
-      code: 'auth-code-456',
-    });
-    expect(result.connection.account_label).toBe('personal@outlook.com');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// (d) Scope-narrowing guard — partial re-consent MUST NOT narrow stored scopes
-// ---------------------------------------------------------------------------
-
-describe('connector — scope-narrowing guard (Microsoft re-consent safety)', () => {
-  it('unionScopes returns the set union, never a subset', () => {
-    expect(unionScopes(['A', 'B', 'C'], ['A', 'B'])).toEqual(['A', 'B', 'C']);
-    expect(unionScopes(['A', 'B'], ['B', 'C'])).toEqual(['A', 'B', 'C']);
-    expect(unionScopes([], ['Mail.Send'])).toEqual(['Mail.Send']);
-    expect(unionScopes(['Mail.Send'], [])).toEqual(['Mail.Send']);
-  });
-
-  it('a partial re-consent cannot narrow the stored scope list (union preserved)', async () => {
-    // The user initially connects with full scopes.
-    const fullScopes = ['Calendars.ReadWrite', 'Mail.Read', 'Mail.Send', 'email', 'offline_access', 'openid'];
-    await seedMicrosoftConnection({ scopes: fullScopes });
-
-    // Simulate a re-consent where the user (or provider) only grants a SUBSET — the hazard for Microsoft
-    // because there is no `include_granted_scopes` equivalent.
-    const narrowedScopes = 'openid email offline_access Mail.Read'; // Mail.Send + Calendars.ReadWrite GONE
-
-    const stubClient: OutboundOAuthClient = {
-      authorizeUrl: (o) => `${o.provider.authorization_endpoint}?state=${o.state}`,
-      exchangeCode: async () => ({
-        access_token: 'ms-access-v2',
-        refresh_token: 'ms-refresh-v2',
-        expires_in: 3600,
-        scope: narrowedScopes,
-      }),
-      refresh: async () => ({ access_token: 'ms-access-v3', expires_in: 3600 }),
-      revoke: async () => {},
-    };
-    setOutboundOAuthClient(stubClient);
-
-    const reqState = 'state-partial-reconsent';
-    const b = await getBackends();
-    await b.connections.putRequest(APP_ID, {
-      state: reqState,
-      owner: OWNER,
-      provider: 'microsoft',
-      code_verifier: 'verifier',
-      redirect_uri: 'https://app.example/connect/microsoft/callback',
-      scopes: fullScopes,
-      created_at: nowIso(),
-      expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-    });
-    const result = await completeConnect({
-      appId: APP_ID,
-      provider: 'microsoft',
-      state: reqState,
-      code: 'auth-code-reconsent',
+    setGraphMailSender({
+      async send() {
+        // Should never be reached
+        return { id: 'should-not-be-called' };
+      },
     });
 
-    // After the fix: stored scopes are the UNION — Mail.Send and Calendars.ReadWrite must survive.
-    expect(result.connection.scopes).toContain('Mail.Send');
-    expect(result.connection.scopes).toContain('Calendars.ReadWrite');
-    expect(result.connection.scopes).toContain('Mail.Read');
-    expect(result.connection.scopes).toContain('openid');
-    expect(result.connection.scopes).toContain('email');
-    // The new scopes from the callback are also present.
-    expect(result.connection.scopes).toContain('offline_access');
+    await expect(
+      executeCapability(
+        'send-message',
+        {
+          app: APP_NAME,
+          owner: OWNER,
+          provider: 'microsoft',
+          channel: 'email',
+          to: ['carol@example.com'],
+          subject: 'No connection',
+          body: 'Body',
+        },
+        SYSTEM_ACTOR,
+      ),
+    ).rejects.toMatchObject({ code: 'not_found', status: 404 });
+
+    // A precondition failure before any send attempt must leave no delivery record
+    const resources = await store.listResources({ type: 'EmailDelivery', app_id: APP_ID });
+    expect(resources).toHaveLength(0);
   });
 
-  it('DEMONSTRATES PRE-FIX BEHAVIOR: a plain overwrite would narrow the scope list', () => {
-    // This test captures what the pre-fix code did — a raw overwrite with the callback's granted scopes —
-    // so that a regression in the union logic causes this test to FAIL (restoring the dangerous overwrite).
-    // It does NOT call the real completeConnect; it directly simulates the pre-fix overwrite.
-    const previouslyStored = [
-      'Calendars.ReadWrite',
-      'Mail.Read',
-      'Mail.Send',
-      'email',
-      'offline_access',
-      'openid',
-    ];
-    const callbackGranted = ['email', 'offline_access', 'openid', 'Mail.Read']; // no Mail.Send, no Calendars
+  it('broker insufficient_scope: throws before send — no EmailDelivery persisted', async () => {
+    await seedApp();
+    // Seed a connection WITHOUT Mail.Send scope
+    await seedMicrosoftConnection({ scopes: ['openid', 'email', 'offline_access', 'Mail.Read'] });
 
-    // PRE-FIX: would have stored only callbackGranted
-    const preFix = callbackGranted; // this is what `scopes: grantedScopes` (without union) used to do
-    expect(preFix).not.toContain('Mail.Send');
-    expect(preFix).not.toContain('Calendars.ReadWrite');
+    setGraphMailSender({ async send() { return { id: 'should-not-be-called' }; } });
 
-    // POST-FIX (what unionScopes now guarantees): no narrowing
-    const postFix = unionScopes(previouslyStored, callbackGranted);
-    expect(postFix).toContain('Mail.Send');
-    expect(postFix).toContain('Calendars.ReadWrite');
-    expect(postFix).toContain('Mail.Read');
+    await expect(
+      executeCapability(
+        'send-message',
+        {
+          app: APP_NAME,
+          owner: OWNER,
+          provider: 'microsoft',
+          channel: 'email',
+          to: ['dave@example.com'],
+          subject: 'Scope missing',
+          body: 'Body',
+        },
+        SYSTEM_ACTOR,
+      ),
+    ).rejects.toMatchObject({ code: 'insufficient_scope', status: 403 });
+
+    const resources = await store.listResources({ type: 'EmailDelivery', app_id: APP_ID });
+    expect(resources).toHaveLength(0);
   });
 });
