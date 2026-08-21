@@ -98,7 +98,7 @@ variable "disk_gb" {
 
 variable "job_timeout" {
   type        = string
-  default     = "7200s"
+  default     = "7500s"
   description = "Timeout for a single E2E runner job execution. Must exceed the FULL catalogue's wall clock with margin — see the note below."
 }
 
