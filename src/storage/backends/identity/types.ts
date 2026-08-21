@@ -34,6 +34,15 @@ export interface StoredUser {
   // Optional on the type so the legacy filesystem backend (which has no groups table) stays valid;
   // the Postgres backend always sets it.
   personal_group_id?: string;
+  // SMS delivery channel (C21 SMS). Optional — absent means no phone on file. E.164 format.
+  // phone_verified_at is stamped once the 6-digit OTP is confirmed (reuses the 2FA machinery).
+  // sms_consent_at is the explicit opt-in timestamp (stamped alongside phone_verified_at).
+  // sms_opt_out / sms_opt_out_at track inbound STOP / START keywords from the Twilio webhook.
+  phone?: string;
+  phone_verified_at?: string;
+  sms_consent_at?: string;
+  sms_opt_out?: boolean;
+  sms_opt_out_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -114,6 +123,11 @@ export type UpdateUserPatch = Partial<
     | 'name'
     | 'is_owner'
     | 'twofa_enabled'
+    | 'phone'
+    | 'phone_verified_at'
+    | 'sms_consent_at'
+    | 'sms_opt_out'
+    | 'sms_opt_out_at'
   >
 >;
 
@@ -125,7 +139,7 @@ export type UpdateUserPatch = Partial<
 //   • disable re-verify → `2fa:disable:<userId>`
 // These are transient (minutes) and deliberately EXCLUDED from the FS↔PG migration snapshot — a backend
 // cutover just means an in-flight code must be re-requested, never a data-loss concern.
-export type TwofaPurpose = 'login' | 'enable' | 'disable';
+export type TwofaPurpose = 'login' | 'enable' | 'disable' | 'phone_verify';
 
 export interface StoredTwofaCode {
   id: string;
@@ -236,6 +250,7 @@ export interface IdentityBackend {
   getUser(appId: string, userId: string): Promise<StoredUser | null>;
   findByEmail(appId: string, email: string): Promise<StoredUser | null>;
   findByProvider(appId: string, provider: Provider, providerUserId: string): Promise<StoredUser | null>;
+  findByPhone(appId: string, phone: string): Promise<StoredUser | null>;
   updateUser(appId: string, userId: string, patch: UpdateUserPatch): Promise<StoredUser | null>;
   // Administrative teardown: remove a login identity + ALL its credentials/sessions/tokens (and its O4
   // personal group-of-one) so it can no longer authenticate and its email/handle is freed. Idempotent —

@@ -169,6 +169,13 @@ export class FsIdentityBackend implements IdentityBackend, MigratableIdentityBac
     return id ? (doc.users[id] ?? null) : null;
   }
 
+  // Linear scan over the user map — the FS backend has no phone index. Acceptable for the small
+  // single-app tenants that use the filesystem backend; the PG backend has an indexed lookup.
+  async findByPhone(appId: string, phone: string): Promise<StoredUser | null> {
+    const doc = await this.read(appId);
+    return Object.values(doc.users).find((u) => u.phone === phone) ?? null;
+  }
+
   async updateUser(appId: string, userId: string, patch: UpdateUserPatch): Promise<StoredUser | null> {
     return this.mutate(appId, (doc) => {
       const user = doc.users[userId];

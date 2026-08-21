@@ -45,6 +45,9 @@ export class DualWriteIdentityBackend implements IdentityBackend {
   findByProvider(appId: string, p: Provider, id: string): Promise<StoredUser | null> {
     return this.primary.findByProvider(appId, p, id);
   }
+  findByPhone(appId: string, phone: string): Promise<StoredUser | null> {
+    return this.primary.findByPhone(appId, phone);
+  }
   countUsers(appId: string): Promise<number> {
     return this.primary.countUsers(appId);
   }

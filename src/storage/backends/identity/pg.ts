@@ -143,10 +143,31 @@ export async function ensureIdentitySchema(pool: Pool): Promise<void> {
     CREATE INDEX IF NOT EXISTS forge_identity_twofa_codes_user
       ON forge_identity_twofa_codes (app_id, user_id);
   `);
-  // Additive column for an already-created users table (opt-in 2FA flag; default false ⇒ every existing
-  // account keeps logging in exactly as before). Separate statement so it also lands on pre-existing DBs.
+  // Additive columns for pre-existing users tables. Separate statements so they land on already-created DBs.
+  // twofa_enabled (existing) — opt-in email 2FA flag.
   await pool.query(
     `ALTER TABLE forge_identity_users ADD COLUMN IF NOT EXISTS twofa_enabled boolean NOT NULL DEFAULT false`,
+  );
+  // SMS delivery channel (C21): phone, verification timestamp, consent timestamp, opt-out state + timestamp.
+  // All nullable — absent means no phone on file. Additive, backward-compatible (old rows keep NULL).
+  await pool.query(
+    `ALTER TABLE forge_identity_users ADD COLUMN IF NOT EXISTS phone text`,
+  );
+  await pool.query(
+    `ALTER TABLE forge_identity_users ADD COLUMN IF NOT EXISTS phone_verified_at timestamptz`,
+  );
+  await pool.query(
+    `ALTER TABLE forge_identity_users ADD COLUMN IF NOT EXISTS sms_consent_at timestamptz`,
+  );
+  await pool.query(
+    `ALTER TABLE forge_identity_users ADD COLUMN IF NOT EXISTS sms_opt_out boolean NOT NULL DEFAULT false`,
+  );
+  await pool.query(
+    `ALTER TABLE forge_identity_users ADD COLUMN IF NOT EXISTS sms_opt_out_at timestamptz`,
+  );
+  // Phone lookup index — inbound Twilio webhook resolves the user by E.164 number.
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS forge_identity_users_phone ON forge_identity_users (app_id, phone) WHERE phone IS NOT NULL`,
   );
 }
 
@@ -167,6 +188,12 @@ interface UserRow {
   is_owner: boolean;
   twofa_enabled: boolean;
   personal_group_id: string | null;
+  // SMS channel columns (additive migration — may be absent on pre-migration pools; handled as null).
+  phone: string | null;
+  phone_verified_at: Date | null;
+  sms_consent_at: Date | null;
+  sms_opt_out: boolean;
+  sms_opt_out_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -183,6 +210,11 @@ function rowToUser(r: UserRow): StoredUser {
     is_owner: r.is_owner,
     ...(r.twofa_enabled ? { twofa_enabled: true } : {}),
     ...(r.personal_group_id != null ? { personal_group_id: r.personal_group_id } : {}),
+    ...(r.phone != null ? { phone: r.phone } : {}),
+    ...(r.phone_verified_at != null ? { phone_verified_at: iso(r.phone_verified_at) } : {}),
+    ...(r.sms_consent_at != null ? { sms_consent_at: iso(r.sms_consent_at) } : {}),
+    ...(r.sms_opt_out ? { sms_opt_out: true } : {}),
+    ...(r.sms_opt_out_at != null ? { sms_opt_out_at: iso(r.sms_opt_out_at) } : {}),
     created_at: iso(r.created_at),
     updated_at: iso(r.updated_at),
   };
@@ -340,6 +372,14 @@ export class PgIdentityBackend implements IdentityBackend, MigratableIdentityBac
     return r.rows[0] ? rowToUser(r.rows[0]) : null;
   }
 
+  async findByPhone(appId: string, phone: string): Promise<StoredUser | null> {
+    const r = await this.pool.query<UserRow>(
+      'SELECT * FROM forge_identity_users WHERE app_id=$1 AND phone=$2',
+      [appId, phone],
+    );
+    return r.rows[0] ? rowToUser(r.rows[0]) : null;
+  }
+
   async updateUser(appId: string, userId: string, patch: UpdateUserPatch): Promise<StoredUser | null> {
     return this.withTx(async (c) => {
       const cur = await c.query<UserRow>(
@@ -356,10 +396,18 @@ export class PgIdentityBackend implements IdentityBackend, MigratableIdentityBac
         name: patch.name ?? u.name,
         is_owner: patch.is_owner ?? u.is_owner,
         twofa_enabled: patch.twofa_enabled ?? u.twofa_enabled,
+        // SMS fields: explicit undefined in patch means "keep existing"; explicit null or value replaces.
+        phone: 'phone' in patch ? (patch.phone ?? null) : u.phone,
+        phone_verified_at: 'phone_verified_at' in patch ? (patch.phone_verified_at ?? null) : u.phone_verified_at,
+        sms_consent_at: 'sms_consent_at' in patch ? (patch.sms_consent_at ?? null) : u.sms_consent_at,
+        sms_opt_out: patch.sms_opt_out ?? u.sms_opt_out ?? false,
+        sms_opt_out_at: 'sms_opt_out_at' in patch ? (patch.sms_opt_out_at ?? null) : u.sms_opt_out_at,
       };
       const upd = await c.query<UserRow>(
         `UPDATE forge_identity_users
-           SET email_verified=$3, password_hash=$4, provider=$5, provider_user_id=$6, name=$7, is_owner=$8, twofa_enabled=$9, updated_at=$10
+           SET email_verified=$3, password_hash=$4, provider=$5, provider_user_id=$6, name=$7, is_owner=$8,
+               twofa_enabled=$9, phone=$10, phone_verified_at=$11, sms_consent_at=$12,
+               sms_opt_out=$13, sms_opt_out_at=$14, updated_at=$15
          WHERE app_id=$1 AND id=$2 RETURNING *`,
         [
           appId,
@@ -371,6 +419,11 @@ export class PgIdentityBackend implements IdentityBackend, MigratableIdentityBac
           next.name,
           next.is_owner,
           next.twofa_enabled,
+          next.phone,
+          next.phone_verified_at,
+          next.sms_consent_at,
+          next.sms_opt_out,
+          next.sms_opt_out_at,
           nowIso(),
         ],
       );

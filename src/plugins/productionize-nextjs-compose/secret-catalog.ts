@@ -201,6 +201,46 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     obtain:
       'Stripe Dashboard → Developers → Webhooks → add an endpoint at `https://<host>/hooks/billing/stripe`, then reveal that endpoint’s Signing secret (`whsec_…`).',
   },
+  TWILIO_ACCOUNT_SID: {
+    name: 'TWILIO_ACCOUNT_SID',
+    capability: 'C21 · SMS channel (Twilio)',
+    requirement: 'optional',
+    what: 'Twilio Account SID (ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx) used for HTTP Basic auth on the Twilio Messages REST API.',
+    requires_note:
+      'Optional — enables the SMS delivery channel (C21). Requires TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_FROM_NUMBER + SMS_DELIVERY_ENABLED=true. Without all four, SMS delivery is inert (no sends, no errors).',
+    obtain:
+      'Twilio Console (console.twilio.com) → Account Info → Account SID. Starts with AC.',
+  },
+  TWILIO_AUTH_TOKEN: {
+    name: 'TWILIO_AUTH_TOKEN',
+    capability: 'C21 · SMS channel (Twilio)',
+    requirement: 'optional',
+    what: 'Twilio Auth Token paired with TWILIO_ACCOUNT_SID; used as the password in HTTP Basic auth on Twilio REST API calls.',
+    requires_note:
+      'Optional — enables the SMS delivery channel. Paired with TWILIO_ACCOUNT_SID; either alone leaves SMS unconfigured. Keep secret — never expose in client code or logs.',
+    obtain:
+      'Twilio Console → Account Info → Auth Token (click the eye icon to reveal). Rotate via the Twilio Console: create a secondary token, promote it, invalidate the primary.',
+  },
+  TWILIO_FROM_NUMBER: {
+    name: 'TWILIO_FROM_NUMBER',
+    capability: 'C21 · SMS channel (Twilio)',
+    requirement: 'optional',
+    what: 'The E.164 sender number (e.g. +15005550006) or Messaging Service SID (MGxxx…) outbound SMS is sent from.',
+    requires_note:
+      'Optional — enables the SMS delivery channel. Must be a Twilio-verified number or Messaging Service SID registered to TWILIO_ACCOUNT_SID. Needs TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN.',
+    obtain:
+      'Twilio Console → Phone Numbers → Manage → Active numbers (copy the E.164 number), OR Messaging → Services → create a Messaging Service and copy its SID.',
+  },
+  SMS_DELIVERY_ENABLED: {
+    name: 'SMS_DELIVERY_ENABLED',
+    capability: 'C21 · SMS channel (feature flag)',
+    requirement: 'optional',
+    what: 'Feature flag that gates live SMS delivery. Must be exactly the string true to enable outbound sends; any other value (including absent) keeps the SMS transport inert.',
+    requires_note:
+      'Optional — defaults to inert (no SMS sent). Set to true only after all three Twilio credentials are wired AND carrier registration (10DLC / toll-free verification) is complete. Prevents accidental sends during development or incomplete carrier onboarding.',
+    obtain:
+      'Set to the string true in .env.prod when ready to enable SMS delivery.',
+  },
 };
 
 // The C10 auth session secret — its presence in the declared set is how we detect an

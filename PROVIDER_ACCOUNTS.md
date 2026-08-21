@@ -174,6 +174,34 @@ The db-password and db-url secrets are Terraform-managed. To rotate:
 
 ---
 
+## Twilio (SMS channel — C21)
+
+Forge's SMS delivery channel uses the Twilio Messaging REST API (raw REST, no SDK). The three
+Twilio credentials are held in the per-app C5 secrets vault (or injected as env) and read by the
+data-plane at runtime. None of these are managed in Terraform — they are operator-provisioned OOB.
+
+| Secret (env var) | Seeded by | Value | Purpose |
+|---|---|---|---|
+| `TWILIO_ACCOUNT_SID` | Operator (OOB) | Twilio Account SID (`ACxxx…`) | Authenticates REST API calls (HTTP Basic auth: SID as username). Obtain from the Twilio Console → Account Info. |
+| `TWILIO_AUTH_TOKEN` | Operator (OOB) | Twilio Auth Token | Password for HTTP Basic auth on the Twilio Messages API. Obtain from Twilio Console → Account Info. Rotate via the Console (create secondary, promote, invalidate primary). |
+| `TWILIO_FROM_NUMBER` | Operator (OOB) | E.164 number (`+1xxx`) or Messaging Service SID (`MGxxx…`) | The sender identity for outbound SMS. Must be a Twilio-verified number or Messaging Service registered to the account. |
+| `SMS_DELIVERY_ENABLED` | Operator (OOB) | `"true"` to enable | Feature flag. Set to `true` only after all three Twilio credentials are wired AND carrier registration (10DLC / toll-free verification) is approved. The transport is inert when absent or any other value. |
+
+### Inbound webhook
+Twilio delivers inbound keyword messages (STOP / START / HELP) to:
+```
+POST https://api.dorinda.ai/hooks/sms/twilio
+```
+Register this URL in the Twilio Console → Phone Numbers → Manage → Active number → Messaging → A Message Comes In → Webhook. The endpoint handles TCPA/CTIA compliance keywords and replies with carrier-registered TwiML copy (never drift the HELP string without a carrier re-submission).
+
+### Carrier registration
+Before enabling SMS_DELIVERY_ENABLED=true:
+1. Complete 10DLC brand + campaign registration (or toll-free number verification) in the Twilio Console.
+2. Ensure the campaign use case covers transactional notifications with the registered opt-out language ("Reply STOP to opt out") — this is appended to every outbound message automatically by the platform.
+3. Confirm carrier approval before setting SMS_DELIVERY_ENABLED=true in .env.prod.
+
+---
+
 ## Apply gate
 
 **No resource in this file is applied without Mark's explicit go at `terraform apply` time.** The

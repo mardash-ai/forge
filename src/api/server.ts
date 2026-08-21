@@ -25,6 +25,7 @@ import { registerMembershipRoutes } from './membership-routes';
 import { registerBillingRoutes } from './billing-routes';
 import { registerTenantRoutes } from './tenant-routes';
 import { registerIngestRoutes } from './ingest-routes';
+import { registerSmsRoutes } from './sms-routes';
 import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
 import { aggregateHealth } from '../shared/health';
@@ -206,6 +207,10 @@ registerBillingRoutes(app);
 // C34 whole-tenant teardown — registered on BOTH planes: the app calls it over the internal
 // network (data), and an operator may call it from the control plane.
 registerTenantRoutes(app);
+
+// SMS delivery channel (C21 SMS) — phone verification flow + inbound Twilio webhook.
+// The webhook at POST /hooks/sms/twilio handles carrier-required STOP/START/HELP keywords.
+registerSmsRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME ?? 'default' });
 
 // Runner ingest — POST /ingest/run-progress: the Cloud Run eval job reports its own progress
 // here, authenticated by a Google-signed service-identity OIDC token. Writes land in the
