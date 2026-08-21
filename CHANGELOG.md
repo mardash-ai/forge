@@ -1276,6 +1276,44 @@ Each released version maps to a published control-plane image tag
 ## [Unreleased]
 
 
+## [1.49.0] - 2026-08-20
+
+### Added
+- **message-microsoft plugin** (`src/plugins/message-microsoft/`): calls Microsoft Graph `POST /me/sendMail` as the connected user (delegated `Mail.Send` permission), with swappable `GraphMailSender` for test isolation. Registered as `email:microsoft` in the `send-message` capability's sender dispatch table alongside `email:google`.
+- **MICROSOFT_CONNECT_CLIENT_ID / MICROSOFT_CONNECT_CLIENT_SECRET** added to the productionize secret catalog (C24 · Connectors), so generated provisioning docs and `PROVISIONING.md` describe how to set up the Azure App Registration.
+
+### Changed
+- **Connector descriptor default scopes** for Microsoft widened to `openid email offline_access Mail.Read Mail.Send Calendars.ReadWrite` (short-form, matching what Microsoft v2.0 token endpoint returns in scope strings).
+- **`account_label_claim` → `account_label_claims: string[]`** in `ProviderDescriptor`: the connector now tries each claim in order and takes the first non-empty value. Microsoft descriptor uses `['email', 'preferred_username']` so personal MSA accounts (which lack `email`) are still labeled via `preferred_username`.
+- **Scope-narrowing guard in `completeConnect`**: stored scope list is now always the SET UNION of the previously-stored scopes and the callback's granted scopes. Prevents a partial Microsoft re-consent (Microsoft has no `include_granted_scopes`) from silently revoking already-granted capabilities.
+
+### Fixed
+
+- **redirect-uri test isolation**: `tests/redirect-uri-fix.test.ts` now reads back registered clients from `getBackends().mcp` (the active backend — FS or Postgres, whichever the route wrote to) instead of a hardcoded `new FsMcpBackend()`. When the verify gate sets `TEST_DATABASE_URL` vitest.config.ts activates the Postgres MCP backend, so the route wrote to PG but the test read from the filesystem — a systematic backend mismatch that caused two integrity-check assertions to always fail under the gate. No production behaviour changed; only the test infrastructure is corrected.
+
+### Added
+
+- **Per-IP + per-account rate limiting** on all public OAuth/auth/MCP endpoints (`POST /oauth/register`, `POST /oauth/token`, `GET`+`POST /oauth/authorize`, `POST /auth/login`, `POST /auth/signup`, `POST /auth/forgot`, `/mcp`). Default mode is **log-only / dry-run** (never rejects); set `FORGE_RATE_LIMIT_MODE=enforce` to activate 429 responses with `Retry-After` headers. All ceilings are env-configurable via `FORGE_RATE_LIMIT_*` variables.
+- **Per-account login escalation**: failed login attempts trigger growing backoff (3 failures → 5 s, 5 → 30 s, 10 → 5 min). Keyed on the target email so rotating source IPs can't bypass it. Thresholds and durations are env-overridable.
+- **SSE concurrency cap** (`FORGE_RATE_LIMIT_SSE_PER_CLIENT`, default 5) per `(appId, clientId)` — prevents a single connector from exhausting server-sent-event slots.
+- `src/shared/rate-limit.ts` — standalone sliding-window rate-limit module; no Fastify dependency; both modes fully unit-tested in `tests/rate-limit.test.ts`.
+- **DCR garbage collection** (`gcStaleClients`): deletes OAuth clients that were registered but never consented to (i.e., abandoned flows) after `DCR_GC_MAX_AGE_DAYS` days (default 30). Consented clients are **never** touched regardless of age. Operator-facing GC surface added to MCP backend: `GET /mcp/clients` (client summary) and `POST /mcp/clients/gc` (trigger GC), both service-token gated.
+- `src/shared/dcr-gc.ts` — DCR GC implementation; proven on seeded stale clients in `tests/dcr-gc.test.ts`.
+- `listClients`, `deleteClient`, `listConsentedClientIds` added to `McpBackend` interface and implemented on `FsMcpBackend`, `PgMcpBackend`, and `DualWriteMcpBackend`.
+
+### Fixed
+
+- **redirect_uri silent-filter bug**: `POST /oauth/register` previously used `Array.filter()` to silently drop non-`http(s)://` URIs, causing a 201 whose stored `redirect_uris` differed from the sent list — leading to a 400 at the `/oauth/authorize` step. The fix: if ANY URI in the request is non-`http(s)://`, the whole registration is rejected with `400 invalid_redirect_uri`. Proven with a register→authorize round-trip guard and RED-first tests in `tests/redirect-uri-fix.test.ts`.
+
+### Added
+- **Stripe mode-consistency guard (C33)**: On boot and in release-verify, the forge data-plane retrieves exactly one catalog price from Stripe and compares its `livemode` flag against the secret-key prefix (`sk_live_` → livemode true, `sk_test_` → livemode false). A mismatch (live key + test price IDs, or test key + live price IDs) turns `GET /health/deep` unavailable (503) and fails `forge verify --check-billing-mode`, with a specific error message naming both the key mode and the price mode. When billing is not configured (no `STRIPE_SECRET_KEY`), the guard is a no-op. Adds `src/billing/mode-guard.ts` (`checkStripeModeConsistency`, `keyModeFromSecretKey`, `firstCatalogPriceId`).
+- **`GET /billing/mode-check`** endpoint (public, no auth): returns `{ configured, ok, keyMode?, priceMode?, priceId?, detail? }` — the mode guard result for the sidecar's configured app. Used by `/health/deep` and `forge verify`.
+- **`GET /health/deep`** endpoint on both control and data planes: runs the billing mode guard for all apps with billing configured and returns a standard C6 health response; a mismatch makes the status `unavailable` (HTTP 503).
+- **Boot-time logging**: the data-plane logs a loud `STRIPE MODE MISMATCH` error on startup when a mismatch is detected, so operators see it immediately rather than discovering silent revenue loss.
+- **`forge verify --check-billing-mode`**: the verify capability (C14) gains `check_billing_mode` and `billing_app_name` inputs. When `check_billing_mode: true`, `runContractChecks` probes `GET /billing/mode-check` on the app's base URL and adds a `billing-mode` assertion to the report.
+- **`tax_enabled` in `GET /billing/catalog`**: the catalog response now includes `tax_enabled: boolean` (default `true`; set `STRIPE_TAX_ENABLED=false/0/off/no` to disable Stripe Tax), so consumers can read the sidecar's actual posture rather than inferring it from their own env.
+- **`retrievePrice` on `StripeClient`**: the Stripe plugin interface adds `retrievePrice(secretKey, priceId)` returning `{ id, livemode } | null` — used exclusively by the mode guard; the stub returns from an in-memory registry for tests (no network).
+
 ## [1.38.0] - 2026-08-14
 
 ### Added
