@@ -66,7 +66,10 @@ function decodeJwtPayload(jwt: string): Record<string, unknown> | null {
 // but always have `preferred_username`, so a descriptor of ['email', 'preferred_username'] resolves a
 // display label for BOTH work/school (has `email`) and personal (has only `preferred_username`) accounts.
 // Exported for direct unit testing of the claim resolution logic.
-export function accountLabelFrom(provider: ProviderDescriptor, idToken: string | undefined): string | undefined {
+export function accountLabelFrom(
+  provider: ProviderDescriptor,
+  idToken: string | undefined,
+): string | undefined {
   if (!idToken || !provider.account_label_claims?.length) return undefined;
   const claims = decodeJwtPayload(idToken);
   if (!claims) return undefined;

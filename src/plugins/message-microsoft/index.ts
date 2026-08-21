@@ -119,9 +119,7 @@ export const httpGraphMailSender: GraphMailSender = {
         signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
       });
     } catch (e) {
-      throw new Error(
-        `graph mail send request failed: ${sanitizeError(String((e as Error)?.message ?? e))}`,
-      );
+      throw new Error(`graph mail send request failed: ${sanitizeError(String((e as Error)?.message ?? e))}`);
     }
     if (!res.ok) {
       const detail = await res.text().catch(() => '');

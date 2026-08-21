@@ -190,9 +190,7 @@ describe('message-microsoft plugin — buildGraphSendBody', () => {
     expect(body.message.conversationId).toBe('ms-conv-id-abc');
     const headers = body.message.internetMessageHeaders!;
     expect(headers.find((h) => h.name === 'In-Reply-To')?.value).toBe('<orig-1@mail.test>');
-    expect(headers.find((h) => h.name === 'References')?.value).toBe(
-      '<root@mail.test> <orig-1@mail.test>',
-    );
+    expect(headers.find((h) => h.name === 'References')?.value).toBe('<root@mail.test> <orig-1@mail.test>');
   });
 
   it('defaults References to In-Reply-To when references is omitted', () => {
@@ -219,8 +217,7 @@ describe('message-microsoft plugin — buildGraphSendBody', () => {
 
 describe('message-microsoft plugin — sanitizeError', () => {
   it('redacts email addresses and Bearer tokens from error messages', () => {
-    const raw =
-      'graph mail send failed: 400 invalid recipient bob@example.test (Bearer abc.def.ghi)';
+    const raw = 'graph mail send failed: 400 invalid recipient bob@example.test (Bearer abc.def.ghi)';
     const scrubbed = sanitizeError(raw);
     expect(scrubbed).not.toContain('bob@example.test');
     expect(scrubbed).not.toContain('abc.def.ghi');
@@ -344,7 +341,11 @@ describe('connector — account_label_claims fallback (Microsoft personal-accoun
   const msDescriptor = providerDescriptor('microsoft')!;
 
   it('uses the email claim when present (work/school account)', () => {
-    const idToken = makeIdToken({ sub: 'user-sub', email: 'work@contoso.test', preferred_username: 'work@contoso.test' });
+    const idToken = makeIdToken({
+      sub: 'user-sub',
+      email: 'work@contoso.test',
+      preferred_username: 'work@contoso.test',
+    });
     expect(accountLabelFrom(msDescriptor, idToken)).toBe('work@contoso.test');
   });
 
@@ -378,13 +379,14 @@ describe('connector — account_label_claims fallback (Microsoft personal-accoun
     // (mirroring what the real httpOAuthClient does after parsing the id_token).
     const stubClient: OutboundOAuthClient = {
       authorizeUrl: (o) => `${o.provider.authorization_endpoint}?state=${o.state}`,
-      exchangeCode: async () => ({
-        access_token: 'ms-access',
-        refresh_token: 'ms-refresh',
-        expires_in: 3600,
-        scope: 'openid offline_access Mail.Send',
-        account_label: 'personal@outlook.com', // httpOAuthClient derives this from preferred_username
-      } as TokenSet),
+      exchangeCode: async () =>
+        ({
+          access_token: 'ms-access',
+          refresh_token: 'ms-refresh',
+          expires_in: 3600,
+          scope: 'openid offline_access Mail.Send',
+          account_label: 'personal@outlook.com', // httpOAuthClient derives this from preferred_username
+        }) as TokenSet,
       refresh: async () => ({ access_token: 'ms-access-v2', expires_in: 3600 }),
       revoke: async () => {},
     };
