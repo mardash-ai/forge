@@ -61,11 +61,20 @@ function decodeJwtPayload(jwt: string): Record<string, unknown> | null {
   }
 }
 
-function accountLabelFrom(provider: ProviderDescriptor, idToken: string | undefined): string | undefined {
-  if (!idToken || !provider.account_label_claim) return undefined;
+// Try each claim in the provider's `account_label_claims` list in order, returning the first non-empty
+// string value. This supports a FALLBACK CHAIN: Microsoft personal accounts (MSA) lack the `email` claim
+// but always have `preferred_username`, so a descriptor of ['email', 'preferred_username'] resolves a
+// display label for BOTH work/school (has `email`) and personal (has only `preferred_username`) accounts.
+// Exported for direct unit testing of the claim resolution logic.
+export function accountLabelFrom(provider: ProviderDescriptor, idToken: string | undefined): string | undefined {
+  if (!idToken || !provider.account_label_claims?.length) return undefined;
   const claims = decodeJwtPayload(idToken);
-  const v = claims?.[provider.account_label_claim];
-  return typeof v === 'string' && v ? v : undefined;
+  if (!claims) return undefined;
+  for (const claimName of provider.account_label_claims) {
+    const v = claims[claimName];
+    if (typeof v === 'string' && v) return v;
+  }
+  return undefined;
 }
 
 // The real HTTP client. Every exchange is a form-encoded POST to the provider's token endpoint over TLS,

@@ -161,6 +161,26 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     obtain:
       'From the same Google Cloud OAuth 2.0 Web client as GOOGLE_CONNECT_CLIENT_ID (shown once on creation; you can add a new secret later).',
   },
+  MICROSOFT_CONNECT_CLIENT_ID: {
+    name: 'MICROSOFT_CONNECT_CLIENT_ID',
+    capability: 'C24 · Connectors (Microsoft outbound OAuth)',
+    requirement: 'optional',
+    what: 'OAuth 2.0 Application (client) ID for CONNECTING a user\'s Microsoft account (mail send + calendar) — the app acting AS the user via Microsoft Graph.',
+    requires_note:
+      'Optional — enables users to connect Microsoft via `/connect/microsoft`. DISTINCT from any sign-in client: use a client whose consent screen requests the Graph scopes (Mail.Send, Calendars.ReadWrite). Needs BOTH MICROSOFT_CONNECT_CLIENT_ID and MICROSOFT_CONNECT_CLIENT_SECRET; either alone leaves the connector unconfigured (clean 503). Supports personal MSA + work/school (Entra ID) accounts.',
+    obtain:
+      'Azure Portal → App registrations → New registration (Accounts in any org + personal MS accounts). Add the Authorized redirect URI `https://<host>/connect/microsoft/callback`. Grant API permissions: Microsoft Graph → Delegated → openid, email, offline_access, Mail.Read, Mail.Send, Calendars.ReadWrite. Copy the Application (client) ID.',
+  },
+  MICROSOFT_CONNECT_CLIENT_SECRET: {
+    name: 'MICROSOFT_CONNECT_CLIENT_SECRET',
+    capability: 'C24 · Connectors (Microsoft outbound OAuth)',
+    requirement: 'optional',
+    what: 'OAuth 2.0 client secret paired with MICROSOFT_CONNECT_CLIENT_ID.',
+    requires_note:
+      'Optional — enables the Microsoft connector. Needs BOTH creds; either alone leaves the connector unconfigured. Sealed into the app\'s C5 vault (or injected as env) — never committed.',
+    obtain:
+      'From the same Azure App Registration as MICROSOFT_CONNECT_CLIENT_ID: Certificates & secrets → New client secret. Copy the VALUE (not the secret ID); it is shown once on creation.',
+  },
   STRIPE_SECRET_KEY: {
     name: 'STRIPE_SECRET_KEY',
     capability: 'C-billing · Stripe (subscriptions/checkout)',

@@ -4,6 +4,11 @@ import {
   GMAIL_SEND_SCOPE,
   getGmailSender,
 } from '../../plugins/message-gmail/index';
+import {
+  IMPLEMENTATION as GRAPH_IMPL,
+  MSGRAPH_SEND_SCOPE,
+  getGraphMailSender,
+} from '../../plugins/message-microsoft/index';
 
 // C25 — the CHANNEL × PROVIDER dispatch table for SendMessage. This is the extensibility seam: the
 // SendMessage Capability is a stable, provider-agnostic contract; WHICH transport actually delivers a
@@ -25,7 +30,8 @@ export interface MessageSenderDescriptor {
   send(message: OutboundMessage, accessToken: string): Promise<SentMessageRef>;
 }
 
-// Registered senders keyed by `${channel}:${provider}`. Only email:google is implemented for the MVP.
+// Registered senders keyed by `${channel}:${provider}`. email:google and email:microsoft are the two
+// outbound email implementations; SMS/push or other providers are additive registrations here.
 const REGISTRY: Record<string, MessageSenderDescriptor> = {
   'email:google': {
     channel: 'email',
@@ -34,6 +40,16 @@ const REGISTRY: Record<string, MessageSenderDescriptor> = {
     implementation: GMAIL_IMPL,
     // Delegate to the swappable Gmail sender so tests inject a deterministic in-memory sender.
     send: (message, accessToken) => getGmailSender().send(message, accessToken),
+  },
+  'email:microsoft': {
+    channel: 'email',
+    provider: 'microsoft',
+    // Microsoft Graph's sendMail requires the `Mail.Send` delegated permission. The short-form scope
+    // string matches what Microsoft's v2.0 token endpoint returns in the `scope` response field.
+    requireScope: MSGRAPH_SEND_SCOPE,
+    implementation: GRAPH_IMPL,
+    // Delegate to the swappable Graph mail sender so tests inject a deterministic in-memory sender.
+    send: (message, accessToken) => getGraphMailSender().send(message, accessToken),
   },
 };
 

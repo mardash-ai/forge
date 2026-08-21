@@ -170,6 +170,13 @@ export async function completeConnect(input: CompleteConnectInput): Promise<Comp
   const now = nowIso();
   const grantedScopes = tokens.scope ? parseScopes(tokens.scope) : req.scopes;
   const existing = await store.getConnection(input.appId, req.owner, descriptor.id);
+  // SCOPE NARROWING GUARD: Microsoft (and any provider without `include_granted_scopes`) can return a
+  // SUBSET of the previously-stored scopes on a partial re-consent — overwriting the stored list would
+  // silently revoke already-granted capabilities (e.g. losing Mail.Send after re-consenting Mail.Read
+  // only). We ALWAYS take the UNION so the stored set is a superset of every grant ever received. Google
+  // avoids this with `include_granted_scopes=true` (the provider merges on their side); Microsoft has
+  // no such mechanism, so the fix must live here.
+  const mergedScopes = unionScopes(existing?.scopes ?? [], grantedScopes);
   const conn: Connection = {
     owner: req.owner,
     provider: descriptor.id,
@@ -178,7 +185,7 @@ export async function completeConnect(input: CompleteConnectInput): Promise<Comp
     // re-consent that reuses an earlier grant).
     ...(await resolveRefreshSealed(tokens.refresh_token, existing)),
     access_expires_at: expiresAt(tokens.expires_in, new Date(now)),
-    scopes: grantedScopes,
+    scopes: mergedScopes,
     status: 'connected',
     ...(tokens.account_label
       ? { account_label: tokens.account_label }
@@ -350,6 +357,14 @@ function freshFrom(conn: Connection, accessToken: string): FreshToken {
     expires_at: conn.access_expires_at,
     ...(conn.account_label ? { account_label: conn.account_label } : {}),
   };
+}
+
+// Return the SET UNION of two scope lists — always a superset. Used by completeConnect to prevent a
+// partial Microsoft re-consent from NARROWING the stored grant (Microsoft has no `include_granted_scopes`
+// so the callback's scope list can be smaller than the previously-stored set).
+export function unionScopes(existing: string[], incoming: string[]): string[] {
+  const s = new Set([...existing, ...incoming]);
+  return [...s].sort(); // deterministic order for tests + storage
 }
 
 // Re-exported for callers building a discovery surface.

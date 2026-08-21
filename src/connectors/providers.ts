@@ -35,8 +35,11 @@ export interface ProviderDescriptor {
   client_id_secret: string;
   client_secret_secret: string;
   // When the token response carries an OIDC id_token (openid scope), derive the connected-account label
-  // (e.g. the Gmail address) from this claim — shown in the connections list, never a token.
-  account_label_claim?: string;
+  // (e.g. the Gmail address or Microsoft UPN) by trying each claim in order and taking the first
+  // non-empty string. Supports a fallback chain: Microsoft personal accounts may lack the `email`
+  // claim but always have `preferred_username`, so ['email', 'preferred_username'] handles both
+  // work/school and personal MSA accounts.
+  account_label_claims?: string[];
 }
 
 const GOOGLE: ProviderDescriptor = {
@@ -57,29 +60,36 @@ const GOOGLE: ProviderDescriptor = {
   pkce: true,
   client_id_secret: 'GOOGLE_CONNECT_CLIENT_ID',
   client_secret_secret: 'GOOGLE_CONNECT_CLIENT_SECRET',
-  account_label_claim: 'email',
+  account_label_claims: ['email'],
 };
 
 // Microsoft is registered to PROVE the architecture is config-driven (endpoints known); it lights up the
 // moment an operator provisions MICROSOFT_CONNECT_CLIENT_ID/SECRET. `offline_access` drives the refresh
 // token; Graph has no simple RFC-7009 revoke, so disconnect drops the stored tokens.
+//
+// Scopes use the short (non-URL) form that Microsoft's v2.0 endpoint returns in token responses — the
+// same short form is stored on the Connection and checked by the C24 broker, so they must match.
+// `Mail.Read` + `Mail.Send` enables send-as-user (C25); `Calendars.ReadWrite` enables calendar access.
+//
+// IMPORTANT — Microsoft has NO `include_granted_scopes` equivalent: if a user re-consents to a SUBSET
+// of scopes, the callback's granted-scope list is narrower than the stored set. The C24 completeConnect
+// implementation MUST union the old and new scope sets (superset preserved) rather than overwriting —
+// a bug here silently revokes already-granted capabilities. See the scope-narrowing fix in service.ts.
 const MICROSOFT: ProviderDescriptor = {
   id: 'microsoft',
   label: 'Microsoft',
   authorization_endpoint: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
   token_endpoint: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
-  default_scopes: [
-    'openid',
-    'email',
-    'offline_access',
-    'https://graph.microsoft.com/Mail.Send',
-    'https://graph.microsoft.com/Calendars.Read',
-  ],
+  // MVP scopes (short form): openid + OIDC identity; offline_access → refresh token; Mail.Read +
+  // Mail.Send → C25 email send-as-user; Calendars.ReadWrite → calendar access.
+  default_scopes: ['openid', 'email', 'offline_access', 'Mail.Read', 'Mail.Send', 'Calendars.ReadWrite'],
   authorize_params: { prompt: 'consent' },
   pkce: true,
   client_id_secret: 'MICROSOFT_CONNECT_CLIENT_ID',
   client_secret_secret: 'MICROSOFT_CONNECT_CLIENT_SECRET',
-  account_label_claim: 'email',
+  // Work/school accounts include `email` in the id_token; personal MSA accounts use `preferred_username`
+  // instead. Trying both in order means the label resolves for ALL Microsoft account types.
+  account_label_claims: ['email', 'preferred_username'],
 };
 
 const PROVIDERS: Record<string, ProviderDescriptor> = {
