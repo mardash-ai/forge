@@ -1320,6 +1320,17 @@ Each released version maps to a published control-plane image tag
 ## [Unreleased]
 
 
+## [1.49.7] - 2026-08-21
+
+### Added
+
+- **message-microsoft plugin** (`src/plugins/message-microsoft/`): sends outbound email via Microsoft Graph `POST /me/sendMail`; registered as `email:microsoft` in the send-message senders table alongside `email:google`. Graph returns 202 with an empty body — the plugin synthesises a `crypto.randomUUID()` as the local `message_id` on the persisted `EmailDelivery`.
+- **Microsoft connector in provider registry** (`src/connectors/providers.ts`): Microsoft provider descriptor with default scopes `openid email offline_access Mail.Read Mail.Send Calendars.ReadWrite`, PKCE, and `account_label_claims: ['email', 'preferred_username']` (personal MSA accounts lack `email` but always have `preferred_username`).
+- **Connector `account_label_claim` preferred_username fallback** (`src/connectors/oauth-client.ts`): `accountLabelFrom` iterates the descriptor's `account_label_claims` list in order, so work/school accounts resolve via `email` and personal MSA accounts fall back to `preferred_username`.
+- **Scope-narrowing guard** (`src/connectors/service.ts`): `completeConnect` uses `unionScopes(existing, incoming)` instead of overwriting the stored scope list, preventing a partial Microsoft re-consent (Microsoft has no `include_granted_scopes`) from silently revoking already-granted capabilities such as `Mail.Send`.
+- **Productionize secret catalog** (`src/plugins/productionize-nextjs-compose/secret-catalog.ts`): `MICROSOFT_CONNECT_CLIENT_ID` and `MICROSOFT_CONNECT_CLIENT_SECRET` entries with Azure Portal provisioning instructions surface in operator runbooks.
+- **Test suite** (`tests/message-microsoft.test.ts`): unit tests for `buildGraphSendBody`, `sanitizeError`, senders dispatch, `accountLabelFrom` fallback, `unionScopes`; integration tests for the scope-narrowing guard (proves partial re-consent cannot narrow stored scopes) and C25 send-message via Microsoft (happy path, MessageSent event, provider error, broker precondition failures).
+
 ## [1.49.4] - 2026-08-20
 
 ### Changed
