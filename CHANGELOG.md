@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.48.5] - 2026-08-21
+
+### Added
+
+- **message-microsoft plugin** (`src/plugins/message-microsoft/`): Microsoft Graph `POST /me/sendMail` send-as-user with swappable `GraphMailSender` for test isolation. Registered as `email:microsoft` in the C25 SendMessage sender dispatch table alongside `email:google` (`requireScope: Mail.Send`, `implementation: message-microsoft`).
+- **MICROSOFT_CONNECT_CLIENT_ID / MICROSOFT_CONNECT_CLIENT_SECRET** added to the productionize secret catalog (C24 · Connectors), so generated provisioning docs describe Azure App Registration setup.
+
+### Changed
+
+- **Connector descriptor default scopes** for Microsoft widened to `openid email offline_access Mail.Read Mail.Send Calendars.ReadWrite` (short-form, matching Microsoft v2.0 token endpoint scope strings).
+- **`account_label_claim` → `account_label_claims: string[]`** in `ProviderDescriptor`: the connector now tries each claim in order and takes the first non-empty value. Microsoft descriptor uses `['email', 'preferred_username']` so personal MSA accounts (which lack `email`) are still labeled via `preferred_username`.
+- **Scope-narrowing guard in `completeConnect`**: stored scope list is now always the SET UNION of the previously-stored scopes and the callback's granted scopes. Prevents a partial Microsoft re-consent (Microsoft has no `include_granted_scopes`) from silently revoking already-granted capabilities.
+
 ## [1.48.4] - 2026-08-20
 
 ### Fixed
