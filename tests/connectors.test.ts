@@ -684,9 +684,7 @@ describe('C24 — accountLabelFrom: preferred_username fallback for personal Mic
   const msDescriptor = { account_label_claims: ['email', 'preferred_username'] } as Parameters<
     typeof accountLabelFrom
   >[0];
-  const googleDescriptor = { account_label_claims: ['email'] } as Parameters<
-    typeof accountLabelFrom
-  >[0];
+  const googleDescriptor = { account_label_claims: ['email'] } as Parameters<typeof accountLabelFrom>[0];
 
   it('returns the email claim for work/school accounts (email is present)', () => {
     const token = fakeIdToken({ email: 'user@company.com', preferred_username: 'user@company.com' });
@@ -779,9 +777,7 @@ describe('C24 — Microsoft connector: connect flow + scope narrowing guard', ()
     });
     expect(start.statusCode).toBe(302);
     const loc = new URL(start.headers.location as string);
-    expect(loc.origin + loc.pathname).toBe(
-      'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
-    );
+    expect(loc.origin + loc.pathname).toBe('https://login.microsoftonline.com/common/oauth2/v2.0/authorize');
     // Default scopes include the full Microsoft scope set.
     const scope = loc.searchParams.get('scope') ?? '';
     expect(scope).toContain('Mail.Send');
@@ -871,8 +867,13 @@ describe('C24 — Microsoft connector: connect flow + scope narrowing guard', ()
     expect(conn2.scopes).toContain('Calendars.ReadWrite'); // MUST survive
     expect(conn2.scopes).toContain('Mail.Read'); // newly granted
     // Exact union (sorted, no duplicates).
-    expect(conn2.scopes).toEqual(
-      ['Calendars.ReadWrite', 'Mail.Read', 'Mail.Send', 'email', 'offline_access', 'openid'],
-    );
+    expect(conn2.scopes).toEqual([
+      'Calendars.ReadWrite',
+      'Mail.Read',
+      'Mail.Send',
+      'email',
+      'offline_access',
+      'openid',
+    ]);
   });
 });

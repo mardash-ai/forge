@@ -568,7 +568,9 @@ describe('C25 — buildGraphSendBody (pure Graph request-body composition)', () 
     const headers = body.message.internetMessageHeaders!;
     expect(headers).toBeDefined();
     expect(headers.find((h) => h.name === 'In-Reply-To')?.value).toBe('<orig-1@mail.test>');
-    expect(headers.find((h) => h.name === 'References')?.value).toBe('<orig-1@mail.test> <earlier@mail.test>');
+    expect(headers.find((h) => h.name === 'References')?.value).toBe(
+      '<orig-1@mail.test> <earlier@mail.test>',
+    );
   });
 
   it('defaults References to In-Reply-To when no explicit references chain is given', () => {
