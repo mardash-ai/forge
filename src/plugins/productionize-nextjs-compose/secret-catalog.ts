@@ -208,8 +208,7 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     what: 'Twilio Account SID (ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx) used for HTTP Basic auth on the Twilio Messages REST API.',
     requires_note:
       'Optional — enables the SMS delivery channel (C21). Requires TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_FROM_NUMBER + SMS_DELIVERY_ENABLED=true. Without all four, SMS delivery is inert (no sends, no errors).',
-    obtain:
-      'Twilio Console (console.twilio.com) → Account Info → Account SID. Starts with AC.',
+    obtain: 'Twilio Console (console.twilio.com) → Account Info → Account SID. Starts with AC.',
   },
   TWILIO_AUTH_TOKEN: {
     name: 'TWILIO_AUTH_TOKEN',
@@ -238,8 +237,7 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
     what: 'Feature flag that gates live SMS delivery. Must be exactly the string true to enable outbound sends; any other value (including absent) keeps the SMS transport inert.',
     requires_note:
       'Optional — defaults to inert (no SMS sent). Set to true only after all three Twilio credentials are wired AND carrier registration (10DLC / toll-free verification) is complete. Prevents accidental sends during development or incomplete carrier onboarding.',
-    obtain:
-      'Set to the string true in .env.prod when ready to enable SMS delivery.',
+    obtain: 'Set to the string true in .env.prod when ready to enable SMS delivery.',
   },
 };
 

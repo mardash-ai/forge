@@ -150,21 +150,13 @@ export async function ensureIdentitySchema(pool: Pool): Promise<void> {
   );
   // SMS delivery channel (C21): phone, verification timestamp, consent timestamp, opt-out state + timestamp.
   // All nullable — absent means no phone on file. Additive, backward-compatible (old rows keep NULL).
-  await pool.query(
-    `ALTER TABLE forge_identity_users ADD COLUMN IF NOT EXISTS phone text`,
-  );
-  await pool.query(
-    `ALTER TABLE forge_identity_users ADD COLUMN IF NOT EXISTS phone_verified_at timestamptz`,
-  );
-  await pool.query(
-    `ALTER TABLE forge_identity_users ADD COLUMN IF NOT EXISTS sms_consent_at timestamptz`,
-  );
+  await pool.query(`ALTER TABLE forge_identity_users ADD COLUMN IF NOT EXISTS phone text`);
+  await pool.query(`ALTER TABLE forge_identity_users ADD COLUMN IF NOT EXISTS phone_verified_at timestamptz`);
+  await pool.query(`ALTER TABLE forge_identity_users ADD COLUMN IF NOT EXISTS sms_consent_at timestamptz`);
   await pool.query(
     `ALTER TABLE forge_identity_users ADD COLUMN IF NOT EXISTS sms_opt_out boolean NOT NULL DEFAULT false`,
   );
-  await pool.query(
-    `ALTER TABLE forge_identity_users ADD COLUMN IF NOT EXISTS sms_opt_out_at timestamptz`,
-  );
+  await pool.query(`ALTER TABLE forge_identity_users ADD COLUMN IF NOT EXISTS sms_opt_out_at timestamptz`);
   // Phone lookup index — inbound Twilio webhook resolves the user by E.164 number.
   await pool.query(
     `CREATE INDEX IF NOT EXISTS forge_identity_users_phone ON forge_identity_users (app_id, phone) WHERE phone IS NOT NULL`,
@@ -398,7 +390,8 @@ export class PgIdentityBackend implements IdentityBackend, MigratableIdentityBac
         twofa_enabled: patch.twofa_enabled ?? u.twofa_enabled,
         // SMS fields: explicit undefined in patch means "keep existing"; explicit null or value replaces.
         phone: 'phone' in patch ? (patch.phone ?? null) : u.phone,
-        phone_verified_at: 'phone_verified_at' in patch ? (patch.phone_verified_at ?? null) : u.phone_verified_at,
+        phone_verified_at:
+          'phone_verified_at' in patch ? (patch.phone_verified_at ?? null) : u.phone_verified_at,
         sms_consent_at: 'sms_consent_at' in patch ? (patch.sms_consent_at ?? null) : u.sms_consent_at,
         sms_opt_out: patch.sms_opt_out ?? u.sms_opt_out ?? false,
         sms_opt_out_at: 'sms_opt_out_at' in patch ? (patch.sms_opt_out_at ?? null) : u.sms_opt_out_at,

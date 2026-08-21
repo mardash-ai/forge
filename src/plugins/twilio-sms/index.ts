@@ -37,7 +37,7 @@ export interface SmsResult {
   ok: boolean;
   sid?: string;
   status?: string; // Twilio message status ("queued", "sent", …) or synthetic ("inert")
-  error?: string;  // error detail on !ok
+  error?: string; // error detail on !ok
 }
 
 // The minimal per-call shape passed to the transport (raw strings — no SDK types).

@@ -1,6 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { getBackends } from '../storage/backends';
-import { newTwofaCode, hashToken, twofaCodeTtlSeconds, twofaMaxAttempts } from '../plugins/auth-identity/index';
+import {
+  newTwofaCode,
+  hashToken,
+  twofaCodeTtlSeconds,
+  twofaMaxAttempts,
+} from '../plugins/auth-identity/index';
 import { sendSms, twiml, twimlEmpty, HELP_REPLY } from '../plugins/twilio-sms/index';
 import { readSecrets } from '../plugins/secrets-local/index';
 import { nowIso } from '../shared/time';
@@ -51,16 +56,17 @@ function classifyKeyword(body: string): 'stop' | 'start' | 'help' | 'other' {
   return 'other';
 }
 
-export function registerSmsRoutes(
-  fastify: FastifyInstance,
-  opts: { defaultApp: () => string },
-): void {
+export function registerSmsRoutes(fastify: FastifyInstance, opts: { defaultApp: () => string }): void {
   // POST /auth/phone/send-code
   // Body: { userId: string; phone: string; appId?: string }
   // Stores the phone on the user record, mints a 6-digit OTP, sends it by SMS.
   // The caller must be authenticated (session) before calling this; the route trusts `userId`.
   fastify.post('/auth/phone/send-code', async (req, reply) => {
-    const { userId, phone, appId: bodyAppId } = req.body as {
+    const {
+      userId,
+      phone,
+      appId: bodyAppId,
+    } = req.body as {
       userId?: string;
       phone?: string;
       appId?: string;
@@ -72,7 +78,10 @@ export function registerSmsRoutes(
     }
     if (!phone || typeof phone !== 'string' || !isE164(phone)) {
       return reply.status(422).send({
-        error: { code: 'validation_error', message: 'phone must be a valid E.164 number (e.g. +15551234567)' },
+        error: {
+          code: 'validation_error',
+          message: 'phone must be a valid E.164 number (e.g. +15551234567)',
+        },
       });
     }
 
@@ -127,7 +136,11 @@ export function registerSmsRoutes(
   // Body: { userId: string; code: string; appId?: string }
   // Redeems the OTP, stamps phone_verified_at + sms_consent_at on success.
   fastify.post('/auth/phone/verify-code', async (req, reply) => {
-    const { userId, code, appId: bodyAppId } = req.body as {
+    const {
+      userId,
+      code,
+      appId: bodyAppId,
+    } = req.body as {
       userId?: string;
       code?: string;
       appId?: string;
@@ -138,7 +151,9 @@ export function registerSmsRoutes(
       return reply.status(422).send({ error: { code: 'validation_error', message: 'userId required' } });
     }
     if (!code || typeof code !== 'string' || !/^\d{6}$/.test(code)) {
-      return reply.status(422).send({ error: { code: 'validation_error', message: 'code must be a 6-digit string' } });
+      return reply
+        .status(422)
+        .send({ error: { code: 'validation_error', message: 'code must be a 6-digit string' } });
     }
 
     const { identity } = await getBackends();
@@ -148,10 +163,14 @@ export function registerSmsRoutes(
     });
 
     if (redeem.outcome === 'invalid') {
-      return reply.status(400).send({ error: { code: 'code_invalid', message: 'Code not found or expired. Request a new code.' } });
+      return reply
+        .status(400)
+        .send({ error: { code: 'code_invalid', message: 'Code not found or expired. Request a new code.' } });
     }
     if (redeem.outcome === 'exhausted') {
-      return reply.status(400).send({ error: { code: 'code_exhausted', message: 'Too many attempts. Request a new code.' } });
+      return reply
+        .status(400)
+        .send({ error: { code: 'code_exhausted', message: 'Too many attempts. Request a new code.' } });
     }
     if (redeem.outcome === 'mismatch') {
       return reply.status(400).send({
@@ -180,69 +199,73 @@ export function registerSmsRoutes(
   //
   // Carrier-registered endpoint — the response copy is compliance-locked. Do not edit without
   // a corresponding carrier re-submission.
-  fastify.post('/hooks/sms/twilio', {
-    config: { rawBody: false },
-  }, async (req, reply) => {
-    reply.header('Content-Type', 'text/xml; charset=utf-8');
+  fastify.post(
+    '/hooks/sms/twilio',
+    {
+      config: { rawBody: false },
+    },
+    async (req, reply) => {
+      reply.header('Content-Type', 'text/xml; charset=utf-8');
 
-    // Twilio sends application/x-www-form-urlencoded
-    const body = req.body as Record<string, string | undefined> | string | undefined;
-    let from = '';
-    let msgBody = '';
+      // Twilio sends application/x-www-form-urlencoded
+      const body = req.body as Record<string, string | undefined> | string | undefined;
+      let from = '';
+      let msgBody = '';
 
-    if (typeof body === 'object' && body !== null) {
-      from = String(body['From'] ?? '').trim();
-      msgBody = String(body['Body'] ?? '').trim();
-    } else if (typeof body === 'string') {
-      const params = new URLSearchParams(body);
-      from = params.get('From') ?? '';
-      msgBody = params.get('Body') ?? '';
-    }
-
-    if (!from) {
-      // Malformed — no From; return empty TwiML (don't leak info).
-      return reply.status(200).send(twimlEmpty());
-    }
-
-    const keyword = classifyKeyword(msgBody);
-
-    if (keyword === 'help') {
-      return reply.status(200).send(twiml(HELP_REPLY));
-    }
-
-    // Look up the user by phone number — must exist with prior in-app consent (sms_consent_at).
-    // We scan all apps for this phone; in practice the data-plane has a single app.
-    const appId = opts.defaultApp();
-    const { identity } = await getBackends();
-    const user = await identity.findByPhone(appId, from);
-
-    if (keyword === 'stop') {
-      if (user) {
-        await identity.updateUser(appId, user.id, {
-          sms_opt_out: true,
-          sms_opt_out_at: nowIso(),
-        });
+      if (typeof body === 'object' && body !== null) {
+        from = String(body['From'] ?? '').trim();
+        msgBody = String(body['Body'] ?? '').trim();
+      } else if (typeof body === 'string') {
+        const params = new URLSearchParams(body);
+        from = params.get('From') ?? '';
+        msgBody = params.get('Body') ?? '';
       }
-      // Always acknowledge STOP (even for unknown numbers) per CTIA requirements. Empty TwiML
-      // lets the carrier's automatic STOP handling reply — we don't send a duplicate message.
-      return reply.status(200).send(twimlEmpty());
-    }
 
-    if (keyword === 'start') {
-      // NEVER create an opt-in from an inbound keyword — only re-enable an existing opted-in user.
-      // A number that never went through the phone-verification flow has no sms_consent_at, so we
-      // drop the message silently (empty TwiML). The carrier handles the mandatory START reply.
-      if (user && user.sms_consent_at) {
-        await identity.updateUser(appId, user.id, {
-          sms_opt_out: false,
-          sms_opt_out_at: undefined,
-        });
+      if (!from) {
+        // Malformed — no From; return empty TwiML (don't leak info).
+        return reply.status(200).send(twimlEmpty());
       }
-      // Empty TwiML — carrier's built-in START reply fires automatically.
-      return reply.status(200).send(twimlEmpty());
-    }
 
-    // 'other' — not a compliance keyword; no action, no reply.
-    return reply.status(200).send(twimlEmpty());
-  });
+      const keyword = classifyKeyword(msgBody);
+
+      if (keyword === 'help') {
+        return reply.status(200).send(twiml(HELP_REPLY));
+      }
+
+      // Look up the user by phone number — must exist with prior in-app consent (sms_consent_at).
+      // We scan all apps for this phone; in practice the data-plane has a single app.
+      const appId = opts.defaultApp();
+      const { identity } = await getBackends();
+      const user = await identity.findByPhone(appId, from);
+
+      if (keyword === 'stop') {
+        if (user) {
+          await identity.updateUser(appId, user.id, {
+            sms_opt_out: true,
+            sms_opt_out_at: nowIso(),
+          });
+        }
+        // Always acknowledge STOP (even for unknown numbers) per CTIA requirements. Empty TwiML
+        // lets the carrier's automatic STOP handling reply — we don't send a duplicate message.
+        return reply.status(200).send(twimlEmpty());
+      }
+
+      if (keyword === 'start') {
+        // NEVER create an opt-in from an inbound keyword — only re-enable an existing opted-in user.
+        // A number that never went through the phone-verification flow has no sms_consent_at, so we
+        // drop the message silently (empty TwiML). The carrier handles the mandatory START reply.
+        if (user && user.sms_consent_at) {
+          await identity.updateUser(appId, user.id, {
+            sms_opt_out: false,
+            sms_opt_out_at: undefined,
+          });
+        }
+        // Empty TwiML — carrier's built-in START reply fires automatically.
+        return reply.status(200).send(twimlEmpty());
+      }
+
+      // 'other' — not a compliance keyword; no action, no reply.
+      return reply.status(200).send(twimlEmpty());
+    },
+  );
 }

@@ -91,12 +91,7 @@ describe('Channel registry', () => {
   it('normalizeChannels accepts sms alongside existing channels', () => {
     expect(normalizeChannels(['in_app', 'sms'])).toEqual(['in_app', 'sms']);
     expect(normalizeChannels(['sms'])).toEqual(['sms']);
-    expect(normalizeChannels(['in_app', 'push', 'email', 'sms'])).toEqual([
-      'in_app',
-      'push',
-      'email',
-      'sms',
-    ]);
+    expect(normalizeChannels(['in_app', 'push', 'email', 'sms'])).toEqual(['in_app', 'push', 'email', 'sms']);
   });
 
   it('normalizeChannels still defaults to [in_app] when empty', () => {
@@ -581,7 +576,11 @@ describe('inbound Twilio webhook keyword handling', () => {
 
   it('case-insensitive: stop / Stop / STOP all opt out', async () => {
     for (const kw of ['stop', 'Stop', 'STOP']) {
-      const user = await seedVerifiedUser(`+1555888${Math.floor(Math.random() * 1000).toString().padStart(4, '0')}`);
+      const user = await seedVerifiedUser(
+        `+1555888${Math.floor(Math.random() * 1000)
+          .toString()
+          .padStart(4, '0')}`,
+      );
       const phone = user.phone!;
       // Re-read to get the phone we set
       const { identity } = await getBackends();
