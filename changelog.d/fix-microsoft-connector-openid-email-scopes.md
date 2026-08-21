@@ -1,0 +1,3 @@
+### Fixed
+
+- **F-077 — Microsoft connector scope list now includes `openid` and `email`** (`src/connectors/providers.ts`): the Microsoft provider descriptor's `default_scopes` was missing `openid` and `email`, so no OIDC id\_token was returned on authorize and `account_label` was always empty. Both scopes are now present in the Microsoft scope list (`['openid', 'email', 'offline_access', 'Mail.Read', 'Mail.Send', 'Calendars.ReadWrite']`). The `account_label_claims: ['email', 'preferred_username']` fallback chain is retained so personal MSA accounts (which lack the `email` claim) still resolve a label via `preferred_username`.
