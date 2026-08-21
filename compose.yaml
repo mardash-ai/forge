@@ -38,6 +38,13 @@ services:
       - ./CHANGELOG.md:/forge/CHANGELOG.md
       # Terraform modules — needed by tests/backend-restricted-paths.test.ts.
       - ./terraform:/forge/terraform
+      # Dockerfiles + GitHub workflows + infra — needed by console-reports-its-version.test.ts
+      # (reads Dockerfile, Dockerfile.console, .github/workflows/publish-image.yml) and
+      # e2e-runner-sweep-wired.test.ts (reads infra/main.tf).
+      - ./Dockerfile:/forge/Dockerfile
+      - ./Dockerfile.console:/forge/Dockerfile.console
+      - ./.github:/forge/.github
+      - ./infra:/forge/infra
     working_dir: /forge
     restart: unless-stopped
 

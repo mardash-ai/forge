@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.49.3] - 2026-08-20
+
+### Fixed
+- Add missing `Dockerfile`, `Dockerfile.console`, `.github`, and `infra/` bind mounts to the dev `compose.yaml` so that `make test` (running vitest inside the container) sees the same files the harness sees on a git checkout; previously `console-reports-its-version.test.ts` and `e2e-runner-sweep-wired.test.ts` would fail with ENOENT when run via the Docker container
+
 ## [1.49.1] - 2026-08-21
 
 ### Added
