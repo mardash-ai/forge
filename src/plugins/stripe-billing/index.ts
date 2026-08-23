@@ -1,5 +1,5 @@
 import Stripe from 'stripe';
-import type { SubscriptionStatus } from '../../billing/types';
+import type { CheckoutMode, SubscriptionStatus } from '../../billing/types';
 
 // Plugin: stripe-billing — the genuine TECHNOLOGY BOUNDARY for the web billing surface (the live Stripe
 // API + Stripe's webhook-signature scheme). Like the C24 outbound-OAuth client and email-smtp, it is
@@ -53,6 +53,10 @@ export interface CreateCheckoutInput {
   // "card-required trial" that auto-converts to paid); `'if_required'` = Stripe's default (may skip the
   // card for a trial). Omitted ⇒ Stripe's default.
   paymentMethodCollection?: 'always' | 'if_required';
+  // Which Checkout session to create (CHECKOUT_MODES). Omitted ⇒ 'subscription'. In 'setup' mode the
+  // session collects a payment method only — no line items, no tax, no subscription_data; the saved
+  // card resumes the customer's paused/trialing subscription via setup_intent.succeeded (§1E).
+  mode?: CheckoutMode;
 }
 
 // §1B — direct subscription creation at signup: no payment method, trial + pause on end.
@@ -281,6 +285,28 @@ export const sdkStripeClient: StripeClient = {
   },
 
   async createCheckoutSession(input) {
+    // §1E conversion: a SETUP session collects a payment method without charging. Stripe rejects the
+    // purchase-only params here (line_items, automatic_tax, tax_id_collection, subscription_data,
+    // payment_method_collection), so the setup shape is built separately rather than subtracted from
+    // the subscription shape. The SetupIntent is stamped with our metadata so the
+    // setup_intent.succeeded webhook (find sub by customer → resume if paused) carries provenance.
+    if (input.mode === 'setup') {
+      const params: Stripe.Checkout.SessionCreateParams = {
+        mode: 'setup',
+        success_url: input.successUrl,
+        cancel_url: input.cancelUrl,
+        client_reference_id: input.clientReferenceId,
+        metadata: input.metadata,
+        setup_intent_data: { metadata: input.metadata },
+      };
+      if (input.customerId) {
+        params.customer = input.customerId;
+      } else if (input.customerEmail) {
+        params.customer_email = input.customerEmail;
+      }
+      const session = await stripeApi(input.secretKey).checkout.sessions.create(params);
+      return { id: session.id, url: session.url ?? '' };
+    }
     const params: Stripe.Checkout.SessionCreateParams = {
       mode: 'subscription',
       line_items: [{ price: input.priceId, quantity: 1 }],

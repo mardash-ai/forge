@@ -534,6 +534,67 @@ describe('C33 — checkout + portal (Stripe web ops)', () => {
     expect(checkoutInputs[0]!.paymentMethodCollection).toBeUndefined();
   });
 
+  it('a setup-mode checkout (mode:"setup") is accepted — the conversion flow whose webhook half (setup_intent.succeeded → resume) already ships', async () => {
+    await configureStripe();
+    await seedCatalog();
+    const { userId, cookie } = await signIn();
+    const res = await server.inject({
+      method: 'POST',
+      url: '/billing/checkout',
+      headers: { cookie },
+      // The EXACT shape dorinda-api sends on a CONVERSION checkout (startConversionCheckout):
+      // collect a card without charging so the paused/trialing subscription can resume. The
+      // sibling test above pins the legacy card-required-trial shape; THIS one is the live path —
+      // it was the uncovered half when the route rejected every mode but "subscription"
+      // (found live 2026-08-23: checkout had never worked in production).
+      payload: {
+        plan_key: 'pro_month',
+        success_url: 'https://app/s',
+        cancel_url: 'https://app/c',
+        mode: 'setup',
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      url: 'https://checkout.stripe.test/session/cs_test_1',
+      session_id: 'cs_test_1',
+    });
+    // The Stripe boundary receives a SETUP session: mode threads through, a customer is
+    // created + remembered (setup sessions require one), and no subscription-only fields leak.
+    expect(checkoutInputs[0]).toMatchObject({
+      mode: 'setup',
+      customerId: 'cus_test_1',
+      clientReferenceId: userId,
+    });
+    expect(checkoutInputs[0]!.trialPeriodDays).toBeUndefined();
+    expect(checkoutInputs[0]!.paymentMethodCollection).toBeUndefined();
+    const rec = await (await getBackends()).billing.read(APP_ID);
+    expect(rec.subscriptions[userId]!.provider_refs.stripe_customer_id).toBe('cus_test_1');
+  });
+
+  it('setup-mode checkout ignores subscription-only fields (trial/payment collection) instead of sending them to Stripe', async () => {
+    await configureStripe();
+    await seedCatalog();
+    const { cookie } = await signIn();
+    const res = await server.inject({
+      method: 'POST',
+      url: '/billing/checkout',
+      headers: { cookie },
+      payload: {
+        plan_key: 'pro_month',
+        success_url: 'https://app/s',
+        cancel_url: 'https://app/c',
+        mode: 'setup',
+        trial_period_days: 30,
+        payment_method_collection: 'always',
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(checkoutInputs[0]!.mode).toBe('setup');
+    expect(checkoutInputs[0]!.trialPeriodDays).toBeUndefined();
+    expect(checkoutInputs[0]!.paymentMethodCollection).toBeUndefined();
+  });
+
   it('checkout rejects invalid trial_period_days / mode / payment_method_collection with 422', async () => {
     await configureStripe();
     await seedCatalog();

@@ -15,6 +15,7 @@ import {
   emptyProviderRefs,
   noneRecord,
   type Catalog,
+  type CheckoutMode,
   type EntitlementValue,
   type EntitlementView,
   type EntitlementsView,
@@ -199,11 +200,16 @@ export interface CheckoutInput {
   trialPeriodDays?: number;
   // Whether Checkout collects a card up-front — `'always'` = card-required trial; omitted ⇒ Stripe default.
   paymentMethodCollection?: 'always' | 'if_required';
+  // Which session the caller wants (CHECKOUT_MODES). Omitted ⇒ 'subscription' (purchase — the prior
+  // behavior). 'setup' = the §1E conversion flow: collect a card WITHOUT charging; the existing
+  // paused/trialing subscription resumes via the setup_intent.succeeded webhook.
+  mode?: CheckoutMode;
 }
 
 export async function createCheckout(input: CheckoutInput): Promise<{ url: string; session_id: string }> {
   const cfg = await resolveBillingConfig(input.appId);
   if (!cfg.configured || !cfg.secretKey) throw billingNotConfigured();
+  const mode: CheckoutMode = input.mode ?? 'subscription';
 
   const state = await (await backend()).read(input.appId);
   const plan = state.catalog?.plans.find((p) => p.plan_key === input.planKey);
@@ -233,8 +239,11 @@ export async function createCheckout(input: CheckoutInput): Promise<{ url: strin
   };
   if (input.scopeRef) metadata.scope_ref = input.scopeRef;
 
+  // Subscription-only knobs (trial length, card-collection policy) never reach a setup session —
+  // Stripe rejects them there, and a caller sending both is asking for conversion, not a new trial.
   const session = await stripe.createCheckoutSession({
     secretKey: cfg.secretKey,
+    mode,
     priceId,
     successUrl: input.successUrl,
     cancelUrl: input.cancelUrl,
@@ -243,8 +252,10 @@ export async function createCheckout(input: CheckoutInput): Promise<{ url: strin
     ...(input.customerEmail ? { customerEmail: input.customerEmail } : {}),
     metadata,
     taxEnabled: cfg.taxEnabled,
-    ...(input.trialPeriodDays ? { trialPeriodDays: input.trialPeriodDays } : {}),
-    ...(input.paymentMethodCollection ? { paymentMethodCollection: input.paymentMethodCollection } : {}),
+    ...(mode === 'subscription' && input.trialPeriodDays ? { trialPeriodDays: input.trialPeriodDays } : {}),
+    ...(mode === 'subscription' && input.paymentMethodCollection
+      ? { paymentMethodCollection: input.paymentMethodCollection }
+      : {}),
   });
   return { url: session.url, session_id: session.id };
 }

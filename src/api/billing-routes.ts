@@ -25,6 +25,7 @@ import {
   reconcileApp,
   deleteCustomer,
 } from '../billing/service';
+import { CHECKOUT_MODES, type CheckoutMode } from '../billing/types';
 import { resolveBillingConfig } from '../billing/config';
 import { checkStripeModeConsistency } from '../billing/mode-guard';
 
@@ -272,17 +273,19 @@ export function registerBillingRoutes(
         },
       });
     }
-    // Subscription is the only billing mode this platform supports. Accept the app's explicit `mode`
-    // (it sends "subscription") but reject anything else clearly rather than silently ignoring it.
-    if (b.mode !== undefined && String(b.mode) !== 'subscription') {
+    // Validate `mode` against the ONE list the service + Stripe client also derive from
+    // (CHECKOUT_MODES) — this check once hardcoded "subscription" and rejected the "setup"
+    // conversion flow whose webhook half was already live, so no consumer could ever reach it.
+    if (b.mode !== undefined && !CHECKOUT_MODES.includes(String(b.mode) as CheckoutMode)) {
       return reply.status(422).send({
         error: {
           code: 'invalid_input',
-          message: '`mode` must be "subscription" (the only supported billing mode).',
+          message: `\`mode\` must be one of: ${CHECKOUT_MODES.map((m) => `"${m}"`).join(', ')}.`,
           retry: 'change-input',
         },
       });
     }
+    const mode = b.mode === undefined ? undefined : (String(b.mode) as CheckoutMode);
     // Optional free trial: a positive integer day count (Stripe accepts 1–730). Absent ⇒ no trial.
     let trialPeriodDays: number | undefined;
     if (
@@ -332,6 +335,7 @@ export function registerBillingRoutes(
         ...(trimmed(b.customer_email) ? { customerEmail: trimmed(b.customer_email)! } : {}),
         ...(trialPeriodDays !== undefined ? { trialPeriodDays } : {}),
         ...(paymentMethodCollection !== undefined ? { paymentMethodCollection } : {}),
+        ...(mode !== undefined ? { mode } : {}),
       });
       await recordC3(app_.id, 'billing.checkout_started', resolved.subscriber, { plan_key: planKey });
       return reply.status(200).send(out);

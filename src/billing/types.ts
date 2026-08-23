@@ -29,6 +29,16 @@ export const SUBSCRIPTION_STATUSES: readonly SubscriptionStatus[] = [
   'none',
 ] as const;
 
+// The checkout-session modes the platform supports — written ONCE; the route validator, the service,
+// and the Stripe client all derive from THIS list so the accepted vocabulary can never drift from the
+// implemented one (the route once rejected "setup" while the webhook half handled its events —
+// setup_intent.succeeded → resume — and no consumer could ever reach the conversion flow).
+//   `subscription` — purchase: creates a subscription (line items, optional trial/card policy).
+//   `setup`        — conversion (§1E): collect a payment method WITHOUT charging so a paused/trialing
+//                    subscription resumes via the setup_intent.succeeded webhook. No line items.
+export const CHECKOUT_MODES = ['subscription', 'setup'] as const;
+export type CheckoutMode = (typeof CHECKOUT_MODES)[number];
+
 // A typed entitlement value. Keys are APP-defined + namespaced; the platform copies values through and
 // NEVER interprets them (it only knows boolean/number/string).
 export type EntitlementValue = boolean | number | string;
