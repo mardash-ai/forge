@@ -267,15 +267,26 @@ export function registerConnectRoutes(
     return { connections: await listConnections(app_.id, owner) };
   });
 
-  // === disconnect ================================================================================
+  // === disconnect ONE provider (session OR service-token) ========================================
+  // ⛔ This used to be session-ONLY (`sessionUser`) while its plural sibling below accepted the
+  // service-token + `owner` channel. That asymmetry was invisible here and fatal one repo away:
+  // dorinda-api talks to this vault server-to-server with a service token, so it could call
+  // `DELETE /connect` (all) but NOT `DELETE /connect/:provider` (one) — it got a flat 401. The
+  // consequence shipped: the Integrations card's per-provider Disconnect had no reachable endpoint,
+  // and every connected user who pressed it saw "Couldn't disconnect" (Mark, live, 2026-08-21).
+  //
+  // Two routes doing the same job for the same callers must resolve their owner the same way. A
+  // browser session can still only ever disconnect its OWN connection — `resolveReadOwner` returns
+  // the session user first and only honours an explicit `owner` for a caller presenting the
+  // service token, exactly as the teardown sibling does.
   app.delete('/connect/:provider', async (req, reply) => {
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
-    const user = await sessionUser(req, app_.id);
-    if (!user) return reply.status(401).send(needAuth);
+    const owner = await resolveReadOwner(req, app_.id);
+    if (!owner) return reply.status(401).send(needAuth);
     const { provider } = req.params as { provider: string };
-    const disconnected = await disconnect(app_.id, user.userId, provider);
-    if (disconnected) await recordC3(app_.id, 'connector.disconnected', provider, user.userId, {});
+    const disconnected = await disconnect(app_.id, owner, provider);
+    if (disconnected) await recordC3(app_.id, 'connector.disconnected', provider, owner, {});
     return { disconnected };
   });
 

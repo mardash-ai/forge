@@ -360,6 +360,43 @@ describe('C24 — management (list / disconnect)', () => {
     expect(res.statusCode).toBe(401);
   });
 
+  it('⛔ DELETE /connect/:provider works over the SERVICE-TOKEN + owner channel, like its plural sibling', async () => {
+    // The asymmetry this pins was invisible in forge and fatal one repo away. dorinda-api talks to
+    // the vault server-to-server with a service token; when this route resolved its owner from a
+    // browser SESSION only, the API could disconnect ALL providers but not ONE — so the Integrations
+    // card's per-provider Disconnect had no reachable endpoint and every user who pressed it saw
+    // "Couldn't disconnect" (reproduced live 2026-08-21).
+    //
+    // Two routes serving the same callers for the same job must resolve their owner the same way.
+    await configureGoogle();
+    await setSecret(APP_ID, 'AUTH_SERVICE_TOKEN', 'svc-token-123');
+    const { userId, cookie } = await signIn();
+    await connect(cookie);
+
+    const res = await server.inject({
+      method: 'DELETE',
+      url: `/connect/google?owner=${encodeURIComponent(userId)}`,
+      headers: { 'x-forge-service-token': 'svc-token-123' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().disconnected).toBe(true);
+    expect(revokes).toHaveLength(1); // withdrawn AT Google, not merely forgotten locally
+    expect(await (await getBackends()).connections.getConnection(APP_ID, userId, 'google')).toBeNull();
+  });
+
+  it('a service token with NO owner is still refused on the per-provider DELETE (401)', async () => {
+    // The service-token channel must not become an anonymous disconnect-anything door.
+    await configureGoogle();
+    await setSecret(APP_ID, 'AUTH_SERVICE_TOKEN', 'svc-token-123');
+    const res = await server.inject({
+      method: 'DELETE',
+      url: '/connect/google',
+      headers: { 'x-forge-service-token': 'svc-token-123' },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
   it('DELETE revokes at the provider and deletes the stored tokens', async () => {
     await configureGoogle();
     const { userId, cookie } = await signIn();
@@ -376,7 +413,8 @@ describe('C24 — management (list / disconnect)', () => {
  * C34 account teardown. Deleting an account MUST also withdraw the grants it holds AT THE PROVIDER —
  * otherwise "delete my account" leaves a live refresh token for the user's Gmail/Calendar and the app
  * still listed under their third-party access. A consumer's purge is a MACHINE call, so this has to
- * work over the service-token + owner channel; the per-provider DELETE is session-only.
+ * work over the service-token + owner channel — as does the per-provider DELETE (fixed 2026-08-23;
+ * it was session-only, which is why dorinda-api could never implement the card's Disconnect).
  */
 describe('C24 — DELETE /connect (disconnect every provider; account teardown)', () => {
   it('revokes AT THE PROVIDER and deletes the tokens, over the service-token + owner channel', async () => {
