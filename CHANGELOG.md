@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.52.1] - 2026-08-23
+
+> Supersedes the `v1.52.0` tag, which points at the same billing fix but with stale version
+> metadata (`package.json` still read 1.51.2 — a release-chain slip, not a code difference).
+> Adopt `v1.52.1`; never pin `v1.52.0`.
+
+### Added
+
+- C33 billing: setup-mode Checkout sessions (`POST /billing/checkout` with `mode:"setup"`) — the §1E conversion flow that collects a payment method WITHOUT charging so a paused/trialing subscription resumes via the already-shipped `setup_intent.succeeded` webhook handler. The route previously hardcoded `mode:"subscription"` and 422-rejected the very mode its own webhook half was waiting for, so no consumer could ever reach conversion (found live 2026-08-23: dorinda-api's checkout had never worked in production). The mode vocabulary is now written once (`CHECKOUT_MODES` in `billing/types.ts`) and the route validator, service, and Stripe client all derive from it. Setup sessions omit every purchase-only param (line items, tax, subscription_data, payment_method_collection) and stamp the SetupIntent with subscriber/app/plan metadata.
+
 ## [1.51.1] - 2026-08-21
 
 ### Fixed
