@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.52.2] - 2026-08-23
+
+### Fixed
+
+- Setup-mode Checkout sessions now send `currency` (the plan's catalog currency, `usd` backstop) — Stripe requires it in setup mode ("Missing required param: currency") and the 1.52.1 implementation omitted it, so every conversion checkout 500'd against the live API while the stubbed client accepted the call. Caught by replaying the exact session params against the real Stripe API during the 2026-08-23 live checkout proof.
+
 ## [1.52.1] - 2026-08-23
 
 > Supersedes the `v1.52.0` tag, which points at the same billing fix but with stale version

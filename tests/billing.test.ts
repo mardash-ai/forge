@@ -560,11 +560,15 @@ describe('C33 — checkout + portal (Stripe web ops)', () => {
       session_id: 'cs_test_1',
     });
     // The Stripe boundary receives a SETUP session: mode threads through, a customer is
-    // created + remembered (setup sessions require one), and no subscription-only fields leak.
+    // created + remembered (setup sessions require one), the plan's catalog currency is
+    // threaded (Stripe REJECTS a setup-mode session without `currency` — "Missing required
+    // param: currency", found against the LIVE API 2026-08-23 after the stub happily accepted
+    // a currency-less call), and no subscription-only fields leak.
     expect(checkoutInputs[0]).toMatchObject({
       mode: 'setup',
       customerId: 'cus_test_1',
       clientReferenceId: userId,
+      currency: 'usd',
     });
     expect(checkoutInputs[0]!.trialPeriodDays).toBeUndefined();
     expect(checkoutInputs[0]!.paymentMethodCollection).toBeUndefined();

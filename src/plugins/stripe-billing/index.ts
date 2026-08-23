@@ -57,6 +57,8 @@ export interface CreateCheckoutInput {
   // session collects a payment method only — no line items, no tax, no subscription_data; the saved
   // card resumes the customer's paused/trialing subscription via setup_intent.succeeded (§1E).
   mode?: CheckoutMode;
+  // Required by Stripe in setup mode (no line items to infer it from). The plan's catalog currency.
+  currency?: string;
 }
 
 // §1B — direct subscription creation at signup: no payment method, trial + pause on end.
@@ -298,6 +300,8 @@ export const sdkStripeClient: StripeClient = {
         client_reference_id: input.clientReferenceId,
         metadata: input.metadata,
         setup_intent_data: { metadata: input.metadata },
+        // Stripe rejects a setup session without a currency (no line items to infer it from).
+        ...(input.currency ? { currency: input.currency } : {}),
       };
       if (input.customerId) {
         params.customer = input.customerId;

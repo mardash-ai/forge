@@ -256,6 +256,10 @@ export async function createCheckout(input: CheckoutInput): Promise<{ url: strin
     ...(mode === 'subscription' && input.paymentMethodCollection
       ? { paymentMethodCollection: input.paymentMethodCollection }
       : {}),
+    // Stripe REQUIRES `currency` on a setup-mode session ("Missing required param: currency" —
+    // live API, 2026-08-23; the stubbed client accepted the currency-less call). The plan's
+    // catalog currency is authoritative; 'usd' only backstops a catalog that never set one.
+    ...(mode === 'setup' ? { currency: plan.prices.stripe.currency ?? 'usd' } : {}),
   });
   return { url: session.url, session_id: session.id };
 }
