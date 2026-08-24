@@ -3,7 +3,7 @@
   "version": "1.52.2",
   "private": true,
   "type": "module",
-  "description": "Forge \u2014 the AI-native software creation platform for Builders. Docker-first, API-first.",
+  "description": "Forge — the AI-native software creation platform for Builders. Docker-first, API-first.",
   "license": "MIT",
   "engines": {
     "node": ">=22"
@@ -23,6 +23,7 @@
     "fastify": "^4.28.1",
     "pg": "^8.22.0",
     "stripe": "^22.3.1",
+    "tsdav": "^2.3.1",
     "tsx": "^4.19.2",
     "undici": "^6.27.0",
     "zod": "^3.23.8"

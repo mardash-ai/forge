@@ -30,6 +30,8 @@ import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
 import { aggregateHealth } from '../shared/health';
 import { runBillingDeepChecks } from '../shared/billing-health';
+import { setCredentialVerifier } from '../connectors/credential-verifier';
+import { caldavCredentialVerifier } from '../connectors/caldav-verifier';
 
 // The Forge HTTP API. Capability APIs perform behavior; Resource/Event APIs
 // expose state and facts. Humans and agents use these SAME contracts.
@@ -192,6 +194,14 @@ registerMcpRoutes(app);
 // and brokers a fresh access token so the app can call the provider AS the user without ever handling raw
 // tokens. Owner comes from the C10 session; the broker also accepts the C10 service token for background
 // sends. Served on both planes.
+// ⛔ Wire the CalDAV credential verifier for basic-auth providers (Apple/iCloud).
+//
+// Deliberately done HERE, at the deployment entry point, and NOT as a module-level default inside
+// credential-verifier.ts. That module has no default on purpose: an absent verifier must refuse, never
+// pass, so a permissive fallback can never be reached by accident. Wiring the real implementation at
+// boot keeps that property intact — remove this line and `apple` becomes un-connectable with a clean
+// 503, which is the correct failure, not a silent one.
+setCredentialVerifier(caldavCredentialVerifier);
 registerConnectRoutes(app);
 
 // Household / multi-member identity + roles + shared-private scoping (C31) — the membership lifecycle

@@ -37,6 +37,8 @@ import { getCatalog } from '../billing/service';
 import { aggregateHealth } from '../shared/health';
 import { runBillingDeepChecks } from '../shared/billing-health';
 import type { PlanDef } from '../billing/types';
+import { setCredentialVerifier } from '../connectors/credential-verifier';
+import { caldavCredentialVerifier } from '../connectors/caldav-verifier';
 
 // The Forge DATA PLANE server — the production/runtime counterpart to the control
 // plane. It ships in a SLIM image (no Docker CLI, no build/test/lint, no dev deps)
@@ -225,6 +227,14 @@ registerMcpRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 // auto-refreshes them, and brokers a FRESH access token so the app calls the provider AS the user without
 // ever handling raw tokens. Owner comes from the C10 session; the broker also accepts the C10 service token
 // for background sends (e.g. the outbound-email capability). Defaults the app to this sidecar's FORGE_APP_NAME.
+// ⛔ Wire the CalDAV credential verifier for basic-auth providers (Apple/iCloud).
+//
+// Deliberately done HERE, at the deployment entry point, and NOT as a module-level default inside
+// credential-verifier.ts. That module has no default on purpose: an absent verifier must refuse, never
+// pass, so a permissive fallback can never be reached by accident. Wiring the real implementation at
+// boot keeps that property intact — remove this line and `apple` becomes un-connectable with a clean
+// 503, which is the correct failure, not a silent one.
+setCredentialVerifier(caldavCredentialVerifier);
 registerConnectRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 
 // Household / multi-member identity + roles + shared-private scoping (C31) — the membership lifecycle
