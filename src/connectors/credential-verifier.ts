@@ -13,8 +13,17 @@ import type { BasicProviderDescriptor } from './providers';
 // So the credential is probed against the real service BEFORE it is sealed, and the connection record
 // is only written on a verified success.
 
+/** A calendar the verifier discovered while proving the credential. Returned so the connect flow can
+ *  offer a picker without a SECOND round trip — discovery already fetched them, and asking iCloud
+ *  again would be both slower and a chance for the two answers to disagree. */
+export interface VerifiedCalendar {
+  url: string;
+  displayName: string;
+  readOnly: boolean;
+}
+
 export type VerifyOutcome =
-  | { ok: true; account_label?: string }
+  | { ok: true; account_label?: string; calendars?: VerifiedCalendar[] }
   // The service answered and REJECTED the credential. A definite observation.
   | { ok: false; reason: 'invalid_credentials'; detail?: string }
   // The service could not be reached / answered unusably. NOT a statement about the credential —

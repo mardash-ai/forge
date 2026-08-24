@@ -43,6 +43,16 @@ export const caldavCredentialVerifier: CredentialVerifier = {
 
     // The account label is the username: iCloud's principal does not carry a friendlier display name,
     // and inventing one would be worse than showing the address the user typed.
-    return { ok: true, account_label: input.username };
+    return {
+      ok: true,
+      account_label: input.username,
+      // Carried forward from discovery. Each URL is on the account's PARTITION host and must be used
+      // as-is — rebuilding it from the discovery root is what breaks every later call.
+      calendars: probe.calendars.map((c) => ({
+        url: c.url,
+        displayName: c.displayName,
+        readOnly: c.readOnly,
+      })),
+    };
   },
 };

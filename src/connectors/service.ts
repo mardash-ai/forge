@@ -14,7 +14,7 @@ import type {
   ConnectionView,
   FreshToken,
 } from './types';
-import { getCredentialVerifier } from './credential-verifier';
+import { getCredentialVerifier, type VerifiedCalendar } from './credential-verifier';
 import { getCalDavClient } from '../caldav';
 import type { CalDavWrite, CalDavWriteResult } from '../caldav';
 import { toConnectionView } from './types';
@@ -183,6 +183,8 @@ export interface ConnectWithCredentialsInput {
 
 export interface ConnectWithCredentialsResult {
   connection: ConnectionView;
+  /** Discovered at verification time, so the caller can offer a calendar picker immediately. */
+  calendars: VerifiedCalendar[];
 }
 
 export async function connectWithCredentials(
@@ -254,7 +256,7 @@ export async function connectWithCredentials(
     updated_at: now,
   };
   await store.putConnection(input.appId, conn);
-  return { connection: toConnectionView(conn) };
+  return { connection: toConnectionView(conn), calendars: outcome.calendars ?? [] };
 }
 
 // --- calendar writes for BASIC-auth providers ---------------------------------

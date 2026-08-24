@@ -1015,6 +1015,37 @@ describe('C24 — basic-auth connect (POST /connect/:provider/credentials)', () 
   const storedApple = async (userId: string) =>
     (await getBackends()).connections.getConnection(APP_ID, userId, 'apple');
 
+  // The picker needs the calendars discovery already fetched. Asking iCloud a SECOND time would be
+  // slower and would give the two answers a chance to disagree.
+  it('returns the discovered calendars alongside the connection', async () => {
+    setCredentialVerifier(
+      verifierReturning({
+        ok: true,
+        calendars: [
+          { url: 'https://p1-caldav.icloud.com/1/cal/home/', displayName: 'Home', readOnly: false },
+          { url: 'https://p1-caldav.icloud.com/1/cal/rem/', displayName: 'Reminders', readOnly: true },
+        ],
+      }),
+    );
+    const { cookie } = await signIn();
+    const res = await post(cookie, { username: APPLE_USER, password: APPLE_PASS });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.calendars).toHaveLength(2);
+    // Partition-host URLs are carried VERBATIM — rebuilding them from the discovery root is what
+    // breaks every later call.
+    expect(body.calendars[0].url).toContain('p1-caldav.icloud.com');
+    expect(body.calendars[1]).toMatchObject({ displayName: 'Reminders', readOnly: true });
+  });
+
+  it('answers with an empty calendar list rather than omitting the field', async () => {
+    setCredentialVerifier(verifierReturning({ ok: true }));
+    const { cookie } = await signIn();
+    const res = await post(cookie, { username: APPLE_USER, password: APPLE_PASS });
+    // ⛔ [] and "absent" must not be the same thing to a client deciding whether to show a picker.
+    expect(res.json().calendars).toEqual([]);
+  });
+
   it('stores a SEALED credential after the verifier confirms it, and never the plaintext', async () => {
     setCredentialVerifier(verifierReturning({ ok: true }));
     const { userId, cookie } = await signIn();
