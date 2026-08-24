@@ -56,7 +56,12 @@ describe('CalDAV credential verifier', () => {
       username: 'dorinda-test@mardash.ai',
       password: 'app-specific',
     });
-    expect(out).toEqual({ ok: true, account_label: 'dorinda-test@mardash.ai' });
+    expect(out).toMatchObject({ ok: true, account_label: 'dorinda-test@mardash.ai' });
+    // The discovered calendars ride along so the connect flow can offer a picker without asking
+    // iCloud a second time. Carried VERBATIM — these URLs are on the account's partition host.
+    if (!out.ok) throw new Error('unreachable');
+    expect(out.calendars).toHaveLength(2);
+    expect(out.calendars![0]!.url).toContain('p42-caldav.icloud.com');
   });
 
   // ⛔ THE WEB-ONLY-ACCOUNT GUARD. A browser-created Apple Account authenticates perfectly and has NO
