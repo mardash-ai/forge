@@ -6,7 +6,7 @@ import { ForgeError, notFound, dependencyUnavailable } from '../shared/errors';
 import { resolveProvider } from './config';
 import { getOutboundOAuthClient, newPkcePair } from './oauth-client';
 import { parseScopes, scopeString } from '../mcp/oauth';
-import type { Connection, ConnectRequest, ConnectionView, FreshToken } from './types';
+import type { Connection, OAuthConnection, ConnectRequest, ConnectionView, FreshToken } from './types';
 import { toConnectionView } from './types';
 
 // C24 — the connector-vault SERVICE: the core behavior the routes (and a future outbound-delivery
@@ -30,6 +30,25 @@ export const unknownProvider = (provider: string) =>
   notFound(`Unknown connector provider "${provider}".`, { provider });
 export const notConnected = (provider: string) =>
   notFound(`No "${provider}" connection for this user. Connect the account first.`, { provider });
+// A `basic` provider reached an OAuth-only entrypoint (start / callback / refresh). This is a
+// ROUTING mistake, not a configuration one, and it must not masquerade as `connectorNotConfigured`:
+// that error tells the operator to provision client credentials, which for Apple would send them
+// hunting for an APPLE_CONNECT_CLIENT_ID that does not and will never exist. Guardrail #7 — a
+// diagnostic that hides its cause costs more than the bug.
+export const wrongAuthKind = (provider: string, expected: 'oauth2' | 'basic') =>
+  new ForgeError({
+    code: 'wrong_auth_kind',
+    message:
+      expected === 'oauth2'
+        ? `Connector "${provider}" authenticates with a username + password, not OAuth. Use ` +
+          `POST /connect/${provider}/credentials instead of the redirect handshake.`
+        : `Connector "${provider}" authenticates with OAuth. Use GET /connect/${provider} instead of ` +
+          `submitting credentials.`,
+    status: 400,
+    // The caller must call a DIFFERENT endpoint — retrying this one never helps.
+    retry: 'change-input',
+    details: { provider, expected_auth_kind: expected },
+  });
 export const reconnectRequired = (provider: string, detail: string) =>
   new ForgeError({
     code: 'reconnect_required',
@@ -68,6 +87,7 @@ export async function startConnect(input: StartConnectInput): Promise<StartConne
     if (!providerDescriptor(input.provider)) throw unknownProvider(input.provider);
     throw connectorNotConfigured(input.provider);
   }
+  if (resolved.auth_kind !== 'oauth2') throw wrongAuthKind(input.provider, 'oauth2');
   const { descriptor, clientId } = resolved;
   const scopes = input.scopes && input.scopes.length ? input.scopes : descriptor.default_scopes;
   const state = randomBytes(32).toString('base64url');
@@ -145,6 +165,7 @@ export async function completeConnect(input: CompleteConnectInput): Promise<Comp
 
   const resolved = await resolveProvider(input.appId, input.provider);
   if (!resolved) throw connectorNotConfigured(input.provider);
+  if (resolved.auth_kind !== 'oauth2') throw wrongAuthKind(input.provider, 'oauth2');
   const { descriptor, clientId, clientSecret } = resolved;
 
   let tokens;
@@ -177,7 +198,8 @@ export async function completeConnect(input: CompleteConnectInput): Promise<Comp
   // avoids this with `include_granted_scopes=true` (the provider merges on their side); Microsoft has
   // no such mechanism, so the fix must live here.
   const mergedScopes = unionScopes(existing?.scopes ?? [], grantedScopes);
-  const conn: Connection = {
+  const conn: OAuthConnection = {
+    auth_kind: 'oauth2',
     owner: req.owner,
     provider: descriptor.id,
     access_sealed: await sealValue(tokens.access_token),
@@ -202,9 +224,12 @@ export async function completeConnect(input: CompleteConnectInput): Promise<Comp
 async function resolveRefreshSealed(
   refreshToken: string | undefined,
   existing: Connection | null,
-): Promise<Pick<Connection, 'refresh_sealed'>> {
+): Promise<Pick<OAuthConnection, 'refresh_sealed'>> {
   if (refreshToken) return { refresh_sealed: await sealValue(refreshToken) };
-  if (existing?.refresh_sealed) return { refresh_sealed: existing.refresh_sealed };
+  // Only an OAuth connection carries a refresh token; a basic one never does.
+  if (existing?.auth_kind === 'oauth2' && existing.refresh_sealed) {
+    return { refresh_sealed: existing.refresh_sealed };
+  }
   return {};
 }
 
@@ -252,8 +277,16 @@ export async function disconnect(appId: string, owner: string, provider: string)
   const conn = await store.getConnection(appId, owner, provider);
   if (!conn) return false;
   // Best-effort revoke at the provider (when it supports it), then drop the local tokens regardless.
+  // Remote revocation is an OAuth affordance. A basic provider's app-specific password lives at the
+  // provider and can only be revoked BY THE USER there — deleting our sealed copy is the whole of what
+  // disconnect can honestly do, so say nothing and drop it (the caller still reports success, because
+  // locally it IS gone).
   const resolved = await resolveProvider(appId, provider);
-  if (resolved?.descriptor.revoke_endpoint) {
+  if (
+    resolved?.auth_kind === 'oauth2' &&
+    resolved.descriptor.revoke_endpoint &&
+    conn.auth_kind === 'oauth2'
+  ) {
     try {
       const refresh = conn.refresh_sealed
         ? await openValue(conn.refresh_sealed)
@@ -307,6 +340,10 @@ export async function getFreshAccessToken(input: GetTokenInput): Promise<FreshTo
       });
     }
 
+    // ⛔ A basic connection has no bearer token to hand out, ever. Refuse BEFORE reading any token
+    // field, so the failure names the real cause instead of dying on an undefined ciphertext.
+    if (conn.auth_kind !== 'oauth2') throw wrongAuthKind(input.provider, 'oauth2');
+
     // Still valid (with skew)? Return the stored access token.
     if (new Date(conn.access_expires_at).getTime() - REFRESH_SKEW_SECONDS * 1000 > Date.now()) {
       return freshFrom(conn, await openValue(conn.access_sealed));
@@ -319,6 +356,7 @@ export async function getFreshAccessToken(input: GetTokenInput): Promise<FreshTo
     }
     const resolved = await resolveProvider(input.appId, input.provider);
     if (!resolved) throw connectorNotConfigured(input.provider);
+    if (resolved.auth_kind !== 'oauth2') throw wrongAuthKind(input.provider, 'oauth2');
 
     let tokens;
     try {
@@ -335,7 +373,7 @@ export async function getFreshAccessToken(input: GetTokenInput): Promise<FreshTo
     }
 
     const now = nowIso();
-    const updated: Connection = {
+    const updated: OAuthConnection = {
       ...conn,
       access_sealed: await sealValue(tokens.access_token),
       ...(tokens.refresh_token ? { refresh_sealed: await sealValue(tokens.refresh_token) } : {}),
@@ -349,7 +387,7 @@ export async function getFreshAccessToken(input: GetTokenInput): Promise<FreshTo
   });
 }
 
-function freshFrom(conn: Connection, accessToken: string): FreshToken {
+function freshFrom(conn: OAuthConnection, accessToken: string): FreshToken {
   return {
     access_token: accessToken,
     provider: conn.provider,

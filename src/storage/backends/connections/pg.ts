@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import type { Connection, ConnectRequest } from '../../../connectors/types';
+import { hydrateConnection, type Connection, type ConnectRequest } from '../../../connectors/types';
 import type { ConnectionBackend, MigratableConnectionBackend, ConnectionsExport } from './types';
 
 // C24 / P26 — the POSTGRES connector-vault backend: one table per record kind. The full object rides
@@ -35,6 +35,14 @@ interface DataRow<T> {
   data: T;
 }
 
+// The denormalised `expires_at` column mirrors an OAuth access-token expiry so a sweep can find stale
+// rows without parsing jsonb. A BASIC connection has no expiry — its app-specific password does not
+// expire — so it writes NULL. The column is `text` (nullable), verified against the live schema above,
+// which is why this needs no migration. Do NOT substitute a far-future date to keep the column
+// populated: a sweep would then treat a permanent credential as merely not-yet-stale.
+const expiresAtColumn = (c: Connection): string | null =>
+  c.auth_kind === 'oauth2' ? c.access_expires_at : null;
+
 export class PgConnectionBackend implements ConnectionBackend, MigratableConnectionBackend {
   constructor(private readonly pool: Pool) {}
 
@@ -50,7 +58,7 @@ export class PgConnectionBackend implements ConnectionBackend, MigratableConnect
         conn.owner,
         conn.provider,
         conn.status,
-        conn.access_expires_at,
+        expiresAtColumn(conn),
         JSON.stringify(conn),
         conn.updated_at,
       ],
@@ -62,14 +70,15 @@ export class PgConnectionBackend implements ConnectionBackend, MigratableConnect
       'SELECT data FROM forge_connections WHERE app_id=$1 AND owner=$2 AND provider=$3',
       [appId, owner, provider],
     );
-    return r.rows[0]?.data ?? null;
+    const row = r.rows[0]?.data;
+    return row ? hydrateConnection(row) : null;
   }
   async listConnections(appId: string, owner: string): Promise<Connection[]> {
     const r = await this.pool.query<DataRow<Connection>>(
       'SELECT data FROM forge_connections WHERE app_id=$1 AND owner=$2 ORDER BY provider ASC',
       [appId, owner],
     );
-    return r.rows.map((row) => row.data);
+    return r.rows.map((row) => hydrateConnection(row.data));
   }
   async deleteConnection(appId: string, owner: string, provider: string): Promise<boolean> {
     const r = await this.pool.query(
@@ -124,7 +133,7 @@ export class PgConnectionBackend implements ConnectionBackend, MigratableConnect
       for (const c of data.connections) {
         await client.query(
           'INSERT INTO forge_connections (app_id, owner, provider, status, expires_at, data, updated_at) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)',
-          [appId, c.owner, c.provider, c.status, c.access_expires_at, JSON.stringify(c), c.updated_at],
+          [appId, c.owner, c.provider, c.status, expiresAtColumn(c), JSON.stringify(c), c.updated_at],
         );
       }
       for (const r of data.requests) {

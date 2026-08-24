@@ -157,7 +157,29 @@ export function registerConnectRoutes(
     return {
       providers: providerIds().map((id) => {
         const d = providerDescriptor(id)!;
-        return { id, label: d.label, configured: configured.has(id), default_scopes: d.default_scopes };
+        // ⛔ `auth_kind` is part of the DISCOVERY CONTRACT, not an internal detail. The web tier
+        // decides from this field alone whether a card sends the user through a redirect or renders a
+        // credentials wizard; without it the client would have to hardcode a provider-id allowlist,
+        // and adding a provider would silently render a dead button (Apple plan §4.0 — an unwired
+        // card renders a dead button rather than an error). Two halves of one contract: forge emits
+        // `auth_kind`, dorinda-web branches on it, and `tests/connectors.test.ts` asserts every
+        // registered provider publishes one.
+        // `default_scopes` exists only for OAuth — a basic provider has no scopes to request, and
+        // emitting `[]` would read as "no permissions" rather than "not applicable".
+        return {
+          id,
+          label: d.label,
+          auth_kind: d.auth_kind,
+          configured: configured.has(id),
+          ...(d.auth_kind === 'oauth2'
+            ? { default_scopes: d.default_scopes }
+            : {
+                service_endpoint: d.service_endpoint,
+                credential_help_url: d.credential_help_url,
+                username_label: d.username_label,
+                password_label: d.password_label,
+              }),
+        };
       }),
     };
   });

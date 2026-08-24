@@ -37,7 +37,7 @@ import {
   resetOutboundOAuthClient,
 } from '../src/connectors/oauth-client';
 import type { OutboundOAuthClient } from '../src/connectors/oauth-client';
-import { providerDescriptor } from '../src/connectors/providers';
+import { providerDescriptor, oauthProviderDescriptor } from '../src/connectors/providers';
 
 // Service layer (scope-narrowing test)
 import { completeConnect, unionScopes, startConnect } from '../src/connectors/service';
@@ -207,8 +207,10 @@ describe('send-message senders dispatch (email:microsoft)', () => {
 // ─── 4. accountLabelFrom — preferred_username fallback ────────────────────────
 
 describe('accountLabelFrom — Microsoft preferred_username fallback', () => {
-  const msDesc = providerDescriptor('microsoft')!;
-  const googleDesc = providerDescriptor('google')!;
+  // accountLabelFrom reads OIDC claims, so both descriptors must be OAuth ones — narrow at the
+  // source rather than casting, so registering a basic provider under either id fails here loudly.
+  const msDesc = oauthProviderDescriptor('microsoft')!;
+  const googleDesc = oauthProviderDescriptor('google')!;
 
   it('uses the email claim for a work/school Microsoft account (both claims present → email wins)', () => {
     const token = fakeIdToken({ email: 'user@company.onmicrosoft.com', preferred_username: 'alias@company' });
@@ -447,6 +449,7 @@ describe('C25 send-message capability via email:microsoft', () => {
     await backend.connections.putConnection(APP_ID, {
       owner: OWNER,
       provider: 'microsoft',
+      auth_kind: 'oauth2',
       access_sealed: await sealValue('fake-ms-access-token'),
       refresh_sealed: await sealValue('fake-ms-refresh-token'),
       access_expires_at: expiresAt,

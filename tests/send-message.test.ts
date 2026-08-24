@@ -76,6 +76,7 @@ async function seedConnection(
   const conn: Connection = {
     owner,
     provider: 'google',
+    auth_kind: 'oauth2',
     access_sealed: await sealValue('access-token-live'),
     ...(opts.withRefresh === false ? {} : { refresh_sealed: await sealValue('refresh-token') }),
     access_expires_at: new Date(now.getTime() + (opts.expiresInSec ?? 3600) * 1000).toISOString(),
@@ -97,6 +98,7 @@ async function seedMicrosoftConnection(
   const conn: Connection = {
     owner,
     provider: 'microsoft',
+    auth_kind: 'oauth2',
     access_sealed: await sealValue('ms-access-token-live'),
     refresh_sealed: await sealValue('ms-refresh-token'),
     access_expires_at: new Date(now.getTime() + (opts.expiresInSec ?? 3600) * 1000).toISOString(),

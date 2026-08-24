@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { pkceChallenge } from '../mcp/oauth';
-import type { ProviderDescriptor } from './providers';
+import type { OAuthProviderDescriptor } from './providers';
 
 // C24 — the OUTBOUND OAuth client: the deterministic authorize-URL builder + the three server-to-server
 // exchanges (code → tokens, refresh → tokens, revoke). This is the genuine technology boundary (a live
@@ -20,7 +20,7 @@ export interface TokenSet {
 export interface OutboundOAuthClient {
   // Build the provider consent URL (PKCE S256, state, offline access → refresh token).
   authorizeUrl(opts: {
-    provider: ProviderDescriptor;
+    provider: OAuthProviderDescriptor;
     clientId: string;
     redirectUri: string;
     state: string;
@@ -29,7 +29,7 @@ export interface OutboundOAuthClient {
   }): string;
   // Exchange an authorization code (+ PKCE verifier) for the token set.
   exchangeCode(opts: {
-    provider: ProviderDescriptor;
+    provider: OAuthProviderDescriptor;
     clientId: string;
     clientSecret: string;
     code: string;
@@ -38,13 +38,13 @@ export interface OutboundOAuthClient {
   }): Promise<TokenSet>;
   // Exchange a refresh token for a fresh access token (the provider may rotate the refresh token).
   refresh(opts: {
-    provider: ProviderDescriptor;
+    provider: OAuthProviderDescriptor;
     clientId: string;
     clientSecret: string;
     refreshToken: string;
   }): Promise<TokenSet>;
   // Best-effort revoke at the provider (when it exposes an endpoint). Never throws.
-  revoke(opts: { provider: ProviderDescriptor; token: string }): Promise<void>;
+  revoke(opts: { provider: OAuthProviderDescriptor; token: string }): Promise<void>;
 }
 
 // Decode a JWT payload WITHOUT signature verification. Safe here for the SAME reason C10 does it: the
@@ -67,7 +67,7 @@ function decodeJwtPayload(jwt: string): Record<string, unknown> | null {
 // display label for BOTH work/school (has `email`) and personal (has only `preferred_username`) accounts.
 // Exported for direct unit testing of the claim resolution logic.
 export function accountLabelFrom(
-  provider: ProviderDescriptor,
+  provider: OAuthProviderDescriptor,
   idToken: string | undefined,
 ): string | undefined {
   if (!idToken || !provider.account_label_claims?.length) return undefined;
@@ -136,7 +136,7 @@ export const httpOAuthClient: OutboundOAuthClient = {
   },
 };
 
-async function tokenRequest(provider: ProviderDescriptor, body: URLSearchParams): Promise<TokenSet> {
+async function tokenRequest(provider: OAuthProviderDescriptor, body: URLSearchParams): Promise<TokenSet> {
   const res = await fetch(provider.token_endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },

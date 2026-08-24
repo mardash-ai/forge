@@ -5,7 +5,7 @@ import { FsConnectionBackend } from '../src/storage/backends/connections/fs';
 import { PgConnectionBackend } from '../src/storage/backends/connections/pg';
 import { backfillConnections } from '../src/storage/backends/connections/migrate';
 import { nowIso } from '../src/shared/time';
-import type { Connection, ConnectRequest } from '../src/connectors/types';
+import type { Connection, ConnectRequest, OAuthConnection } from '../src/connectors/types';
 
 // C24 / P26 — Postgres connector-vault backend-SPECIFIC coverage: jsonb round-trip, one-shot consumeRequest
 // (no double-spend), owner-scoped listing, and FS→PG backfill. Runs ONLY when the Postgres connections
@@ -14,9 +14,12 @@ const HAS_PG = process.env.FORGE_CONNECTIONS_BACKEND === 'postgres' && Boolean(p
 
 const sealed = (s: string) => ({ iv: `iv-${s}`, tag: `tag-${s}`, data: `data-${s}` });
 
-const conn = (over: Partial<Connection> = {}): Connection => ({
+// Typed to the OAUTH arm: spreading a Partial<Connection> over a union would let an override set
+// auth_kind:'basic' while the oauth fields stayed, producing a record that satisfies neither arm.
+const conn = (over: Partial<OAuthConnection> = {}): OAuthConnection => ({
   owner: 'A',
   provider: 'google',
+  auth_kind: 'oauth2',
   access_sealed: sealed('a'),
   refresh_sealed: sealed('r'),
   access_expires_at: new Date(Date.now() + 3600_000).toISOString(),

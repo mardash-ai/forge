@@ -9,11 +9,34 @@
 // client id/secret, read from the C5 vault/env at request time; see ./config.ts). To add Microsoft/others,
 // add a descriptor here and provision its `<ID>_CONNECT_CLIENT_ID/SECRET` secrets — no route/store change.
 
-export interface ProviderDescriptor {
+// ⛔ A provider is a DISCRIMINATED UNION on `auth_kind`, not one shape with optional fields.
+//
+// Until 2026-08-24 this was a single interface that REQUIRED the OAuth quartet
+// (authorization_endpoint / token_endpoint / pkce / client_id_secret / client_secret_secret). That
+// silently encoded "every provider is an OAuth provider", and the encoding was load-bearing in the
+// worst way: `config.resolveProvider` treats a provider as configured only when BOTH operator client
+// creds resolve, so a username+password provider would have reported `configured: false` FOREVER and
+// its connect endpoint would have answered 503 for all time — the exact failure Microsoft's connector
+// hit on 2026-08-21 before its creds were wired, except unfixable, because there are no creds to wire.
+//
+// Apple/iCloud has no OAuth for calendar data at all: CalDAV over Basic auth with a per-user
+// app-specific password is the only route. Optional fields would have "worked" and told a lie the
+// type system could not catch — an Apple descriptor would still typecheck against every OAuth
+// consumer, and the failure would surface as a runtime `undefined` inside a fetch. The union makes
+// the two kinds structurally non-interchangeable, so `tsc` — not production — finds the mistake.
+export type ProviderDescriptor = OAuthProviderDescriptor | BasicProviderDescriptor;
+
+interface ProviderDescriptorBase {
   // Stable provider id used in URLs + the connection key, e.g. "google" (a-z0-9_-).
   id: string;
   // Human label for consent/management UIs.
   label: string;
+}
+
+// A provider the platform connects to as an OAuth 2.x CLIENT (Google, Microsoft). The operator
+// provisions a client id/secret; the user consents in a browser redirect.
+export interface OAuthProviderDescriptor extends ProviderDescriptorBase {
+  auth_kind: 'oauth2';
   // OAuth 2.0 authorization + token endpoints.
   authorization_endpoint: string;
   token_endpoint: string;
@@ -42,7 +65,36 @@ export interface ProviderDescriptor {
   account_label_claims?: string[];
 }
 
-const GOOGLE: ProviderDescriptor = {
+// A provider authenticated with a per-user USERNAME + PASSWORD (Apple/iCloud CalDAV, and any future
+// app-specific-password service). There is no operator client credential, no redirect, no consent
+// screen and no token: the user pastes a credential the provider minted for them.
+//
+// Consequences that differ from OAuth, each of which broke an assumption somewhere:
+//   • ALWAYS configured. There is nothing for an operator to provision, so gating availability on
+//     resolved secrets (as the OAuth path does) would disable it permanently. See config.ts.
+//   • No expiry. An app-specific password does not expire, so the broker must NOT synthesise a
+//     far-future `expires_at` to fit the OAuth shape — that is a lie the credential union avoids by
+//     discriminating on `kind` instead.
+//   • Nothing to revoke remotely. Disconnect deletes the sealed credential locally; the user revokes
+//     the app-specific password at the provider if they want it dead everywhere.
+export interface BasicProviderDescriptor extends ProviderDescriptorBase {
+  auth_kind: 'basic';
+  // The service root the credential authenticates against — for iCloud, the CalDAV discovery host.
+  // Kept on the descriptor (not hardcoded in the capability) so a provider swap is config, not code.
+  service_endpoint: string;
+  // Where the user goes to MINT the credential, surfaced verbatim by the connect wizard. The wizard's
+  // copy is the riskiest part of a basic-auth connect flow (the user is pasting a password), so the
+  // canonical URL lives with the descriptor rather than being retyped in the web tier.
+  credential_help_url: string;
+  // Field labels for the wizard. Apple calls the username an "Apple Account" and the credential an
+  // "app-specific password"; saying "username"/"password" would invite the PRIMARY password, which
+  // fails with a bare 401 and is the single most likely user error (§8 of the Apple plan).
+  username_label: string;
+  password_label: string;
+}
+
+const GOOGLE: OAuthProviderDescriptor = {
+  auth_kind: 'oauth2',
   id: 'google',
   label: 'Google',
   authorization_endpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
@@ -75,7 +127,8 @@ const GOOGLE: ProviderDescriptor = {
 // of scopes, the callback's granted-scope list is narrower than the stored set. The C24 completeConnect
 // implementation MUST union the old and new scope sets (superset preserved) rather than overwriting —
 // a bug here silently revokes already-granted capabilities. See the scope-narrowing fix in service.ts.
-const MICROSOFT: ProviderDescriptor = {
+const MICROSOFT: OAuthProviderDescriptor = {
+  auth_kind: 'oauth2',
   id: 'microsoft',
   label: 'Microsoft',
   authorization_endpoint: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
@@ -92,15 +145,40 @@ const MICROSOFT: ProviderDescriptor = {
   account_label_claims: ['email', 'preferred_username'],
 };
 
+// Apple/iCloud — CalDAV over Basic auth. No OAuth exists for iCloud calendar data (see the Apple
+// plan §2.1 and the OneCal/Nylas sources), so this is the first `basic` provider in the estate.
+// The id is `apple` while the LABEL is "Apple Calendar": users say Apple, the protocol says iCloud,
+// and the card must speak the user's language (Apple plan §13 Q6).
+const APPLE: BasicProviderDescriptor = {
+  auth_kind: 'basic',
+  id: 'apple',
+  label: 'Apple Calendar',
+  // Discovery starts here; iCloud then redirects the principal to a PARTITION host (pNN-caldav…),
+  // which the CalDAV client follows. Do not pin a partition host — it differs per account.
+  service_endpoint: 'https://caldav.icloud.com',
+  credential_help_url: 'https://support.apple.com/en-us/102654',
+  username_label: 'Apple Account email',
+  password_label: 'App-specific password',
+};
+
 const PROVIDERS: Record<string, ProviderDescriptor> = {
   [GOOGLE.id]: GOOGLE,
   [MICROSOFT.id]: MICROSOFT,
+  [APPLE.id]: APPLE,
 };
 
 // The descriptor for a provider id, or null when unknown. Pure lookup — availability (creds resolved) is a
 // separate check in ./config.ts.
 export function providerDescriptor(id: string): ProviderDescriptor | null {
   return PROVIDERS[id] ?? null;
+}
+
+// The descriptor for a provider that authenticates with OAuth, or null when the id is unknown OR the
+// provider uses a different auth kind. Call sites that can only handle the OAuth handshake use this
+// instead of narrowing by hand, so "is this an OAuth provider?" is answered in ONE place.
+export function oauthProviderDescriptor(id: string): OAuthProviderDescriptor | null {
+  const d = providerDescriptor(id);
+  return d && d.auth_kind === 'oauth2' ? d : null;
 }
 
 // Every registered provider id (for discovery / the management surface).

@@ -17,10 +17,19 @@ import {
   type TokenSet,
 } from '../src/connectors/oauth-client';
 import { resolveProvider, availableProviders } from '../src/connectors/config';
-import { getFreshAccessToken, unionScopes } from '../src/connectors/service';
+import type { Connection, OAuthConnection } from '../src/connectors/types';
+import { getFreshAccessToken, unionScopes, startConnect } from '../src/connectors/service';
 import { connectionsFile } from '../src/shared/paths';
 import { nowIso } from '../src/shared/time';
 import type { Application } from '../src/resources/types';
+
+// These assertions are about the OAUTH arm of the connection union — narrow once, loudly, so a record
+// that is unexpectedly `basic` fails with a clear message instead of `undefined is not a Sealed`.
+function asOAuth(c: Connection | null | undefined): OAuthConnection {
+  if (!c) throw new Error('expected a connection, got none');
+  if (c.auth_kind !== 'oauth2') throw new Error(`expected an oauth2 connection, got ${c.auth_kind}`);
+  return c;
+}
 
 // C24 — the third-party connector vault / outbound OAuth capability. Exercised through the configured
 // `connections` store backend (filesystem default / Postgres on the pg run) with a STUB OAuth provider
@@ -187,16 +196,73 @@ function fakeIdToken(claims: Record<string, unknown>): string {
 }
 
 describe('C24 — provider registry + credential resolution', () => {
-  it('a provider is unconfigured until BOTH client creds resolve (graceful degradation)', async () => {
+  it('an OAUTH provider is unconfigured until BOTH client creds resolve (graceful degradation)', async () => {
     expect(await resolveProvider(APP_ID, 'google')).toBeNull();
-    expect(await availableProviders(APP_ID)).toEqual([]);
+    // `apple` is basic-auth and therefore always available — see the dedicated test below.
+    expect(await availableProviders(APP_ID)).toEqual(['apple']);
     await setSecret(APP_ID, 'GOOGLE_CONNECT_CLIENT_ID', 'id-only');
     expect(await resolveProvider(APP_ID, 'google')).toBeNull(); // secret still missing
     await setSecret(APP_ID, 'GOOGLE_CONNECT_CLIENT_SECRET', 'secret');
     const resolved = await resolveProvider(APP_ID, 'google');
-    expect(resolved?.clientId).toBe('id-only');
-    expect(resolved?.descriptor.default_scopes).toContain('https://www.googleapis.com/auth/gmail.send');
-    expect(await availableProviders(APP_ID)).toEqual(['google']);
+    if (resolved?.auth_kind !== 'oauth2') throw new Error('google must resolve as an oauth2 provider');
+    expect(resolved.clientId).toBe('id-only');
+    expect(resolved.descriptor.default_scopes).toContain('https://www.googleapis.com/auth/gmail.send');
+    expect(await availableProviders(APP_ID)).toEqual(['apple', 'google']);
+  });
+
+  // ⛔ THE 503-FOREVER GUARD. Apple/iCloud has no operator-provisioned OAuth client — the credential is
+  // per-user and arrives at connect time. Before the auth_kind union, `resolveProvider` gated EVERY
+  // provider on both client secrets resolving, so a basic provider reported configured:false forever
+  // and its connect endpoint answered 503 permanently. Not a degraded state waiting on an operator: a
+  // provider that could never be enabled at all. Proven RED against exactly that code before the fix.
+  it('a BASIC provider is configured with NO operator client credentials (never a permanent 503)', async () => {
+    // Deliberately provision nothing. There is no APPLE_CONNECT_CLIENT_ID and there never will be.
+    const resolved = await resolveProvider(APP_ID, 'apple');
+    expect(resolved).not.toBeNull();
+    if (resolved?.auth_kind !== 'basic') throw new Error('apple must resolve as a basic provider');
+    expect(resolved.descriptor.service_endpoint).toBe('https://caldav.icloud.com');
+    expect(await availableProviders(APP_ID)).toContain('apple');
+  });
+
+  // Two halves of one contract (guardrail #5): forge EMITS auth_kind on discovery and dorinda-web
+  // BRANCHES on it to pick redirect-vs-wizard. A provider registered without one would render a dead
+  // button in the card rather than an error, so assert the property for EVERY registered provider —
+  // not just the ones that exist today.
+  it('every registered provider publishes an auth_kind on discovery', async () => {
+    const res = await server.inject({ method: 'GET', url: '/connect/providers' });
+    const providers = res.json().providers as Array<{ id: string; auth_kind?: string }>;
+    expect(providers.length).toBeGreaterThanOrEqual(3);
+    for (const p of providers) {
+      expect(['oauth2', 'basic']).toContain(p.auth_kind);
+    }
+    expect(providers.find((p) => p.id === 'apple')!.auth_kind).toBe('basic');
+    expect(providers.find((p) => p.id === 'google')!.auth_kind).toBe('oauth2');
+  });
+
+  // The wizard's copy travels WITH the descriptor. If these went missing the web tier would render a
+  // credentials form with unlabelled fields and no link to mint the password — the single most likely
+  // path to a user pasting their PRIMARY Apple password, which fails with a bare 401 (Apple plan §8).
+  it('a basic provider publishes the wizard copy the web tier needs', async () => {
+    const res = await server.inject({ method: 'GET', url: '/connect/providers' });
+    const apple = res.json().providers.find((p: { id: string }) => p.id === 'apple');
+    expect(apple.username_label).toBe('Apple Account email');
+    expect(apple.password_label).toBe('App-specific password');
+    expect(apple.credential_help_url).toContain('support.apple.com');
+    expect(apple.default_scopes).toBeUndefined(); // scopes are an OAuth concept
+  });
+
+  // Routing mistakes must not masquerade as configuration errors. `connectorNotConfigured` tells an
+  // operator to provision client credentials — for Apple that sends them hunting for a secret that
+  // does not and will never exist (guardrail #7: fix the diagnostic).
+  it('a basic provider on the OAUTH start path fails as wrong_auth_kind, not not-configured', async () => {
+    await expect(
+      startConnect({
+        appId: APP_ID,
+        provider: 'apple',
+        owner: 'u1',
+        redirectUri: 'https://app.example/connect/apple/callback',
+      }),
+    ).rejects.toMatchObject({ code: 'wrong_auth_kind', status: 400 });
   });
 
   it('an unknown provider is not resolvable', async () => {
@@ -259,8 +325,9 @@ describe('C24 — connect handshake', () => {
     expect(JSON.stringify(conn)).not.toContain('google-access-1');
     expect(JSON.stringify(conn)).not.toContain('google-refresh-1');
     // …but decrypt back to the originals under the C5 master key.
-    expect(await openValue(conn.access_sealed)).toBe('google-access-1');
-    expect(await openValue(conn.refresh_sealed!)).toBe('google-refresh-1');
+    const oauthConn = asOAuth(conn as Connection);
+    expect(await openValue(oauthConn.access_sealed)).toBe('google-access-1');
+    expect(await openValue(oauthConn.refresh_sealed!)).toBe('google-refresh-1');
   });
 
   it('the connect request is ONE-SHOT — replaying the same state fails', async () => {
@@ -529,7 +596,7 @@ describe('C24 — broker (fresh access token + auto-refresh)', () => {
     await connect(cookie);
     // Force the stored access token to be expired.
     const b = (await getBackends()).connections;
-    const conn = (await b.getConnection(APP_ID, userId, 'google'))!;
+    const conn = asOAuth(await b.getConnection(APP_ID, userId, 'google'));
     await b.putConnection(APP_ID, { ...conn, access_expires_at: new Date(Date.now() - 1000).toISOString() });
 
     const res = await server.inject({
@@ -543,8 +610,8 @@ describe('C24 — broker (fresh access token + auto-refresh)', () => {
     expect(refreshes).toHaveLength(1);
     // The refreshed pair is persisted (sealed) — a subsequent still-valid call does NOT refresh again.
     const after = (await b.getConnection(APP_ID, userId, 'google'))!;
-    expect(await openValue(after.access_sealed)).toBe('google-access-2');
-    expect(await openValue(after.refresh_sealed!)).toBe('google-refresh-2');
+    expect(await openValue(asOAuth(after).access_sealed)).toBe('google-access-2');
+    expect(await openValue(asOAuth(after).refresh_sealed!)).toBe('google-refresh-2');
     const res2 = await server.inject({
       method: 'POST',
       url: '/connect/google/token',
@@ -560,7 +627,7 @@ describe('C24 — broker (fresh access token + auto-refresh)', () => {
     const { userId, cookie } = await signIn();
     await connect(cookie);
     const b = (await getBackends()).connections;
-    const conn = (await b.getConnection(APP_ID, userId, 'google'))!;
+    const conn = asOAuth(await b.getConnection(APP_ID, userId, 'google'));
     await b.putConnection(APP_ID, { ...conn, access_expires_at: new Date(Date.now() - 1000).toISOString() });
     // Call the service directly to race two in-process calls through the mutex.
     const [a, c] = await Promise.all([
@@ -579,7 +646,7 @@ describe('C24 — broker (fresh access token + auto-refresh)', () => {
     nextExchange = { access_token: 'access-norefresh', expires_in: 3600, scope: 'openid email' };
     await connect(cookie);
     const b = (await getBackends()).connections;
-    const conn = (await b.getConnection(APP_ID, userId, 'google'))!;
+    const conn = asOAuth(await b.getConnection(APP_ID, userId, 'google'));
     expect(conn.refresh_sealed).toBeUndefined();
     await b.putConnection(APP_ID, { ...conn, access_expires_at: new Date(Date.now() - 1000).toISOString() });
     const res = await server.inject({
@@ -598,7 +665,7 @@ describe('C24 — broker (fresh access token + auto-refresh)', () => {
     const { userId, cookie } = await signIn();
     await connect(cookie);
     const b = (await getBackends()).connections;
-    const conn = (await b.getConnection(APP_ID, userId, 'google'))!;
+    const conn = asOAuth(await b.getConnection(APP_ID, userId, 'google'));
     await b.putConnection(APP_ID, { ...conn, access_expires_at: new Date(Date.now() - 1000).toISOString() });
     setOutboundOAuthClient({
       ...stubClient,
@@ -842,7 +909,7 @@ describe('C24 — Microsoft connector: connect flow + scope narrowing guard', ()
     expect(conn.account_label).toBe('user@outlook.test');
     // Tokens are sealed at rest.
     expect(JSON.stringify(conn)).not.toContain('ms-access-1');
-    expect(await openValue(conn.access_sealed)).toBe('ms-access-1');
+    expect(await openValue(asOAuth(conn as Connection).access_sealed)).toBe('ms-access-1');
   });
 
   it('Microsoft disconnect drops stored tokens WITHOUT a provider revoke call (no revoke_endpoint)', async () => {
