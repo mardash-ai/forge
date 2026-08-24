@@ -15,6 +15,8 @@ import type {
   FreshToken,
 } from './types';
 import { getCredentialVerifier } from './credential-verifier';
+import { getCalDavClient } from '../caldav';
+import type { CalDavWrite, CalDavWriteResult } from '../caldav';
 import { toConnectionView } from './types';
 
 // C24 — the connector-vault SERVICE: the core behavior the routes (and a future outbound-delivery
@@ -253,6 +255,55 @@ export async function connectWithCredentials(
   };
   await store.putConnection(input.appId, conn);
   return { connection: toConnectionView(conn) };
+}
+
+// --- calendar writes for BASIC-auth providers ---------------------------------
+//
+// ⛔ WHY THE WRITE HAPPENS HERE AND NOT IN THE CONSUMING APP.
+//
+// Google and Microsoft hand the app a BEARER TOKEN via `/connect/:provider/token`: scoped to the
+// granted permissions, short-lived, and revocable at the provider without touching the user's account.
+// Handing that to dorinda-api is a bounded delegation, and dorinda-api calls Graph itself.
+//
+// A basic-auth provider has no such thing. The credential IS a password — unscoped, non-expiring, and
+// revocable only by the user going to Apple and revoking it. Brokering it outward would put a
+// long-lived account credential on the wire and into a second service's memory and logs, to save one
+// hop. So there is deliberately NO reveal endpoint: the sealed credential never leaves the data-plane,
+// and the data-plane performs the write. This is also what BUILDING_A_CAPABILITY §0 already requires —
+// anything that calls a third-party API with a secret runs on the data-plane tier.
+
+export interface CalendarWriteInput {
+  appId: string;
+  provider: string;
+  owner: string;
+  write: CalDavWrite;
+}
+
+export async function writeCalendarEvent(input: CalendarWriteInput): Promise<CalDavWriteResult> {
+  const resolved = await resolveProvider(input.appId, input.provider);
+  if (!resolved) {
+    const { providerDescriptor } = await import('./providers');
+    if (!providerDescriptor(input.provider)) throw unknownProvider(input.provider);
+    throw connectorNotConfigured(input.provider);
+  }
+  if (resolved.auth_kind !== 'basic') throw wrongAuthKind(input.provider, 'basic');
+
+  const store = await backend();
+  const conn = await store.getConnection(input.appId, input.owner, input.provider);
+  if (!conn) throw notConnected(input.provider);
+  if (conn.auth_kind !== 'basic') throw wrongAuthKind(input.provider, 'basic');
+
+  // Opened here, used immediately, never returned to the caller and never logged.
+  const password = await openValue(conn.password_sealed);
+
+  return getCalDavClient().writeEvent(
+    {
+      username: conn.username,
+      password,
+      serverUrl: resolved.descriptor.service_endpoint,
+    },
+    input.write,
+  );
 }
 
 // --- complete: consume the request, exchange the code, store sealed tokens ------

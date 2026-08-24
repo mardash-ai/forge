@@ -23,7 +23,9 @@ import {
   disconnectAll,
   getFreshAccessToken,
   connectWithCredentials,
+  writeCalendarEvent,
 } from '../connectors/service';
+import type { CalDavWrite } from '../caldav';
 
 // C24 — the third-party connector HTTP surface. The app proxies `/connect/*` SAME-ORIGIN to this sidecar
 // (like `/auth/*`, `/oauth/*`, `/mcp`), so the browser carries the C10 session cookie and the owner is
@@ -427,6 +429,60 @@ export function registerConnectRoutes(
   //   200 { message } with message.status 'sent' | 'failed' (a provider rejection is a recorded 'failed',
   //        never a silent drop); a broker precondition is a typed error the app relays as "reconnect":
   //   404 not_found (not connected) · 403 insufficient_scope (send not granted) · 409 reconnect_required.
+  // === calendar write for a BASIC-auth provider ==================================================
+  //
+  // The counterpart to `/token` for providers that have no token. `/token` hands the app a bearer
+  // credential and the app calls the provider; here the credential is a PASSWORD, so it stays sealed on
+  // this tier and the write happens here. There is deliberately no endpoint that reveals it.
+  //
+  // Same trust model as /token and /send: session, else service-token + `owner`. A background sweep in
+  // the consuming app is service-authenticated, which is exactly what this is for.
+  app.post('/connect/:provider/calendar/write', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.status(404).send(unknownApp);
+    const { provider } = req.params as { provider: string };
+    const b = (req.body ?? {}) as Record<string, unknown>;
+
+    let owner: string | undefined;
+    const user = await sessionUser(req, app_.id);
+    if (user) {
+      owner = user.userId;
+    } else {
+      const presented = serviceTokenPresented(req);
+      const configured = await resolveServiceToken(app_.id);
+      if (!presented || !serviceTokenMatches(presented, configured)) return reply.status(401).send(needAuth);
+      owner = trimmed(b.owner);
+      if (!owner)
+        return reply.status(422).send({
+          error: {
+            code: 'invalid_input',
+            message: 'a service-authenticated calendar write must pass `owner`.',
+            retry: 'change-input',
+          },
+        });
+    }
+
+    const write = b.write as CalDavWrite | undefined;
+    if (!write || typeof write !== 'object' || !('kind' in write)) {
+      return reply.status(422).send({
+        error: {
+          code: 'invalid_input',
+          message: '`write` is required and must carry a `kind` of create, update or delete.',
+          retry: 'change-input',
+        },
+      });
+    }
+
+    try {
+      const result = await writeCalendarEvent({ appId: app_.id, provider, owner, write });
+      // The provider's answer is relayed verbatim, including its failure reason. A write that did not
+      // land must never read as one that did — the whole point of the three-way result.
+      return reply.status(result.ok ? 200 : 502).send(result);
+    } catch (e) {
+      return errorReply(reply, e);
+    }
+  });
+
   app.post('/connect/:provider/send', async (req, reply) => {
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);

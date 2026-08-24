@@ -1097,7 +1097,7 @@ describe('C24 — basic-auth connect (POST /connect/:provider/credentials)', () 
   // against any user id and the card would render it as a healthy connection they never established.
   it('a SERVICE token cannot plant a credential for another user (session-only route)', async () => {
     setCredentialVerifier(verifierReturning({ ok: true }));
-    await setSecret(APP_ID, 'FORGE_SERVICE_TOKEN', 'svc-token-value');
+    await setSecret(APP_ID, 'AUTH_SERVICE_TOKEN', 'svc-token-value');
     const res = await server.inject({
       method: 'POST',
       url: '/connect/apple/credentials',
