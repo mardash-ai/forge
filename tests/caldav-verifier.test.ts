@@ -11,10 +11,13 @@ const withProbe = (probe: CalDavProbe, spy?: (c: unknown) => void) =>
       spy?.(c);
       return probe;
     },
-    // The verifier never writes; a stub that throws proves it (a verifier that quietly wrote would
-    // fail loudly here rather than mutating a real calendar during a credential check).
+    // The verifier never writes or lists; stubs that throw prove it (a verifier that quietly wrote
+    // would fail loudly here rather than mutating a real calendar during a credential check).
     writeEvent: async () => {
       throw new Error('the credential verifier must not write');
+    },
+    listCalendars: async () => {
+      throw new Error('the credential verifier uses probe(), not listCalendars()');
     },
   });
 
@@ -28,6 +31,7 @@ const ok = (calendars: number): CalDavProbe => ({
     url: `https://p42-caldav.icloud.com/1234/calendars/c${i}/`,
     displayName: `Calendar ${i}`,
     readOnly: false,
+    syncCollection: 'advertised' as const,
   })),
 });
 

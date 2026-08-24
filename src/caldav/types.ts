@@ -27,6 +27,21 @@ export interface CalDavCalendar {
   readOnly: boolean;
   // Opaque per-collection tag used to detect "has anything changed" cheaply.
   ctag?: string;
+
+  // ⛔ THREE STATES, NOT A BOOLEAN — and recorded PER CALENDAR, never per account.
+  //
+  // RFC 6578 requires a server implementing the sync-collection REPORT to advertise it in
+  // DAV:supported-report-set, so the advert IS the check. But whether iCloud advertises it on every
+  // collection type — shared and subscribed calendars especially — is genuinely unknown (Apple plan
+  // §5, marked ❓), which is exactly why the answer is stored per collection.
+  //
+  // `unknown` exists because "the server did not advertise it" and "we never read the advert" are
+  // different facts, and collapsing them into `false` would manufacture an observation out of a
+  // missing one — the estate's own HAT-F-065 rule (a default is not an observation). Both `absent`
+  // and `unknown` route to the ctag fallback, so behaviour is identical and safe; what differs is
+  // what we are entitled to SAY about the server, and therefore whether a future report claiming
+  // "iCloud does not support sync-collection" is evidence or a guess.
+  syncCollection: 'advertised' | 'absent' | 'unknown';
 }
 
 export interface CalDavPrincipal {
@@ -42,10 +57,22 @@ export type CalDavProbe =
   | { ok: false; reason: 'invalid_credentials'; detail?: string }
   | { ok: false; reason: 'unreachable'; detail?: string };
 
+// Reads fail the same three ways writes do, and for the same reason: a caller that cannot tell
+// "the account has no calendars" from "we could not reach iCloud" will eventually render an empty
+// calendar as fact. Guardrail #8's corollary — loading, loaded-and-empty, and the-fetch-failed are
+// three different states and must never share one appearance.
+export type CalDavListResult =
+  | { ok: true; calendars: CalDavCalendar[] }
+  | { ok: false; reason: 'invalid_credentials' | 'unreachable'; detail?: string };
+
 export interface CalDavClient {
   // Authenticate + discover the principal and its calendar-home-set. This is the whole of what
   // verify-before-store needs, and the first thing that exercises the partition-host redirect.
   probe(creds: CalDavCredentials): Promise<CalDavProbe>;
+
+  // The ongoing read path. Distinct from `probe`, which exists to VERIFY a credential at connect
+  // time; this is what a sweep calls, and it carries the per-calendar sync capability forward.
+  listCalendars(creds: CalDavCredentials): Promise<CalDavListResult>;
 
   // The SINGLE write path for create, update and delete. See CalDavWrite for why it is one method.
   writeEvent(creds: CalDavCredentials, write: CalDavWrite): Promise<CalDavWriteResult>;

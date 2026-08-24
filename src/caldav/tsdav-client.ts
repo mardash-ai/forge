@@ -1,6 +1,7 @@
 import { DAVClient } from 'tsdav';
 import type {
   CalDavClient,
+  CalDavListResult,
   CalDavCredentials,
   CalDavProbe,
   CalDavCalendar,
@@ -46,12 +47,23 @@ function statusFrom(e: unknown): number | undefined {
 // A subscribed or otherwise non-writable collection must be reported read-only. iCloud expresses this
 // through the supported privilege set / resource type; tsdav normalises some of it, but a calendar whose
 // component set does not include VEVENT is not somewhere we can put an event either.
+// RFC 6578's report name. Servers spell the advert with the DAV: namespace prefix in various ways, so
+// match on the local name rather than an exact string.
+function syncCollectionSupport(reports: unknown): CalDavCalendar['syncCollection'] {
+  // Absent/unusable advert => we did not observe it. NOT 'absent'.
+  if (reports === undefined || reports === null) return 'unknown';
+  const flat = Array.isArray(reports) ? reports.map((r) => String(r)) : [String(reports)];
+  if (flat.length === 0) return 'unknown';
+  return flat.some((r) => /sync-collection/i.test(r)) ? 'advertised' : 'absent';
+}
+
 function toCalendar(c: {
   url: string;
   displayName?: unknown;
   ctag?: unknown;
   components?: unknown;
   resourcetype?: unknown;
+  reports?: unknown;
 }): CalDavCalendar {
   const components = Array.isArray(c.components) ? (c.components as string[]) : [];
   const subscribed =
@@ -61,6 +73,7 @@ function toCalendar(c: {
     url: c.url,
     displayName: name,
     readOnly: subscribed || (components.length > 0 && !components.includes('VEVENT')),
+    syncCollection: syncCollectionSupport(c.reports),
     ...(typeof c.ctag === 'string' ? { ctag: c.ctag } : {}),
   };
 }
@@ -75,6 +88,8 @@ async function davClientFor(creds: CalDavCredentials): Promise<DAVClient> {
   await client.login();
   return client;
 }
+
+export { syncCollectionSupport, toCalendar };
 
 export const tsdavCalDavClient: CalDavClient = {
   async probe(creds: CalDavCredentials): Promise<CalDavProbe> {
@@ -110,6 +125,17 @@ export const tsdavCalDavClient: CalDavClient = {
         },
         calendars: calendars.map((c) => toCalendar(c as Parameters<typeof toCalendar>[0])),
       };
+    } catch (e) {
+      const { reason, detail } = classify(e);
+      return { ok: false, reason, detail };
+    }
+  },
+
+  async listCalendars(creds: CalDavCredentials): Promise<CalDavListResult> {
+    try {
+      const client = await davClientFor(creds);
+      const calendars = await client.fetchCalendars();
+      return { ok: true, calendars: calendars.map((c) => toCalendar(c as Parameters<typeof toCalendar>[0])) };
     } catch (e) {
       const { reason, detail } = classify(e);
       return { ok: false, reason, detail };
