@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.53.0] - 2026-08-24
+
+### Added
+
+- **Basic-auth connector providers (Apple/iCloud CalDAV).** `ProviderDescriptor` and `Connection` are now discriminated unions on `auth_kind`. Previously a provider was configured only when BOTH operator OAuth client creds resolved, so a username+password provider would have reported `configured: false` FOREVER and answered 503 permanently — not a degraded state awaiting an operator, but a provider that could never be enabled, because there are no client creds to provision.
+- **`POST /connect/:provider/credentials`** — verify-before-store. The credential is probed against the real service and sealed only on success; an unverified stored password is a connection that merely LOOKS connected. Deliberately SESSION-ONLY: it creates a grant out of a password, so a service-token holder must never be able to plant one against another user. There is deliberately **no default verifier** — with none registered, connecting refuses rather than assuming success.
+- **`POST /connect/:provider/calendar/write`** — the data-plane performs CalDAV writes itself. Google/Microsoft broker a bearer token to the app (scoped, expiring, revocable); an app-specific password is none of those, so it never leaves this tier and **no endpoint reveals it**.
+- **`src/caldav/`** — internal CalDAV surface with `tsdav` behind it as the only importer, so the library is swappable and retry/logging policy is ours.
+- Connect responses carry the calendars discovery already fetched, so a picker needs no second round trip.
+
+### Changed
+
+- Create, update and delete travel **one** write path (`writeEvent`, discriminated `kind`) and `CalDavWriteResult` has **no** pending/queued variant, by type. The estate shipped the same asymmetry twice — HAT-F-081 (Outlook) and W-022 (Google), both "create mirrors synchronously; the update does not" — and both featured deferred-success wording no tool result can support.
+- `sync-collection` support is recorded **per calendar** in three states — advertised / absent / **unknown** — because "the server did not advertise it" and "we never read the advert" are different facts.
+
+### Fixed
+
+- The `sync-collection` classifier reported every calendar as unsupported against a server advertising it on all seven collections: `tsdav` normalises the report set to **camelCase** (`syncCollection`) while the check tested the wire spelling — a format invented rather than observed. 1,869 unit tests passed throughout; only a live probe against the real account could see it.
+
 ## [1.52.2] - 2026-08-23
 
 ### Fixed
