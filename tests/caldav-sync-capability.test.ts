@@ -16,6 +16,24 @@ import { syncCollectionSupport, toCalendar } from '../src/caldav/tsdav-client';
 // claim of "iCloud does not support sync-collection" is evidence or a guess.
 
 describe('sync-collection capability — recorded, never assumed', () => {
+  // ⛔ THE REAL SHAPE, recorded from a live PROPFIND against dorinda-test@mardash.ai on 2026-08-24
+  // via tsdav. It is camelCase, because the library normalises the wire form — and the original
+  // implementation tested only the WIRE spelling I had invented, so it reported 'absent' for a server
+  // advertising full support. This array is copied from observed output, not composed.
+  it('LIVE-OBSERVED: tsdav hands back camelCase report names, and they count as advertised', () => {
+    const observed = [
+      'aclPrincipalPropSet',
+      'principalMatch',
+      'principalPropertySearch',
+      'syncCollection',
+      'calendarQuery',
+      'calendarMultiget',
+      'freeBusyQuery',
+      'calendarSearch',
+    ];
+    expect(syncCollectionSupport(observed)).toBe('advertised');
+  });
+
   it('advertised: the report set names sync-collection', () => {
     expect(syncCollectionSupport(['sync-collection', 'calendar-query'])).toBe('advertised');
     // namespace-prefixed spellings vary by server; match the local name

@@ -47,14 +47,31 @@ function statusFrom(e: unknown): number | undefined {
 // A subscribed or otherwise non-writable collection must be reported read-only. iCloud expresses this
 // through the supported privilege set / resource type; tsdav normalises some of it, but a calendar whose
 // component set does not include VEVENT is not somewhere we can put an event either.
-// RFC 6578's report name. Servers spell the advert with the DAV: namespace prefix in various ways, so
-// match on the local name rather than an exact string.
+// RFC 6578's report name, as it reaches us AFTER the library has parsed it.
+//
+// ⛔ THE SPELLING IS NOT THE WIRE SPELLING, and assuming it was produced a false 'absent' against the
+// real iCloud account on 2026-08-24. The server advertises `<sync-collection/>`; tsdav normalises the
+// supported-report-set to camelCase, so what actually arrives is:
+//   ["aclPrincipalPropSet","principalMatch","principalPropertySearch","syncCollection",
+//    "calendarQuery","calendarMultiget","freeBusyQuery","calendarSearch"]
+// A /sync-collection/i test never matches "syncCollection", so every collection on a server that
+// fully supports it was reported as NOT supporting it.
+//
+// The unit tests passed throughout, because they fed the WIRE spelling — a format I invented rather
+// than observed. That is the whole HAT-F-065 shape a second time: the three-state model exists to
+// stop us manufacturing an observation, and the classifier manufactured one. Only the live probe
+// could see it, which is why C4 runs before any acceptance bar leans on CalDAV.
+//
+// Normalising both sides (strip non-alphanumerics, casefold) matches the wire form, the camelCase
+// form, and any namespace-prefixed spelling, so the check no longer depends on which layer we read.
+const normalizeReportName = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
 function syncCollectionSupport(reports: unknown): CalDavCalendar['syncCollection'] {
   // Absent/unusable advert => we did not observe it. NOT 'absent'.
   if (reports === undefined || reports === null) return 'unknown';
   const flat = Array.isArray(reports) ? reports.map((r) => String(r)) : [String(reports)];
   if (flat.length === 0) return 'unknown';
-  return flat.some((r) => /sync-collection/i.test(r)) ? 'advertised' : 'absent';
+  return flat.some((r) => normalizeReportName(r).includes('synccollection')) ? 'advertised' : 'absent';
 }
 
 function toCalendar(c: {
