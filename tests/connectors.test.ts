@@ -17,6 +17,11 @@ import {
   type TokenSet,
 } from '../src/connectors/oauth-client';
 import { resolveProvider, availableProviders } from '../src/connectors/config';
+import {
+  setCredentialVerifier,
+  resetCredentialVerifier,
+  type VerifyOutcome,
+} from '../src/connectors/credential-verifier';
 import type { Connection, OAuthConnection } from '../src/connectors/types';
 import { getFreshAccessToken, unionScopes, startConnect } from '../src/connectors/service';
 import { connectionsFile } from '../src/shared/paths';
@@ -980,5 +985,158 @@ describe('C24 — Microsoft connector: connect flow + scope narrowing guard', ()
       'offline_access',
       'openid',
     ]);
+  });
+});
+
+describe('C24 — basic-auth connect (POST /connect/:provider/credentials)', () => {
+  const APPLE_USER = 'dorinda-test@mardash.ai';
+  const APPLE_PASS = 'abcd-efgh-ijkl-mnop'; // the app-specific-password shape
+
+  // Record what the verifier was asked, so we can prove the REAL credential reached it (a verifier that
+  // is called with a trimmed/mangled password would pass every assertion about outcomes and still be
+  // broken in production).
+  let seen: Array<{ username: string; password: string }> = [];
+  const verifierReturning = (outcome: VerifyOutcome) => ({
+    verify: async (input: { username: string; password: string }) => {
+      seen.push({ username: input.username, password: input.password });
+      return outcome;
+    },
+  });
+
+  beforeEach(() => {
+    seen = [];
+    resetCredentialVerifier();
+  });
+  afterEach(() => resetCredentialVerifier());
+
+  const post = (cookie: string, body: Record<string, unknown>) =>
+    server.inject({ method: 'POST', url: '/connect/apple/credentials', headers: { cookie }, payload: body });
+
+  const storedApple = async (userId: string) =>
+    (await getBackends()).connections.getConnection(APP_ID, userId, 'apple');
+
+  it('stores a SEALED credential after the verifier confirms it, and never the plaintext', async () => {
+    setCredentialVerifier(verifierReturning({ ok: true }));
+    const { userId, cookie } = await signIn();
+    const res = await post(cookie, { username: APPLE_USER, password: APPLE_PASS });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().connection.auth_kind).toBe('basic');
+    expect(res.json().connection.account_label).toBe(APPLE_USER);
+
+    const conn = await storedApple(userId);
+    expect(conn!.auth_kind).toBe('basic');
+    // The whole record, serialized, must not contain the password anywhere.
+    expect(JSON.stringify(conn)).not.toContain(APPLE_PASS);
+    if (conn!.auth_kind !== 'basic') throw new Error('expected a basic connection');
+    expect(await openValue(conn!.password_sealed)).toBe(APPLE_PASS);
+    // The username is NOT a secret — it is the account label — and is stored in the clear.
+    expect(conn!.username).toBe(APPLE_USER);
+    // The response never carries the credential back.
+    expect(JSON.stringify(res.json())).not.toContain(APPLE_PASS);
+  });
+
+  it('passes the password through byte-for-byte (never trimmed or normalised)', async () => {
+    setCredentialVerifier(verifierReturning({ ok: true }));
+    const { cookie } = await signIn();
+    const padded = '  spaces-matter  ';
+    await post(cookie, { username: `  ${APPLE_USER}  `, password: padded });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.password).toBe(padded); // untouched
+    expect(seen[0]!.username).toBe(APPLE_USER); // trimmed — a stray space in an email is always a typo
+  });
+
+  // ⛔ THE WITHHOLD GUARD. With no verifier registered the flow must REFUSE, not assume success.
+  // A permissive fallback would manufacture a verified-connected state out of an absent check — the
+  // HAT-F-065 defect class (a default is not an observation).
+  it('REFUSES to connect when no verifier is registered, and stores nothing', async () => {
+    const { userId, cookie } = await signIn();
+    const res = await post(cookie, { username: APPLE_USER, password: APPLE_PASS });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error.code).toBe('dependency_unavailable');
+    expect(await storedApple(userId)).toBeNull(); // ← nothing was written
+  });
+
+  it('a REJECTED credential is a 401 that names the app-specific-password trap, and stores nothing', async () => {
+    setCredentialVerifier(verifierReturning({ ok: false, reason: 'invalid_credentials' }));
+    const { userId, cookie } = await signIn();
+    const res = await post(cookie, { username: APPLE_USER, password: 'my-real-apple-password' });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error.code).toBe('credential_rejected');
+    // The guidance that actually resolves the common case must be in the message.
+    expect(res.json().error.message.toLowerCase()).toContain('app-specific password');
+    expect(res.json().error.message).toContain('support.apple.com');
+    expect(await storedApple(userId)).toBeNull();
+  });
+
+  // "We asked and it said no" and "we could not ask" are different facts. Collapsing them sends a user
+  // to reset a working primary password — which, on Apple, revokes every app-specific password held.
+  it('an UNREACHABLE service is 503 verification_unavailable — never reported as a bad password', async () => {
+    setCredentialVerifier(verifierReturning({ ok: false, reason: 'unreachable', detail: 'ETIMEDOUT' }));
+    const { userId, cookie } = await signIn();
+    const res = await post(cookie, { username: APPLE_USER, password: APPLE_PASS });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error.code).toBe('verification_unavailable');
+    expect(res.json().error.message.toLowerCase()).not.toContain('rejected');
+    expect(await storedApple(userId)).toBeNull();
+  });
+
+  it('a verifier that THROWS is treated as unreachable, not as a rejection', async () => {
+    setCredentialVerifier({
+      verify: async () => {
+        throw new Error('socket hang up');
+      },
+    });
+    const { userId, cookie } = await signIn();
+    const res = await post(cookie, { username: APPLE_USER, password: APPLE_PASS });
+    expect(res.json().error.code).toBe('verification_unavailable');
+    expect(await storedApple(userId)).toBeNull();
+  });
+
+  // ⛔ A password is set BY ITS OWNER. The service-token + owner channel exists so a backend can ACT ON
+  // a grant the user already made; it must never CREATE one, or a token holder could plant a credential
+  // against any user id and the card would render it as a healthy connection they never established.
+  it('a SERVICE token cannot plant a credential for another user (session-only route)', async () => {
+    setCredentialVerifier(verifierReturning({ ok: true }));
+    await setSecret(APP_ID, 'FORGE_SERVICE_TOKEN', 'svc-token-value');
+    const res = await server.inject({
+      method: 'POST',
+      url: '/connect/apple/credentials',
+      headers: { authorization: 'Bearer svc-token-value' },
+      payload: { username: APPLE_USER, password: APPLE_PASS, owner: 'someone-else' },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('an OAUTH provider on the credentials path is wrong_auth_kind, not a config error', async () => {
+    setCredentialVerifier(verifierReturning({ ok: true }));
+    await configureGoogle();
+    const { cookie } = await signIn();
+    const res = await server.inject({
+      method: 'POST',
+      url: '/connect/google/credentials',
+      headers: { cookie },
+      payload: { username: 'a@b.c', password: 'x' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('wrong_auth_kind');
+  });
+
+  it('requires both fields', async () => {
+    setCredentialVerifier(verifierReturning({ ok: true }));
+    const { cookie } = await signIn();
+    expect((await post(cookie, { username: APPLE_USER })).statusCode).toBe(422);
+    expect((await post(cookie, { username: '', password: APPLE_PASS })).statusCode).toBe(422);
+  });
+
+  it('reconnecting with a new password replaces the credential and keeps connected_at', async () => {
+    setCredentialVerifier(verifierReturning({ ok: true }));
+    const { userId, cookie } = await signIn();
+    await post(cookie, { username: APPLE_USER, password: APPLE_PASS });
+    const first = await storedApple(userId);
+    await post(cookie, { username: APPLE_USER, password: 'rotated-pass-value' });
+    const second = await storedApple(userId);
+    if (second!.auth_kind !== 'basic') throw new Error('expected basic');
+    expect(await openValue(second!.password_sealed)).toBe('rotated-pass-value');
+    expect(second!.connected_at).toBe(first!.connected_at); // first connect, preserved
   });
 });

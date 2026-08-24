@@ -6,7 +6,15 @@ import { ForgeError, notFound, dependencyUnavailable } from '../shared/errors';
 import { resolveProvider } from './config';
 import { getOutboundOAuthClient, newPkcePair } from './oauth-client';
 import { parseScopes, scopeString } from '../mcp/oauth';
-import type { Connection, OAuthConnection, ConnectRequest, ConnectionView, FreshToken } from './types';
+import type {
+  Connection,
+  OAuthConnection,
+  BasicConnection,
+  ConnectRequest,
+  ConnectionView,
+  FreshToken,
+} from './types';
+import { getCredentialVerifier } from './credential-verifier';
 import { toConnectionView } from './types';
 
 // C24 — the connector-vault SERVICE: the core behavior the routes (and a future outbound-delivery
@@ -49,6 +57,42 @@ export const wrongAuthKind = (provider: string, expected: 'oauth2' | 'basic') =>
     retry: 'change-input',
     details: { provider, expected_auth_kind: expected },
   });
+// The service answered and rejected the credential. The message carries the ONE piece of guidance that
+// resolves the overwhelmingly common case: Apple returns a bare 401 for a primary password used where
+// an app-specific password is required, and the user has no way to know that from the provider's
+// response. Copy lives here, next to the failure, rather than in the web tier — every consumer of this
+// API gets it, and it cannot drift out of sync with the condition that produces it.
+export const credentialRejected = (provider: string, hint: string, detail?: string) =>
+  new ForgeError({
+    code: 'credential_rejected',
+    message: `The ${provider} credential was rejected. ${hint}`,
+    status: 401,
+    retry: 'change-input',
+    details: { provider, ...(detail ? { detail } : {}) },
+  });
+
+// We could not ASK. Deliberately distinct from credentialRejected: telling a user their password is
+// wrong when the truth is that iCloud was unreachable sends them to reset a working credential — and
+// on Apple, changing the primary password silently revokes every app-specific password they hold.
+export const verificationUnavailable = (provider: string, detail?: string) =>
+  new ForgeError({
+    code: 'verification_unavailable',
+    message:
+      `Could not reach ${provider} to verify the credential. Nothing was saved — this is not a ` +
+      `statement about whether the credential is correct. Try again shortly.`,
+    status: 503,
+    retry: 'retry',
+    details: { provider, ...(detail ? { detail } : {}) },
+  });
+
+// No verifier is registered for a basic provider. Refuse — never store an unverified credential.
+export const verifierUnavailable = (provider: string) =>
+  dependencyUnavailable(
+    `Connector "${provider}" cannot be connected: no credential verifier is registered for it, so a ` +
+      `submitted credential could not be checked before storage. This is a deployment gap, not a user error.`,
+    { provider, capability: 'Connectors' },
+  );
+
 export const reconnectRequired = (provider: string, detail: string) =>
   new ForgeError({
     code: 'reconnect_required',
@@ -115,6 +159,100 @@ export async function startConnect(input: StartConnectInput): Promise<StartConne
     codeChallenge: challenge,
   });
   return { authorizeUrl, state };
+}
+
+// --- connect with CREDENTIALS (basic auth) -------------------------------------
+//
+// The basic-auth counterpart to start+callback. There is no redirect, no consent screen, no one-shot
+// state: the user submits a username + password once and we either verify and store it, or refuse.
+//
+// ⛔ ORDER IS THE WHOLE POINT: verify against the real service FIRST, seal and store only on success.
+// Storing first and verifying later (or never) produces a connection the card renders as healthy while
+// nothing works — and for a PASSWORD, an unverified store is worse than useless: the user believes the
+// credential is in use somewhere, so when they later debug they will not suspect it.
+
+export interface ConnectWithCredentialsInput {
+  appId: string;
+  provider: string;
+  owner: string;
+  username: string;
+  password: string;
+}
+
+export interface ConnectWithCredentialsResult {
+  connection: ConnectionView;
+}
+
+export async function connectWithCredentials(
+  input: ConnectWithCredentialsInput,
+): Promise<ConnectWithCredentialsResult> {
+  const username = input.username.trim();
+  // The password is NOT trimmed: an app-specific password is generated, and silently mutating a
+  // credential the user pasted correctly would produce an inexplicable rejection.
+  const password = input.password;
+  if (!username || !password) {
+    throw new ForgeError({
+      code: 'invalid_input',
+      message: 'Both a username and a password are required to connect this provider.',
+      status: 422,
+      retry: 'change-input',
+      details: { provider: input.provider },
+    });
+  }
+
+  const resolved = await resolveProvider(input.appId, input.provider);
+  if (!resolved) {
+    const { providerDescriptor } = await import('./providers');
+    if (!providerDescriptor(input.provider)) throw unknownProvider(input.provider);
+    throw connectorNotConfigured(input.provider);
+  }
+  if (resolved.auth_kind !== 'basic') throw wrongAuthKind(input.provider, 'basic');
+  const { descriptor } = resolved;
+
+  const verifier = getCredentialVerifier();
+  if (!verifier) throw verifierUnavailable(input.provider);
+
+  const outcome = await verifier
+    .verify({ descriptor, username, password })
+    .catch(
+      (e: unknown) =>
+        ({ ok: false, reason: 'unreachable', detail: String((e as Error)?.message ?? e) }) as const,
+    );
+
+  if (!outcome.ok) {
+    // Three outcomes, three different things said to the user. Collapsing "rejected" into
+    // "unavailable" (or the reverse) is how a user ends up resetting a primary password that was
+    // never the problem — which, on Apple, revokes every app-specific password they hold.
+    if (outcome.reason === 'unreachable') {
+      throw verificationUnavailable(input.provider, outcome.detail);
+    }
+    throw credentialRejected(
+      input.provider,
+      `Check that you used an ${descriptor.password_label.toLowerCase()} — not your main account ` +
+        `password, which is rejected without explanation. Generate one at ${descriptor.credential_help_url}.`,
+      outcome.detail,
+    );
+  }
+
+  const store = await backend();
+  const existing = await store.getConnection(input.appId, input.owner, descriptor.id);
+  const now = nowIso();
+  const conn: BasicConnection = {
+    auth_kind: 'basic',
+    owner: input.owner,
+    provider: descriptor.id,
+    username,
+    password_sealed: await sealValue(password),
+    // Basic auth grants no scopes — the credential's reach is whatever the provider gives it. An empty
+    // list is the honest representation; inventing scope strings here would imply a grant we never made.
+    scopes: [],
+    status: 'connected',
+    account_label: outcome.account_label ?? username,
+    connected_at: existing?.connected_at ?? now,
+    updated_at: now,
+  };
+  await store.putConnection(input.appId, conn);
+  return { connection: toConnectionView(conn) };
 }
 
 // --- complete: consume the request, exchange the code, store sealed tokens ------

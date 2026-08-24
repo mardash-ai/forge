@@ -22,6 +22,7 @@ import {
   disconnect,
   disconnectAll,
   getFreshAccessToken,
+  connectWithCredentials,
 } from '../connectors/service';
 
 // C24 — the third-party connector HTTP surface. The app proxies `/connect/*` SAME-ORIGIN to this sidecar
@@ -331,6 +332,46 @@ export function registerConnectRoutes(
   });
 
   // === broker: a fresh, valid access token (session OR service-token) =============================
+  // === connect a BASIC-auth provider by submitting credentials ===================================
+  //
+  // The basic-auth sibling of `GET /connect/:provider/start` + callback. One request, no redirect.
+  //
+  // ⛔ SESSION-ONLY, deliberately — unlike /token and DELETE, this route does NOT accept the
+  // service-token + `owner` channel. Those routes let a trusted backend ACT ON a grant the user
+  // already made in a browser. This one CREATES a grant, out of a password. Accepting a service token
+  // here would let any holder of it plant an arbitrary credential against any user id — and because
+  // the card renders whatever is stored, the victim would see a healthy "connected" state they never
+  // established. A user's password is set BY THAT USER, in their own session, or not at all.
+  app.post('/connect/:provider/credentials', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.status(404).send(unknownApp);
+    const { provider } = req.params as { provider: string };
+    const user = await sessionUser(req, app_.id);
+    if (!user) return reply.status(401).send(needAuth);
+    const b = (req.body ?? {}) as { username?: unknown; password?: unknown };
+    if (typeof b.username !== 'string' || typeof b.password !== 'string') {
+      return reply.status(422).send({
+        error: {
+          code: 'invalid_input',
+          message: 'Both `username` and `password` are required (strings).',
+          retry: 'change-input',
+        },
+      });
+    }
+    try {
+      const out = await connectWithCredentials({
+        appId: app_.id,
+        provider,
+        owner: user.userId,
+        username: b.username,
+        password: b.password,
+      });
+      return out;
+    } catch (e) {
+      return errorReply(reply, e);
+    }
+  });
+
   app.post('/connect/:provider/token', async (req, reply) => {
     const app_ = await resolveAppId(req);
     if (!app_) return reply.status(404).send(unknownApp);
