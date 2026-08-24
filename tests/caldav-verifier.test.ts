@@ -11,6 +11,11 @@ const withProbe = (probe: CalDavProbe, spy?: (c: unknown) => void) =>
       spy?.(c);
       return probe;
     },
+    // The verifier never writes; a stub that throws proves it (a verifier that quietly wrote would
+    // fail loudly here rather than mutating a real calendar during a credential check).
+    writeEvent: async () => {
+      throw new Error('the credential verifier must not write');
+    },
   });
 
 const ok = (calendars: number): CalDavProbe => ({

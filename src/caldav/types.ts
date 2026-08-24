@@ -46,4 +46,54 @@ export interface CalDavClient {
   // Authenticate + discover the principal and its calendar-home-set. This is the whole of what
   // verify-before-store needs, and the first thing that exercises the partition-host redirect.
   probe(creds: CalDavCredentials): Promise<CalDavProbe>;
+
+  // The SINGLE write path for create, update and delete. See CalDavWrite for why it is one method.
+  writeEvent(creds: CalDavCredentials, write: CalDavWrite): Promise<CalDavWriteResult>;
 }
+
+// --- writes -------------------------------------------------------------------
+//
+// ⛔ ONE VERB, THREE KINDS — deliberately a single method rather than
+// createEvent/updateEvent/deleteEvent.
+//
+// The estate has shipped the same defect twice on two independent providers: HAT-F-081 (Outlook — the
+// create lands, the move never reaches the provider) and W-022 (Google — "the create mirrors
+// synchronously; the update does not"). Two implementations, one shape: create was written through
+// synchronously while update/delete were queued to a sweep, so the asymmetry was STRUCTURAL and no
+// amount of care at the call sites would have prevented it.
+//
+// Separate methods are what make that divergence expressible. With one method taking a discriminated
+// `kind`, an implementation cannot make create synchronous and update deferred without the difference
+// being visible inside a single function body — and `tests/caldav-write-symmetry.test.ts` asserts all
+// three kinds traverse the identical transport.
+
+export interface CalDavEvent {
+  // Stable identity. For a create we mint it; for update/delete it identifies the existing object.
+  uid: string;
+  summary: string;
+  start: string; // ISO 8601 instant
+  end: string; // ISO 8601 instant
+  location?: string;
+  description?: string;
+}
+
+export type CalDavWrite =
+  | { kind: 'create'; calendarUrl: string; event: CalDavEvent }
+  | { kind: 'update'; calendarUrl: string; event: CalDavEvent; href: string; etag?: string }
+  | { kind: 'delete'; calendarUrl: string; href: string; etag?: string };
+
+// ⛔ There is NO `pending` / `queued` / `accepted` state, and there must never be one.
+//
+// Plan §6 requirement 2: no deferred-success language, ever. A reply may not say "it should appear
+// shortly" or "it will keep retrying" — those are claims about the future that no tool result can
+// support, and BOTH shipped findings featured exactly that wording. Either the provider accepted the
+// write (say so) or it did not (say that plainly and leave the user able to act). Making the absence
+// of a pending state a property of the TYPE means no future implementation can reintroduce the
+// language without first inventing a variant that does not exist.
+export type CalDavWriteResult =
+  | { ok: true; href: string; etag?: string }
+  | {
+      ok: false;
+      reason: 'not_found' | 'conflict' | 'read_only' | 'invalid_credentials' | 'unreachable';
+      detail?: string;
+    };
