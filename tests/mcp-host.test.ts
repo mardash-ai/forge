@@ -181,6 +181,22 @@ describe('C23 — tool registration + the OAuth-gated MCP endpoint', () => {
     expect(String(unauth.headers['www-authenticate'])).toContain('resource_metadata=');
   });
 
+  it('RFC 6750: a PRESENTED-but-invalid bearer carries error="invalid_token" in the challenge; a bare request must not', async () => {
+    // A client holding a dead token (revoked grant, 7-day expiry) needs the error code to know it
+    // should re-authorize rather than dead-end at "can't connect"; a request with NO credentials
+    // MUST NOT carry an error code (RFC 6750 §3.1). Observed live 2026-08-26: Claude showed
+    // "issue → Reconnect" against a revoked grant — the code is the recovery signal hosts key off.
+    const bare = await rpc('initialize', {});
+    expect(bare.statusCode).toBe(401);
+    expect(String(bare.headers['www-authenticate'])).not.toContain('error=');
+
+    const presented = await rpc('initialize', {}, 'not-a-real-token');
+    expect(presented.statusCode).toBe(401);
+    const challenge = String(presented.headers['www-authenticate']);
+    expect(challenge).toContain('error="invalid_token"');
+    expect(challenge).toContain('resource_metadata=');
+  });
+
   it('initialize returns serverInfo + the latest instruction block; tools/list returns the surface', async () => {
     await registerTool();
     await post('/mcp/instructions', { text: 'v1 preamble' });

@@ -445,6 +445,13 @@ export function registerMcpRoutes(
       authorization_servers: [issuerBase(req)],
     });
   app.get('/.well-known/oauth-protected-resource', protectedResourceHandler);
+
+  // The ONE place the 401 challenge is written (both /mcp verbs use it — a value emitted twice drifts).
+  // RFC 6750 §3.1: a request that PRESENTED a token gets error="invalid_token" so a well-behaved client
+  // re-authorizes instead of dead-ending at "can't connect" (a revoked grant or the 7-day expiry looks
+  // identical from the client); a request with NO credentials MUST NOT carry an error code.
+  const bearerChallenge = (req: FastifyRequest, tokenPresented: boolean): string =>
+    `Bearer ${tokenPresented ? 'error="invalid_token", ' : ''}resource_metadata="${resourceBase(req)}/.well-known/oauth-protected-resource/mcp"`;
   app.get('/.well-known/oauth-protected-resource/mcp', protectedResourceHandler);
 
   // === the MCP endpoint (Streamable-HTTP, JSON-RPC 2.0) ============================================
@@ -502,10 +509,7 @@ export function registerMcpRoutes(
       });
       return reply
         .status(401)
-        .header(
-          'WWW-Authenticate',
-          `Bearer resource_metadata="${resourceBase(req)}/.well-known/oauth-protected-resource/mcp"`,
-        )
+        .header('WWW-Authenticate', bearerChallenge(req, rawBearer !== null))
         .send({
           error: 'invalid_token',
           error_description: 'a valid OAuth access token is required.',
@@ -886,10 +890,7 @@ export function registerMcpRoutes(
     if (!verified) {
       return reply
         .status(401)
-        .header(
-          'WWW-Authenticate',
-          `Bearer resource_metadata="${resourceBase(req)}/.well-known/oauth-protected-resource/mcp"`,
-        )
+        .header('WWW-Authenticate', bearerChallenge(req, rawBearerGet !== null))
         .send({
           error: 'invalid_token',
           error_description: 'a valid OAuth access token is required.',

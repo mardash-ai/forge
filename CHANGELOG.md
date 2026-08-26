@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.53.1] - 2026-08-26
+
+### Fixed
+
+- **RFC 6750: the /mcp 401 challenge now carries `error="invalid_token"` when a token was PRESENTED and rejected** (bare unauthenticated requests still carry no error code, as the RFC requires). A client holding a dead token — revoked grant, 7-day expiry — needs the code to know it should re-authorize instead of dead-ending; observed live 2026-08-26 when Claude showed "issue → Reconnect" against a revoked grant. Both /mcp verbs now emit the challenge from ONE builder (`bearerChallenge`) so the header cannot drift between them. Guard: `tests/mcp-host.test.ts` ("RFC 6750"), proven RED before the fix.
+
 ## [1.53.0] - 2026-08-24
 
 ### Added
