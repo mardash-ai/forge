@@ -40,6 +40,11 @@ export interface BasicConnection extends ConnectionBase {
   auth_kind: 'basic';
   username: string;
   password_sealed: Sealed; // AES-256-GCM ciphertext of the app-specific password
+  // The calendar collection this user's events write to — the wizard picker's choice (PUT
+  // /connect/:provider/calendar), or the first writable calendar persisted at first resolved
+  // write. Stored-choice-first is the never-fallback rule (Mark, 2026-08-26): an explicit choice
+  // is honoured; discovery fills the gap exactly once.
+  calendar_url?: string;
 }
 
 // ⛔ Records written BEFORE the auth_kind union have no discriminant. Reading one raw would produce an

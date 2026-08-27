@@ -10,6 +10,11 @@
 
 - **`no_writable_calendar`** on `CalDavWriteResult` — an ACCOUNT fact, kept distinct from the NETWORK claim `unreachable`. Reporting the latter for the former is precisely what aimed the production investigation at connectivity.
 - **`icsHref()` throws on any non-absolute base** rather than inventing a root-relative object path, and the transport refuses an unaddressed create with a typed reason instead of guessing — so the defect class stays unrepresentable no matter which caller gets the contract wrong next.
+- **The calendar CHOICE is durable state** (`BasicConnection.calendar_url`): `PUT
+  /connect/:provider/calendar` persists the wizard picker's choice; an unaddressed create uses the
+  stored choice with NO discovery round trip, and a discovery-resolved calendar is persisted ONCE so
+  existing connections self-heal and the resolution never drifts with server order. Never-fallback
+  (Mark's law, 2026-08-26): an explicit choice is honoured, always.
 
 ## [1.53.1] - 2026-08-26
 

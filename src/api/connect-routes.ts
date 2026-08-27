@@ -24,6 +24,7 @@ import {
   getFreshAccessToken,
   connectWithCredentials,
   writeCalendarEvent,
+  setConnectionCalendar,
 } from '../connectors/service';
 import type { CalDavWrite } from '../caldav';
 
@@ -478,6 +479,53 @@ export function registerConnectRoutes(
       // The provider's answer is relayed verbatim, including its failure reason. A write that did not
       // land must never read as one that did — the whole point of the three-way result.
       return reply.status(result.ok ? 200 : 502).send(result);
+    } catch (e) {
+      return errorReply(reply, e);
+    }
+  });
+
+  // === calendar CHOICE for a BASIC-auth provider =================================================
+  // Persists the wizard picker's choice of collection. Explicit and honoured (never-fallback law,
+  // 2026-08-26): a stored choice addresses every create; absent one, the write path discovers the
+  // first writable calendar once and persists it.
+  app.put('/connect/:provider/calendar', async (req, reply) => {
+    const app_ = await resolveAppId(req);
+    if (!app_) return reply.status(404).send(unknownApp);
+    const { provider } = req.params as { provider: string };
+    const b = (req.body ?? {}) as Record<string, unknown>;
+
+    let owner: string | undefined;
+    const user = await sessionUser(req, app_.id);
+    if (user) {
+      owner = user.userId;
+    } else {
+      const presented = serviceTokenPresented(req);
+      const configured = await resolveServiceToken(app_.id);
+      if (!presented || !serviceTokenMatches(presented, configured)) return reply.status(401).send(needAuth);
+      owner = trimmed(b.owner);
+      if (!owner)
+        return reply.status(422).send({
+          error: {
+            code: 'invalid_input',
+            message: 'a service-authenticated calendar choice must pass `owner`.',
+            retry: 'change-input',
+          },
+        });
+    }
+
+    const calendarUrl = trimmed(b.calendarUrl);
+    if (!calendarUrl)
+      return reply.status(422).send({
+        error: {
+          code: 'invalid_input',
+          message: '`calendarUrl` is required — an absolute collection URL from the discovered list.',
+          retry: 'change-input',
+        },
+      });
+
+    try {
+      await setConnectionCalendar(app_.id, owner, provider, calendarUrl);
+      return reply.status(200).send({ ok: true, provider, calendarUrl });
     } catch (e) {
       return errorReply(reply, e);
     }

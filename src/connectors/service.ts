@@ -304,8 +304,25 @@ export async function writeCalendarEvent(input: CalendarWriteInput): Promise<Cal
     serverUrl: resolved.descriptor.service_endpoint,
   };
 
-  const write = await resolveWriteTarget(creds, input.write);
+  // Stored-choice-first (never-fallback): the picker's choice — or a previously persisted
+  // resolution — addresses the create without a discovery round trip.
+  let toResolve = input.write;
+  const storedChoice = trimmedUrl(conn.calendar_url);
+  const needsResolution = toResolve.kind === 'create' && !trimmedUrl(toResolve.calendarUrl);
+  if (needsResolution && storedChoice) {
+    toResolve = { ...toResolve, calendarUrl: storedChoice };
+  }
+  const write = await resolveWriteTarget(creds, toResolve);
   if ('unresolved' in write) return write.unresolved;
+
+  // A DISCOVERED resolution is persisted once, so the round trip never repeats and the next
+  // write is addressed like a chosen one. (A stored choice or explicit URL skips this.)
+  if (needsResolution && !storedChoice && write.write.kind === 'create') {
+    const resolvedUrl = trimmedUrl(write.write.calendarUrl);
+    if (resolvedUrl) {
+      await store.putConnection(input.appId, { ...conn, calendar_url: resolvedUrl, updated_at: nowIso() });
+    }
+  }
 
   return getCalDavClient().writeEvent(creds, write.write);
 }
@@ -371,6 +388,31 @@ function trimmedUrl(value: string | undefined): string | undefined {
   const v = (value ?? '').trim();
   if (!v) return undefined;
   return /^https?:\/\//i.test(v) ? v : undefined;
+}
+
+// --- calendar CHOICE for a BASIC-auth provider ---------------------------------
+// The wizard picker's choice — which collection this user's events write to. Explicit and
+// honoured (never-fallback law, Mark 2026-08-26): a stored choice addresses every create with no
+// discovery and no drift; absent one, the write path discovers once and persists.
+export async function setConnectionCalendar(
+  appId: string,
+  owner: string,
+  provider: string,
+  calendarUrl: string,
+): Promise<void> {
+  if (!trimmedUrl(calendarUrl)) {
+    throw new ForgeError({
+      code: 'invalid_input',
+      message: '`calendarUrl` must be an absolute http(s) collection URL from the discovered calendar list.',
+      status: 422,
+      retry: 'change-input',
+    });
+  }
+  const store = await backend();
+  const conn = await store.getConnection(appId, owner, provider);
+  if (!conn) throw notConnected(provider);
+  if (conn.auth_kind !== 'basic') throw wrongAuthKind(provider, 'basic');
+  await store.putConnection(appId, { ...conn, calendar_url: calendarUrl.trim(), updated_at: nowIso() });
 }
 
 // --- complete: consume the request, exchange the code, store sealed tokens ------
