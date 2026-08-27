@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.54.0] - 2026-08-27
+
+### Fixed
+
+- **CalDAV: a create with no `calendarUrl` is now ADDRESSED by forge, instead of writing to a relative href.** The create variant of `CalDavWrite` documented that forge would choose the calendar from the connection's discovered home when the field was omitted. It never did: dorinda-api satisfied the REQUIRED field with `''`, the empty string flowed into `icsHref()`, which returned the root-relative `/dorinda-<uid>.ics`, tsdav failed to parse it as a URL, and the write 502'd as `unreachable`. A real user was told "Apple Calendar couldn't be reached" — a network story for an addressing bug. Both repos were internally consistent and fully green; every fixture in `caldav-write-route.test.ts` supplied a real `calendarUrl`, so neither suite could ever evaluate the PAIR (estate guardrail #5). `calendarUrl` is now **optional** on create — the type says what is true, so `''` is no longer how you satisfy a field the caller cannot fill — and `service.writeCalendarEvent` resolves the discovered calendar home, choosing the first writable collection and preferring iCloud's default "Home" so an account resolves the same way every time. Subscribed and non-VEVENT collections are skipped, which is how Reminders is excluded structurally rather than by name. Guard: `tests/caldav-create-resolves-calendar.test.ts`, proven RED first (6 of 8 failing before the fix).
+
+### Added
+
+- **`no_writable_calendar`** on `CalDavWriteResult` — an ACCOUNT fact, kept distinct from the NETWORK claim `unreachable`. Reporting the latter for the former is precisely what aimed the production investigation at connectivity.
+- **`icsHref()` throws on any non-absolute base** rather than inventing a root-relative object path, and the transport refuses an unaddressed create with a typed reason instead of guessing — so the defect class stays unrepresentable no matter which caller gets the contract wrong next.
+
 ## [1.53.1] - 2026-08-26
 
 ### Fixed

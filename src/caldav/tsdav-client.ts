@@ -182,6 +182,17 @@ export const tsdavCalDavClient: CalDavClient = {
       const ics = eventToIcs(write.event);
 
       if (write.kind === 'create') {
+        // Belt and braces with service.ts#resolveWriteTarget, which addresses every create before
+        // it gets here. If one ever arrives unaddressed that is an upstream programming error, and
+        // the honest answer is a typed refusal — NOT a guessed URL, and not the relative href this
+        // line produced in production.
+        if (!write.calendarUrl) {
+          return {
+            ok: false,
+            reason: 'no_writable_calendar',
+            detail: 'create reached the transport with no calendarUrl — it was never addressed',
+          };
+        }
         const href = icsHref(write.calendarUrl, write.event.uid);
         const res = await client.createObject({
           url: href,

@@ -67,7 +67,28 @@ export function eventToIcs(event: CalDavEvent, now: Date = new Date()): string {
 
 // The object path for a UID within a collection. iCloud is tolerant here, but a stable, derivable
 // href means an update can address an object we created without a round trip to find it.
+//
+// ⛔ THE BASE MUST BE ABSOLUTE, and this function is where that is enforced.
+//
+// In production this was called with `calendarUrl: ''` and returned the ROOT-RELATIVE
+// "/dorinda-<uid>.ics". tsdav could not parse that as a URL, so a two-repo contract defect
+// surfaced to a real user as "Apple Calendar couldn't be reached" — a network story for an
+// addressing bug. A relative object path is never a thing we can legitimately want: there is no
+// base to resolve it against once it leaves this process. Refusing it here makes the whole class
+// unrepresentable no matter which caller gets the contract wrong next.
 export function icsHref(calendarUrl: string, uid: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(calendarUrl);
+  } catch {
+    throw new Error(
+      `icsHref: calendarUrl must be an absolute http(s) collection URL, got ${JSON.stringify(calendarUrl)}. ` +
+        'A create must be addressed to a discovered calendar — see connectors/service.ts#resolveWriteTarget.',
+    );
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`icsHref: calendarUrl must be http(s), got ${JSON.stringify(calendarUrl)}.`);
+  }
   const base = calendarUrl.endsWith('/') ? calendarUrl : `${calendarUrl}/`;
   return `${base}${encodeURIComponent(uid)}.ics`;
 }

@@ -298,14 +298,79 @@ export async function writeCalendarEvent(input: CalendarWriteInput): Promise<Cal
   // Opened here, used immediately, never returned to the caller and never logged.
   const password = await openValue(conn.password_sealed);
 
-  return getCalDavClient().writeEvent(
-    {
-      username: conn.username,
-      password,
-      serverUrl: resolved.descriptor.service_endpoint,
-    },
-    input.write,
-  );
+  const creds = {
+    username: conn.username,
+    password,
+    serverUrl: resolved.descriptor.service_endpoint,
+  };
+
+  const write = await resolveWriteTarget(creds, input.write);
+  if ('unresolved' in write) return write.unresolved;
+
+  return getCalDavClient().writeEvent(creds, write.write);
+}
+
+/**
+ * Address a create that arrived without a calendar.
+ *
+ * ⛔ THIS IS THE HALF THAT WAS MISSING. dorinda-api sent `calendarUrl: ''` under a comment
+ * asserting "the calendar is chosen by forge from the connection's discovered home when omitted."
+ * Forge had never implemented it, so the empty string flowed into icsHref() and became the
+ * relative href "/dorinda-<uid>.ics". Each repo was self-consistent and fully green; the first
+ * thing to ever evaluate the PAIR was a real user's calendar write (estate guardrail #5).
+ *
+ * The consuming app is right to not know the collection URL — it lives on a per-account partition
+ * host (pNN-caldav.icloud.com) discovered at login and cannot be constructed. So resolution belongs
+ * here, and this function makes the emitter's comment true.
+ *
+ * Every outcome is TYPED. If discovery fails we relay ITS reason; if the account genuinely has
+ * nowhere to write we say `no_writable_calendar`. Neither is ever reported as `unreachable`, and
+ * neither ever falls through to a write against a guessed URL.
+ */
+async function resolveWriteTarget(
+  creds: { username: string; password: string; serverUrl: string },
+  write: CalDavWrite,
+): Promise<{ write: CalDavWrite } | { unresolved: CalDavWriteResult }> {
+  if (write.kind !== 'create' || trimmedUrl(write.calendarUrl)) return { write };
+
+  const listed = await getCalDavClient().listCalendars(creds);
+  if (!listed.ok) {
+    return {
+      unresolved: {
+        ok: false,
+        reason: listed.reason,
+        ...(listed.detail ? { detail: listed.detail } : {}),
+      },
+    };
+  }
+
+  // `readOnly` already covers both ineligible shapes: a subscribed collection, and a collection
+  // that does not accept VEVENT (which is how iCloud's Reminders lists arrive here). See
+  // caldav/tsdav-client.ts#toCalendar.
+  const writable = listed.calendars.filter((c) => !c.readOnly && trimmedUrl(c.url));
+  const target =
+    // iCloud names the account's default calendar "Home"; prefer it when present so the same
+    // account resolves to the same collection every time rather than drifting with server order.
+    writable.find((c) => c.displayName.trim().toLowerCase() === 'home') ?? writable[0];
+
+  if (!target) {
+    return {
+      unresolved: {
+        ok: false,
+        reason: 'no_writable_calendar',
+        detail: `no writable calendar in ${listed.calendars.length} discovered collection(s)`,
+      },
+    };
+  }
+
+  return { write: { ...write, calendarUrl: target.url } };
+}
+
+/** An absolute http(s) URL, or undefined. Guards against '' satisfying a truthiness check upstream. */
+function trimmedUrl(value: string | undefined): string | undefined {
+  const v = (value ?? '').trim();
+  if (!v) return undefined;
+  return /^https?:\/\//i.test(v) ? v : undefined;
 }
 
 // --- complete: consume the request, exchange the code, store sealed tokens ------

@@ -105,7 +105,12 @@ export interface CalDavEvent {
 }
 
 export type CalDavWrite =
-  | { kind: 'create'; calendarUrl: string; event: CalDavEvent }
+  // ⛔ OPTIONAL BY DESIGN. A consuming app knows it wants "the user's calendar"; it does not know
+  // the partition-host collection URL, and it must not have to. When this is omitted forge resolves
+  // the discovered calendar home itself (connectors/service.ts#resolveWriteTarget). It was typed
+  // REQUIRED once, so dorinda-api satisfied the type with `''` and shipped a defect the compiler
+  // had certified — the type now says what is actually true.
+  | { kind: 'create'; calendarUrl?: string; event: CalDavEvent }
   | { kind: 'update'; calendarUrl: string; event: CalDavEvent; href: string; etag?: string }
   | { kind: 'delete'; calendarUrl: string; href: string; etag?: string };
 
@@ -121,6 +126,14 @@ export type CalDavWriteResult =
   | { ok: true; href: string; etag?: string }
   | {
       ok: false;
-      reason: 'not_found' | 'conflict' | 'read_only' | 'invalid_credentials' | 'unreachable';
+      // `no_writable_calendar` is an ACCOUNT fact, not a network one. Collapsing it into
+      // `unreachable` is what pointed the production investigation at connectivity.
+      reason:
+        | 'not_found'
+        | 'conflict'
+        | 'read_only'
+        | 'no_writable_calendar'
+        | 'invalid_credentials'
+        | 'unreachable';
       detail?: string;
     };
