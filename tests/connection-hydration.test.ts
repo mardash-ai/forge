@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { store } from '../src/storage/store';
 import { getBackends } from '../src/storage/backends';
+import { loadStoreConfig } from '../src/storage/backends/config';
 import { connectionsFile } from '../src/shared/paths';
 import { hydrateConnection } from '../src/connectors/types';
 
@@ -60,6 +61,25 @@ afterEach(async () => {
 async function seedLegacyDoc(): Promise<void> {
   const b = (await getBackends()).connections;
   await b.putConnection(APP_ID, { ...legacyRecord, auth_kind: 'oauth2' } as never);
+  // Strip the discriminant back out THROUGH THE CONFIGURED BACKEND'S OWN STORAGE, so what sits in
+  // the store is byte-for-byte the pre-union shape on BOTH backends. (Found 2026-08-28: the
+  // file-only strip below made this guard ENOENT under the pg matrix — forge CI ran red for four
+  // days and nobody noticed, because tag publishes gate on a different workflow. A guard that only
+  // runs on one backend is not a guard on the other.)
+  if (loadStoreConfig().connections === 'postgres') {
+    const { Pool } = await import('pg');
+    const pool = new Pool({ connectionString: process.env.FORGE_DB_URL, max: 1 });
+    try {
+      const res = await pool.query(
+        `UPDATE forge_connections SET data = data - 'auth_kind' WHERE app_id = $1`,
+        [APP_ID],
+      );
+      expect(res.rowCount).toBe(1);
+    } finally {
+      await pool.end();
+    }
+    return;
+  }
   const file = connectionsFile(APP_ID);
   const doc = JSON.parse(await readFile(file, 'utf8')) as {
     connections: Record<string, Record<string, unknown>>;
