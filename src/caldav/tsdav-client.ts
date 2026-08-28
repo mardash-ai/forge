@@ -83,17 +83,34 @@ function toCalendar(c: {
   reports?: unknown;
 }): CalDavCalendar {
   const components = Array.isArray(c.components) ? (c.components as string[]) : [];
-  const subscribed =
-    Array.isArray(c.resourcetype) && c.resourcetype.some((r) => /subscribed/i.test(String(r)));
+  const resourcetypes = Array.isArray(c.resourcetype) ? c.resourcetype.map((r) => String(r)) : [];
+  const subscribed = resourcetypes.some((r) => /subscribed/i.test(r));
+
+  // ⛔ RFC 6638 SCHEDULING COLLECTIONS ARE NEVER A PLACE TO PUT AN EVENT.
+  //
+  // `schedule-inbox`, `schedule-outbox` and `notification` are the mailboxes iCloud uses to deliver
+  // and queue invitations. They ADVERTISE VEVENT — that is their whole purpose — so the component
+  // check below cannot exclude them, and a scheduling inbox looks exactly like a writable calendar.
+  //
+  // Today tsdav's fetchCalendars happens to drop them (it keeps only `resourcetype` containing
+  // `calendar`). That is an upstream accident, not a guarantee we make: types.ts advertises this
+  // boundary as deliberately swappable, and connectors/service.ts#resolveWriteTarget picks
+  // `writable[0]` — so a scheduling inbox that ever reached the list could RECEIVE A USER'S EVENT.
+  // Stated here so the protection survives a client swap. See
+  // tests/caldav-scheduling-collections-excluded.test.ts (ACCEPTANCE_TESTING.md AP-5).
+  const scheduling = resourcetypes.some((r) => /schedule-inbox|schedule-outbox|notification/i.test(r));
   const name = typeof c.displayName === 'string' && c.displayName.trim() ? c.displayName.trim() : c.url;
   return {
     url: c.url,
     displayName: name,
-    readOnly: subscribed || (components.length > 0 && !components.includes('VEVENT')),
+    readOnly: scheduling || subscribed || (components.length > 0 && !components.includes('VEVENT')),
     syncCollection: syncCollectionSupport(c.reports),
     ...(typeof c.ctag === 'string' ? { ctag: c.ctag } : {}),
   };
 }
+
+/** Test seam: {@link toCalendar} is pure mapping, and AP-5's exclusions are asserted against it. */
+export const toCalendarForTest = toCalendar;
 
 async function davClientFor(creds: CalDavCredentials): Promise<DAVClient> {
   const client = new DAVClient({

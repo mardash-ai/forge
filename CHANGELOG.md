@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **CalDAV: RFC 6638 scheduling collections can never be offered as writable calendars.** `schedule-inbox`, `schedule-outbox` and `notification` ADVERTISE VEVENT — that is their purpose — so the existing component check could not exclude them, and a scheduling inbox was indistinguishable from a writable calendar. It held in practice only because tsdav's `fetchCalendars` keeps solely `resourcetype` containing `calendar`: an **upstream accident, not a guarantee this repo made**. `src/caldav/` contained no mention of scheduling collections at all, while `types.ts` advertises the tsdav boundary as deliberately swappable — so replacing the client would have removed the protection silently. Compounding it, `connectors/service.ts#resolveWriteTarget` selects `writable[0]`, so a scheduling inbox reaching the list could have RECEIVED A USER'S EVENT — an appointment filed into the mailbox iCloud uses to deliver invitations. The exclusion is now stated in our own mapping and asserted by `tests/caldav-scheduling-collections-excluded.test.ts`, RED-proven (removing the term fails exactly the three scheduling cases). Closes the second half of `ACCEPTANCE_TESTING.md` AP-5 as a suite guarantee rather than a manual check.
+
 ## [1.54.0] - 2026-08-27
 
 ### Fixed
