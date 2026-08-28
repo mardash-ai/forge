@@ -2,9 +2,27 @@
 
 ## [Unreleased]
 
+## [1.54.1] - 2026-08-28
+
 ### Fixed
 
 - **CalDAV: RFC 6638 scheduling collections can never be offered as writable calendars.** `schedule-inbox`, `schedule-outbox` and `notification` ADVERTISE VEVENT — that is their purpose — so the existing component check could not exclude them, and a scheduling inbox was indistinguishable from a writable calendar. It held in practice only because tsdav's `fetchCalendars` keeps solely `resourcetype` containing `calendar`: an **upstream accident, not a guarantee this repo made**. `src/caldav/` contained no mention of scheduling collections at all, while `types.ts` advertises the tsdav boundary as deliberately swappable — so replacing the client would have removed the protection silently. Compounding it, `connectors/service.ts#resolveWriteTarget` selects `writable[0]`, so a scheduling inbox reaching the list could have RECEIVED A USER'S EVENT — an appointment filed into the mailbox iCloud uses to deliver invitations. The exclusion is now stated in our own mapping and asserted by `tests/caldav-scheduling-collections-excluded.test.ts`, RED-proven (removing the term fails exactly the three scheduling cases). Closes the second half of `ACCEPTANCE_TESTING.md` AP-5 as a suite guarantee rather than a manual check.
+
+
+- **The legacy-row hydration guard runs on BOTH backends.** `connection-hydration.test.ts` seeded its
+  discriminant-less record by editing the filesystem doc, which ENOENT'd under the Postgres matrix —
+  so `ci.yml` on main ran RED for four days (every run since 901cffa, 2026-08-24) while tag publishes
+  stayed green on their own gate. The strip now goes through the configured backend's own storage
+  (`data - 'auth_kind'` on Postgres, the file edit on fs). A guard that only runs on one backend is
+  not a guard on the other.
+- **`productionize-nextjs-compose` emits plain `npm ci` — no install fallback.** The fallback caught
+  the exact failure `npm ci` exists to produce, resolving lockfile drift against semver ranges inside
+  the build and shipping transitive versions nobody reviewed while reporting success. Emission-tested
+  (RED-proven; the proof also caught the comment wording quoting the forbidden string). Consumers
+  regenerate on their next productionize; dorinda-api's checked-in file is already aligned.
+- **All three images and CI's root installs run plain `npm ci`.** Same guard, applied to this repo's
+  own Dockerfiles (including the data plane — the sealed-credential tier) and to `ci.yml`, so CI
+  tests the dependency tree the images actually ship instead of a range-resolved one.
 
 ## [1.54.0] - 2026-08-27
 
