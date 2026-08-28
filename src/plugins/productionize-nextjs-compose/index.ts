@@ -79,7 +79,11 @@ export function generateProdDockerfile(opts: ProdDockerfileOptions): string {
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci || npm install
+# NO install fallback after this: npm ci exists to FAIL when lockfile and manifest disagree —
+# that failure is the guard. A fallback resolves drift against semver ranges inside the build
+# and ships transitive versions nobody reviewed, reporting success. If this line fails, fix
+# the lockfile in the repo; never paper over it here.
+RUN npm ci
 
 FROM node:22-bookworm-slim AS build
 WORKDIR /app

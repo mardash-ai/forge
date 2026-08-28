@@ -920,6 +920,18 @@ describe('generateProdDockerfile — the runtime user must own .next (acceptance
   });
 });
 
+describe('generateProdDockerfile — npm ci has NO fallback (the failure IS the guard, 2026-08-28)', () => {
+  // `npm ci || npm install` catches the exact failure npm ci exists to produce: the fallback
+  // resolves lockfile/manifest drift against semver ranges inside the build and ships transitive
+  // versions nobody reviewed, reporting success. Found live in four production Dockerfiles; the
+  // hand-patched consumers are one regen away from reverting unless the GENERATOR holds the line.
+  it('emits plain `npm ci` and never the `|| npm install` fallback', () => {
+    const df = generateProdDockerfile({ appName: 'acme', port: 3000 });
+    expect(df).toContain('RUN npm ci');
+    expect(df).not.toContain('|| npm install');
+  });
+});
+
 describe('generateProdDockerfile — the runner ships no npm CLI (image-scan finding, 2026-08-19)', () => {
   // The base image bundles npm with vendored deps that carry fix-available CVEs; the runtime
   // never invokes npm/npx (CMD is `node server.js`). The generator must strip it from the
