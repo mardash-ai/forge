@@ -21,8 +21,11 @@ jobs:
         with:
           node-version: 22
 
+      # npm ci, not install (guardrail #5): install resolves against semver ranges, ci against
+      # the lockfile — so with install, CI tests a dependency tree the images do not ship, and
+      # drift surfaces at RELEASE time blaming whoever cut the tag instead of whoever caused it.
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       # Without this the one-time reformat is a cosmetic event with no lasting property: formatting
       # drifts back within weeks, and `prettier --write` becomes a loaded gun again (one stray run
@@ -69,8 +72,11 @@ jobs:
         with:
           node-version: 22
 
+      # npm ci, not install (guardrail #5): install resolves against semver ranges, ci against
+      # the lockfile — so with install, CI tests a dependency tree the images do not ship, and
+      # drift surfaces at RELEASE time blaming whoever cut the tag instead of whoever caused it.
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       # MinIO is started as a container (a `services:` block can't pass the required `server /data` arg).
       - name: Start MinIO (S3-compatible object store)
