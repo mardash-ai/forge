@@ -16,7 +16,11 @@ WORKDIR /forge
 # Production dependencies only — omits typescript, vitest, @types/* (devDependencies).
 # tsx is a runtime dependency, so it stays.
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev || npm install --omit=dev
+# ⛔ NO `|| npm install` fallback: npm ci exists to FAIL when lockfile and manifest disagree —
+# that failure is the guard. A fallback resolves drift against semver ranges inside the build and
+# ships transitive versions nobody reviewed, reporting success. If this line fails, fix the
+# lockfile in the repo; never paper over it here.
+RUN npm ci --omit=dev
 
 COPY tsconfig.json ./
 COPY src ./src

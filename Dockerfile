@@ -48,7 +48,11 @@ WORKDIR /forge
 # needs its dev toolchain: tsx/tsc/vitest); the `|| npm install` fallback keeps the
 # build resilient if the lockfile is ever momentarily out of sync.
 COPY package.json package-lock.json* ./
-RUN npm ci || npm install
+# ⛔ NO `|| npm install` fallback: npm ci exists to FAIL when lockfile and manifest disagree —
+# that failure is the guard. A fallback resolves drift against semver ranges inside the build and
+# ships transitive versions nobody reviewed, reporting success. If this line fails, fix the
+# lockfile in the repo; never paper over it here.
+RUN npm ci
 
 COPY tsconfig.json ./
 COPY CHANGELOG.md ./
