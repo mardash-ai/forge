@@ -6,10 +6,17 @@ import type { CalDavEvent } from './types';
 
 // RFC 5545 §3.3.11: backslash, semicolon and comma are escaped; newlines become the literal \n.
 // Order matters — backslash must be escaped FIRST or it would double-escape the escapes we add after.
+//
+// ⛔ The semicolon arm read `.replace(/;/g, '\;')` until 2026-08-29. In JavaScript '\;' IS ';' —
+// a backslash before a non-escape character is simply dropped — so that line replaced a semicolon
+// with a semicolon and did nothing, for every event forge has ever written. The comment above it
+// asserted the property was handled, which is precisely why nobody looked: the code and its own
+// documentation agreed, and neither was true. The comma arm right beside it was correct, which is
+// what makes the pair readable as working.
 function escapeText(v: string): string {
   return v
     .replace(/\\/g, '\\\\')
-    .replace(/;/g, '\;')
+    .replace(/;/g, '\\;')
     .replace(/,/g, '\\,')
     .replace(/\r\n|\n|\r/g, '\\n');
 }
@@ -44,6 +51,33 @@ function foldLine(line: string): string {
   return out.join('\r\n');
 }
 
+/**
+ * VALARM blocks for an event's alarm leads (minutes before start).
+ *
+ * The serialization here is PIXEL-PROVEN, not inferred: on 2026-08-29 a live probe wrote
+ * `TRIGGER:-PT30M` to a real iCloud calendar over CalDAV and a human confirmed on icloud.com that
+ * the alert both persisted and RENDERED on the event. A VALARM a server stores but no client ever
+ * displays is indistinguishable from a working one at the protocol boundary, so that check could
+ * not be skipped.
+ *
+ * A lead of 0 is "at start" and must be `TRIGGER:PT0S` — `-PT0M` is a negative zero duration that
+ * some clients reject outright. Leads are deduped and sorted so the nearest alarm comes first, and
+ * anything that is not a non-negative integer is dropped rather than serialized into a malformed
+ * TRIGGER that would fail the whole PUT.
+ */
+function alarmLines(event: CalDavEvent): string[] {
+  const leads = [...new Set(event.alarmsMinutesBefore ?? [])]
+    .filter((m) => Number.isInteger(m) && m >= 0)
+    .sort((a, b) => a - b);
+  return leads.flatMap((m) => [
+    'BEGIN:VALARM',
+    'ACTION:DISPLAY',
+    `DESCRIPTION:${escapeText(event.summary)}`,
+    m === 0 ? 'TRIGGER:PT0S' : `TRIGGER:-PT${m}M`,
+    'END:VALARM',
+  ]);
+}
+
 export function eventToIcs(event: CalDavEvent, now: Date = new Date()): string {
   const lines = [
     'BEGIN:VCALENDAR',
@@ -58,6 +92,9 @@ export function eventToIcs(event: CalDavEvent, now: Date = new Date()): string {
     `SUMMARY:${escapeText(event.summary)}`,
     ...(event.location ? [`LOCATION:${escapeText(event.location)}`] : []),
     ...(event.description ? [`DESCRIPTION:${escapeText(event.description)}`] : []),
+    // Provider-native alarms, INSIDE the VEVENT — a VALARM after END:VEVENT is not the event's
+    // alarm and is silently ignored by every client that reads it.
+    ...alarmLines(event),
     'END:VEVENT',
     'END:VCALENDAR',
   ];

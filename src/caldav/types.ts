@@ -102,6 +102,12 @@ export interface CalDavEvent {
   end: string; // ISO 8601 instant
   location?: string;
   description?: string;
+  /**
+   * Provider-native alarm leads, in MINUTES BEFORE `start` (`0` = at start). Omitted or empty
+   * writes no VALARM. Each lead becomes a DISPLAY alarm on the event itself, so it fires from the
+   * user's own phone/desktop calendar rather than only from the consuming app.
+   */
+  alarmsMinutesBefore?: number[];
 }
 
 export type CalDavWrite =

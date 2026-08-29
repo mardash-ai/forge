@@ -124,9 +124,24 @@ describe('CalDAV writes — create, update and delete are structurally symmetric
 
 describe('iCalendar serialisation', () => {
   it('escapes per RFC 5545 §3.3.11 — backslash first, then ; and ,', () => {
-    const ics = eventToIcs({ ...EVENT, summary: 'a\\b;c,d', location: 'x;y' });
-    expect(ics).toContain('SUMMARY:a\\\\b\;c\\,d');
-    expect(ics).toContain('LOCATION:x\;y');
+    /*
+     * ⛔ THIS TEST ASSERTED THE BUG AS CORRECT until 2026-08-29, and that is why the bug lived.
+     *
+     * It expected `SUMMARY:a\\b;c\,d` — the comma escaped, the SEMICOLON NOT — under a name that
+     * claims to verify §3.3.11. Both the test and the implementation were written with the same
+     * JavaScript mistake: '\;' is just ';', because a backslash before a non-escape character is
+     * dropped. So escapeText's semicolon arm replaced ';' with ';', the test asserted exactly that
+     * output, and the pair agreed with each other while disagreeing with the RFC in the title.
+     *
+     * A green test named after the property it is failing to check is worse than no test — it is
+     * the reason nobody looked for two months of Apple Calendar writes.
+     *
+     * String.raw so the expected ICS is written once, with no JS escape layer between the
+     * assertion and what a CalDAV server actually receives.
+     */
+    const ics = eventToIcs({ ...EVENT, summary: String.raw`a\b;c,d`, location: 'x;y' });
+    expect(ics).toContain(String.raw`SUMMARY:a\\b\;c\,d`);
+    expect(ics).toContain(String.raw`LOCATION:x\;y`);
   });
 
   it('turns newlines into the literal \\n rather than breaking the line structure', () => {

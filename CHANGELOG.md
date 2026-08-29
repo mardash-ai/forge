@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Added
+
+- **CalDAV events can carry provider-native alarms (VALARM).** `CalDavEvent.alarmsMinutesBefore`
+  (minutes before start; `0` = at start) emits one `BEGIN:VALARM` / `ACTION:DISPLAY` /
+  `TRIGGER:-PT<n>M` block per lead, nested inside the VEVENT. An alarm written onto the provider's
+  own event fires from the user's phone and desktop calendar without the consuming app being awake.
+  The serialization is **pixel-proven, not inferred**: a live probe wrote `TRIGGER:-PT30M` to a real
+  iCloud calendar and a human confirmed on icloud.com that the alert persisted *and rendered* — a
+  VALARM a server stores but no client displays is indistinguishable from a working one at the
+  protocol boundary, so the RFC alone could not settle it.
+
+### Fixed
+
+- **RFC 5545 §3.3.11: semicolons in event text were never escaped.** `escapeText` read
+  `.replace(/;/g, '\;')`, and in JavaScript `'\;'` *is* `';'` — a backslash before a non-escape
+  character is dropped — so the semicolon arm replaced a semicolon with itself for every event forge
+  has ever written. The comment directly above it stated that semicolons were escaped.
+- **The test for that property asserted the bug as correct.** `caldav-write-symmetry.test.ts` had a
+  case named *"escapes per RFC 5545 §3.3.11 — backslash first, then ; and ,"* whose expectation was
+  `SUMMARY:a\\b;c\,d` — comma escaped, semicolon not. It was written with the same JavaScript
+  mistake as the implementation, so code and test agreed with each other while disagreeing with the
+  RFC named in the title. A green test named after the property it fails to check is worse than no
+  test: it is the reason nobody looked. Both are corrected and now use `String.raw`, so the expected
+  ICS is written once with no escape layer between the assertion and what a server receives.
+
 ## [1.54.1] - 2026-08-28
 
 ### Fixed
