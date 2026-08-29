@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.55.0] - 2026-08-29
+
 ### Added
 
 - **CalDAV events can carry provider-native alarms (VALARM).** `CalDavEvent.alarmsMinutesBefore`
