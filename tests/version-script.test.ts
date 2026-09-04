@@ -51,20 +51,24 @@ describe('version npm lifecycle script', () => {
 describe('version script mechanism — bump propagates to model stamp', () => {
   const pkgPath = join(ROOT, 'package.json');
   const modelPath = join(ROOT, 'platform-model.json');
+  const mdModelPath = join(ROOT, 'docs/architecture/PLATFORM_MODEL.md');
 
   let savedPkg: string;
   let savedModel: string;
+  let savedMdModel: string;
   const BUMPED_VERSION = '99.0.0-version-script-test';
 
   beforeAll(() => {
     savedPkg = readFileSync(pkgPath, 'utf8');
     savedModel = existsSync(modelPath) ? readFileSync(modelPath, 'utf8') : '';
+    savedMdModel = existsSync(mdModelPath) ? readFileSync(mdModelPath, 'utf8') : '';
   });
 
   afterAll(() => {
     // Always restore regardless of test outcome.
     writeFileSync(pkgPath, savedPkg);
     if (savedModel) writeFileSync(modelPath, savedModel);
+    if (savedMdModel) writeFileSync(mdModelPath, savedMdModel);
   });
 
   it('running generate:platform-model after a version bump updates the model stamp', () => {
