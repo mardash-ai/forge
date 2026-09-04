@@ -1,6 +1,6 @@
 {
   "$schema": "https://forge.build/platform-model/v1",
-  "version": "1.56.3",
+  "version": "1.56.4",
   "capabilities": [
     {
       "name": "InitializeApp",
