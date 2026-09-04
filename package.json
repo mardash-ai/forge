@@ -14,6 +14,7 @@
     "data-plane": "tsx src/data-plane/server.ts",
     "cli": "tsx src/cli/index.ts",
     "generate:platform-model": "tsx scripts/generate-platform-model.ts && npx prettier --write platform-model.json",
+    "version": "npm run generate:platform-model && git add platform-model.json",
     "test": "vitest run",
     "test:pg": "vitest run --config vitest.pg.config.ts",
     "typecheck": "tsc --noEmit"

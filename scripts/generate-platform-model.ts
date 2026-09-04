@@ -3,7 +3,10 @@
 // error taxonomy, and server route tables; emits a version-stamped platform-model.json that
 // is COMMITTED into the forge repo. Consumers fetch it by git tag.
 //
-// Run:   npm run generate:platform-model
+// Run manually:  npm run generate:platform-model
+// On version bump: the `version` npm lifecycle script in package.json runs this automatically
+//   (`npm version <level>` → scripts.version → generate:platform-model → git add platform-model.json)
+//   so the model is always regenerated and staged in the same commit as the version bump.
 // CI:    ci.yml re-runs this and diffs; a divergence fails the build (drift guard).
 
 import { readFileSync, writeFileSync } from 'node:fs';
