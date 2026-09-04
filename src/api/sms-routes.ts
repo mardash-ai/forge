@@ -206,12 +206,21 @@ export function registerSmsRoutes(fastify: FastifyInstance, opts: { defaultApp: 
   fastify.register(async (twilio) => {
     // Parse the form body as a raw string so we can extract the exact param values
     // Twilio used when computing the HMAC-SHA1 signature.
+    //
+    // removeContentTypeParser first: this scope is a Fastify child that inherits a COPY of the
+    // parent scope's parser map. If an ancestor scope (e.g. registerAuthRoutes) already registered
+    // application/x-www-form-urlencoded as a parsed-object parser, calling addContentTypeParser
+    // here throws FST_ERR_CTP_ALREADY_PRESENT. Remove it from this child's copy first so we can
+    // install the raw-string variant needed for HMAC-SHA1 verification. removeContentTypeParser is
+    // a no-op (returns false) when the parser is absent, so this is safe on a clean instance too.
+    twilio.removeContentTypeParser('application/x-www-form-urlencoded');
     twilio.addContentTypeParser(
       'application/x-www-form-urlencoded',
       { parseAs: 'string' },
       (_req, body, done) => done(null, body),
     );
-    // Fallback for misrouted or missing content-type.
+    // Fallback for misrouted or missing content-type — same guard for consistency.
+    twilio.removeContentTypeParser('*');
     twilio.addContentTypeParser('*', { parseAs: 'string' }, (_req, body, done) => done(null, body));
 
     twilio.post('/hooks/sms/twilio', async (req, reply) => {

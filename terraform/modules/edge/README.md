@@ -111,6 +111,19 @@ expecting the certificate to become ACTIVE.
 | `dns_authorization_cnames` | 🔒 RUNBOOK — all DNS-auth CNAMEs (name/type/data), for placement at the registrar pre-cutover |
 | `external_dns_records` | 🔒 RUNBOOK — per external host: A record + CNAME that an operator must place at their external DNS provider |
 
+## Provider version constraint
+
+The module requires `hashicorp/google >= 6.0, < 8.0`.  This is intentionally wide so consumers
+pinned at any 6.x or 7.x release can adopt the module without an empty-intersection error.
+The module itself is tested with the latest 7.x provider; a consumer locked at `~> 6.0` can
+run `terraform init -backend=false` against it successfully (see
+`terraform/fixtures/edge-consumer/` for a working demonstration).
+
+> **History:** Prior to this release the constraint was `~> 7.0`. Consumers locked at 6.x
+> (`~> 6.0`, e.g. locked at 6.50.0) hit an empty-intersection init failure. The constraint was
+> relaxed to `>= 6.0, < 8.0` in the same release that fixed the data-plane SMS-routes
+> `FST_ERR_CTP_ALREADY_PRESENT` boot crash.
+
 ## Tests
 
 ```bash
