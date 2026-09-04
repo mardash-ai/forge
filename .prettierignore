@@ -18,3 +18,7 @@ tests/fixtures/
 
 # The approved E2E mock is evidence, not source — never reformat it
 console/design/
+
+# Generated release-feed outputs (emitted by npm run diff:platform-model; attached to GitHub releases,
+# never committed). Excluded so a local diff run doesn't fail the prettier gate.
+platform-changes.json

@@ -18,6 +18,11 @@ terraform/**/.terraform.lock.hcl
 console/dist/
 console/node_modules/
 
+# Generated release-feed outputs (emitted by npm run diff:platform-model; attached to GitHub
+# releases as release assets, never committed to the repo source tree).
+platform-changes.json
+platform-changes.md
+
 # tsc -b emits alongside the sources; only the Vite bundle ships
 console/src/**/*.js
 console/src/*.js
