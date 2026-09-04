@@ -76,18 +76,9 @@ Resources, an Event history, and token-conscious output.
 
 ### Capabilities
 
-| Capability | CLI | Resource created |
-|---|---|---|
-| InitializeApp | `forge init app --name <n>` | `Application` |
-| ProvisionEnvironment | `forge provision --app <n>` | `Environment` |
-| InstallDependencies | `forge install --app <n>` | `DependencyInstall` |
-| RunDevServer | `forge dev --app <n>` | `DevServer` |
-| Build | `forge build --app <n>` | `Build` |
-| Test | `forge test --app <n>` | `TestRun` |
-| Lint | `forge lint --app <n>` | `CheckRun` |
-| Inspect | `forge inspect <type> --app <n>` | `Inspection` |
-| ExplainFailure | `forge explain --resource <id>` | `Analysis` |
-| GenerateFeaturePlan | `forge plan --app <n> --goal "…"` | `Plan` |
+The full, generated capability reference — slugs, planes, endpoints, resource types, and events
+emitted — lives in [`docs/architecture/PLATFORM_MODEL.md`](docs/architecture/PLATFORM_MODEL.md).
+Run `npm run generate:platform-model` to regenerate it from the live registry.
 
 ### Quick start
 
@@ -124,17 +115,10 @@ Flags: `--summary` (human-readable), `--raw` (full resource), `--json` (default)
 
 ### HTTP API
 
-The CLI is a thin client over the API (default `http://localhost:3717`):
-
-```
-GET  /health
-GET  /capabilities                  # discovery
-POST /capabilities/:slug            # perform a Capability
-GET  /resources[?type=&app_id=]     # list state
-GET  /resources/:type/:id           # one Resource
-GET  /events[?app_id=&resource_id=] # facts
-GET  /logs/:resourceId              # full log (explicit only)
-```
+The CLI is a thin client over the API (default `http://localhost:3717`). The full,
+generated route table — inline routes and all mounted route modules for both the
+control and data planes — is in
+[`docs/architecture/PLATFORM_MODEL.md`](docs/architecture/PLATFORM_MODEL.md#route-tables).
 
 ### Architecture
 

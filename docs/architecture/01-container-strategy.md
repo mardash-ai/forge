@@ -88,7 +88,7 @@ flowchart LR
 - The sidecar's **entire state directory** (`FORGE_STATE_DIR=/forge-state`) rides one durable named volume
   (`forge_state`). This is load-bearing: users/sessions, the secrets vault, the app-event log,
   notifications, the search index, and blob bytes all live there, so a redeploy that recreates the sidecar
-  container **keeps** signed-in users and stored data. (See [Runtime topology](02-runtime-topology.md).)
+  container **keeps** signed-in users and stored data.
 
 Packaging choice, stated plainly: the data plane is a **per-app sidecar container**, not a shared
 service and not an embedded library. That keeps a single-app trust boundary (the sidecar trusts its one
