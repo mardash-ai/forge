@@ -1,6 +1,6 @@
 {
   "name": "forge",
-  "version": "1.55.0",
+  "version": "1.56.0",
   "private": true,
   "type": "module",
   "description": "Forge — the AI-native software creation platform for Builders. Docker-first, API-first.",
@@ -13,6 +13,7 @@
     "api:watch": "tsx watch src/api/server.ts",
     "data-plane": "tsx src/data-plane/server.ts",
     "cli": "tsx src/cli/index.ts",
+    "generate:platform-model": "tsx scripts/generate-platform-model.ts",
     "test": "vitest run",
     "test:pg": "vitest run --config vitest.pg.config.ts",
     "typecheck": "tsc --noEmit"

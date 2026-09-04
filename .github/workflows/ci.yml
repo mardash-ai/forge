@@ -39,6 +39,21 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Platform-model drift guard — regenerate platform-model.json from the live
+      # registries and fail if the committed file is stale. This ensures the committed
+      # model is always in sync with the actual capability set, resource types, event
+      # catalog, and route tables. Re-run `npm run generate:platform-model` locally to
+      # update. See: Decision 2 (committed + ci-drift-guard, no publish-image change).
+      - name: Platform model drift check
+        run: |
+          npm run generate:platform-model
+          git diff --exit-code platform-model.json || {
+            echo ""
+            echo "❌ platform-model.json is stale. Run: npm run generate:platform-model"
+            echo "   then commit the updated platform-model.json."
+            exit 1
+          }
+
       # The console SPA has its own package.json and otherwise compiles only inside
       # Dockerfile.console — a TS error there (v1.19.1) surfaces at every consumer's docker
       # build instead of here.

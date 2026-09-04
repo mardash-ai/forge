@@ -1,0 +1,1718 @@
+{
+  "$schema": "https://forge.build/platform-model/v1",
+  "version": "1.56.0",
+  "capabilities": [
+    {
+      "name": "InitializeApp",
+      "slug": "initialize-app",
+      "description": "Create a Dockerized web/nextjs Application with standardized structure and Forge manifest.",
+      "plane": "control",
+      "resource_type": "Application",
+      "events": [
+        "ApplicationInitialized"
+      ],
+      "long_running": false,
+      "requires_docker": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "template": {
+            "type": "string",
+            "default": "nextjs-web"
+          },
+          "package_manager": {
+            "type": "string",
+            "enum": [
+              "npm"
+            ],
+            "default": "npm"
+          },
+          "language": {
+            "type": "string",
+            "enum": [
+              "typescript"
+            ],
+            "default": "typescript"
+          },
+          "app_dir": {
+            "type": "boolean",
+            "default": true
+          },
+          "docker": {
+            "type": "boolean",
+            "default": true
+          },
+          "platform": {
+            "type": "string",
+            "default": "web"
+          },
+          "framework": {
+            "type": "string",
+            "default": "nextjs"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "endpoint": "POST /capabilities/initialize-app"
+    },
+    {
+      "name": "ProvisionEnvironment",
+      "slug": "provision-environment",
+      "description": "Converge a Docker Compose environment (web + optional postgres/redis) for an Application; idempotent and non-destructive.",
+      "plane": "control",
+      "resource_type": "Environment",
+      "events": [
+        "EnvironmentProvisioned"
+      ],
+      "long_running": false,
+      "requires_docker": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "default": "web"
+          },
+          "framework": {
+            "type": "string",
+            "default": "nextjs"
+          },
+          "with_postgres": {
+            "type": "boolean",
+            "default": false
+          },
+          "with_redis": {
+            "type": "boolean",
+            "default": false
+          },
+          "without_postgres": {
+            "type": "boolean",
+            "default": false
+          },
+          "without_redis": {
+            "type": "boolean",
+            "default": false
+          },
+          "postgres_port": {
+            "type": "number",
+            "optional": true
+          },
+          "redis_port": {
+            "type": "number",
+            "optional": true
+          },
+          "web_port": {
+            "type": "number",
+            "optional": true
+          },
+          "force": {
+            "type": "boolean",
+            "default": false
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "platform_store": {
+            "type": "string",
+            "enum": [
+              "filesystem",
+              "postgres"
+            ],
+            "optional": true
+          }
+        },
+        "required": [
+          "app"
+        ]
+      },
+      "endpoint": "POST /capabilities/provision-environment"
+    },
+    {
+      "name": "InstallDependencies",
+      "slug": "install-dependencies",
+      "description": "Install application dependencies inside Docker (npm) and record a DependencyInstall Resource.",
+      "plane": "control",
+      "resource_type": "DependencyInstall",
+      "events": [
+        "DependenciesInstalled"
+      ],
+      "long_running": true,
+      "requires_docker": true,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "default": "web"
+          },
+          "framework": {
+            "type": "string",
+            "default": "nextjs"
+          }
+        },
+        "required": [
+          "app"
+        ]
+      },
+      "endpoint": "POST /capabilities/install-dependencies"
+    },
+    {
+      "name": "RunDevServer",
+      "slug": "run-dev-server",
+      "description": "Start, stop, or inspect the app dev server in Docker; records a DevServer Resource.",
+      "plane": "control",
+      "resource_type": "DevServer",
+      "events": [
+        "DevServerStarted",
+        "DevServerStopped"
+      ],
+      "long_running": true,
+      "requires_docker": true,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "default": "web"
+          },
+          "framework": {
+            "type": "string",
+            "default": "nextjs"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "start",
+              "stop",
+              "status"
+            ],
+            "default": "start"
+          }
+        },
+        "required": [
+          "app"
+        ]
+      },
+      "endpoint": "POST /capabilities/run-dev-server"
+    },
+    {
+      "name": "Build",
+      "slug": "build",
+      "description": "Run a reproducible production build inside Docker and record a Build Resource.",
+      "plane": "control",
+      "resource_type": "Build",
+      "events": [
+        "BuildStarted",
+        "BuildSucceeded",
+        "BuildFailed"
+      ],
+      "long_running": true,
+      "requires_docker": true,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "default": "web"
+          },
+          "framework": {
+            "type": "string",
+            "default": "nextjs"
+          }
+        },
+        "required": [
+          "app"
+        ]
+      },
+      "endpoint": "POST /capabilities/build"
+    },
+    {
+      "name": "Test",
+      "slug": "test",
+      "description": "Run the test suite inside Docker (Vitest) and record a TestRun Resource.",
+      "plane": "control",
+      "resource_type": "TestRun",
+      "events": [
+        "TestRunStarted",
+        "TestRunSucceeded",
+        "TestRunFailed"
+      ],
+      "long_running": true,
+      "requires_docker": true,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "default": "web"
+          },
+          "framework": {
+            "type": "string",
+            "default": "nextjs"
+          }
+        },
+        "required": [
+          "app"
+        ]
+      },
+      "endpoint": "POST /capabilities/test"
+    },
+    {
+      "name": "Lint",
+      "slug": "lint",
+      "description": "Run ESLint inside Docker and record a CheckRun Resource.",
+      "plane": "control",
+      "resource_type": "CheckRun",
+      "events": [
+        "CheckRunStarted",
+        "CheckRunSucceeded",
+        "CheckRunFailed"
+      ],
+      "long_running": true,
+      "requires_docker": true,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "default": "web"
+          },
+          "framework": {
+            "type": "string",
+            "default": "nextjs"
+          }
+        },
+        "required": [
+          "app"
+        ]
+      },
+      "endpoint": "POST /capabilities/lint"
+    },
+    {
+      "name": "Inspect",
+      "slug": "inspect",
+      "description": "Return a compact structured view of an Application (app, resources, events, app-events, notifications, routes, scripts, docker, secrets, jobs, agent-runs, email, health).",
+      "plane": "both",
+      "resource_type": "Inspection",
+      "events": [
+        "InspectionCreated"
+      ],
+      "long_running": false,
+      "requires_docker": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "default": "web"
+          },
+          "framework": {
+            "type": "string",
+            "default": "nextjs"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "app",
+              "resources",
+              "events",
+              "app-events",
+              "notifications",
+              "routes",
+              "scripts",
+              "docker",
+              "secrets",
+              "jobs",
+              "agent-runs",
+              "email",
+              "auth",
+              "health"
+            ],
+            "default": "app"
+          },
+          "owner": {
+            "type": "string",
+            "optional": true
+          }
+        },
+        "required": [
+          "app"
+        ]
+      },
+      "endpoint": "POST /capabilities/inspect"
+    },
+    {
+      "name": "Verify",
+      "slug": "verify",
+      "description": "Post-deploy contract smoke: read-only HTTP assertions that a deployed app honors the platform contracts it adopted (C6 health, C10 auth gates + /auth/config). Exits non-zero on any failed assertion.",
+      "plane": "both",
+      "resource_type": "Verification",
+      "events": [
+        "VerificationCompleted"
+      ],
+      "long_running": false,
+      "requires_docker": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "default": "web"
+          },
+          "framework": {
+            "type": "string",
+            "default": "nextjs"
+          },
+          "host": {
+            "type": "string"
+          },
+          "page_path": {
+            "type": "string",
+            "default": "/"
+          },
+          "health_path": {
+            "type": "string",
+            "default": "/api/health"
+          },
+          "api_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "cron_path": {
+            "type": "string",
+            "optional": true
+          },
+          "expect_google": {
+            "type": "boolean",
+            "default": false
+          },
+          "expect_email": {
+            "type": "boolean",
+            "default": false
+          },
+          "expect_password_signup": {
+            "type": "boolean",
+            "default": false
+          },
+          "check_refresh": {
+            "type": "boolean",
+            "default": false
+          },
+          "check_billing_mode": {
+            "type": "boolean",
+            "default": false
+          },
+          "billing_app_name": {
+            "type": "string",
+            "optional": true
+          },
+          "timeout_ms": {
+            "type": "number",
+            "optional": true
+          },
+          "readiness_timeout_ms": {
+            "type": "number",
+            "default": 0
+          },
+          "readiness_interval_ms": {
+            "type": "number",
+            "optional": true
+          }
+        },
+        "required": [
+          "app",
+          "host"
+        ]
+      },
+      "endpoint": "POST /capabilities/verify"
+    },
+    {
+      "name": "ExplainFailure",
+      "slug": "explain-failure",
+      "description": "Analyze a failed Build/TestRun/CheckRun (or a log path) and produce a compact Analysis Resource.",
+      "plane": "control",
+      "resource_type": "Analysis",
+      "events": [
+        "AnalysisCreated"
+      ],
+      "long_running": false,
+      "requires_docker": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "resource": {
+            "type": "string",
+            "optional": true
+          },
+          "log_path": {
+            "type": "string",
+            "optional": true
+          }
+        }
+      },
+      "endpoint": "POST /capabilities/explain-failure"
+    },
+    {
+      "name": "GenerateFeaturePlan",
+      "slug": "generate-feature-plan",
+      "description": "Produce a deterministic Plan (resources, files, capability sequence, validation, risks) for a Goal.",
+      "plane": "control",
+      "resource_type": "Plan",
+      "events": [
+        "PlanCreated"
+      ],
+      "long_running": false,
+      "requires_docker": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "goal"
+        ]
+      },
+      "endpoint": "POST /capabilities/generate-feature-plan"
+    },
+    {
+      "name": "SetSecret",
+      "slug": "set-secret",
+      "description": "Store an encrypted secret (e.g. an API key) for an Application; injected into its runtime, never persisted in source.",
+      "plane": "both",
+      "resource_type": "Secret",
+      "events": [
+        "SecretSet"
+      ],
+      "long_running": false,
+      "requires_docker": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "name",
+          "value"
+        ]
+      },
+      "endpoint": "POST /capabilities/set-secret"
+    },
+    {
+      "name": "UnsetSecret",
+      "slug": "unset-secret",
+      "description": "Remove/revoke an encrypted secret from an Application's vault (idempotent). Never returns the value.",
+      "plane": "both",
+      "resource_type": "Secret",
+      "events": [
+        "SecretUnset"
+      ],
+      "long_running": false,
+      "requires_docker": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "name"
+        ]
+      },
+      "endpoint": "POST /capabilities/unset-secret"
+    },
+    {
+      "name": "ScheduleJob",
+      "slug": "schedule-job",
+      "description": "Register or remove a durable scheduled job (recurring cron/interval or one-shot) that calls back into the app.",
+      "plane": "both",
+      "resource_type": "ScheduledJob",
+      "events": [
+        "JobScheduled",
+        "JobUnscheduled"
+      ],
+      "long_running": false,
+      "requires_docker": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "target_path": {
+            "type": "string",
+            "optional": true
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST"
+            ],
+            "default": "POST"
+          },
+          "every": {
+            "type": "string",
+            "optional": true
+          },
+          "cron": {
+            "type": "string",
+            "optional": true
+          },
+          "at": {
+            "type": "string",
+            "optional": true
+          },
+          "disabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "remove": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "app",
+          "name"
+        ]
+      },
+      "endpoint": "POST /capabilities/schedule-job"
+    },
+    {
+      "name": "Deploy",
+      "slug": "deploy",
+      "description": "Zero-downtime deploy of the app’s production stack (start-first roll) and record a Deployment.",
+      "plane": "control",
+      "resource_type": "Deployment",
+      "events": [
+        "DeploymentStarted",
+        "DeploymentCompleted",
+        "DeploymentRolledBack"
+      ],
+      "long_running": true,
+      "requires_docker": true,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "default": "web"
+          },
+          "framework": {
+            "type": "string",
+            "default": "nextjs"
+          },
+          "service": {
+            "type": "string",
+            "default": "web"
+          },
+          "context": {
+            "type": "string",
+            "optional": true
+          },
+          "compose_file": {
+            "type": "string",
+            "default": "app/compose.prod.yaml"
+          },
+          "env_file": {
+            "type": "string",
+            "default": "app/.env.prod"
+          },
+          "proxy_net": {
+            "type": "string",
+            "default": "proxy"
+          },
+          "pull": {
+            "type": "boolean",
+            "default": true
+          },
+          "drain_seconds": {
+            "type": "number",
+            "default": 3
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "default": 120
+          }
+        },
+        "required": [
+          "app"
+        ]
+      },
+      "endpoint": "POST /capabilities/deploy"
+    },
+    {
+      "name": "Productionize",
+      "slug": "productionize",
+      "description": "Generate the app’s canonical production artifacts (standalone Dockerfile, compose.prod.yaml with Traefik/data-plane/DB, .env.prod.example); idempotent and digest-pinned.",
+      "plane": "control",
+      "resource_type": "ProductionArtifacts",
+      "events": [
+        "ProductionArtifactsGenerated"
+      ],
+      "long_running": false,
+      "requires_docker": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "default": "web"
+          },
+          "framework": {
+            "type": "string",
+            "default": "nextjs"
+          },
+          "host": {
+            "type": "string",
+            "optional": true
+          },
+          "readiness_path": {
+            "type": "string",
+            "optional": true
+          },
+          "web_image": {
+            "type": "string",
+            "optional": true
+          },
+          "data_plane_image": {
+            "type": "string",
+            "optional": true
+          },
+          "cert_resolver": {
+            "type": "string",
+            "optional": true
+          },
+          "blobs_backend": {
+            "type": "string",
+            "enum": [
+              "filesystem",
+              "s3"
+            ],
+            "optional": true
+          },
+          "observability": {
+            "type": "boolean",
+            "optional": true
+          },
+          "mcp_mtls_host": {
+            "type": "string",
+            "optional": true
+          },
+          "mcp_mtls_tls_options": {
+            "type": "string",
+            "optional": true
+          }
+        },
+        "required": [
+          "app"
+        ]
+      },
+      "endpoint": "POST /capabilities/productionize"
+    },
+    {
+      "name": "Release",
+      "slug": "release",
+      "description": "Run the full production deploy pipeline end-to-end, idempotently and fail-safe: publish/await the commit’s image, repin (C8), deploy (C7 + P14 drift gate), verify (C14). Resumable after a partial failure; leaves prod on the last-good version on any error.",
+      "plane": "control",
+      "resource_type": "Release",
+      "events": [
+        "ReleaseStarted",
+        "ReleaseCompleted",
+        "ReleaseFailed"
+      ],
+      "long_running": true,
+      "requires_docker": true,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "default": "web"
+          },
+          "framework": {
+            "type": "string",
+            "default": "nextjs"
+          },
+          "host": {
+            "type": "string",
+            "optional": true
+          },
+          "publish_mode": {
+            "type": "string",
+            "enum": [
+              "ci",
+              "build"
+            ],
+            "default": "ci"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "default": 600
+          },
+          "poll_interval_seconds": {
+            "type": "number",
+            "default": 10
+          },
+          "commit": {
+            "type": "string",
+            "optional": true
+          },
+          "image_ref": {
+            "type": "string",
+            "optional": true
+          },
+          "owner": {
+            "type": "string",
+            "optional": true
+          },
+          "registry": {
+            "type": "string",
+            "optional": true
+          },
+          "image_suffix": {
+            "type": "string",
+            "optional": true
+          },
+          "context": {
+            "type": "string",
+            "optional": true
+          },
+          "service": {
+            "type": "string",
+            "optional": true
+          },
+          "compose_file": {
+            "type": "string",
+            "optional": true
+          },
+          "env_file": {
+            "type": "string",
+            "optional": true
+          },
+          "allow_dirty": {
+            "type": "boolean",
+            "default": false
+          },
+          "page_path": {
+            "type": "string",
+            "optional": true
+          },
+          "health_path": {
+            "type": "string",
+            "optional": true
+          },
+          "api_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "optional": true
+          },
+          "cron_path": {
+            "type": "string",
+            "optional": true
+          },
+          "expect_google": {
+            "type": "boolean",
+            "optional": true
+          },
+          "expect_email": {
+            "type": "boolean",
+            "optional": true
+          },
+          "expect_password_signup": {
+            "type": "boolean",
+            "optional": true
+          },
+          "check_refresh": {
+            "type": "boolean",
+            "optional": true
+          },
+          "verify_timeout_ms": {
+            "type": "number",
+            "optional": true
+          },
+          "verify_readiness_timeout_ms": {
+            "type": "number",
+            "default": 30000
+          },
+          "verify_readiness_interval_ms": {
+            "type": "number",
+            "optional": true
+          }
+        },
+        "required": [
+          "app"
+        ]
+      },
+      "endpoint": "POST /capabilities/release"
+    },
+    {
+      "name": "AgentRun",
+      "slug": "agent-run",
+      "description": "Invoke a model with a system prompt + input + enforced output schema; return the parsed result and persist the run (AgentTask) and its result (Artifact).",
+      "plane": "data",
+      "resource_type": "AgentTask",
+      "events": [
+        "AgentRunSucceeded",
+        "AgentRunFailed",
+        "ArtifactCreated"
+      ],
+      "long_running": false,
+      "requires_docker": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string",
+            "optional": true
+          },
+          "owner": {
+            "type": "string",
+            "optional": true
+          },
+          "capability": {
+            "type": "string"
+          },
+          "system": {
+            "type": "string"
+          },
+          "input": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              {
+                "type": "array",
+                "items": {}
+              }
+            ]
+          },
+          "schema": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "model": {
+            "type": "string",
+            "optional": true
+          },
+          "max_tokens": {
+            "type": "number",
+            "optional": true
+          }
+        },
+        "required": [
+          "capability",
+          "system",
+          "input",
+          "schema"
+        ]
+      },
+      "endpoint": "POST /capabilities/agent-run"
+    },
+    {
+      "name": "SendEmail",
+      "slug": "send-email",
+      "description": "Deliver a transactional email (inline subject+body or a built-in verify/reset template) via a C5-configured provider; persist the send (EmailDelivery) with a redacted recipient — no body/creds retained.",
+      "plane": "data",
+      "resource_type": "EmailDelivery",
+      "events": [
+        "EmailSent",
+        "EmailFailed"
+      ],
+      "long_running": false,
+      "requires_docker": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string",
+            "optional": true
+          },
+          "to": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string",
+            "optional": true
+          },
+          "html": {
+            "type": "string",
+            "optional": true
+          },
+          "text": {
+            "type": "string",
+            "optional": true
+          },
+          "template": {
+            "type": "string",
+            "enum": [
+              "verify-email",
+              "reset-password",
+              "twofa-code"
+            ],
+            "optional": true
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": {},
+            "optional": true
+          }
+        },
+        "required": [
+          "to"
+        ]
+      },
+      "endpoint": "POST /capabilities/send-email"
+    },
+    {
+      "name": "SendMessage",
+      "slug": "send-message",
+      "description": "Send an outbound message AS a user through their connected provider (MVP: email via Google/Gmail using the C24 broker); persist the send (EmailDelivery, owner-scoped, redacted) and emit MessageSent/MessageFailed.",
+      "plane": "data",
+      "resource_type": "EmailDelivery",
+      "events": [
+        "MessageSent",
+        "MessageFailed"
+      ],
+      "long_running": false,
+      "requires_docker": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string",
+            "optional": true
+          },
+          "owner": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string",
+            "default": "google"
+          },
+          "channel": {
+            "type": "string",
+            "default": "email"
+          },
+          "to": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "optional": true
+          },
+          "bcc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "optional": true
+          },
+          "subject": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "content_type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "html"
+            ],
+            "default": "text"
+          },
+          "in_reply_to": {
+            "type": "string",
+            "optional": true
+          },
+          "references": {
+            "type": "string",
+            "optional": true
+          },
+          "thread_ref": {
+            "type": "string",
+            "optional": true
+          }
+        },
+        "required": [
+          "owner",
+          "to",
+          "subject",
+          "body"
+        ]
+      },
+      "endpoint": "POST /capabilities/send-message"
+    },
+    {
+      "name": "SetupObservability",
+      "slug": "setup-observability",
+      "description": "Register the platform self-hosted Langfuse OTel stack: validate keys, probe endpoint, persist ObservabilityStack resource.",
+      "plane": "both",
+      "resource_type": "ObservabilityStack",
+      "events": [
+        "ObservabilityConfigured"
+      ],
+      "long_running": false,
+      "requires_docker": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "endpoint": {
+            "type": "string",
+            "default": "http://langfuse-web:3000/api/public/otel"
+          },
+          "public_key": {
+            "type": "string"
+          },
+          "secret_key": {
+            "type": "string"
+          },
+          "skip_probe": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "public_key",
+          "secret_key"
+        ]
+      },
+      "endpoint": "POST /capabilities/setup-observability"
+    },
+    {
+      "name": "ProvisionMonitoring",
+      "slug": "provision-monitoring",
+      "description": "Generate the canonical metrics+logging stack (collector, Loki, promtail, Prometheus, Grafana), deploy it, wait for health, and register the MonitoringStack resource.",
+      "plane": "control",
+      "resource_type": "MonitoringStack",
+      "events": [
+        "MonitoringConfigured"
+      ],
+      "long_running": true,
+      "requires_docker": true,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "dir": {
+            "type": "string",
+            "optional": true
+          },
+          "project_name": {
+            "type": "string",
+            "default": "dorinda-grafana"
+          },
+          "public_host": {
+            "type": "string",
+            "optional": true
+          },
+          "ui_port": {
+            "type": "number",
+            "default": 3200
+          },
+          "network": {
+            "type": "string",
+            "default": "observability"
+          },
+          "proxy_network": {
+            "type": "string",
+            "default": "proxy"
+          },
+          "alert_email": {
+            "type": "string",
+            "default": "ops@forge.local"
+          },
+          "log_scope_regex": {
+            "type": "string",
+            "default": "^(traefik|otel-collector|loki|promtail|prometheus|grafana|dorinda-.*|forge-.*)$"
+          },
+          "langfuse_otlp_b64": {
+            "type": "string",
+            "optional": true
+          },
+          "smtp_host": {
+            "type": "string",
+            "optional": true
+          },
+          "smtp_user": {
+            "type": "string",
+            "optional": true
+          },
+          "smtp_password": {
+            "type": "string",
+            "optional": true
+          },
+          "smtp_from": {
+            "type": "string",
+            "optional": true
+          },
+          "langfuse_public_url": {
+            "type": "string",
+            "optional": true
+          },
+          "langfuse_project_id": {
+            "type": "string",
+            "optional": true
+          },
+          "app_db_network": {
+            "type": "string",
+            "optional": true
+          },
+          "app_db_host": {
+            "type": "string",
+            "optional": true
+          },
+          "app_db_port": {
+            "type": "number",
+            "optional": true
+          },
+          "app_db_database": {
+            "type": "string",
+            "optional": true
+          },
+          "app_db_user": {
+            "type": "string",
+            "optional": true
+          },
+          "app_db_app_id": {
+            "type": "string",
+            "optional": true
+          },
+          "app_db_password": {
+            "type": "string",
+            "optional": true
+          },
+          "env_file": {
+            "type": "string",
+            "default": ".env"
+          },
+          "health_url": {
+            "type": "string",
+            "optional": true
+          },
+          "context": {
+            "type": "string",
+            "optional": true
+          },
+          "skip_deploy": {
+            "type": "boolean",
+            "default": false
+          },
+          "regenerate_secrets": {
+            "type": "boolean",
+            "default": false
+          },
+          "health_timeout_ms": {
+            "type": "number",
+            "default": 240000
+          }
+        }
+      },
+      "endpoint": "POST /capabilities/provision-monitoring"
+    },
+    {
+      "name": "Eval",
+      "slug": "eval",
+      "description": "Run an eval suite: drive a real model (Claude/GPT) as an MCP client against the app's tools, grade the trajectory (deterministic asserts + LLM-judge), and report a Langfuse dataset run.",
+      "plane": "control",
+      "resource_type": "EvalRun",
+      "events": [
+        "EvalRunCompleted"
+      ],
+      "long_running": true,
+      "requires_docker": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "suite": {},
+          "mcp_url": {
+            "type": "string"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "enum": [
+                    "anthropic",
+                    "openai"
+                  ]
+                },
+                "model": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "provider",
+                "model"
+              ]
+            },
+            "default": [
+              {
+                "provider": "anthropic",
+                "model": "claude-opus-4-8"
+              },
+              {
+                "provider": "openai",
+                "model": "gpt-4o"
+              }
+            ]
+          },
+          "judge_model": {
+            "type": "string",
+            "default": "claude-opus-4-8"
+          },
+          "run_name": {
+            "type": "string",
+            "optional": true
+          },
+          "langfuse": {
+            "type": "object",
+            "properties": {
+              "baseUrl": {
+                "type": "string",
+                "optional": true
+              },
+              "publicKey": {
+                "type": "string",
+                "optional": true
+              },
+              "secretKey": {
+                "type": "string",
+                "optional": true
+              }
+            },
+            "optional": true
+          }
+        },
+        "required": [
+          "app",
+          "suite",
+          "mcp_url"
+        ]
+      },
+      "endpoint": "POST /capabilities/eval"
+    },
+    {
+      "name": "DeliveryCheck",
+      "slug": "delivery-check",
+      "description": "Guard every hop of the delivery pipeline (commit→tag→image→deploy→consumer-pin). Each failing check exits non-zero and names the specific artifact behind with a concrete remedy. Silence requires an explicit in-repo declaration with a reason.",
+      "plane": "control",
+      "resource_type": "DeliveryCheckRun",
+      "events": [
+        "DeliveryCheckCompleted",
+        "DeliveryCheckFailed"
+      ],
+      "long_running": false,
+      "requires_docker": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "producer",
+                "release",
+                "consumer"
+              ]
+            },
+            "default": [
+              "producer",
+              "release",
+              "consumer"
+            ]
+          },
+          "repo_name": {
+            "type": "string",
+            "default": "forge"
+          },
+          "source_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "src/",
+              "tests/",
+              "package.json",
+              "Dockerfile"
+            ]
+          },
+          "image": {
+            "type": "string",
+            "optional": true
+          },
+          "image_label": {
+            "type": "string",
+            "optional": true
+          },
+          "consumers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "consumer_name": {
+                  "type": "string"
+                },
+                "producer_name": {
+                  "type": "string"
+                },
+                "pinned_version": {
+                  "type": "string"
+                },
+                "latest_version": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "consumer_name",
+                "producer_name",
+                "pinned_version",
+                "latest_version"
+              ]
+            },
+            "default": []
+          },
+          "repo_root": {
+            "type": "string",
+            "optional": true
+          }
+        }
+      },
+      "endpoint": "POST /capabilities/delivery-check"
+    }
+  ],
+  "resource_types": [
+    "Application",
+    "Environment",
+    "DependencyInstall",
+    "DevServer",
+    "Build",
+    "TestRun",
+    "CheckRun",
+    "Inspection",
+    "Verification",
+    "Analysis",
+    "Plan",
+    "Secret",
+    "ScheduledJob",
+    "Deployment",
+    "ProductionArtifacts",
+    "Release",
+    "AgentTask",
+    "Artifact",
+    "EmailDelivery",
+    "ObservabilityStack",
+    "MonitoringStack",
+    "EvalRun",
+    "DeliveryCheckRun"
+  ],
+  "event_catalog": [
+    "ApplicationInitialized",
+    "EnvironmentProvisioned",
+    "DependenciesInstalled",
+    "DevServerStarted",
+    "DevServerStopped",
+    "BuildStarted",
+    "BuildSucceeded",
+    "BuildFailed",
+    "TestRunStarted",
+    "TestRunSucceeded",
+    "TestRunFailed",
+    "CheckRunStarted",
+    "CheckRunSucceeded",
+    "CheckRunFailed",
+    "InspectionCreated",
+    "VerificationCompleted",
+    "AnalysisCreated",
+    "PlanCreated",
+    "SecretSet",
+    "SecretUnset",
+    "JobScheduled",
+    "JobUnscheduled",
+    "JobRan",
+    "JobRunFailed",
+    "DeploymentStarted",
+    "DeploymentCompleted",
+    "DeploymentRolledBack",
+    "ProductionArtifactsGenerated",
+    "ReleaseStarted",
+    "ReleaseCompleted",
+    "ReleaseFailed",
+    "AgentRunSucceeded",
+    "AgentRunFailed",
+    "ArtifactCreated",
+    "EmailSent",
+    "EmailFailed",
+    "MessageSent",
+    "MessageFailed",
+    "UserSignedUp",
+    "UserVerified",
+    "UserAuthenticated",
+    "SessionRefreshed",
+    "SessionRevoked",
+    "PasswordResetRequested",
+    "PasswordChanged",
+    "OwnerSeeded",
+    "TwofaEnabled",
+    "TwofaDisabled",
+    "TwofaChallengeIssued",
+    "TwofaChallengeVerified",
+    "UserDeleted",
+    "IncidentOpened",
+    "IncidentUpdated",
+    "IncidentResolved",
+    "ObservabilityConfigured",
+    "MonitoringConfigured",
+    "EvalRunCompleted",
+    "DeliveryCheckCompleted",
+    "DeliveryCheckFailed"
+  ],
+  "error_taxonomy": [
+    {
+      "code": "not_found",
+      "status": 404,
+      "retry": "change-input",
+      "description": "The requested resource or capability does not exist."
+    },
+    {
+      "code": "invalid_input",
+      "status": 422,
+      "retry": "change-input",
+      "description": "The request input failed schema validation."
+    },
+    {
+      "code": "policy_blocked",
+      "status": 403,
+      "retry": "needs-human",
+      "description": "A governance Policy blocked the operation."
+    },
+    {
+      "code": "permission_denied",
+      "status": 403,
+      "retry": "needs-human",
+      "description": "The Actor is not authorized to use this Capability or Resource."
+    },
+    {
+      "code": "dependency_unavailable",
+      "status": 503,
+      "retry": "needs-human",
+      "description": "A required dependency (Docker, secret, provider) is unavailable."
+    },
+    {
+      "code": "internal_error",
+      "status": 500,
+      "retry": "no",
+      "description": "An unexpected platform error occurred."
+    }
+  ],
+  "route_tables": {
+    "control_plane": {
+      "base_port": 3717,
+      "inline_routes": [
+        {
+          "method": "GET",
+          "path": "/health"
+        },
+        {
+          "method": "GET",
+          "path": "/health/deep"
+        },
+        {
+          "method": "GET",
+          "path": "/capabilities"
+        },
+        {
+          "method": "POST",
+          "path": "/capabilities/:slug"
+        },
+        {
+          "method": "GET",
+          "path": "/resources"
+        },
+        {
+          "method": "GET",
+          "path": "/resources/:type/:id"
+        },
+        {
+          "method": "GET",
+          "path": "/resources/:id"
+        },
+        {
+          "method": "GET",
+          "path": "/events"
+        },
+        {
+          "method": "GET",
+          "path": "/logs/:resourceId"
+        }
+      ],
+      "api_modules": [
+        "app-events-routes",
+        "notifications-routes",
+        "search-routes",
+        "blobs-routes",
+        "auth-routes",
+        "owner-routes",
+        "theme-routes",
+        "status-routes",
+        "incident-routes",
+        "authz-routes",
+        "oauth-routes",
+        "mcp-routes",
+        "connect-routes",
+        "membership-routes",
+        "billing-routes",
+        "tenant-routes",
+        "ingest-routes",
+        "sms-routes"
+      ]
+    },
+    "data_plane": {
+      "base_port": 3718,
+      "inline_routes": [
+        {
+          "method": "GET",
+          "path": "/health"
+        },
+        {
+          "method": "GET",
+          "path": "/health/deep"
+        },
+        {
+          "method": "GET",
+          "path": "/capabilities"
+        },
+        {
+          "method": "POST",
+          "path": "/capabilities/:slug"
+        },
+        {
+          "method": "GET",
+          "path": "/resources"
+        },
+        {
+          "method": "GET",
+          "path": "/resources/:id"
+        },
+        {
+          "method": "GET",
+          "path": "/events"
+        },
+        {
+          "method": "GET",
+          "path": "/logs/:resourceId"
+        }
+      ],
+      "api_modules": [
+        "app-events-routes",
+        "notifications-routes",
+        "search-routes",
+        "blobs-routes",
+        "auth-routes",
+        "owner-routes",
+        "theme-routes",
+        "status-routes",
+        "incident-routes",
+        "authz-routes",
+        "oauth-routes",
+        "mcp-routes",
+        "connect-routes",
+        "membership-routes",
+        "billing-routes",
+        "tenant-routes"
+      ]
+    }
+  }
+}
