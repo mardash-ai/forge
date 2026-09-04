@@ -13,3 +13,10 @@
   with pointers to `docs/architecture/PLATFORM_MODEL.md`.
 - `docs/architecture/README.md`: updated reading-order table to reference the generated
   `PLATFORM_MODEL.md` instead of the retired pages; preserved the two-planes design-rationale prose.
+
+### Fixed
+
+- `tests/version-script.test.ts`: the end-to-end version-bump test now restores
+  `docs/architecture/PLATFORM_MODEL.md` in `afterAll`, so the working tree is clean after every
+  `npm test` run (previously the test left `PLATFORM_MODEL.md` stamped with
+  `v99.0.0-version-script-test`, which failed the CI drift guard on the next push).
