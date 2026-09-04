@@ -135,4 +135,75 @@ describe('AppEvent owner-scoping (C11)', () => {
     ]);
     expect(await store.assignAppEventOwner('app', 'A')).toBe(0); // nothing left to claim (idempotent)
   });
+
+  it("deleteAppEventsByOwner removes only that owner's events (owner-scoped teardown)", async () => {
+    await store.appendAppEvent({ app_id: 'app', type: 'e1', owner: 'A' });
+    await store.appendAppEvent({ app_id: 'app', type: 'e2', owner: 'A' });
+    await store.appendAppEvent({ app_id: 'app', type: 'e3', owner: 'B' });
+
+    const deleted = await store.deleteAppEventsByOwner('app', 'A');
+    expect(deleted).toBe(2);
+
+    // A's events are gone; B's are intact
+    expect(await store.listAppEvents({ app_id: 'app', owner: 'A' })).toHaveLength(0);
+    expect(await store.listAppEvents({ app_id: 'app', owner: 'B' })).toHaveLength(1);
+  });
+
+  it('deleteAppEventsByOwner is idempotent — a second call returns 0', async () => {
+    await store.appendAppEvent({ app_id: 'app', type: 'e', owner: 'X' });
+    await store.deleteAppEventsByOwner('app', 'X');
+    expect(await store.deleteAppEventsByOwner('app', 'X')).toBe(0);
+  });
+});
+
+// C3 caller attribution + trace stamping (store level)
+describe('AppEvent caller attribution + trace_id (C3 fix)', () => {
+  it('persists caller when supplied', async () => {
+    const event = await store.appendAppEvent({
+      app_id: 'app',
+      type: 'mcp.tool_call',
+      owner: 'u1',
+      caller: 'claude-host',
+    });
+    expect(event.caller).toBe('claude-host');
+
+    const listed = await store.listAppEvents({ app_id: 'app', owner: 'u1' });
+    expect(listed[0]?.caller).toBe('claude-host');
+  });
+
+  it('caller is absent when not supplied', async () => {
+    const event = await store.appendAppEvent({ app_id: 'app', type: 'goal.created', owner: 'u2' });
+    expect(event.caller).toBeUndefined();
+  });
+
+  it('persists trace_id in top-level field and stamps it into data.trace_id', async () => {
+    const event = await store.appendAppEvent({
+      app_id: 'app',
+      type: 'authz.decision',
+      owner: 'u3',
+      trace_id: 'trace0011223344',
+      data: { decision: 'allow' },
+    });
+    expect(event.trace_id).toBe('trace0011223344');
+    expect(event.data['trace_id']).toBe('trace0011223344');
+
+    const listed = await store.listAppEvents({ app_id: 'app', owner: 'u3' });
+    expect(listed[0]?.trace_id).toBe('trace0011223344');
+    expect(listed[0]?.data['trace_id']).toBe('trace0011223344');
+  });
+
+  it('does not overwrite a caller-supplied data.trace_id with the top-level trace_id', async () => {
+    // If the caller explicitly set data.trace_id, we don't overwrite it.
+    const event = await store.appendAppEvent({
+      app_id: 'app',
+      type: 'connector.connected',
+      owner: 'u4',
+      trace_id: 'top-level-id',
+      data: { trace_id: 'caller-supplied-id' },
+    });
+    // Top-level field is always the stamped trace_id
+    expect(event.trace_id).toBe('top-level-id');
+    // data.trace_id keeps the caller-supplied value (not overwritten)
+    expect(event.data['trace_id']).toBe('caller-supplied-id');
+  });
 });

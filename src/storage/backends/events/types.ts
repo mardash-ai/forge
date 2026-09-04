@@ -14,6 +14,12 @@ export interface AppEventInput {
   type: string;
   subject?: string;
   owner?: string;
+  // Caller attribution — the service/host that emitted this event. Passed through from
+  // POST /app-events or set by forge when writing its own C3 events.
+  caller?: string;
+  // W3C trace id from the active span (forge-written events only). Also stamped into
+  // data.trace_id for consumers that read the data payload.
+  trace_id?: string;
   data?: Record<string, unknown>;
 }
 

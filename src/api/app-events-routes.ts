@@ -7,9 +7,15 @@ import { store } from '../storage/store';
 // a failed emit must never break the mutation that triggered it — that contract lives in the app's
 // client, but these routes never throw for "nothing there" either).
 //
-//   POST /app-events            { app?, type, subject?, owner?, data? }  -> { event }
-//   GET  /app-events            ?app=&subject=&owner=&limit=            -> { events }   (newest-first)
-//   GET  /app-events/latest     ?app=&owner=                           -> { latest }   (subject -> ISO)
+//   POST   /app-events            { app?, type, subject?, owner?, caller?, data? }  -> { event }
+//   GET    /app-events            ?app=&subject=&owner=&limit=                      -> { events }   (newest-first)
+//   GET    /app-events/latest     ?app=&owner=                                     -> { latest }   (subject -> ISO)
+//   DELETE /app-events            { app?, owner }                                  -> { deleted }   (owner-scoped teardown)
+//
+// `caller` (C3 fix) is the attribution field dorinda-api sends on mcp.tool_call and stamped domain
+// events — the OAuth client id or service identity of the emitter. Persisted verbatim; absent = unattributed.
+// `DELETE /app-events` is the owner-scoped tenant-reset route dorinda-api calls. It removes ONLY the
+// requesting owner's events from the app, never another tenant's. Previously 404'd — fixed here.
 //
 // `app` is the Application NAME; it defaults to the server's own app (data-plane: FORGE_APP_NAME),
 // so the app usually doesn't pass it. Resolves to an app_id via the seeded Application record.
@@ -42,6 +48,7 @@ export function registerAppEventRoutes(
       type?: string;
       subject?: string;
       owner?: string;
+      caller?: string;
       data?: Record<string, unknown>;
     };
     if (!b.type || typeof b.type !== 'string') {
@@ -60,9 +67,31 @@ export function registerAppEventRoutes(
       type: b.type,
       subject: b.subject,
       owner: b.owner,
+      // Pass caller through verbatim; absent in body → undefined (not persisted).
+      caller: typeof b.caller === 'string' && b.caller.length > 0 ? b.caller : undefined,
       data: b.data,
     });
     return reply.status(200).send({ event });
+  });
+
+  // DELETE /app-events — owner-scoped tenant reset. Removes ALL events belonging to `owner`
+  // for this app. Never touches another owner's events. Returns the count of deleted events.
+  // Called by dorinda-api on tenant reset / account teardown.
+  app.delete('/app-events', async (req, reply) => {
+    const b = (req.body ?? {}) as { app?: string; owner?: string };
+    if (!b.owner || typeof b.owner !== 'string') {
+      return reply.status(422).send({
+        error: {
+          code: 'invalid_input',
+          message: 'DELETE /app-events requires a string `owner` to scope the deletion.',
+          retry: 'change-input',
+        },
+      });
+    }
+    const app_id = await resolveAppId(b.app);
+    if (!app_id) return reply.status(404).send(unknownApp);
+    const deleted = await store.deleteAppEventsByOwner(app_id, b.owner);
+    return reply.status(200).send({ deleted });
   });
 
   app.get('/app-events', async (req, reply) => {

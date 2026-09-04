@@ -150,6 +150,12 @@ the field was the previous behavior; it is now forbidden.
 **Legacy / migrated events** whose `data.host` was never captured will carry
 `caller: 'unattributed'`. This is the correct answer, not a bug.
 
+**C3 fix (caller attribution for app-emitted events):** `POST /app-events` now accepts and
+persists a top-level `caller` field in the request body. dorinda-api stamps the OAuth client id
+on mcp.tool_call and domain events it emits on behalf of an MCP host; forge previously dropped
+this field silently (it was absent from `AppEvent` and `AppEventInput`). The field is now
+persisted verbatim on both the filesystem JSONL and Postgres backends.
+
 ### Agent usage example
 
 ```typescript
@@ -163,6 +169,57 @@ const timeline = events.map(toTimelineEvent);
 for (const entry of timeline) {
   console.log(`${entry.at} ${entry.tool} by ${entry.caller} (${entry.ok ? 'ok' : 'error'})`);
 }
+```
+
+---
+
+## C3 trace stamping — cross-hop trace correlation
+
+Every C3 event **forge writes itself** (mcp.tool_call, authz.decision, policy.set/removed,
+connector.connected/disconnected/token_issued, message.sent/failed) carries two trace fields:
+
+| Field | Where | Value |
+|---|---|---|
+| `event.trace_id` | top-level AppEvent field | W3C trace id (16-byte hex) from the active span |
+| `event.data.trace_id` | inside the `data` payload | Same trace id — for consumers that read only `data` |
+
+**When does a trace id appear?**
+
+- **forge-written events**: always stamped when a span is in scope. For `mcp.tool_call`, the span
+  is the C23 `mcp.tool_call` span started from `parentFromTraceparent(req.headers.traceparent)`.
+  For authz/policy/connector/message events, the trace id is extracted from the incoming request's
+  `traceparent` header (if present). Events written outside a traced request carry no trace id.
+- **app-emitted events** (POST /app-events from the app): trace id is NOT stamped — the app
+  controls its own tracing boundary and may pass its own `data.trace_id` in the body.
+
+**Why both fields?**
+
+`event.trace_id` is indexed (a Postgres column + B-tree index; a scan filter in the FS backend)
+and is the primary field for platform cross-hop queries. `data.trace_id` preserves backward
+compatibility for consumers that destructure `data` directly without knowing about the top-level
+field.
+
+**Querying by trace (PG backend):**
+
+```sql
+SELECT * FROM forge_app_events
+WHERE app_id = $1 AND trace_id = $2
+ORDER BY at DESC;
+```
+
+**DELETE /app-events — tenant reset:**
+
+`DELETE /app-events { owner }` removes ALL events for `owner` from the app, scoped to that owner
+only (never another tenant's events). dorinda-api calls this route during tenant teardown; it
+previously 404'd because the route was not registered. Returns `{ deleted: N }`.
+
+```bash
+# dorinda-api's tenant reset call (server-to-server, service token):
+curl -X DELETE https://api.example.com/app-events \
+  -H "x-forge-service-token: $AUTH_SERVICE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"owner":"user_abc123"}'
+# → {"deleted":42}
 ```
 
 ---

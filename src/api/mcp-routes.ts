@@ -672,7 +672,7 @@ export function registerMcpRoutes(
     // Per-tool SCOPE enforcement against the granted token (the platform's job). The app additionally runs
     // its C29 authorize() inside the handler for write/act tools — we pass it the seam context below.
     if (tool.scope && !scopesSatisfy(verified.scopes, [tool.scope])) {
-      await recordCall(app_.id, name, verified, false, 'insufficient_scope');
+      await recordCall(app_.id, name, verified, false, 'insufficient_scope', span.traceId);
       span.setAttribute(ATTR.AUTHZ_DECISION, 'insufficient_scope').end('error', 'insufficient_scope');
       const dur = Date.now() - startMs;
       mcpLog({
@@ -703,7 +703,7 @@ export function registerMcpRoutes(
     // Dispatch to the app's handler (the C2 sidecar→app callback), authenticated as a service.
     const base = await appCallbackBase(store, app_.id);
     if (!base) {
-      await recordCall(app_.id, name, verified, false, 'app_unreachable');
+      await recordCall(app_.id, name, verified, false, 'app_unreachable', span.traceId);
       span.end('error', 'app_unreachable');
       const dur = Date.now() - startMs;
       mcpLog({
@@ -770,7 +770,7 @@ export function registerMcpRoutes(
     }
     const errorClass = ok ? undefined : `handler_status_${httpStatus ?? 'error'}`;
     const duration_ms = Date.now() - startMs;
-    await recordCall(app_.id, name, verified, ok, errorClass);
+    await recordCall(app_.id, name, verified, ok, errorClass, span.traceId);
     if (httpStatus !== undefined) span.setAttribute('http.response.status_code', httpStatus);
     // C36 — the returned payload is the observation OUTPUT, on SUCCESS AND FAILURE alike: an isError /
     // handler_status_* error body is exactly what you need to see on the trace to debug the bounce.
@@ -840,22 +840,28 @@ export function registerMcpRoutes(
   }
 
   // Every host tool call is a C3 fact: who (user), which host (client), which tool, and whether it ran.
+  // `traceId` is the active span's trace id — stamped into data.trace_id and the top-level trace_id
+  // field so consumers can correlate this event back to a full cross-hop trace.
   async function recordCall(
     appId: string,
     tool: string,
     verified: VerifiedToken,
     ok: boolean,
     reason?: string,
+    traceId?: string,
   ) {
     await store.appendAppEvent({
       app_id: appId,
       type: 'mcp.tool_call',
       subject: tool,
       owner: verified.userId,
+      caller: verified.clientId,
+      ...(traceId ? { trace_id: traceId } : {}),
       data: {
         tool,
         host: verified.clientId,
         ok,
+        ...(traceId ? { trace_id: traceId } : {}),
         ...(reason ? { reason } : {}),
       },
     });

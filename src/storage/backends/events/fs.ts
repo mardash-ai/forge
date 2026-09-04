@@ -53,13 +53,21 @@ export class FsEventBackend implements EventBackend, MigratableEventBackend {
   }
 
   async append(appId: string, input: AppEventInput): Promise<AppEvent> {
+    // When trace_id is supplied, also copy it into data.trace_id so consumers that read
+    // the data payload inherit it without needing to know the top-level field.
+    const data =
+      input.trace_id && !input.data?.['trace_id']
+        ? { trace_id: input.trace_id, ...(input.data ?? {}) }
+        : (input.data ?? {});
     const event: AppEvent = {
       id: newId('aevt'),
       app_id: appId,
       type: input.type,
       subject: input.subject,
       owner: input.owner,
-      data: input.data ?? {},
+      ...(input.caller !== undefined ? { caller: input.caller } : {}),
+      ...(input.trace_id !== undefined ? { trace_id: input.trace_id } : {}),
+      data,
       at: nowIso(),
     };
     await mkdir(appEventsDir(), { recursive: true });

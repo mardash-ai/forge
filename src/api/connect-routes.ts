@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { parentFromTraceparent } from '../plugins/otel/index';
 import { store } from '../storage/store';
 import { executeCapability } from '../core/runtime';
 import { SYSTEM_ACTOR } from '../shared/domain';
@@ -138,6 +139,7 @@ export function registerConnectRoutes(
     provider: string,
     owner: string,
     data: Record<string, unknown>,
+    traceId?: string,
   ): Promise<void> {
     try {
       await store.appendAppEvent({
@@ -145,11 +147,17 @@ export function registerConnectRoutes(
         type,
         subject: provider,
         owner,
-        data: { provider, ...data },
+        ...(traceId ? { trace_id: traceId } : {}),
+        data: { provider, ...data, ...(traceId ? { trace_id: traceId } : {}) },
       });
     } catch {
       // C3 is best-effort telemetry — never fail the connect/broker call because the timeline write hiccuped.
     }
+  }
+
+  /** Extract trace id from an incoming W3C traceparent header (if present). */
+  function traceIdFrom(req: FastifyRequest): string | undefined {
+    return parentFromTraceparent(req.headers.traceparent)?.traceId;
   }
 
   // === discovery =================================================================================
@@ -247,10 +255,17 @@ export function registerConnectRoutes(
         code: q.code,
         ...(session ? { sessionOwner: session.userId } : {}),
       });
-      await recordC3(app_.id, 'connector.connected', connection.provider, owner, {
-        scopes: connection.scopes,
-        ...(connection.account_label ? { account_label: connection.account_label } : {}),
-      });
+      await recordC3(
+        app_.id,
+        'connector.connected',
+        connection.provider,
+        owner,
+        {
+          scopes: connection.scopes,
+          ...(connection.account_label ? { account_label: connection.account_label } : {}),
+        },
+        traceIdFrom(req),
+      );
       const sep = returnTo.includes('?') ? '&' : '?';
       return reply
         .code(302)
@@ -312,7 +327,8 @@ export function registerConnectRoutes(
     if (!owner) return reply.status(401).send(needAuth);
     const { provider } = req.params as { provider: string };
     const disconnected = await disconnect(app_.id, owner, provider);
-    if (disconnected) await recordC3(app_.id, 'connector.disconnected', provider, owner, {});
+    if (disconnected)
+      await recordC3(app_.id, 'connector.disconnected', provider, owner, {}, traceIdFrom(req));
     return { disconnected };
   });
 
@@ -329,7 +345,14 @@ export function registerConnectRoutes(
     if (!owner) return reply.status(401).send(needAuth);
     const result = await disconnectAll(app_.id, owner);
     for (const provider of result.providers) {
-      await recordC3(app_.id, 'connector.disconnected', provider, owner, { reason: 'teardown' });
+      await recordC3(
+        app_.id,
+        'connector.disconnected',
+        provider,
+        owner,
+        { reason: 'teardown' },
+        traceIdFrom(req),
+      );
     }
     return result;
   });
@@ -414,7 +437,14 @@ export function registerConnectRoutes(
           ? { requireScope: trimmed(b.require_scope ?? b.scope)! }
           : {}),
       });
-      await recordC3(app_.id, 'connector.token_issued', provider, owner, { via, scopes: fresh.scopes });
+      await recordC3(
+        app_.id,
+        'connector.token_issued',
+        provider,
+        owner,
+        { via, scopes: fresh.scopes },
+        traceIdFrom(req),
+      );
       return reply.status(200).send(fresh);
     } catch (e) {
       return errorReply(reply, e);
@@ -592,6 +622,7 @@ export function registerConnectRoutes(
           message_id: message.message_id ?? null,
           ...(message.status === 'failed' && message.error ? { error: message.error } : {}),
         },
+        traceIdFrom(req),
       );
       return reply.status(200).send({ message });
     } catch (e) {

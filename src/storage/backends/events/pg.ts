@@ -27,6 +27,10 @@ export async function ensureEventSchema(pool: Pool): Promise<void> {
       type       text NOT NULL,
       subject    text,
       owner      text,
+      -- caller attribution (C3 fix): the service/host that emitted the event.
+      caller     text,
+      -- trace_id: W3C trace id from the active span, for cross-hop correlation.
+      trace_id   text,
       data       jsonb NOT NULL DEFAULT '{}',
       at         text NOT NULL,   -- ISO-8601, verbatim
       -- O4 ownership scope (baked in; households/C31 light up with no migration).
@@ -36,6 +40,11 @@ export async function ensureEventSchema(pool: Pool): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS forge_app_events_owner_at ON forge_app_events (app_id, owner, at DESC);
     CREATE INDEX IF NOT EXISTS forge_app_events_subject  ON forge_app_events (app_id, subject);
+    -- Idempotent column additions for existing deployments (caller + trace_id added in C3 fix).
+    ALTER TABLE forge_app_events ADD COLUMN IF NOT EXISTS caller   text;
+    ALTER TABLE forge_app_events ADD COLUMN IF NOT EXISTS trace_id text;
+    CREATE INDEX IF NOT EXISTS forge_app_events_trace_id ON forge_app_events (app_id, trace_id)
+      WHERE trace_id IS NOT NULL;
   `);
 }
 
@@ -45,6 +54,8 @@ interface EventRow {
   type: string;
   subject: string | null;
   owner: string | null;
+  caller: string | null;
+  trace_id: string | null;
   data: unknown;
   at: string;
 }
@@ -55,14 +66,16 @@ function rowToEvent(r: EventRow): AppEvent {
     type: r.type,
     ...(r.subject != null ? { subject: r.subject } : {}),
     ...(r.owner != null ? { owner: r.owner } : {}),
+    ...(r.caller != null ? { caller: r.caller } : {}),
+    ...(r.trace_id != null ? { trace_id: r.trace_id } : {}),
     data: (r.data as Record<string, unknown>) ?? {},
     at: r.at,
   };
 }
 
 const INSERT_SQL = `
-  INSERT INTO forge_app_events (app_id, id, type, subject, owner, data, at, group_id, visibility)
-  VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7, NULL, 'private')`;
+  INSERT INTO forge_app_events (app_id, id, type, subject, owner, caller, trace_id, data, at, group_id, visibility)
+  VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9, NULL, 'private')`;
 
 export class PgEventBackend implements EventBackend, MigratableEventBackend {
   constructor(private readonly pool: Pool) {}
@@ -87,13 +100,21 @@ export class PgEventBackend implements EventBackend, MigratableEventBackend {
   }
 
   async append(appId: string, input: AppEventInput): Promise<AppEvent> {
+    // When trace_id is supplied, also copy it into data.trace_id so consumers that read
+    // the data payload inherit it without needing to know the top-level field.
+    const data =
+      input.trace_id && !input.data?.['trace_id']
+        ? { trace_id: input.trace_id, ...(input.data ?? {}) }
+        : (input.data ?? {});
     const event: AppEvent = {
       id: newId('aevt'),
       app_id: appId,
       type: input.type,
       subject: input.subject,
       owner: input.owner,
-      data: input.data ?? {},
+      ...(input.caller !== undefined ? { caller: input.caller } : {}),
+      ...(input.trace_id !== undefined ? { trace_id: input.trace_id } : {}),
+      data,
       at: nowIso(),
     };
     await this.pool.query(INSERT_SQL, [
@@ -102,6 +123,8 @@ export class PgEventBackend implements EventBackend, MigratableEventBackend {
       event.type,
       input.subject ?? null,
       input.owner ?? null,
+      input.caller ?? null,
+      input.trace_id ?? null,
       JSON.stringify(event.data),
       event.at,
     ]);
@@ -111,7 +134,7 @@ export class PgEventBackend implements EventBackend, MigratableEventBackend {
   async list(appId: string, opts: AppEventListOpts): Promise<AppEvent[]> {
     // Indexed range read, newest-first. `at DESC, seq DESC` = insertion order reversed (deterministic).
     const r = await this.pool.query<EventRow>(
-      `SELECT app_id, id, type, subject, owner, data, at
+      `SELECT app_id, id, type, subject, owner, caller, trace_id, data, at
          FROM forge_app_events
         WHERE app_id = $1
           AND ($2::text IS NULL OR owner = $2)
@@ -153,7 +176,7 @@ export class PgEventBackend implements EventBackend, MigratableEventBackend {
   // --- migration surface (oldest-first, insertion order preserved via seq) --
   async exportApp(appId: string): Promise<AppEvent[]> {
     const r = await this.pool.query<EventRow>(
-      'SELECT app_id, id, type, subject, owner, data, at FROM forge_app_events WHERE app_id=$1 ORDER BY seq ASC',
+      'SELECT app_id, id, type, subject, owner, caller, trace_id, data, at FROM forge_app_events WHERE app_id=$1 ORDER BY seq ASC',
       [appId],
     );
     return r.rows.map(rowToEvent);
@@ -170,6 +193,8 @@ export class PgEventBackend implements EventBackend, MigratableEventBackend {
           e.type,
           e.subject ?? null,
           e.owner ?? null,
+          e.caller ?? null,
+          e.trace_id ?? null,
           JSON.stringify(e.data ?? {}),
           e.at,
         ]);

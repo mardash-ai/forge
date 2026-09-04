@@ -17,6 +17,18 @@ export interface AppEvent {
   // The feed filters by (app, owner): a query passing an owner sees ONLY that owner's events,
   // so events never leak across users. Absent = legacy/app-scoped (pre-C11 or a C10-less app).
   owner?: string;
+  // Caller attribution — the identity of the service or host that emitted this event. Set
+  // on app-emitted events when the emitter passes `caller` in the POST /app-events body
+  // (e.g. dorinda-api stamps the OAuth client id on mcp.tool_call events). Forge-written
+  // events (mcp.tool_call, authz.decision, policy.*, connector.*, message.*) also carry this
+  // when the platform can determine the originator. Absent = unattributed.
+  caller?: string;
+  // W3C-style trace id (16-byte hex) from the active span when this event was written. Set
+  // only on FORGE-WRITTEN events (mcp.tool_call, authz.decision, policy.*, connector.*,
+  // message.*). Consumers use this for cross-hop trace correlation. Absent on app-emitted
+  // events (the app controls its own tracing boundary). Also copied into data.trace_id for
+  // backward compatibility with consumers that read the data payload directly.
+  trace_id?: string;
   // Denormalized snapshot the app supplies; rendered as-is.
   data: Record<string, unknown>;
   // ISO-8601 emit time.

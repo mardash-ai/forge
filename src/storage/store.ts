@@ -111,6 +111,12 @@ export class Store {
     subject?: string;
     // Owner (C11) — the opaque user id this fact belongs to. Absent = app-scoped/legacy.
     owner?: string;
+    // Caller attribution — the service/host that emitted this event. Passed through from
+    // POST /app-events (app-emitted) or set by forge when writing its own C3 events.
+    caller?: string;
+    // W3C trace id from the active span (forge-written events only). Also stamped into
+    // data.trace_id for consumers that read the data payload.
+    trace_id?: string;
     data?: Record<string, unknown>;
   }): Promise<AppEvent> {
     const { events } = await getBackends();
@@ -118,6 +124,8 @@ export class Store {
       type: input.type,
       subject: input.subject,
       owner: input.owner,
+      caller: input.caller,
+      trace_id: input.trace_id,
       data: input.data,
     });
   }
@@ -147,6 +155,15 @@ export class Store {
   async assignAppEventOwner(app_id: string, owner: string): Promise<number> {
     const { events } = await getBackends();
     return events.assignOwner(app_id, owner);
+  }
+
+  // Delete ALL app events belonging to `owner` for an app (tenant reset / account teardown).
+  // Owner-scoped: only removes events where owner === `owner`; other owners' events are untouched.
+  // Returns the number of deleted events. Used by DELETE /app-events (C3 fix) and account teardown
+  // flows (C34). Idempotent — deleting an already-gone set returns 0.
+  async deleteAppEventsByOwner(app_id: string, owner: string): Promise<number> {
+    const { events } = await getBackends();
+    return events.deleteByOwner(app_id, owner);
   }
 
   // --- Notifications (C4) — P26: pluggable NotificationBackend --------------------

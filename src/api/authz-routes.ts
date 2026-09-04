@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { store } from '../storage/store';
 import { getBackends } from '../storage/backends';
 import { newId } from '../shared/ids';
@@ -15,6 +15,12 @@ import type {
   ResolvedMembership,
 } from '../authz/types';
 import { resolveMembership, getPersonalGroup, provisionGroup } from '../membership/service';
+import { parentFromTraceparent } from '../plugins/otel/index';
+
+/** Extract the trace id from the incoming W3C `traceparent` header (if present). */
+function traceIdFrom(req: FastifyRequest): string | undefined {
+  return parentFromTraceparent(req.headers.traceparent)?.traceId;
+}
 
 // C29 — the authorization/policy HTTP surface. Registered on BOTH planes (control: policy config; data:
 // runtime `POST /authorize`), like the other data-plane surfaces. The deterministic decision itself is
@@ -127,16 +133,19 @@ export function registerAuthzRoutes(
     });
 
     // Record the decision to the C3 audit trail (owner-scoped), keyed by the action class.
+    const authzTraceId = traceIdFrom(req);
     await store.appendAppEvent({
       app_id,
       type: AUTHZ_DECISION,
       subject: decision.action_class,
       owner: b.owner,
+      ...(authzTraceId ? { trace_id: authzTraceId } : {}),
       data: {
         decision: decision.decision,
         rule: decision.rule,
         high_risk: decision.high_risk,
         action: b.action,
+        ...(authzTraceId ? { trace_id: authzTraceId } : {}),
         ...(membership
           ? { group_id: decision.group_id, role: decision.role, is_member: decision.is_member }
           : {}),
@@ -183,12 +192,19 @@ export function registerAuthzRoutes(
     await backend.put(app_id, policy);
     // Record the create/update to the C3 audit trail (owner-scoped when the rule is), so the policy
     // lifecycle is observable end-to-end and symmetric with policy.removed below.
+    const policySetTraceId = traceIdFrom(req);
     await store.appendAppEvent({
       app_id,
       type: POLICY_SET,
       subject: policy.id,
       ...(policy.owner ? { owner: policy.owner } : {}),
-      data: { id: policy.id, effect: policy.effect, ...(policy.owner ? { owner: policy.owner } : {}) },
+      ...(policySetTraceId ? { trace_id: policySetTraceId } : {}),
+      data: {
+        id: policy.id,
+        effect: policy.effect,
+        ...(policy.owner ? { owner: policy.owner } : {}),
+        ...(policySetTraceId ? { trace_id: policySetTraceId } : {}),
+      },
     });
     return reply.status(200).send({ policy });
   });
@@ -216,12 +232,18 @@ export function registerAuthzRoutes(
     const deleted = await (await getBackends()).policy.delete(app_id, id, q.owner ? { owner: q.owner } : {});
     // Emit policy.removed ONLY on a real removal (a no-op has nothing to announce), symmetric with policy.set.
     if (deleted) {
+      const policyRemovedTraceId = traceIdFrom(req);
       await store.appendAppEvent({
         app_id,
         type: POLICY_REMOVED,
         subject: id,
         ...(q.owner ? { owner: q.owner } : {}),
-        data: { id, ...(q.owner ? { owner: q.owner } : {}) },
+        ...(policyRemovedTraceId ? { trace_id: policyRemovedTraceId } : {}),
+        data: {
+          id,
+          ...(q.owner ? { owner: q.owner } : {}),
+          ...(policyRemovedTraceId ? { trace_id: policyRemovedTraceId } : {}),
+        },
       });
     }
     return reply.status(200).send({ deleted, id });
