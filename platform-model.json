@@ -1,6 +1,6 @@
 {
   "$schema": "https://forge.build/platform-model/v1",
-  "version": "1.56.4",
+  "version": "1.57.0",
   "capabilities": [
     {
       "name": "InitializeApp",
@@ -1538,7 +1538,8 @@
         "connect-routes",
         "membership-routes",
         "billing-routes",
-        "tenant-routes"
+        "tenant-routes",
+        "sms-routes"
       ]
     }
   }
