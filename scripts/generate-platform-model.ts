@@ -23,11 +23,36 @@ const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { ve
 // ── Error taxonomy ────────────────────────────────────────────────────────────
 // Sourced from src/shared/errors.ts — every ForgeError variant the platform emits.
 const ERROR_TAXONOMY = [
-  { code: 'not_found', status: 404, retry: 'change-input', description: 'The requested resource or capability does not exist.' },
-  { code: 'invalid_input', status: 422, retry: 'change-input', description: 'The request input failed schema validation.' },
-  { code: 'policy_blocked', status: 403, retry: 'needs-human', description: 'A governance Policy blocked the operation.' },
-  { code: 'permission_denied', status: 403, retry: 'needs-human', description: 'The Actor is not authorized to use this Capability or Resource.' },
-  { code: 'dependency_unavailable', status: 503, retry: 'needs-human', description: 'A required dependency (Docker, secret, provider) is unavailable.' },
+  {
+    code: 'not_found',
+    status: 404,
+    retry: 'change-input',
+    description: 'The requested resource or capability does not exist.',
+  },
+  {
+    code: 'invalid_input',
+    status: 422,
+    retry: 'change-input',
+    description: 'The request input failed schema validation.',
+  },
+  {
+    code: 'policy_blocked',
+    status: 403,
+    retry: 'needs-human',
+    description: 'A governance Policy blocked the operation.',
+  },
+  {
+    code: 'permission_denied',
+    status: 403,
+    retry: 'needs-human',
+    description: 'The Actor is not authorized to use this Capability or Resource.',
+  },
+  {
+    code: 'dependency_unavailable',
+    status: 503,
+    retry: 'needs-human',
+    description: 'A required dependency (Docker, secret, provider) is unavailable.',
+  },
   { code: 'internal_error', status: 500, retry: 'no', description: 'An unexpected platform error occurred.' },
 ] as const;
 
@@ -54,17 +79,28 @@ function zodToJsonSchema(schema: ZodTypeAny, depth = 0): Record<string, unknown>
       }
       return { type: 'object', properties, ...(required.length ? { required } : {}) };
     }
-    case 'ZodString': return { type: 'string' };
-    case 'ZodNumber': return { type: 'number' };
-    case 'ZodBoolean': return { type: 'boolean' };
-    case 'ZodAny': return {};
-    case 'ZodUnknown': return {};
-    case 'ZodNull': return { type: 'null' };
-    case 'ZodUndefined': return { type: 'undefined' };
-    case 'ZodLiteral': return { const: def.value as unknown };
-    case 'ZodEnum': return { type: 'string', enum: def.values as string[] };
-    case 'ZodNativeEnum': return { type: 'string', enum: Object.values(def.values as Record<string, unknown>) };
-    case 'ZodArray': return { type: 'array', items: zodToJsonSchema(def.type as ZodTypeAny, depth + 1) };
+    case 'ZodString':
+      return { type: 'string' };
+    case 'ZodNumber':
+      return { type: 'number' };
+    case 'ZodBoolean':
+      return { type: 'boolean' };
+    case 'ZodAny':
+      return {};
+    case 'ZodUnknown':
+      return {};
+    case 'ZodNull':
+      return { type: 'null' };
+    case 'ZodUndefined':
+      return { type: 'undefined' };
+    case 'ZodLiteral':
+      return { const: def.value as unknown };
+    case 'ZodEnum':
+      return { type: 'string', enum: def.values as string[] };
+    case 'ZodNativeEnum':
+      return { type: 'string', enum: Object.values(def.values as Record<string, unknown>) };
+    case 'ZodArray':
+      return { type: 'array', items: zodToJsonSchema(def.type as ZodTypeAny, depth + 1) };
     case 'ZodOptional': {
       const inner = zodToJsonSchema(def.innerType as ZodTypeAny, depth + 1);
       return { ...inner, optional: true };
@@ -72,7 +108,11 @@ function zodToJsonSchema(schema: ZodTypeAny, depth = 0): Record<string, unknown>
     case 'ZodDefault': {
       const inner = zodToJsonSchema(def.innerType as ZodTypeAny, depth + 1);
       let defaultVal: unknown;
-      try { defaultVal = (def.defaultValue as () => unknown)(); } catch { defaultVal = undefined; }
+      try {
+        defaultVal = (def.defaultValue as () => unknown)();
+      } catch {
+        defaultVal = undefined;
+      }
       return { ...inner, default: defaultVal };
     }
     case 'ZodNullable': {
@@ -109,7 +149,7 @@ function zodToJsonSchema(schema: ZodTypeAny, depth = 0): Record<string, unknown>
     }
     default: {
       // Unknown Zod type — emit the type name so the model is self-documenting.
-      return { '$zod': typeName };
+      return { $zod: typeName };
     }
   }
 }

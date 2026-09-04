@@ -67,7 +67,17 @@ describe('describeCapabilities() — plane field (registry.ts:27+)', () => {
   });
 
   it('returns slug, name, description, resource_type, events, long_running, requires_docker, endpoint', () => {
-    const required = ['slug', 'name', 'description', 'plane', 'resource_type', 'events', 'long_running', 'requires_docker', 'endpoint'];
+    const required = [
+      'slug',
+      'name',
+      'description',
+      'plane',
+      'resource_type',
+      'events',
+      'long_running',
+      'requires_docker',
+      'endpoint',
+    ];
     for (const cap of described) {
       for (const field of required) {
         expect(cap, `${cap.slug} missing ${field}`).toHaveProperty(field);
@@ -149,7 +159,9 @@ describe('platform-model.json', () => {
 
   it('control_plane route table includes the /capabilities route', () => {
     if (!model) return;
-    const cp = (model.route_tables as { control_plane: { inline_routes: Array<{ method: string; path: string }> } }).control_plane;
+    const cp = (
+      model.route_tables as { control_plane: { inline_routes: Array<{ method: string; path: string }> } }
+    ).control_plane;
     const capRoute = cp.inline_routes.find((r) => r.path === '/capabilities');
     expect(capRoute, 'GET /capabilities missing from control_plane route table').toBeDefined();
     expect(capRoute?.method).toBe('GET');
@@ -157,7 +169,9 @@ describe('platform-model.json', () => {
 
   it('data_plane route table includes the /capabilities route', () => {
     if (!model) return;
-    const dp = (model.route_tables as { data_plane: { inline_routes: Array<{ method: string; path: string }> } }).data_plane;
+    const dp = (
+      model.route_tables as { data_plane: { inline_routes: Array<{ method: string; path: string }> } }
+    ).data_plane;
     const capRoute = dp.inline_routes.find((r) => r.path === '/capabilities');
     expect(capRoute, 'GET /capabilities missing from data_plane route table').toBeDefined();
   });

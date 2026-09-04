@@ -47,6 +47,7 @@ jobs:
       - name: Platform model drift check
         run: |
           npm run generate:platform-model
+          npx prettier --write platform-model.json
           git diff --exit-code platform-model.json || {
             echo ""
             echo "❌ platform-model.json is stale. Run: npm run generate:platform-model"
