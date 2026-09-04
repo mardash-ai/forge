@@ -30,6 +30,7 @@ import { registerConnectRoutes } from '../api/connect-routes';
 import { registerMembershipRoutes } from '../api/membership-routes';
 import { registerBillingRoutes } from '../api/billing-routes';
 import { registerTenantRoutes } from '../api/tenant-routes';
+import { registerSmsRoutes } from '../api/sms-routes';
 import { logPath } from '../shared/paths';
 import { getBackends } from '../storage/backends';
 import { checkStripeModeConsistency } from '../billing/mode-guard';
@@ -251,6 +252,13 @@ registerMembershipRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 registerBillingRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
 // C34 whole-tenant teardown — the app calls this over the internal network to erase an account.
 registerTenantRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME });
+
+// SMS delivery channel (C21 SMS) — phone verification flow (/auth/phone/*) + inbound Twilio webhook.
+// The app proxies /auth/* to this plane (next-config.ts rewrites), so /auth/phone/send-code and
+// /auth/phone/verify-code MUST be registered here for production phone verification to work.
+// The webhook at POST /hooks/sms/twilio handles carrier-required STOP/START/HELP keywords
+// (HMAC-SHA1 signature verified against TWILIO_AUTH_TOKEN before any business logic runs).
+registerSmsRoutes(app, { defaultApp: () => process.env.FORGE_APP_NAME ?? 'default' });
 
 // In production there is no `./forge provision`, so seed a minimal Application
 // record for the app this sidecar serves — enough for schedule-job/inspect to

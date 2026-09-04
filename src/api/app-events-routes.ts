@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { store } from '../storage/store';
+import { hasValidServiceToken } from '../shared/service-auth';
 
 // C3 — the application event log surface. Registered on BOTH the control-plane API (dev) and the
 // data-plane server (prod sidecar), because this is the first APP→FORGE direction: the running app
@@ -41,6 +42,13 @@ export function registerAppEventRoutes(
       retry: 'change-input',
     },
   };
+  const needServiceToken = {
+    error: {
+      code: 'unauthorized',
+      message: 'a valid x-forge-service-token is required.',
+      retry: 'needs-human',
+    },
+  };
 
   app.post('/app-events', async (req, reply) => {
     const b = (req.body ?? {}) as {
@@ -62,6 +70,7 @@ export function registerAppEventRoutes(
     }
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     const event = await store.appendAppEvent({
       app_id,
       type: b.type,
@@ -90,6 +99,7 @@ export function registerAppEventRoutes(
     }
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     const deleted = await store.deleteAppEventsByOwner(app_id, b.owner);
     return reply.status(200).send({ deleted });
   });
@@ -98,6 +108,7 @@ export function registerAppEventRoutes(
     const q = req.query as { app?: string; subject?: string; owner?: string; limit?: string };
     const app_id = await resolveAppId(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     const events = await store.listAppEvents({
       app_id,
       subject: q.subject,
@@ -111,6 +122,7 @@ export function registerAppEventRoutes(
     const q = req.query as { app?: string; owner?: string };
     const app_id = await resolveAppId(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     return { latest: await store.latestAppEventTimes(app_id, q.owner) };
   });
 }

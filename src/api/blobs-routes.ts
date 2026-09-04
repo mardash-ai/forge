@@ -6,6 +6,7 @@ import { unlink } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { store } from '../storage/store';
 import { getBackends } from '../storage/backends';
+import { hasValidServiceToken } from '../shared/service-auth';
 import { newId } from '../shared/ids';
 import { nowIso } from '../shared/time';
 import {
@@ -118,6 +119,13 @@ export function registerBlobRoutes(
     'change-input',
   );
   const notFound = blobError('not_found', 'no such blob for this owner.', 'change-input');
+  const needServiceToken = {
+    error: {
+      code: 'unauthorized',
+      message: 'a valid x-forge-service-token is required.',
+      retry: 'needs-human',
+    },
+  };
 
   // --- Stream one multipart request to a temp file, collecting the file + all fields. ------------------
   // Streams the file part (fieldname `file`) through a hash + size counter + head capture into `tmpPath`,
@@ -310,6 +318,10 @@ export function registerBlobRoutes(
       await safeCleanup(tmpPath);
       return reply.status(404).send(unknownApp);
     }
+    if (!(await hasValidServiceToken(req, app_id))) {
+      await safeCleanup(tmpPath);
+      return reply.status(401).send(needServiceToken);
+    }
 
     const filename = sanitizeFilename(up.fields.filename ?? up.partFilename);
     const meta: BlobMetadata = {
@@ -366,6 +378,7 @@ export function registerBlobRoutes(
         .send(blobError('invalid_input', 'a blob read requires an `owner` query param.', 'change-input'));
     const app_id = await resolveAppId(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
 
     const backend = (await getBackends()).blobs;
     const meta = await backend.get(app_id, owner, id);
@@ -412,6 +425,7 @@ export function registerBlobRoutes(
         .send(blobError('invalid_input', 'a blob delete requires an `owner`.', 'change-input'));
     const app_id = await resolveAppId(q.app ?? body.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
 
     const backend = (await getBackends()).blobs;
     const deleted = await backend.delete(app_id, owner, id);
@@ -429,6 +443,7 @@ export function registerBlobRoutes(
         .send(blobError('invalid_input', 'a blob list requires an `owner` query param.', 'change-input'));
     const app_id = await resolveAppId(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     const config = blobConfig();
     const backend = (await getBackends()).blobs;
     const metas = await backend.list(app_id, owner);

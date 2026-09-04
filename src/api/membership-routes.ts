@@ -71,6 +71,13 @@ export function registerMembershipRoutes(
     },
   };
   const invalid = (message: string) => ({ error: { code: 'invalid_input', message, retry: 'change-input' } });
+  const needServiceToken = {
+    error: {
+      code: 'unauthorized',
+      message: 'a valid x-forge-service-token is required.',
+      retry: 'needs-human',
+    },
+  };
 
   // Wrap a handler so a thrown ForgeError (the membership failure vocabulary) serializes to its status —
   // works even on a bare test server with no app-level error handler.
@@ -92,6 +99,7 @@ export function registerMembershipRoutes(
       const b = (req.body ?? {}) as { app?: string; roles?: RoleDef[] };
       const app_id = await resolveAppId(b.app);
       if (!app_id) return reply.status(404).send(unknownApp);
+      if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
       const roles = await (
         await getBackends()
       ).membership.mutate(app_id, (s) => putRoles(s, b.roles as RoleDef[]));
@@ -105,6 +113,7 @@ export function registerMembershipRoutes(
       const q = req.query as { app?: string };
       const app_id = await resolveAppId(q.app);
       if (!app_id) return reply.status(404).send(unknownApp);
+      if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
       const state = await (await getBackends()).membership.read(app_id);
       return { roles: state.roles };
     }),
@@ -118,6 +127,7 @@ export function registerMembershipRoutes(
         return reply.status(422).send(invalid('a group requires a string `owner`.'));
       const app_id = await resolveAppId(b.app);
       if (!app_id) return reply.status(404).send(unknownApp);
+      if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
       const result = await (
         await getBackends()
       ).membership.mutate(app_id, (s) =>
@@ -143,6 +153,7 @@ export function registerMembershipRoutes(
       const q = req.query as { app?: string };
       const app_id = await resolveAppId(q.app);
       if (!app_id) return reply.status(404).send(unknownApp);
+      if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
       const state = await (await getBackends()).membership.read(app_id);
       const group = resolveGroup(state, id);
       if (!group)
@@ -160,6 +171,7 @@ export function registerMembershipRoutes(
       const q = req.query as { app?: string };
       const app_id = await resolveAppId(q.app);
       if (!app_id) return reply.status(404).send(unknownApp);
+      if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
       const state = await (await getBackends()).membership.read(app_id);
       const group = resolveGroup(state, id);
       if (!group)
@@ -180,6 +192,7 @@ export function registerMembershipRoutes(
       const q = req.query as { app?: string };
       const app_id = await resolveAppId(q.app);
       if (!app_id) return reply.status(404).send(unknownApp);
+      if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
       const state = await (await getBackends()).membership.read(app_id);
       const view = memberView(state, id, owner);
       if (!view || view.status !== 'active')
@@ -201,6 +214,7 @@ export function registerMembershipRoutes(
       const q = req.query as { app?: string };
       const app_id = await resolveAppId(q.app);
       if (!app_id) return reply.status(404).send(unknownApp);
+      if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
       const state = await (await getBackends()).membership.read(app_id);
       const items = groupsForOwner(state, owner);
       return { items, total: items.length };
@@ -221,6 +235,7 @@ export function registerMembershipRoutes(
         return reply.status(422).send(invalid('an invitation requires a string `role`.'));
       const app_id = await resolveAppId(b.app);
       if (!app_id) return reply.status(404).send(unknownApp);
+      if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
       const token = mintToken();
       const result = await (
         await getBackends()
@@ -249,6 +264,7 @@ export function registerMembershipRoutes(
       const q = req.query as { app?: string };
       const app_id = await resolveAppId(q.app);
       if (!app_id) return reply.status(404).send(unknownApp);
+      if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
       const state = await (await getBackends()).membership.read(app_id);
       const group = resolveGroup(state, id);
       if (!group)
@@ -269,6 +285,7 @@ export function registerMembershipRoutes(
       const b = (req.body ?? {}) as { app?: string };
       const app_id = await resolveAppId(b.app);
       if (!app_id) return reply.status(404).send(unknownApp);
+      if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
       const invitation = await (
         await getBackends()
       ).membership.mutate(app_id, (s) => revokeInvitation(s, { id, now: nowIso() }));
@@ -286,6 +303,7 @@ export function registerMembershipRoutes(
         return reply.status(422).send(invalid('accept requires a string `owner`.'));
       const app_id = await resolveAppId(b.app);
       if (!app_id) return reply.status(404).send(unknownApp);
+      if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
       const result = await (
         await getBackends()
       ).membership.mutate(app_id, (s) =>
@@ -312,6 +330,7 @@ export function registerMembershipRoutes(
         return reply.status(422).send(invalid('a role change requires a string `role`.'));
       const app_id = await resolveAppId(b.app);
       if (!app_id) return reply.status(404).send(unknownApp);
+      if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
       const member = await (
         await getBackends()
       ).membership.mutate(app_id, (s) =>
@@ -330,6 +349,7 @@ export function registerMembershipRoutes(
         return reply.status(422).send(invalid('a member removal requires a string `actor`.'));
       const app_id = await resolveAppId(b.app);
       if (!app_id) return reply.status(404).send(unknownApp);
+      if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
       const { member, group } = await (
         await getBackends()
       ).membership.mutate(app_id, (s) => removeMember(s, { groupId: id, actor: b.actor!, owner }));
@@ -362,6 +382,7 @@ export function registerMembershipRoutes(
         return reply.status(422).send(invalid('transfer requires a string `to_owner`.'));
       const app_id = await resolveAppId(b.app);
       if (!app_id) return reply.status(404).send(unknownApp);
+      if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
       const result = await (
         await getBackends()
       ).membership.mutate(app_id, (s) =>
@@ -386,6 +407,7 @@ export function registerMembershipRoutes(
         return reply.status(422).send(invalid('leave requires a string `actor`.'));
       const app_id = await resolveAppId(b.app);
       if (!app_id) return reply.status(404).send(unknownApp);
+      if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
       const { member, group } = await (
         await getBackends()
       ).membership.mutate(app_id, (s) => leaveGroup(s, { groupId: id, actor: b.actor! }));

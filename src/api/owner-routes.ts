@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { store } from '../storage/store';
+import { hasValidServiceToken } from '../shared/service-auth';
 
 // C11 — the owner-scoping MIGRATION surface. Owner-scoping is otherwise pure runtime behavior
 // (emit/write take an `owner`; feed/query/inspect filter by it). This route is the one-time cutover
@@ -30,6 +31,13 @@ export function registerOwnerRoutes(
       retry: 'change-input',
     },
   };
+  const needServiceToken = {
+    error: {
+      code: 'unauthorized',
+      message: 'a valid x-forge-service-token is required.',
+      retry: 'needs-human',
+    },
+  };
 
   app.post('/owner/claim-legacy', async (req, reply) => {
     const b = (req.body ?? {}) as { app?: string; owner?: string };
@@ -44,6 +52,7 @@ export function registerOwnerRoutes(
     }
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
 
     // Claim across every owner-scoped shared store. C1 spans two resource types (the run + its
     // artifact), so both are claimed to keep a run and its result attributed to the same owner.

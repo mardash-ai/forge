@@ -33,6 +33,8 @@ import {
 
 const APP = 'demo';
 const APP_ID = `app_${APP}`;
+const SVC_TOKEN = 'incidents-svc-token';
+const svcHdr = { 'x-forge-service-token': SVC_TOKEN };
 
 // ============================================================================
 // PURE — lifecycle / retention / banner precedence / json
@@ -341,6 +343,7 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
     repo = await mkdtemp(path.join(tmpdir(), 'forge-inc-repo-'));
     process.env.FORGE_STATE_DIR = dir;
     process.env.FORGE_APP_CALLBACK_HOST = '127.0.0.1';
+    process.env.AUTH_SERVICE_TOKEN = SVC_TOKEN;
     await store.init();
     server = Fastify({ logger: false });
     registerStatusRoutes(server, { defaultApp: () => APP, planeLabel: 'Forge data plane' });
@@ -356,6 +359,7 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
     restore('FORGE_STATE_DIR', prevState);
     restore('FORGE_APP_CALLBACK_HOST', prevHost);
     restore('FORGE_APP_CALLBACK_PORT', prevPort);
+    delete process.env.AUTH_SERVICE_TOKEN;
     await rm(dir, { recursive: true, force: true });
     await rm(repo, { recursive: true, force: true });
   });
@@ -368,7 +372,7 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
     expect(before.overall).toBe('operational');
     expect(before.incidents).toEqual([]);
 
-    // declare a critical incident (public, no cookie needed)
+    // declare a critical incident
     const created = await server.inject({
       method: 'POST',
       url: '/status/incidents',
@@ -379,6 +383,7 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
         components: ['db'],
         body: 'Investigating elevated errors.',
       },
+      headers: svcHdr,
     });
     expect(created.statusCode).toBe(200);
     const inc = created.json().incident;
@@ -386,7 +391,7 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
     expect(inc.resolved_at).toBeNull();
 
     // list shows it
-    const list = (await server.inject({ method: 'GET', url: '/status/incidents' })).json();
+    const list = (await server.inject({ method: 'GET', url: '/status/incidents', headers: svcHdr })).json();
     expect(list.incidents).toHaveLength(1);
     expect(list.incidents[0].title).toBe('Checkout down');
 
@@ -420,6 +425,7 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
         method: 'POST',
         url: '/status/incidents',
         payload: { title: 'API errors', status: 'investigating', impact: 'major' },
+        headers: svcHdr,
       })
     ).json().incident;
 
@@ -428,6 +434,7 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
       method: 'POST',
       url: '/status/incidents/update',
       payload: { id: created.id, status: 'monitoring', body: 'mitigation in place' },
+      headers: svcHdr,
     });
     expect(upd.json().incident.status).toBe('monitoring');
 
@@ -435,6 +442,7 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
       method: 'POST',
       url: '/status/incidents/resolve',
       payload: { id: created.id, body: 'all clear' },
+      headers: svcHdr,
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().incident.status).toBe('resolved');
@@ -499,14 +507,21 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
         method: 'POST',
         url: '/status/incidents',
         payload: { title: 'Cache cold', status: 'investigating', impact: 'minor' },
+        headers: svcHdr,
       })
     ).json().incident;
     await server.inject({
       method: 'POST',
       url: '/status/incidents/update',
       payload: { id: created.id, status: 'identified', body: 'x' },
+      headers: svcHdr,
     });
-    await server.inject({ method: 'POST', url: '/status/incidents/resolve', payload: { id: created.id } });
+    await server.inject({
+      method: 'POST',
+      url: '/status/incidents/resolve',
+      payload: { id: created.id },
+      headers: svcHdr,
+    });
 
     const events = await store.listEvents({ app_id: APP_ID, limit: 50 });
     const types = events.map((e) => e.type);
@@ -524,12 +539,14 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
         method: 'POST',
         url: '/status/incidents',
         payload: { title: 'quick blip', status: 'investigating', impact: 'minor' },
+        headers: svcHdr,
       })
     ).json().incident;
     await server.inject({
       method: 'POST',
       url: '/status/incidents/update',
       payload: { id: created.id, status: 'resolved', body: 'over' },
+      headers: svcHdr,
     });
     const json = (await server.inject({ method: 'GET', url: '/status.json' })).json();
     expect(json.incidents[0].status).toBe('resolved');
@@ -546,6 +563,7 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
           method: 'POST',
           url: '/status/incidents',
           payload: { title: 't', status: 'bogus', impact: 'minor' },
+          headers: svcHdr,
         })
       ).statusCode,
     ).toBe(422);
@@ -556,6 +574,7 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
           method: 'POST',
           url: '/status/incidents',
           payload: { title: 't', status: 'investigating', impact: 'nope' },
+          headers: svcHdr,
         })
       ).statusCode,
     ).toBe(422);
@@ -566,6 +585,7 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
           method: 'POST',
           url: '/status/incidents',
           payload: { status: 'investigating', impact: 'minor' },
+          headers: svcHdr,
         })
       ).statusCode,
     ).toBe(422);
@@ -576,12 +596,19 @@ describe('C15 Phase 3 — incident routes + public rendering', () => {
           method: 'POST',
           url: '/status/incidents/update',
           payload: { id: 'inc_nope', status: 'monitoring' },
+          headers: svcHdr,
         })
       ).statusCode,
     ).toBe(404);
     expect(
-      (await server.inject({ method: 'POST', url: '/status/incidents/resolve', payload: { id: 'inc_nope' } }))
-        .statusCode,
+      (
+        await server.inject({
+          method: 'POST',
+          url: '/status/incidents/resolve',
+          payload: { id: 'inc_nope' },
+          headers: svcHdr,
+        })
+      ).statusCode,
     ).toBe(404);
   });
 
@@ -623,16 +650,19 @@ describe('C15 Phase 3 — P25 store-less box (empty Application store → app/fo
   let prevState2: string | undefined;
   let prevWs: string | undefined;
   let prevLayout: string | undefined;
+  let prevAuthToken: string | undefined;
 
   beforeEach(async () => {
     prevState2 = process.env.FORGE_STATE_DIR;
     prevWs = process.env.FORGE_WORKSPACE;
     prevLayout = process.env.FORGE_APP_LAYOUT;
+    prevAuthToken = process.env.AUTH_SERVICE_TOKEN;
     sdir = await mkdtemp(path.join(tmpdir(), 'forge-p25-state-'));
     wdir = await mkdtemp(path.join(tmpdir(), 'forge-p25-ws-'));
     process.env.FORGE_STATE_DIR = sdir;
     process.env.FORGE_WORKSPACE = wdir;
     process.env.FORGE_APP_LAYOUT = 'single'; // one repo == one app, living at <ws>/app
+    process.env.AUTH_SERVICE_TOKEN = SVC_TOKEN;
     // The committed app manifest — the SAME file `forge deploy` reads — carries the app name.
     // No Application record is ever saved to the store (the store-less box condition).
     await mkdir(path.join(wdir, 'app'), { recursive: true });
@@ -649,6 +679,7 @@ describe('C15 Phase 3 — P25 store-less box (empty Application store → app/fo
     restore('FORGE_STATE_DIR', prevState2);
     restore('FORGE_WORKSPACE', prevWs);
     restore('FORGE_APP_LAYOUT', prevLayout);
+    restore('AUTH_SERVICE_TOKEN', prevAuthToken);
     await rm(sdir, { recursive: true, force: true });
     await rm(wdir, { recursive: true, force: true });
   });
@@ -668,6 +699,7 @@ describe('C15 Phase 3 — P25 store-less box (empty Application store → app/fo
         impact: 'major',
         body: 'upstream 5xx',
       },
+      headers: svcHdr,
     });
     expect(created.statusCode).toBe(200);
     const inc = created.json().incident;
@@ -675,7 +707,9 @@ describe('C15 Phase 3 — P25 store-less box (empty Application store → app/fo
     expect(inc.title).toBe('Partner API down');
 
     // list resolves the SAME store-less app and shows it
-    const list = (await server2.inject({ method: 'GET', url: '/status/incidents?app=forge-os' })).json();
+    const list = (
+      await server2.inject({ method: 'GET', url: '/status/incidents?app=forge-os', headers: svcHdr })
+    ).json();
     expect(list.incidents).toHaveLength(1);
     expect(list.incidents[0].title).toBe('Partner API down');
 
@@ -691,6 +725,7 @@ describe('C15 Phase 3 — P25 store-less box (empty Application store → app/fo
         method: 'POST',
         url: '/status/incidents',
         payload: { app: 'forge-os', title: 'Cache cold', status: 'investigating', impact: 'minor' },
+        headers: svcHdr,
       })
     ).json().incident;
 
@@ -698,12 +733,15 @@ describe('C15 Phase 3 — P25 store-less box (empty Application store → app/fo
       method: 'POST',
       url: '/status/incidents/resolve',
       payload: { app: 'forge-os', id: inc.id, body: 'recovered' },
+      headers: svcHdr,
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().incident.status).toBe('resolved');
     expect(res.json().incident.resolved_at).toBeTruthy();
 
-    const after = (await server2.inject({ method: 'GET', url: '/status/incidents?app=forge-os' })).json();
+    const after = (
+      await server2.inject({ method: 'GET', url: '/status/incidents?app=forge-os', headers: svcHdr })
+    ).json();
     expect(after.incidents).toHaveLength(1);
     expect(after.incidents[0].status).toBe('resolved');
   });
@@ -715,9 +753,12 @@ describe('C15 Phase 3 — P25 store-less box (empty Application store → app/fo
         method: 'POST',
         url: '/status/incidents',
         payload: { title: 'No --app needed', status: 'investigating', impact: 'minor' },
+        headers: svcHdr,
       });
       expect(created.statusCode).toBe(200);
-      const list = (await server2.inject({ method: 'GET', url: '/status/incidents' })).json();
+      const list = (
+        await server2.inject({ method: 'GET', url: '/status/incidents', headers: svcHdr })
+      ).json();
       expect(list.incidents.map((i: { title: string }) => i.title)).toEqual(['No --app needed']);
     } finally {
       delete process.env.FORGE_APP_NAME;
@@ -733,6 +774,7 @@ describe('C15 Phase 3 — P25 store-less box (empty Application store → app/fo
       method: 'POST',
       url: '/status/incidents',
       payload: { app: 'ghost', title: 't', status: 'investigating', impact: 'minor' },
+      headers: svcHdr,
     });
     expect(r.statusCode).toBe(404);
     expect(r.json().error.code).toBe('not_found');

@@ -138,9 +138,10 @@ const seedActiveCustomer = async (
   expect(applied).toBe(true);
 };
 
-const setRoles = () => server.inject({ method: 'PUT', url: '/roles', payload: { roles: ROLES } });
+const setRoles = () =>
+  server.inject({ method: 'PUT', url: '/roles', payload: { roles: ROLES }, headers: SVC });
 const ensureGroup = (owner: string) =>
-  server.inject({ method: 'POST', url: '/groups/ensure', payload: { owner } });
+  server.inject({ method: 'POST', url: '/groups/ensure', payload: { owner }, headers: SVC });
 
 // Provision a SHARED group: A owns it, B accepts an invitation (flips it off singleton).
 const sharedGroup = async (a: string, b: string, bRole = 'member'): Promise<string> => {
@@ -149,12 +150,14 @@ const sharedGroup = async (a: string, b: string, bRole = 'member'): Promise<stri
     method: 'POST',
     url: `/groups/${g}/invitations`,
     payload: { actor: a, invitee_hint: b, role: bRole },
+    headers: SVC,
   });
   const token = inv.json().invitation.token as string;
   const acc = await server.inject({
     method: 'POST',
     url: '/invitations/accept',
     payload: { token, owner: b },
+    headers: SVC,
   });
   expect(acc.statusCode).toBe(200);
   return g;

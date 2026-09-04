@@ -15,6 +15,7 @@ import { nowIso } from '../src/shared/time';
 // to one owner never returns another owner's data, and that the one-time cutover migration claims
 // legacy (owner-less) records for a seeded owner.
 const APP = 'demo';
+const SVC_TOKEN = 'owner-scoping-svc-token';
 let dir: string;
 let prevState: string | undefined;
 let server: FastifyInstance;
@@ -43,6 +44,7 @@ beforeEach(async () => {
   prevState = process.env.FORGE_STATE_DIR;
   dir = await mkdtemp(path.join(tmpdir(), 'forge-owner-'));
   process.env.FORGE_STATE_DIR = dir;
+  process.env.AUTH_SERVICE_TOKEN = SVC_TOKEN;
   await store.init();
   await seedApp();
   server = Fastify({ logger: false });
@@ -54,21 +56,23 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await server.close();
+  delete process.env.AUTH_SERVICE_TOKEN;
   if (prevState === undefined) delete process.env.FORGE_STATE_DIR;
   else process.env.FORGE_STATE_DIR = prevState;
   await rm(dir, { recursive: true, force: true });
 });
 
+const svcHdr = { 'x-forge-service-token': SVC_TOKEN };
 function post(url: string, body: unknown, target: FastifyInstance = server) {
   return target.inject({
     method: 'POST',
     url,
     payload: JSON.stringify(body),
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...svcHdr },
   });
 }
 async function get(url: string) {
-  return (await server.inject({ method: 'GET', url })).json();
+  return (await server.inject({ method: 'GET', url, headers: svcHdr })).json();
 }
 
 describe('C11 owner-scoping over HTTP (C3 + C4)', () => {

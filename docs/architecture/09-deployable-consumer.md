@@ -379,6 +379,20 @@ both of which a fresh clone inherits so its **first** `forge release` works with
    closed** when the token is unset). The bootstrap must therefore send the header; a bare call is rejected `401`.
    `POST /mcp` (JSON-RPC, OAuth-token gated) and the public `GET /.well-known/oauth-protected-resource` discovery
    doc are **not** service-token gated.
+
+   **All app-facing data-plane routes require the same service token.** The service-token gate extends
+   beyond `/mcp/*` to every app-facing capability: `/app-events`, `/notifications`, `/blobs`,
+   `/authorize`, `/policies`, `/status/incidents`, `/owner/*`, `/search`, `/index`, `/roles`,
+   `/groups/*`, `/identities/*`, `/invitations/*`, and the `/auth/admin/*` management endpoints
+   (including `seed-owner`). Every call from the app's backend to these routes must include
+   `x-forge-service-token: <AUTH_SERVICE_TOKEN>`.
+
+   > **`compose.prod.yaml` + Cloud Run VPC isolation is defence-in-depth, NOT the gate.** In production the
+   > data-plane is kept off the public internet by the network topology (the web container is the only
+   > ingress; the data-plane is private). That network boundary is an additional security layer — it is NOT
+   > the trust mechanism. The platform enforces the service token unconditionally at the route level, so the
+   > gating holds on any network topology and is not defeated by a misconfigured network or a port accidentally
+   > exposed during development.
 2. **Deploy-time step.** Alternatively a `release`-time hook the scaffold defines runs the same
    migrate + register once per deploy. On-boot is preferred because it also self-heals a manually-started
    container and needs no orchestrator cooperation.

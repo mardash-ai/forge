@@ -29,6 +29,7 @@ import type { Application } from '../src/resources/types';
 const APP = 'test-guard';
 const APP_ID = 'app_guard';
 
+const SVC_TOKEN = 'c3-guard-svc-token';
 let dir: string;
 let prevDir: string | undefined;
 let server: FastifyInstance;
@@ -37,6 +38,7 @@ beforeEach(async () => {
   prevDir = process.env.FORGE_STATE_DIR;
   dir = await mkdtemp(path.join(tmpdir(), 'forge-c3-guard-'));
   process.env.FORGE_STATE_DIR = dir;
+  process.env.AUTH_SERVICE_TOKEN = SVC_TOKEN;
   await store.init();
   const now = nowIso();
   await store.saveResource({
@@ -60,6 +62,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await server.close();
+  delete process.env.AUTH_SERVICE_TOKEN;
   if (prevDir === undefined) delete process.env.FORGE_STATE_DIR;
   else process.env.FORGE_STATE_DIR = prevDir;
   await rm(dir, { recursive: true, force: true });
@@ -96,6 +99,7 @@ describe(`C3 cross-source guard — ${DORINDA_POST_ROUTE} + ${DORINDA_DELETE_ROU
         method: 'POST',
         url: '/app-events',
         payload: dorindaPayload,
+        headers: { 'x-forge-service-token': SVC_TOKEN },
       });
       expect(res.statusCode).toBe(200);
 
@@ -117,6 +121,7 @@ describe(`C3 cross-source guard — ${DORINDA_POST_ROUTE} + ${DORINDA_DELETE_ROU
         method: 'POST',
         url: '/app-events',
         payload: domainPayload,
+        headers: { 'x-forge-service-token': SVC_TOKEN },
       });
       expect(res.statusCode).toBe(200);
       const { event } = JSON.parse(res.body) as { event: Record<string, unknown> };
@@ -130,6 +135,7 @@ describe(`C3 cross-source guard — ${DORINDA_POST_ROUTE} + ${DORINDA_DELETE_ROU
         method: 'POST',
         url: '/app-events',
         payload: { type: 'mcp.tool_call', owner: 'u1', [DORINDA_CALLER_FIELD]: caller },
+        headers: { 'x-forge-service-token': SVC_TOKEN },
       });
 
       const events = await store.listAppEvents({ app_id: APP_ID, owner: 'u1' });
@@ -143,6 +149,7 @@ describe(`C3 cross-source guard — ${DORINDA_POST_ROUTE} + ${DORINDA_DELETE_ROU
         method: 'POST',
         url: '/app-events',
         payload: { type: 'goal.created', owner: 'u2', data: { title: 'x' } },
+        headers: { 'x-forge-service-token': SVC_TOKEN },
       });
       const events = await store.listAppEvents({ app_id: APP_ID, owner: 'u2' });
       // Absent caller → undefined (sentinel guard in toTimelineEvent handles this)
@@ -158,12 +165,14 @@ describe(`C3 cross-source guard — ${DORINDA_POST_ROUTE} + ${DORINDA_DELETE_ROU
         method: 'POST',
         url: '/app-events',
         payload: { type: 'goal.created', owner: 'tenant_a', data: {} },
+        headers: { 'x-forge-service-token': SVC_TOKEN },
       });
 
       const res = await server.inject({
         method: 'DELETE',
         url: '/app-events',
         payload: { owner: 'tenant_a' },
+        headers: { 'x-forge-service-token': SVC_TOKEN },
       });
 
       // Must NOT be 404 — the route dorinda-api calls MUST exist.
@@ -182,6 +191,7 @@ describe(`C3 cross-source guard — ${DORINDA_POST_ROUTE} + ${DORINDA_DELETE_ROU
         method: 'DELETE',
         url: '/app-events',
         payload: { [DORINDA_OWNER_FIELD]: 'tenant_a' },
+        headers: { 'x-forge-service-token': SVC_TOKEN },
       });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body) as { deleted: number };
@@ -278,6 +288,7 @@ describe('C3 trace_id stamping (forge-written events)', () => {
       method: 'POST',
       url: '/app-events',
       payload: { type: 'goal.created', owner: 'u4', data: { title: 'My Goal' } },
+      headers: { 'x-forge-service-token': SVC_TOKEN },
     });
     expect(res.statusCode).toBe(200);
     const { event } = JSON.parse(res.body) as { event: Record<string, unknown> };

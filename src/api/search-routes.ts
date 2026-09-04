@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { store } from '../storage/store';
 import { searchStore } from '../storage/search-store';
 import type { SearchDocument, SearchScope, DocVisibility } from '../search/types';
+import { hasValidServiceToken } from '../shared/service-auth';
 
 // C19 — the SEARCH / indexing surface. Registered on BOTH the control-plane API (dev) and the
 // data-plane server (prod sidecar), like the C3 app-event + C4 notification routes (app→Forge): the
@@ -58,6 +59,13 @@ export function registerSearchRoutes(
     },
   };
   const invalid = (message: string) => ({ error: { code: 'invalid_input', message, retry: 'change-input' } });
+  const needServiceToken = {
+    error: {
+      code: 'unauthorized',
+      message: 'a valid x-forge-service-token is required.',
+      retry: 'needs-human',
+    },
+  };
 
   // Validate + normalise one indexable document. Returns the document or an error message.
   const parseDoc = (raw: unknown): { doc: SearchDocument } | { err: string } => {
@@ -119,6 +127,7 @@ export function registerSearchRoutes(
     if ('err' in parsed) return reply.status(422).send(invalid(parsed.err));
     const app_id = await resolveAppId((req.body as { app?: string })?.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     const document = await searchStore.index(app_id, parsed.doc);
     return reply.status(200).send({ document });
   });
@@ -154,6 +163,7 @@ export function registerSearchRoutes(
       return reply.status(422).send(invalid('delete requires a string `owner`.'));
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
 
     if (b.all === true) {
       const count = await searchStore.deleteByOwner(app_id, b.owner);
@@ -181,6 +191,7 @@ export function registerSearchRoutes(
     }
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     const indexed = await searchStore.reindex(app_id, docs);
     return reply.status(200).send({ indexed });
   });
@@ -205,6 +216,7 @@ export function registerSearchRoutes(
       return reply.status(400).send(invalid('search requires a non-empty query `q`.'));
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
 
     const types = Array.isArray(b.types)
       ? (b.types as unknown[]).filter((t): t is string => typeof t === 'string')

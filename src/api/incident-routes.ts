@@ -3,6 +3,7 @@ import { store } from '../storage/store';
 import { incidentStore } from '../storage/incident-store';
 import { resolveAppLenient } from '../capabilities/_shared';
 import type { Actor } from '../shared/domain';
+import { hasValidServiceToken } from '../shared/service-auth';
 import {
   type Incident,
   INCIDENT_STATUSES,
@@ -82,6 +83,13 @@ export function registerIncidentRoutes(
     error: { code: 'not_found', message: 'no such incident for this app.', retry: 'change-input' },
   };
   const invalid = (message: string) => ({ error: { code: 'invalid_input', message, retry: 'change-input' } });
+  const needServiceToken = {
+    error: {
+      code: 'unauthorized',
+      message: 'a valid x-forge-service-token is required.',
+      retry: 'needs-human',
+    },
+  };
 
   const emit = async (
     req: FastifyRequest,
@@ -122,6 +130,7 @@ export function registerIncidentRoutes(
     }
     const app_id = await resolveAppKey(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     const inc = await incidentStore.create(app_id, {
       title: b.title.trim(),
       status: b.status,
@@ -148,6 +157,7 @@ export function registerIncidentRoutes(
     }
     const app_id = await resolveAppKey(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     const inc = await incidentStore.update(app_id, b.id, {
       status: b.status,
       ...(typeof b.body === 'string' ? { body: b.body } : {}),
@@ -168,6 +178,7 @@ export function registerIncidentRoutes(
       return reply.status(422).send(invalid('resolve requires the incident `id`.'));
     const app_id = await resolveAppKey(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     const inc = await incidentStore.resolve(app_id, b.id, {
       ...(typeof b.body === 'string' ? { body: b.body } : {}),
     });
@@ -181,6 +192,7 @@ export function registerIncidentRoutes(
     const q = req.query as { app?: string };
     const app_id = await resolveAppKey(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     const all = await incidentStore.list(app_id);
     const incidents = [...orderActive(all), ...orderResolved(all)].map(incidentJson);
     return reply.status(200).send({ incidents });

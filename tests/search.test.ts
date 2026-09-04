@@ -293,6 +293,7 @@ describe('C19 — search store (file-backed)', () => {
 describe('C19 — search routes', () => {
   const APP = 'demo';
   const APP_ID = 'app_demo';
+  const SVC_TOKEN = 'search-test-svc-token';
   let dir: string;
   let prev: string | undefined;
   let server: FastifyInstance;
@@ -320,6 +321,7 @@ describe('C19 — search routes', () => {
     prev = process.env.FORGE_STATE_DIR;
     dir = await mkdtemp(path.join(tmpdir(), 'forge-search-routes-'));
     process.env.FORGE_STATE_DIR = dir;
+    process.env.AUTH_SERVICE_TOKEN = SVC_TOKEN;
     await store.init();
     await seedApp();
     server = Fastify({ logger: false });
@@ -329,13 +331,19 @@ describe('C19 — search routes', () => {
   afterEach(async () => {
     await server.close();
     vi.restoreAllMocks();
+    delete process.env.AUTH_SERVICE_TOKEN;
     if (prev === undefined) delete process.env.FORGE_STATE_DIR;
     else process.env.FORGE_STATE_DIR = prev;
     await rm(dir, { recursive: true, force: true });
   });
 
   const post = (url: string, payload: unknown) =>
-    server.inject({ method: 'POST', url, payload: payload as object });
+    server.inject({
+      method: 'POST',
+      url,
+      payload: payload as object,
+      headers: { 'x-forge-service-token': SVC_TOKEN },
+    });
 
   it('index → search returns the caller’s ranked hits with <mark> snippets', async () => {
     const r = await post('/index', {
@@ -763,6 +771,7 @@ describe('C19 access-aware — search store (file-backed ACL)', () => {
 describe('C19 access-aware — routes (scope + ACL fields)', () => {
   const APP = 'demo';
   const APP_ID = 'app_demo';
+  const SVC_TOKEN = 'search-acl-test-svc-token';
   let dir: string;
   let prev: string | undefined;
   let server: FastifyInstance;
@@ -790,6 +799,7 @@ describe('C19 access-aware — routes (scope + ACL fields)', () => {
     prev = process.env.FORGE_STATE_DIR;
     dir = await mkdtemp(path.join(tmpdir(), 'forge-search-acl-routes-'));
     process.env.FORGE_STATE_DIR = dir;
+    process.env.AUTH_SERVICE_TOKEN = SVC_TOKEN;
     await store.init();
     await seedApp();
     server = Fastify({ logger: false });
@@ -799,13 +809,19 @@ describe('C19 access-aware — routes (scope + ACL fields)', () => {
   afterEach(async () => {
     await server.close();
     vi.restoreAllMocks();
+    delete process.env.AUTH_SERVICE_TOKEN;
     if (prev === undefined) delete process.env.FORGE_STATE_DIR;
     else process.env.FORGE_STATE_DIR = prev;
     await rm(dir, { recursive: true, force: true });
   });
 
   const post = (url: string, payload: unknown) =>
-    server.inject({ method: 'POST', url, payload: payload as object });
+    server.inject({
+      method: 'POST',
+      url,
+      payload: payload as object,
+      headers: { 'x-forge-service-token': SVC_TOKEN },
+    });
 
   it('a scoped /search returns the caller’s own docs PLUS group/shared docs the scope authorizes', async () => {
     await post('/index', {

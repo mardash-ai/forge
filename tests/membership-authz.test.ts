@@ -174,6 +174,7 @@ const ROLES: RoleDef[] = [
   },
   { key: 'member', permissions: [], rank: 10, owner_role: false, assignable: true },
 ];
+const MAUTHZ_SVC_TOKEN = 'authz-membership-svc-token';
 let dir: string;
 let prev: string | undefined;
 let server: FastifyInstance;
@@ -201,6 +202,7 @@ describe('C31 — /authorize route: resolution, legacy path, and floors end-to-e
     prev = process.env.FORGE_STATE_DIR;
     dir = await mkdtemp(path.join(tmpdir(), 'forge-mauthz-'));
     process.env.FORGE_STATE_DIR = dir;
+    process.env.AUTH_SERVICE_TOKEN = MAUTHZ_SVC_TOKEN;
     await store.init();
     await seedApp();
     server = Fastify({ logger: false });
@@ -210,14 +212,25 @@ describe('C31 — /authorize route: resolution, legacy path, and floors end-to-e
   });
   afterEach(async () => {
     await server.close();
+    delete process.env.AUTH_SERVICE_TOKEN;
     if (prev === undefined) delete process.env.FORGE_STATE_DIR;
     else process.env.FORGE_STATE_DIR = prev;
     await rm(dir, { recursive: true, force: true });
   });
   const post = (url: string, payload: unknown) =>
-    server.inject({ method: 'POST', url, payload: payload as object });
+    server.inject({
+      method: 'POST',
+      url,
+      payload: payload as object,
+      headers: { 'x-forge-service-token': MAUTHZ_SVC_TOKEN },
+    });
   const put = (url: string, payload: unknown) =>
-    server.inject({ method: 'PUT', url, payload: payload as object });
+    server.inject({
+      method: 'PUT',
+      url,
+      payload: payload as object,
+      headers: { 'x-forge-service-token': MAUTHZ_SVC_TOKEN },
+    });
   const authorizeCall = (body: unknown) => post('/authorize', body).then((r) => r.json());
 
   it('legacy (no role registry): request role honored, response has NO resolved fields', async () => {
@@ -236,7 +249,13 @@ describe('C31 — /authorize route: resolution, legacy path, and floors end-to-e
     expect(d).toMatchObject({ role: 'owner', is_member: true });
     expect(typeof d.group_id).toBe('string');
     // the group-of-one is now real
-    const groups = (await server.inject({ method: 'GET', url: '/identities/A/groups' })).json();
+    const groups = (
+      await server.inject({
+        method: 'GET',
+        url: '/identities/A/groups',
+        headers: { 'x-forge-service-token': MAUTHZ_SVC_TOKEN },
+      })
+    ).json();
     expect(groups.total).toBe(1);
   });
 

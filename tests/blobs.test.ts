@@ -224,6 +224,8 @@ describe('C20 — blob store (file-backed)', () => {
 describe('C20 — blob routes', () => {
   const APP = 'demo';
   const APP_ID = 'app_demo';
+  const SVC_TOKEN = 'blob-svc-token';
+  const svcHdr = { 'x-forge-service-token': SVC_TOKEN };
   let dir: string;
   let prev: string | undefined;
   let server: FastifyInstance;
@@ -251,6 +253,7 @@ describe('C20 — blob routes', () => {
     prev = process.env.FORGE_STATE_DIR;
     dir = await mkdtemp(path.join(tmpdir(), 'forge-blob-routes-'));
     process.env.FORGE_STATE_DIR = dir;
+    process.env.AUTH_SERVICE_TOKEN = SVC_TOKEN;
     await store.init();
     await seedApp();
     server = Fastify({ logger: false });
@@ -269,12 +272,13 @@ describe('C20 — blob routes', () => {
       delete process.env[k];
     if (prev === undefined) delete process.env.FORGE_STATE_DIR;
     else process.env.FORGE_STATE_DIR = prev;
+    delete process.env.AUTH_SERVICE_TOKEN;
     await rm(dir, { recursive: true, force: true });
   });
 
   const upload = (input: Parameters<typeof multipart>[0]) => {
     const { payload, headers } = multipart(input);
-    return server.inject({ method: 'POST', url: '/blobs', payload, headers });
+    return server.inject({ method: 'POST', url: '/blobs', payload, headers: { ...headers, ...svcHdr } });
   };
 
   it('upload → 201 { blob_id, checksum, size }; GET round-trips the EXACT bytes', async () => {
@@ -293,7 +297,7 @@ describe('C20 — blob routes', () => {
     });
     expect(typeof body.blob_id).toBe('string');
 
-    const g = await server.inject({ method: 'GET', url: `/blobs/${body.blob_id}?owner=A` });
+    const g = await server.inject({ method: 'GET', url: `/blobs/${body.blob_id}?owner=A`, headers: svcHdr });
     expect(g.statusCode).toBe(200);
     expect(g.headers['content-type']).toBe('image/png');
     expect(g.headers['content-length']).toBe(String(data.length));
@@ -307,10 +311,16 @@ describe('C20 — blob routes', () => {
       file: { data: png('A-only'), contentType: 'image/png' },
     });
     const id = r.json().blob_id;
-    expect((await server.inject({ method: 'GET', url: `/blobs/${id}?owner=B` })).statusCode).toBe(404);
-    expect((await server.inject({ method: 'DELETE', url: `/blobs/${id}?owner=B` })).statusCode).toBe(404);
+    expect(
+      (await server.inject({ method: 'GET', url: `/blobs/${id}?owner=B`, headers: svcHdr })).statusCode,
+    ).toBe(404);
+    expect(
+      (await server.inject({ method: 'DELETE', url: `/blobs/${id}?owner=B`, headers: svcHdr })).statusCode,
+    ).toBe(404);
     // A still owns it.
-    expect((await server.inject({ method: 'GET', url: `/blobs/${id}?owner=A` })).statusCode).toBe(200);
+    expect(
+      (await server.inject({ method: 'GET', url: `/blobs/${id}?owner=A`, headers: svcHdr })).statusCode,
+    ).toBe(200);
   });
 
   it('content-type ALLOWLIST rejects a disallowed type (415)', async () => {
@@ -341,7 +351,9 @@ describe('C20 — blob routes', () => {
     expect(r.statusCode).toBe(413);
     expect(r.json().error.code).toBe('file_too_large');
     // nothing landed for A
-    expect((await server.inject({ method: 'GET', url: '/blobs?owner=A' })).json().blobs).toEqual([]);
+    expect(
+      (await server.inject({ method: 'GET', url: '/blobs?owner=A', headers: svcHdr })).json().blobs,
+    ).toEqual([]);
   });
 
   it('per-owner QUOTA: bytes → 413, object count → 409', async () => {
@@ -378,9 +390,15 @@ describe('C20 — blob routes', () => {
         file: { data: png(), contentType: 'image/png' },
       })
     ).json().blob_id;
-    expect((await server.inject({ method: 'DELETE', url: `/blobs/${id}?owner=A` })).statusCode).toBe(204);
-    expect((await server.inject({ method: 'GET', url: `/blobs/${id}?owner=A` })).statusCode).toBe(404);
-    expect((await server.inject({ method: 'DELETE', url: `/blobs/${id}?owner=A` })).statusCode).toBe(404);
+    expect(
+      (await server.inject({ method: 'DELETE', url: `/blobs/${id}?owner=A`, headers: svcHdr })).statusCode,
+    ).toBe(204);
+    expect(
+      (await server.inject({ method: 'GET', url: `/blobs/${id}?owner=A`, headers: svcHdr })).statusCode,
+    ).toBe(404);
+    expect(
+      (await server.inject({ method: 'DELETE', url: `/blobs/${id}?owner=A`, headers: svcHdr })).statusCode,
+    ).toBe(404);
   });
 
   it('Range request → 206 with a partial body + Content-Range', async () => {
@@ -394,7 +412,7 @@ describe('C20 — blob routes', () => {
     const g = await server.inject({
       method: 'GET',
       url: `/blobs/${id}?owner=A`,
-      headers: { range: 'bytes=0-3' },
+      headers: { ...svcHdr, range: 'bytes=0-3' },
     });
     expect(g.statusCode).toBe(206);
     expect(g.headers['content-range']).toBe(`bytes 0-3/${data.length}`);
@@ -404,7 +422,7 @@ describe('C20 — blob routes', () => {
     const bad = await server.inject({
       method: 'GET',
       url: `/blobs/${id}?owner=A`,
-      headers: { range: `bytes=${data.length + 5}-` },
+      headers: { ...svcHdr, range: `bytes=${data.length + 5}-` },
     });
     expect(bad.statusCode).toBe(416);
   });
@@ -420,7 +438,7 @@ describe('C20 — blob routes', () => {
     const g = await server.inject({
       method: 'GET',
       url: `/blobs/${id}?owner=A`,
-      headers: { 'if-none-match': `"${sha256(data)}"` },
+      headers: { ...svcHdr, 'if-none-match': `"${sha256(data)}"` },
     });
     expect(g.statusCode).toBe(304);
   });
@@ -434,7 +452,7 @@ describe('C20 — blob routes', () => {
       fields: { owner: 'B', content_type: 'image/png' },
       file: { data: png('b'), contentType: 'image/png' },
     });
-    const la = (await server.inject({ method: 'GET', url: '/blobs?owner=A' })).json();
+    const la = (await server.inject({ method: 'GET', url: '/blobs?owner=A', headers: svcHdr })).json();
     expect(la.blobs).toHaveLength(1);
     expect(la.blobs[0]).toMatchObject({ content_type: 'text/plain', filename: 'a.txt' });
     expect(la.usage).toMatchObject({
@@ -444,7 +462,9 @@ describe('C20 — blob routes', () => {
       quota_objects: expect.any(Number),
     });
     // B never sees A's
-    expect((await server.inject({ method: 'GET', url: '/blobs?owner=B' })).json().blobs).toHaveLength(1);
+    expect(
+      (await server.inject({ method: 'GET', url: '/blobs?owner=B', headers: svcHdr })).json().blobs,
+    ).toHaveLength(1);
   });
 
   it('validates input: missing owner → 422; missing file → 400; empty file → 400; GET without owner → 400', async () => {
@@ -480,7 +500,9 @@ describe('C20 — blob routes', () => {
       expect(r.statusCode).toBe(400);
       expect(r.json().error.code).toBe('upload_aborted');
       // nothing was stored for A
-      expect((await server.inject({ method: 'GET', url: '/blobs?owner=A' })).json().blobs).toEqual([]);
+      expect(
+        (await server.inject({ method: 'GET', url: '/blobs?owner=A', headers: svcHdr })).json().blobs,
+      ).toEqual([]);
     },
   );
 

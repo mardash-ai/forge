@@ -23,7 +23,9 @@ Forge ships as two images (both multi-arch, digest-pinned):
 - **Data plane** — `ghcr.io/mardash-ai/forge-data-plane` — the slim production/runtime sidecar that
   ships next to a deployed app. It is **single-app** (`FORGE_APP_NAME`) and serves the runtime
   capabilities the app calls (C10 hosted auth, C3 app-events, C4 notifications, C2 scheduler, C1
-  agent-run, C5 secrets read). The app proxies `/auth/*` to it same-origin.
+  agent-run, C5 secrets read, C21 SMS phone verification). The app proxies `/auth/*` (including
+  `/auth/phone/*` for SMS phone verification) to it same-origin. The Twilio webhook at
+  `POST /hooks/sms/twilio` verifies the Twilio HMAC-SHA1 request signature before any handler logic runs.
 
 ### Bringing up the control plane (dev/operator host)
 
@@ -84,7 +86,7 @@ Setting or changing a value requires the data-plane container to be **(re)starte
 | `FORGE_SECRETS_KEY` | C5 · Secrets vault (master key) | **Required** (any secret / agent use) | Master key the data-plane uses to decrypt the C5 vault at rest. |
 | `ANTHROPIC_API_KEY` | C1 · Agent runtime | Conditional — only if the app uses C1 | Anthropic API key the agent runtime calls the model with. |
 | `AUTH_SESSION_SECRET` | C10 · Identity/Auth (session signing) | Conditional — **required for C10 auth** | HMAC key that signs/verifies the `forge_session` access token (P8). |
-| `AUTH_SERVICE_TOKEN` | C10 · Identity/Auth (service/cron) | Optional | Token a non-user principal (C2 scheduler/cron) presents to `/api/cron/*`. |
+| `AUTH_SERVICE_TOKEN` | C10 · Identity/Auth (service/cron) | **Required** for app-facing modules | Token a non-user principal presents to call the platform's app-facing routes (`/app-events`, `/notifications`, `/blobs`, `/authorize`, `/policies`, `/search`, `/index`, `/status/incidents`, `/owner/*`, `/roles`, `/groups/*`, `/identities/*`, `/invitations/*`, `/mcp/*`, and `/auth/admin/*` except the public OAuth endpoints). |
 | `GOOGLE_CLIENT_ID` | C10 · Identity/Auth (Google sign-in) | Optional — enables Google | OAuth 2.0 Web client ID for "Continue with Google". |
 | `GOOGLE_CLIENT_SECRET` | C10 · Identity/Auth (Google sign-in) | Optional — enables Google | OAuth 2.0 Web client secret (paired with the ID). |
 | `SMTP_URL` | C12 · Transactional email | Optional — enables email signup/verify/reset | SMTP connection URL used to send email. |
@@ -120,8 +122,24 @@ verifies locally). Keep it stable — rotating invalidates all live sessions.
 - **Generate:** `openssl rand -base64 48`
 - **Set:** `./forge secrets set --app <app> --name AUTH_SESSION_SECRET --from-env AUTH_SESSION_SECRET`.
 
-#### `AUTH_SERVICE_TOKEN` — C10 service/cron principal · Optional
-Only if the app has service-authenticated cron routes (`/api/cron/*`). Unset ⇒ those stay gated (401).
+#### `AUTH_SERVICE_TOKEN` — C10 service/cron principal · **Required for app-facing modules**
+
+The single shared token the platform's internal HTTP surface verifies on every call to:
+- **`/mcp/*`** management (register/list/delete tools, manage consents)
+- **`/app-events`** (C3 — app → platform event log)
+- **`/notifications`** (C4 — notification store/delivery)
+- **`/blobs`** (C20 — blob upload/read/delete/list)
+- **`/authorize` + `/policies`** (C29/C30 — authz checks and policy CRUD)
+- **`/status/incidents`** (C15 — incident create/update/resolve/list)
+- **`/owner/*`** (C32 — legacy owner migration)
+- **`/search` + `/index`** (C19 — full-text indexing and search)
+- **`/roles`, `/groups/*`, `/identities/*`, `/invitations/*`** (C31 — membership lifecycle)
+- **`/auth/admin/*`** including `seed-owner`, `identities`, `identity/:id` (admin identity ops)
+
+The platform does a **constant-time compare** and **fails closed** (`401`) when the token is absent or unset. Every call from the app's backend to these routes must include `x-forge-service-token: <token>`.
+
+> **Network boundary is defence-in-depth, NOT the gate.** In production the app's `compose.prod.yaml` (or Cloud Run VPC connector) keeps the data-plane off the public internet — only the web container reaches it. That network boundary is an additional layer, not a substitute for the token check. The platform enforces the token unconditionally, so the app stays secure on any network topology.
+
 - **Generate:** `openssl rand -hex 32`
 - **Set:** `./forge secrets set --app <app> --name AUTH_SERVICE_TOKEN --from-env AUTH_SERVICE_TOKEN`.
 

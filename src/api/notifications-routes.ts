@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { store } from '../storage/store';
 import { notify, normalizeChannels, CHANNELS, type Channel } from '../notifications/delivery';
 import { getVapidPublicKey } from '../notifications/vapid';
+import { hasValidServiceToken } from '../shared/service-auth';
 
 // C4 + C21 — the notification surface. Registered on BOTH the control-plane API (dev) and the data-plane
 // server (prod sidecar), like the C3 app-event routes (app→Forge). The app derives WHICH conditions matter
@@ -51,6 +52,13 @@ export function registerNotificationRoutes(
       retry: 'change-input',
     },
   };
+  const needServiceToken = {
+    error: {
+      code: 'unauthorized',
+      message: 'a valid x-forge-service-token is required.',
+      retry: 'needs-human',
+    },
+  };
 
   app.post('/notifications', async (req, reply) => {
     const b = (req.body ?? {}) as {
@@ -92,6 +100,7 @@ export function registerNotificationRoutes(
     }
     const resolved = await resolveApp(b.app);
     if (!resolved) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, resolved.id))) return reply.status(401).send(needServiceToken);
     const channels = normalizeChannels(b.channels as string[] | undefined) as Channel[];
     const result = await notify(resolved.id, resolved.name, {
       key: b.key,
@@ -116,6 +125,7 @@ export function registerNotificationRoutes(
     if (!b.key || typeof b.key !== 'string') return reply.status(422).send(badKey);
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     return { dismissed: await store.dismissNotification(app_id, b.key, b.owner) };
   });
 
@@ -124,6 +134,7 @@ export function registerNotificationRoutes(
     if (!b.key || typeof b.key !== 'string') return reply.status(422).send(badKey);
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     return { cleared: await store.clearNotification(app_id, b.key, b.owner) };
   });
 
@@ -131,6 +142,7 @@ export function registerNotificationRoutes(
     const q = req.query as { app?: string; include_dismissed?: string; owner?: string };
     const app_id = await resolveAppId(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     const includeDismissed = q.include_dismissed === 'true' || q.include_dismissed === '1';
     return { notifications: await store.listNotifications(app_id, { includeDismissed, owner: q.owner }) };
   });
@@ -143,6 +155,7 @@ export function registerNotificationRoutes(
   app.get('/notifications/vapid-public-key', async (req, reply) => {
     const app_id = await resolveAppId((req.query as { app?: string }).app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     const publicKey = await getVapidPublicKey(app_id);
     // `applicationServerKey` is an alias for the same value, named as the Web Push API expects it.
     return { public_key: publicKey, applicationServerKey: publicKey };
@@ -159,6 +172,7 @@ export function registerNotificationRoutes(
     };
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     if (!b.owner || typeof b.owner !== 'string') {
       return reply.status(422).send({
         error: {
@@ -198,6 +212,7 @@ export function registerNotificationRoutes(
     const b = (req.body ?? {}) as { app?: string; owner?: string; endpoint?: string };
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     if (!b.endpoint || typeof b.endpoint !== 'string') {
       return reply.status(422).send({
         error: {

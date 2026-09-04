@@ -6,7 +6,7 @@ import {
   twofaCodeTtlSeconds,
   twofaMaxAttempts,
 } from '../plugins/auth-identity/index';
-import { sendSms, twiml, twimlEmpty, HELP_REPLY } from '../plugins/twilio-sms/index';
+import { sendSms, twiml, twimlEmpty, HELP_REPLY, verifyTwilioSignature } from '../plugins/twilio-sms/index';
 import { readSecrets } from '../plugins/secrets-local/index';
 import { nowIso } from '../shared/time';
 import type { SmsConfig } from '../plugins/twilio-sms/index';
@@ -197,29 +197,56 @@ export function registerSmsRoutes(fastify: FastifyInstance, opts: { defaultApp: 
   // Handles STOP (opt-out), START/YES/UNSTOP (re-enable, only if prior consent exists), HELP.
   // Replies with TwiML. NEVER creates an opt-in from an inbound keyword alone.
   //
+  // SECURITY: Every request is verified with Twilio's HMAC-SHA1 signature scheme
+  // (X-Twilio-Signature header; signed with TWILIO_AUTH_TOKEN over full URL + sorted params).
+  // Missing or invalid signatures are rejected 403 before any business logic runs.
+  //
   // Carrier-registered endpoint — the response copy is compliance-locked. Do not edit without
   // a corresponding carrier re-submission.
-  fastify.post(
-    '/hooks/sms/twilio',
-    {
-      config: { rawBody: false },
-    },
-    async (req, reply) => {
+  fastify.register(async (twilio) => {
+    // Parse the form body as a raw string so we can extract the exact param values
+    // Twilio used when computing the HMAC-SHA1 signature.
+    twilio.addContentTypeParser(
+      'application/x-www-form-urlencoded',
+      { parseAs: 'string' },
+      (_req, body, done) => done(null, body),
+    );
+    // Fallback for misrouted or missing content-type.
+    twilio.addContentTypeParser('*', { parseAs: 'string' }, (_req, body, done) => done(null, body));
+
+    twilio.post('/hooks/sms/twilio', async (req, reply) => {
       reply.header('Content-Type', 'text/xml; charset=utf-8');
 
-      // Twilio sends application/x-www-form-urlencoded
-      const body = req.body as Record<string, string | undefined> | string | undefined;
-      let from = '';
-      let msgBody = '';
+      // Parse the form body to extract params for signature verification AND business logic.
+      const rawBody = typeof req.body === 'string' ? req.body : '';
+      const params: Record<string, string> = {};
+      new URLSearchParams(rawBody).forEach((v, k) => {
+        params[k] = v;
+      });
 
-      if (typeof body === 'object' && body !== null) {
-        from = String(body['From'] ?? '').trim();
-        msgBody = String(body['Body'] ?? '').trim();
-      } else if (typeof body === 'string') {
-        const params = new URLSearchParams(body);
-        from = params.get('From') ?? '';
-        msgBody = params.get('Body') ?? '';
+      // Reconstruct the URL Twilio signed: prefer X-Forwarded-* headers (set by Traefik / Cloud Run)
+      // over the raw Host header so the URL matches what was configured in the Twilio console.
+      const proto = String((req.headers['x-forwarded-proto'] as string | undefined) ?? 'https')
+        .split(',')[0]!
+        .trim();
+      const host = String(
+        ((req.headers['x-forwarded-host'] as string | undefined) ?? req.headers.host ?? '') as string,
+      )
+        .split(',')[0]!
+        .trim();
+      const webhookUrl = `${proto}://${host}/hooks/sms/twilio`;
+
+      // Verify the Twilio HMAC-SHA1 signature. Reject before any business logic if invalid.
+      const sigHeader = req.headers['x-twilio-signature'];
+      const signature = (Array.isArray(sigHeader) ? sigHeader[0] : sigHeader) ?? '';
+      const cfg = await resolveSmsConfig(opts.defaultApp());
+      if (!cfg || !verifyTwilioSignature(cfg.authToken, webhookUrl, params, signature)) {
+        // Empty TwiML + 403: reject Twilio-carrier-initiated; don't leak anything.
+        return reply.status(403).send(twimlEmpty());
       }
+
+      const from = (params['From'] ?? '').trim();
+      const msgBody = (params['Body'] ?? '').trim();
 
       if (!from) {
         // Malformed — no From; return empty TwiML (don't leak info).
@@ -266,6 +293,6 @@ export function registerSmsRoutes(fastify: FastifyInstance, opts: { defaultApp: 
 
       // 'other' — not a compliance keyword; no action, no reply.
       return reply.status(200).send(twimlEmpty());
-    },
-  );
+    });
+  });
 }

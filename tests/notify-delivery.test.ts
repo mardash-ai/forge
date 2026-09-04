@@ -27,6 +27,7 @@ import type { Application } from '../src/resources/types';
 
 const APP = 'demo';
 const APP_ID = 'app_demo';
+const NOTIFY_SVC_TOKEN = 'notify-routes-svc-token';
 let dir: string;
 let prevState: string | undefined;
 const prevKey = process.env.FORGE_SECRETS_KEY;
@@ -270,16 +271,22 @@ describe('notify() fan-out — channels (C21)', () => {
 describe('notification routes — C21 delivery surface', () => {
   let server: FastifyInstance;
   beforeEach(async () => {
+    process.env.AUTH_SERVICE_TOKEN = NOTIFY_SVC_TOKEN;
     server = Fastify({ logger: false });
     registerNotificationRoutes(server, { defaultApp: () => APP });
     await server.ready();
   });
   afterEach(async () => {
     await server.close();
+    delete process.env.AUTH_SERVICE_TOKEN;
   });
 
   it('GET /notifications/vapid-public-key returns the app public key (auto-generated, stable, 65-byte point)', async () => {
-    const r1 = await server.inject({ method: 'GET', url: '/notifications/vapid-public-key' });
+    const r1 = await server.inject({
+      method: 'GET',
+      url: '/notifications/vapid-public-key',
+      headers: { 'x-forge-service-token': NOTIFY_SVC_TOKEN },
+    });
     expect(r1.statusCode).toBe(200);
     const body = r1.json() as { public_key: string; applicationServerKey: string };
     expect(body.public_key).toBe(body.applicationServerKey);
@@ -287,7 +294,11 @@ describe('notification routes — C21 delivery surface', () => {
     expect(raw.length).toBe(65);
     expect(raw[0]).toBe(0x04);
     // Stable across reads (persisted, not regenerated).
-    const r2 = await server.inject({ method: 'GET', url: '/notifications/vapid-public-key' });
+    const r2 = await server.inject({
+      method: 'GET',
+      url: '/notifications/vapid-public-key',
+      headers: { 'x-forge-service-token': NOTIFY_SVC_TOKEN },
+    });
     expect((r2.json() as { public_key: string }).public_key).toBe(body.public_key);
   });
 
@@ -298,6 +309,7 @@ describe('notification routes — C21 delivery surface', () => {
       method: 'POST',
       url: '/notifications/push/subscribe',
       payload: { owner, subscription },
+      headers: { 'x-forge-service-token': NOTIFY_SVC_TOKEN },
     });
     expect(sr.statusCode).toBe(200);
     expect(sr.json()).toEqual({ subscribed: true, endpoint: 'https://push/dev1' });
@@ -308,6 +320,7 @@ describe('notification routes — C21 delivery surface', () => {
       method: 'POST',
       url: '/notifications/push/subscribe',
       payload: { owner, subscription },
+      headers: { 'x-forge-service-token': NOTIFY_SVC_TOKEN },
     });
     expect((await store.listPushSubscriptions(APP_ID, owner)).length).toBe(1);
 
@@ -315,6 +328,7 @@ describe('notification routes — C21 delivery surface', () => {
       method: 'POST',
       url: '/notifications/push/unsubscribe',
       payload: { owner, endpoint: 'https://push/dev1' },
+      headers: { 'x-forge-service-token': NOTIFY_SVC_TOKEN },
     });
     expect(ur.json()).toEqual({ unsubscribed: true });
     expect(await store.listPushSubscriptions(APP_ID, owner)).toEqual([]);
@@ -325,12 +339,14 @@ describe('notification routes — C21 delivery surface', () => {
       method: 'POST',
       url: '/notifications/push/subscribe',
       payload: { owner: 'u', subscription: { endpoint: 'x' } },
+      headers: { 'x-forge-service-token': NOTIFY_SVC_TOKEN },
     });
     expect(bad.statusCode).toBe(422);
     const noOwner = await server.inject({
       method: 'POST',
       url: '/notifications/push/subscribe',
       payload: { subscription: { endpoint: 'x', keys: { p256dh: 'a', auth: 'b' } } },
+      headers: { 'x-forge-service-token': NOTIFY_SVC_TOKEN },
     });
     expect(noOwner.statusCode).toBe(422);
   });
@@ -340,6 +356,7 @@ describe('notification routes — C21 delivery surface', () => {
       method: 'POST',
       url: '/notifications',
       payload: { key: 'k', title: 'Hi', owner: 'A' },
+      headers: { 'x-forge-service-token': NOTIFY_SVC_TOKEN },
     });
     expect(r.statusCode).toBe(200);
     const body = r.json() as Record<string, unknown>;
@@ -352,6 +369,7 @@ describe('notification routes — C21 delivery surface', () => {
       method: 'POST',
       url: '/notifications',
       payload: { key: 'k', title: 'Hi', owner: 'A', channels: ['in_app', 'carrier-pigeon'] },
+      headers: { 'x-forge-service-token': NOTIFY_SVC_TOKEN },
     });
     expect(r.statusCode).toBe(422);
   });
@@ -364,6 +382,7 @@ describe('notification routes — C21 delivery surface', () => {
       method: 'POST',
       url: '/notifications',
       payload: { key: 'k', title: 'Hi', owner, channels: ['in_app', 'push'] },
+      headers: { 'x-forge-service-token': NOTIFY_SVC_TOKEN },
     });
     expect(r.statusCode).toBe(200);
     const body = r.json() as { notification: { key: string }; delivery: { push: { sent: number } } };

@@ -1582,6 +1582,7 @@ export function registerAuthRoutes(
     const b = body(req);
     const app_ = await resolveAppId(req);
     if (!app_) return reply.code(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_.id))) return reply.code(401).send(needServiceToken);
     const email = String(b.email ?? '').trim();
     if (!EMAIL_RE.test(email)) {
       return reply.code(422).send({

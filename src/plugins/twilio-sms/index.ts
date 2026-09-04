@@ -1,3 +1,5 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
 // Plugin: twilio-sms.
 //
 // The SMS delivery Implementation of C21's SMS channel — a real technology boundary (the Twilio
@@ -142,4 +144,28 @@ export function twiml(body: string): string {
 // An empty TwiML response (for STOP/START where a confirm TwiML is sent — or for no-reply).
 export function twimlEmpty(): string {
   return `<?xml version="1.0" encoding="UTF-8"?><Response/>`;
+}
+
+// Verify a Twilio webhook request signature (HMAC-SHA1 with the auth token).
+// Algorithm: sort POST params alphabetically, concatenate as key+value (no delimiters),
+// prepend the full request URL, sign with HMAC-SHA1, base64-encode, constant-time compare.
+// Returns false when the signature is absent, malformed, or credentials are not configured.
+export function verifyTwilioSignature(
+  authToken: string,
+  url: string,
+  params: Record<string, string>,
+  signature: string,
+): boolean {
+  if (!authToken || !signature) return false;
+  try {
+    const sortedKeys = Object.keys(params).sort();
+    const toSign = url + sortedKeys.map((k) => `${k}${params[k] ?? ''}`).join('');
+    const computed = createHmac('sha1', authToken).update(toSign, 'utf8').digest('base64');
+    const a = Buffer.from(computed);
+    const b = Buffer.from(signature);
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
 }

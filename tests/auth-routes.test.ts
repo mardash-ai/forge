@@ -712,12 +712,16 @@ describe('administrative identity creation', () => {
 });
 
 describe('owner migration hook (§8)', () => {
+  const SEED_SVC_TOKEN = 'seed-owner-svc-token';
+  const SVC_HDR = { 'x-forge-service-token': SEED_SVC_TOKEN, ...FORM };
+
   it('seeds an owner (verified) who can immediately sign in; response is redacted', async () => {
     await configureSessionAndEmail();
+    await setSecret(appId, 'AUTH_SERVICE_TOKEN', SEED_SVC_TOKEN);
     const seed = await server.inject({
       method: 'POST',
       url: '/auth/admin/seed-owner',
-      headers: FORM,
+      headers: SVC_HDR,
       payload: form({ email: 'owner@example.com', password: 'owner-pass-123' }),
     });
     expect(seed.statusCode).toBe(200);
@@ -734,6 +738,17 @@ describe('owner migration hook (§8)', () => {
     });
     expect(login.statusCode).toBe(303);
     expect(cookieValue(login, 'forge_session')).toBeTruthy();
+  });
+
+  it('refuses without a service token — seed-owner is not end-user reachable', async () => {
+    await configureSessionAndEmail();
+    const seed = await server.inject({
+      method: 'POST',
+      url: '/auth/admin/seed-owner',
+      headers: FORM,
+      payload: form({ email: 'owner@example.com', password: 'owner-pass-123' }),
+    });
+    expect(seed.statusCode).toBe(401);
   });
 });
 

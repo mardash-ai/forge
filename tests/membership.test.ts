@@ -15,6 +15,7 @@ import { acceptInvitation, hashToken } from '../src/membership/service';
 // (filesystem on the default run, Postgres on the pg run) — so this whole suite validates BOTH backends.
 const APP = 'demo';
 const APP_ID = 'app_demo';
+const SVC_TOKEN = 'membership-svc-token';
 let dir: string;
 let prev: string | undefined;
 let server: FastifyInstance;
@@ -54,6 +55,7 @@ beforeEach(async () => {
   prev = process.env.FORGE_STATE_DIR;
   dir = await mkdtemp(path.join(tmpdir(), 'forge-membership-'));
   process.env.FORGE_STATE_DIR = dir;
+  process.env.AUTH_SERVICE_TOKEN = SVC_TOKEN;
   await store.init();
   await seedApp();
   server = Fastify({ logger: false });
@@ -62,18 +64,35 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await server.close();
+  delete process.env.AUTH_SERVICE_TOKEN;
   if (prev === undefined) delete process.env.FORGE_STATE_DIR;
   else process.env.FORGE_STATE_DIR = prev;
   await rm(dir, { recursive: true, force: true });
 });
 
 const post = (url: string, payload: unknown = {}) =>
-  server.inject({ method: 'POST', url, payload: payload as object });
+  server.inject({
+    method: 'POST',
+    url,
+    payload: payload as object,
+    headers: { 'x-forge-service-token': SVC_TOKEN },
+  });
 const put = (url: string, payload: unknown = {}) =>
-  server.inject({ method: 'PUT', url, payload: payload as object });
-const get = (url: string) => server.inject({ method: 'GET', url });
+  server.inject({
+    method: 'PUT',
+    url,
+    payload: payload as object,
+    headers: { 'x-forge-service-token': SVC_TOKEN },
+  });
+const get = (url: string) =>
+  server.inject({ method: 'GET', url, headers: { 'x-forge-service-token': SVC_TOKEN } });
 const del = (url: string, payload: unknown = {}) =>
-  server.inject({ method: 'DELETE', url, payload: payload as object });
+  server.inject({
+    method: 'DELETE',
+    url,
+    payload: payload as object,
+    headers: { 'x-forge-service-token': SVC_TOKEN },
+  });
 const setRoles = () => put('/roles', { roles: ROLES });
 
 describe('C31 — role registry', () => {

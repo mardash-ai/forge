@@ -13,8 +13,10 @@ import {
   twiml,
   twimlEmpty,
   HELP_REPLY,
+  verifyTwilioSignature,
   type SmsResult,
 } from '../src/plugins/twilio-sms/index';
+import { createHmac } from 'node:crypto';
 import { notify, normalizeChannels, CHANNELS } from '../src/notifications/delivery';
 import { registerSmsRoutes } from '../src/api/sms-routes';
 import { nowIso } from '../src/shared/time';
@@ -421,33 +423,36 @@ describe('phone verification routes', () => {
 
 // ── 6. Inbound webhook keyword handling ────────────────────────────────────────────────────────
 
+// The webhook route reconstructs the URL using x-forwarded-proto + x-forwarded-host.
+// We supply these headers explicitly in inject calls to guarantee a deterministic URL.
+const WEBHOOK_TEST_AUTH_TOKEN = 'test-auth-token-for-webhook';
+const WEBHOOK_TEST_HOST = 'test.forge.local';
+const WEBHOOK_URL = `https://${WEBHOOK_TEST_HOST}/hooks/sms/twilio`;
+
+function computeTwilioSignature(authToken: string, url: string, params: Record<string, string>): string {
+  const sortedKeys = Object.keys(params).sort();
+  const toSign = url + sortedKeys.map((k) => `${k}${params[k] ?? ''}`).join('');
+  return createHmac('sha1', authToken).update(toSign, 'utf8').digest('base64');
+}
+
 describe('inbound Twilio webhook keyword handling', () => {
   let server: FastifyInstance;
 
   beforeEach(async () => {
+    // Set TWILIO_AUTH_TOKEN so the webhook signature verification passes.
+    process.env.TWILIO_AUTH_TOKEN = WEBHOOK_TEST_AUTH_TOKEN;
+    process.env.TWILIO_ACCOUNT_SID = 'AC_test';
+    process.env.TWILIO_FROM_NUMBER = '+15550000001';
+
     server = Fastify({ logger: false });
-    // Register with content-type parsing for form data
-    await server.addContentTypeParser(
-      'application/x-www-form-urlencoded',
-      { parseAs: 'string' },
-      (_req, body, done) => {
-        try {
-          const params = new URLSearchParams(body as string);
-          const obj: Record<string, string> = {};
-          params.forEach((v, k) => {
-            obj[k] = v;
-          });
-          done(null, obj);
-        } catch (e) {
-          done(e as Error);
-        }
-      },
-    );
     registerSmsRoutes(server, { defaultApp: () => APP_ID });
     await server.ready();
   });
 
   afterEach(async () => {
+    delete process.env.TWILIO_AUTH_TOKEN;
+    delete process.env.TWILIO_ACCOUNT_SID;
+    delete process.env.TWILIO_FROM_NUMBER;
     await server.close();
   });
 
@@ -466,11 +471,22 @@ describe('inbound Twilio webhook keyword handling', () => {
   }
 
   function webhookPayload(from: string, body: string) {
+    const rawPayload = `From=${encodeURIComponent(from)}&Body=${encodeURIComponent(body)}`;
+    const params: Record<string, string> = {};
+    new URLSearchParams(rawPayload).forEach((v, k) => {
+      params[k] = v;
+    });
+    const signature = computeTwilioSignature(WEBHOOK_TEST_AUTH_TOKEN, WEBHOOK_URL, params);
     return {
       method: 'POST' as const,
       url: '/hooks/sms/twilio',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      payload: `From=${encodeURIComponent(from)}&Body=${encodeURIComponent(body)}`,
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'x-forwarded-proto': 'https',
+        'x-forwarded-host': WEBHOOK_TEST_HOST,
+        'x-twilio-signature': signature,
+      },
+      payload: rawPayload,
     };
   }
 

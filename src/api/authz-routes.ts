@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { store } from '../storage/store';
 import { getBackends } from '../storage/backends';
+import { hasValidServiceToken } from '../shared/service-auth';
 import { newId } from '../shared/ids';
 import { nowIso } from '../shared/time';
 import { authorize } from '../authz/authorize';
@@ -76,6 +77,13 @@ export function registerAuthzRoutes(
     },
   };
   const invalid = (message: string) => ({ error: { code: 'invalid_input', message, retry: 'change-input' } });
+  const needServiceToken = {
+    error: {
+      code: 'unauthorized',
+      message: 'a valid x-forge-service-token is required.',
+      retry: 'needs-human',
+    },
+  };
 
   // === POST /authorize — the deterministic decision (+ C3 audit) ===================================
   app.post('/authorize', async (req, reply) => {
@@ -94,6 +102,7 @@ export function registerAuthzRoutes(
       return reply.status(400).send(invalid('authorize requires an `action` object.'));
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
 
     const backends = await getBackends();
     // C31 — resolve the caller's membership/role from the graph SERVER-SIDE (never the request's `role`).
@@ -160,6 +169,7 @@ export function registerAuthzRoutes(
     const q = req.query as { app?: string; owner?: string };
     const app_id = await resolveAppId(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     const policies = await (await getBackends()).policy.list(app_id, { owner: q.owner });
     return { policies };
   });
@@ -172,6 +182,7 @@ export function registerAuthzRoutes(
       return reply.status(422).send(invalid('`match` must be an object.'));
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
 
     const backend = (await getBackends()).policy;
     const now = nowIso();
@@ -214,6 +225,7 @@ export function registerAuthzRoutes(
     const q = req.query as { app?: string };
     const app_id = await resolveAppId(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     const policy = await (await getBackends()).policy.get(app_id, id);
     if (!policy)
       return reply
@@ -227,6 +239,7 @@ export function registerAuthzRoutes(
     const q = req.query as { app?: string; owner?: string };
     const app_id = await resolveAppId(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     // Owner-scoped when `owner` is present (a caller may remove only its own rules); management scope when
     // absent. Idempotent — an absent/out-of-scope rule yields `{ deleted: false }` (200), never a 500.
     const deleted = await (await getBackends()).policy.delete(app_id, id, q.owner ? { owner: q.owner } : {});
@@ -258,6 +271,7 @@ export function registerAuthzRoutes(
       return reply.status(400).send(invalid('an approval requires a string `action_class`.'));
     const app_id = await resolveAppId(b.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     await store.appendAppEvent({
       app_id,
       type: AUTHZ_APPROVAL,
@@ -275,6 +289,7 @@ export function registerAuthzRoutes(
       return reply.status(400).send(invalid('an approvals query requires an `action_class`.'));
     const app_id = await resolveAppId(q.app);
     if (!app_id) return reply.status(404).send(unknownApp);
+    if (!(await hasValidServiceToken(req, app_id))) return reply.status(401).send(needServiceToken);
     const events = await store.listAppEvents({ app_id, owner: q.owner, subject: q.action_class, limit: 500 });
     const approvals = events.filter((e) => e.type === AUTHZ_APPROVAL).length;
     const threshold = q.threshold ? Number(q.threshold) : 3;

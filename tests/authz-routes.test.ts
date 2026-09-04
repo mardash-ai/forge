@@ -13,6 +13,7 @@ import type { Application } from '../src/resources/types';
 // store + routes on BOTH backends.
 const APP = 'demo';
 const APP_ID = 'app_demo';
+const SVC_TOKEN = 'authz-svc-token';
 let dir: string;
 let prev: string | undefined;
 let server: FastifyInstance;
@@ -39,6 +40,7 @@ beforeEach(async () => {
   prev = process.env.FORGE_STATE_DIR;
   dir = await mkdtemp(path.join(tmpdir(), 'forge-authz-'));
   process.env.FORGE_STATE_DIR = dir;
+  process.env.AUTH_SERVICE_TOKEN = SVC_TOKEN;
   await store.init();
   await seedApp();
   server = Fastify({ logger: false });
@@ -49,13 +51,15 @@ afterEach(async () => {
   await server.close();
   if (prev === undefined) delete process.env.FORGE_STATE_DIR;
   else process.env.FORGE_STATE_DIR = prev;
+  delete process.env.AUTH_SERVICE_TOKEN;
   await rm(dir, { recursive: true, force: true });
 });
 
+const svcHdr = { 'x-forge-service-token': SVC_TOKEN };
 const post = (url: string, payload: unknown) =>
-  server.inject({ method: 'POST', url, payload: payload as object });
-const get = (url: string) => server.inject({ method: 'GET', url });
-const del = (url: string) => server.inject({ method: 'DELETE', url });
+  server.inject({ method: 'POST', url, payload: payload as object, headers: svcHdr });
+const get = (url: string) => server.inject({ method: 'GET', url, headers: svcHdr });
+const del = (url: string) => server.inject({ method: 'DELETE', url, headers: svcHdr });
 
 describe('C29 — policy CRUD', () => {
   it('create → list → get → delete a policy', async () => {
@@ -77,9 +81,10 @@ describe('C29 — policy CRUD', () => {
     );
     expect((await get(`/policies/${policy.id}`)).json().policy.id).toBe(policy.id);
 
-    expect((await server.inject({ method: 'DELETE', url: `/policies/${policy.id}` })).json().deleted).toBe(
-      true,
-    );
+    expect(
+      (await server.inject({ method: 'DELETE', url: `/policies/${policy.id}`, headers: svcHdr })).json()
+        .deleted,
+    ).toBe(true);
     expect((await get(`/policies/${policy.id}`)).statusCode).toBe(404);
   });
 
