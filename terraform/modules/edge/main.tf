@@ -50,6 +50,18 @@ variable "mcp_intermediate_pems" {
   default     = []
   description = "Intermediate CA PEMs (e.g. OpenAI-Connectors-mTLS-CA), one block each — GCP builds the chain from these."
 }
+variable "external_dns_hosts" {
+  type        = set(string)
+  default     = []
+  description = <<-EOT
+    Subset of main_hosts whose DNS is managed outside the product Cloud DNS zone (e.g. GoDaddy).
+    These hosts still get their certificate, Certificate Manager DNS authorization, URL map route,
+    and backend — but no google_dns_record_set is created for them so the managed zone is not
+    authoritative for their A record. Operators must place two records at their external DNS provider:
+    the A record and the DNS-authorization CNAME listed in the external_dns_records output.
+    Every entry here must also appear in main_hosts (enforced by lifecycle precondition).
+  EOT
+}
 
 locals {
   all_hosts = concat(var.main_hosts, [var.mcp_host])
@@ -61,6 +73,13 @@ resource "google_dns_managed_zone" "zone" {
   name        = replace(var.domain, ".", "-")
   dns_name    = "${var.domain}."
   description = "Managed by forge infra — do not hand-edit records."
+
+  lifecycle {
+    precondition {
+      condition     = length(setsubtract(var.external_dns_hosts, toset(var.main_hosts))) == 0
+      error_message = "Every entry in external_dns_hosts must also appear in main_hosts."
+    }
+  }
 }
 
 resource "google_compute_global_address" "main" {
@@ -74,7 +93,9 @@ resource "google_compute_global_address" "mcp" {
 }
 
 resource "google_dns_record_set" "main_a" {
-  for_each     = toset(var.main_hosts)
+  # external_dns_hosts are managed outside this zone — exclude them so we don't create a record set
+  # for a host whose DNS authority lives elsewhere. Non-external hosts are unaffected.
+  for_each     = setsubtract(toset(var.main_hosts), var.external_dns_hosts)
   project      = var.project_id
   managed_zone = google_dns_managed_zone.zone.name
   name         = "${each.value}."
@@ -280,5 +301,29 @@ output "dns_authorization_cnames" {
   value = {
     for host, auth in google_certificate_manager_dns_authorization.auth :
     host => { record = auth.dns_resource_record[0].name, type = auth.dns_resource_record[0].type, data = auth.dns_resource_record[0].data }
+  }
+}
+
+# 🔒 RUNBOOK step (external_dns_hosts): an operator must place these two records at their external
+# DNS provider (e.g. GoDaddy). The A record points the host at the edge IP; the CNAME lets
+# Certificate Manager verify domain ownership so the cert provisions pre-cutover.
+#
+# Record [0]: A record      — name="${host}.", type="A", data=<main LB IP>
+# Record [1]: CNAME record  — name=<acme-challenge.host.>, type="CNAME", data=<auth token>
+output "external_dns_records" {
+  description = "Per external host: the two records an operator must place at external DNS — A record (host → edge IP) and DNS-authorization CNAME (for cert provisioning)."
+  value = {
+    for host in var.external_dns_hosts : host => [
+      {
+        name = "${host}."
+        type = "A"
+        data = google_compute_global_address.main.address
+      },
+      {
+        name = google_certificate_manager_dns_authorization.auth[host].dns_resource_record[0].name
+        type = google_certificate_manager_dns_authorization.auth[host].dns_resource_record[0].type
+        data = google_certificate_manager_dns_authorization.auth[host].dns_resource_record[0].data
+      }
+    ]
   }
 }
