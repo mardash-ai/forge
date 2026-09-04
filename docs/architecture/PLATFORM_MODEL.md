@@ -4,8 +4,8 @@
 <!-- Source: platform-model.json (committed, CI-drift-guarded). -->
 
 The platform model is the authoritative reference for everything Forge exposes: capabilities,
-resource types, event catalog, error taxonomy, and HTTP route tables. It is generated from the
-live capability registry and committed so consumers can fetch it by git tag.
+resource types, event catalog, error taxonomy, HTTP route tables, and CLI surface. It is generated
+from the live capability registry and committed so consumers can fetch it by git tag.
 
 **Regenerate:** `npm run generate:platform-model` · **Source:** [`platform-model.json`](../../platform-model.json)
 
@@ -173,3 +173,56 @@ Route modules mounted: `app-events-routes`, `notifications-routes`, `search-rout
 | `GET` | `/logs/:resourceId` |
 
 Route modules mounted: `app-events-routes`, `notifications-routes`, `search-routes`, `blobs-routes`, `auth-routes`, `owner-routes`, `theme-routes`, `status-routes`, `incident-routes`, `authz-routes`, `oauth-routes`, `mcp-routes`, `connect-routes`, `membership-routes`, `billing-routes`, `tenant-routes`, `sms-routes`
+
+## CLI surface
+
+Every `forge` verb, the route it calls, and its required arguments.
+Full argument lists (including optional flags) are in `platform-model.json` under `cli_surface`.
+
+| Verb | Route | Required args | Description |
+| --- | --- | --- | --- |
+| `forge init app` | `POST /capabilities/initialize-app` | `--name <name>` | Initialize a Dockerized application (InitializeApp) |
+| `forge init-app` | `POST /capabilities/initialize-app` | `--name <name>` | Alias for `forge init app` (back-compat) |
+| `forge provision` | `POST /capabilities/provision-environment` | `--app <app>` | Provision a Docker environment (ProvisionEnvironment) |
+| `forge install` | `POST /capabilities/install-dependencies` | `--app <app>` | Install dependencies in Docker (InstallDependencies) |
+| `forge dev` | `POST /capabilities/run-dev-server` | `--app <app>` | Start/stop/inspect the dev server (RunDevServer) |
+| `forge build` | `POST /capabilities/build` | `--app <app>` | Run a reproducible build (Build) |
+| `forge test` | `POST /capabilities/test` | `--app <app>` | Run tests (Test) |
+| `forge lint` | `POST /capabilities/lint` | `--app <app>` | Run lint (Lint) |
+| `forge deploy` | `POST /capabilities/deploy` | `--app <app>` | Zero-downtime deploy of the production stack (Deploy) |
+| `forge productionize` | `POST /capabilities/productionize` | `--app <app>` | Generate the app's canonical production artifacts (Productionize) |
+| `forge inspect` | `POST /capabilities/inspect` | `--app <app>` | Compact structured inspection (Inspect) |
+| `forge verify` | `POST /capabilities/verify` | `--app <app>`, `--host <host>` | Post-deploy contract smoke test (Verify) |
+| `forge release` | `POST /capabilities/release` | `--app <app>` | Full production deploy pipeline end-to-end (Release) |
+| `forge explain` | `POST /capabilities/explain-failure` | — | Explain a failure without dumping logs (ExplainFailure) |
+| `forge plan` | `POST /capabilities/generate-feature-plan` | `--app <app>`, `--goal <goal>` | Generate a feature plan for a Goal (GenerateFeaturePlan) |
+| `forge secrets set` | `POST /capabilities/set-secret` | `--app <app>`, `--name <name>` | Store an encrypted secret for an app (SetSecret) |
+| `forge secrets list` | `POST /capabilities/inspect` | `--app <app>` | List secret names set for an app (Inspect) |
+| `forge secrets unset` | `POST /capabilities/unset-secret` | `--app <app>`, `--name <name>` | Remove/revoke a secret from an app (UnsetSecret) |
+| `forge schedule` | `POST /capabilities/schedule-job` | `--app <app>`, `--name <name>` | Register or remove a scheduled job (ScheduleJob) |
+| `forge jobs` | `POST /capabilities/inspect` | `--app <app>` | List scheduled jobs for an app (Inspect) |
+| `forge email send` | `POST /capabilities/send-email` | `--app <app>`, `--to <addr>` | Send a transactional email (SendEmail) |
+| `forge email list` | `POST /capabilities/inspect` | `--app <app>` | List transactional-email sends for an app (Inspect) |
+| `forge auth users` | `POST /capabilities/inspect` | `--app <app>` | List users for an app (Inspect) |
+| `forge auth seed-owner` | `POST /auth/admin/seed-owner` | `--app <app>`, `--email <email>` | Designate/seed the owner user — the migration cutover hook |
+| `forge owner claim-legacy` | `POST /owner/claim-legacy` | `--app <app>`, `--owner <id>` | Assign every owner-less shared-store record to an owner (C11 cutover migration) |
+| `forge status incident create` | `POST /status/incidents` | `--app <app>`, `--title <title>`, `--status <status>`, `--impact <impact>` | Declare a new incident on the public status page (C15) |
+| `forge status incident update` | `POST /status/incidents/update` | `--app <app>`, `--incident <id>`, `--status <status>` | Append an update to an incident, moving its status (C15) |
+| `forge status incident resolve` | `POST /status/incidents/resolve` | `--app <app>`, `--incident <id>` | Resolve an incident — sets status:resolved and appends a final update (C15) |
+| `forge status incident list` | `GET /status/incidents` | `--app <app>` | List incidents for an app (C15) |
+| `forge capabilities` | `GET /capabilities` | — | Discover available Capabilities |
+| `forge resources` | `GET /resources` | — | List Resources |
+| `forge events` | `GET /events` | — | List Events (facts) |
+| `forge logs` | `GET /logs/:id` | `<resourceId>` | Show a resource log |
+| `forge storage migrate` | `local` | — | Backfill a platform store from filesystem into Postgres (P26) |
+| `forge policy list` | `GET /policies` | — | List an app's policies (C29) |
+| `forge policy set` | `POST /policies` | `--effect <effect>` | Create or update a policy (C29) |
+| `forge policy delete` | `DELETE /policies/:id` | `<id>` | Delete a policy by id (C29) |
+| `forge mcp list-tools` | `GET /mcp/tools` | — | List an app's registered MCP tools (C23) |
+| `forge mcp register-tool` | `POST /mcp/tools` | `--name <name>`, `--handler-path <path>` | Register or update an MCP tool (C23) |
+| `forge mcp delete-tool` | `DELETE /mcp/tools/:name` | `<name>` | Unregister an MCP tool by name (C23) |
+| `forge mcp set-instructions` | `POST /mcp/instructions` | `--text <text>` | Append a new versioned instruction/training block (C23) |
+| `forge mcp get-instructions` | `GET /mcp/instructions` | — | Show the latest (or a specific) instruction block (C23) |
+| `forge mcp proactive` | `POST /mcp/proactive` | `--tool <name>` | Schedule (or remove) a proactive prompt for an MCP tool (C23) |
+| `forge eval` | `POST /capabilities/eval` | `<suite-file>`, `--app <app>`, `--mcp-url <url>` | Run an eval suite against an app's MCP surface (Eval, C30) |
+| `forge provision-monitoring` | `POST /capabilities/provision-monitoring` | — | Generate and deploy the metrics+logging stack (ProvisionMonitoring) |
