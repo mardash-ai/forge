@@ -1090,11 +1090,7 @@
             "type": "string",
             "optional": true
           },
-          "langfuse_public_url": {
-            "type": "string",
-            "optional": true
-          },
-          "langfuse_project_id": {
+          "gcp_project": {
             "type": "string",
             "optional": true
           },
@@ -1123,6 +1119,18 @@
             "optional": true
           },
           "app_db_password": {
+            "type": "string",
+            "optional": true
+          },
+          "dorinda_db_database": {
+            "type": "string",
+            "optional": true
+          },
+          "dorinda_db_user": {
+            "type": "string",
+            "optional": true
+          },
+          "dorinda_db_password": {
             "type": "string",
             "optional": true
           },

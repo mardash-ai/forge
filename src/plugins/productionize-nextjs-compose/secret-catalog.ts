@@ -239,6 +239,28 @@ export const SECRET_CATALOG: Record<string, SecretSpec> = {
       'Optional — defaults to inert (no SMS sent). Set to true only after all three Twilio credentials are wired AND carrier registration (10DLC / toll-free verification) is complete. Prevents accidental sends during development or incomplete carrier onboarding.',
     obtain: 'Set to the string true in .env.prod when ready to enable SMS delivery.',
   },
+  GRAFANA_PG_RO_PASSWORD: {
+    name: 'GRAFANA_PG_RO_PASSWORD',
+    capability: 'Monitoring · Grafana read-only DB datasource (forge platform DB)',
+    requirement: 'conditional',
+    what: 'Password of the dedicated SELECT-only Postgres role `grafana_ro` that the "Forge platform DB (read-only)" Grafana datasource (uid forge-appdb) connects with — NEVER a superuser.',
+    requires_note:
+      'Required only when the monitoring stack is provisioned with the app-DB hookup (the User Experience email picker). Absent ⇒ the datasource is declared but cannot authenticate — detectable, not a crash.',
+    obtain:
+      'Create the role once on the platform database (CREATE ROLE grafana_ro LOGIN PASSWORD …; GRANT SELECT on the tables Grafana reads), generate a URL-safe password, store it where the Grafana tier reads env (stack .env / Secret Manager).',
+    generate: 'openssl rand -hex 24',
+  },
+  GRAFANA_DORINDA_PG_RO_PASSWORD: {
+    name: 'GRAFANA_DORINDA_PG_RO_PASSWORD',
+    capability: 'Monitoring · Grafana read-only DB datasource (dorinda app DB)',
+    requirement: 'conditional',
+    what: 'Password of the dedicated SELECT-only Postgres role `grafana_dorinda_ro` that the "Dorinda app DB (read-only)" Grafana datasource (uid dorinda-appdb) connects with — NEVER a superuser, never the platform role.',
+    requires_note:
+      'Required only when the monitoring stack is provisioned with the app-DB hookup. Same instance as the platform DB, its OWN database (dorinda_api) and its OWN credential — the two roles must never be conflated (finding F-DD-3).',
+    obtain:
+      'Create the role once on the dorinda_api database (CREATE ROLE grafana_dorinda_ro LOGIN PASSWORD …; GRANT SELECT ON ALL TABLES IN SCHEMA public + ALTER DEFAULT PRIVILEGES for future tables), generate a URL-safe password, store it where the Grafana tier reads env.',
+    generate: 'openssl rand -hex 24',
+  },
 };
 
 // The C10 auth session secret — its presence in the declared set is how we detect an

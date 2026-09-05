@@ -54,7 +54,7 @@ describe('generateMonitoringCompose — defaults', () => {
     // exactly 4-space indent = a top-level config's own content key (deeper = embedded in a payload)
     const inline = lines.filter((l) => /^    content: \|$/.test(l));
     expect(inline.length).toBe(configNames.length);
-    expect(configNames.length).toBe(15); // 16 with appDb (user-experience dashboard); +1 for the HTTP RED dashboard, 2026-07-31
+    expect(configNames.length).toBe(14); // 15 with appDb (user-experience dashboard); log-explorer retired 2026-09-05; +1 for the HTTP RED dashboard, 2026-07-31
     expect(compose).not.toMatch(/^\s+file:/m);
     // the ONLY host bind is promtail's read-only docker socket
     const binds = compose.split('\n').filter((l) => l.includes(':/') && l.trim().startsWith('- /'));
@@ -150,12 +150,11 @@ describe('generateMonitoringCompose — defaults', () => {
   });
 
   it('datasource uids are forge-neutral and consistent between datasources and alert rules', () => {
-    const GRAFANA_DATASOURCES = renderGrafanaDatasources({
-      langfusePublicUrl: 'https://monitor.dorinda.ai',
-      langfuseProjectId: 'forge-default',
-    });
-    expect(GRAFANA_DATASOURCES).toContain('uid: forge-loki');
+    const GRAFANA_DATASOURCES = renderGrafanaDatasources({ gcpProject: 'dorinda-prod' });
     expect(GRAFANA_DATASOURCES).toContain('uid: forge-prometheus');
+    // logs are Cloud Logging — the box-era Loki datasource is retired (2026-09-05)
+    expect(GRAFANA_DATASOURCES).toContain('uid: cloud-logging');
+    expect(GRAFANA_DATASOURCES).not.toContain('uid: forge-loki');
     expect(GRAFANA_ALERT_RULES).not.toContain('proxygen');
     expect(compose).not.toContain('-proxygen');
   });
@@ -170,10 +169,11 @@ describe('generateMonitoringCompose — defaults', () => {
     expect(compose).toContain('traefik_tls_certs_not_after_milliseconds / 1000');
   });
 
-  it('alert rules select labels that exist and semantics that can actually fire (0.75.1)', () => {
-    // promtail sets service_name + stream ONLY — a {job=~".+"} selector matches nothing, ever
+  it('alert rules are metric-based only — the box-era Loki rules are retired (2026-09-05)', () => {
+    // Production has no Loki; estate alerting deliberately lives in Cloud Monitoring. The one
+    // provisioned Grafana rule is the Prometheus-gauge Dead-MCP-Registration check.
+    expect(GRAFANA_ALERT_RULES).not.toContain('loki');
     expect(GRAFANA_ALERT_RULES).not.toContain('{job=~');
-    expect(GRAFANA_ALERT_RULES).toContain('service_name=');
     // registration lines only log at boot — the alert is gauge-based, not absent-line-based
     // Was `min(mcp_tools_registered) or on() vector(0)` with instant:true. That assertion pinned
     // the BUG in place: an instant query cannot see a gauge emitted once at registration (5-minute
@@ -184,15 +184,14 @@ describe('generateMonitoringCompose — defaults', () => {
     expect(GRAFANA_ALERT_RULES).not.toContain('absent_over_time');
   });
 
-  it('sweep-error-streak excludes no_calendars_selected (a skip, not an error — 0.76.1)', () => {
-    expect(GRAFANA_ALERT_RULES).toContain('status !~ `ok|no_calendars_selected`');
-    // and the old catch-all form is gone from the streak rule
-    expect(GRAFANA_ALERT_RULES).not.toContain('"gcal.sync.owner" | json | status != `ok`');
-  });
-
-  it('log-level panels use the detected_level Loki metadata, never a literal "ALL" filter (0.75.1)', () => {
-    expect(compose).toContain('detected_level');
-    expect(compose).not.toContain('|= "$log_level"');
+  it('logs panels ride Cloud Logging with real filters (op/type live in jsonPayload)', () => {
+    // Every logs-type panel queries the cloud-logging datasource via Cloud Logging filter
+    // syntax; LogQL is gone with the Loki datasource. The filters below were validated live
+    // against production (dorinda-metrics forge-user-experience, 2026-08-27).
+    expect(compose).toContain('jsonPayload.op=');
+    expect(compose).toContain('resource.labels.service_name=');
+    expect(compose).not.toContain('count_over_time');
+    expect(compose).not.toContain('|= ');
   });
 
   it('ships the Tool Drilldown dashboard by default; both drilldown dashboards parse as valid JSON (0.77.0)', () => {
@@ -200,13 +199,7 @@ describe('generateMonitoringCompose — defaults', () => {
     const tool = JSON.parse(DASHBOARD_TOOL_DRILLDOWN);
     expect(tool.uid).toBe('forge-tool-drilldown');
     expect(JSON.stringify(tool)).toContain('label_values');
-    const user = JSON.parse(
-      renderUserExperienceDashboard({
-        appId: 'dorinda-api',
-        langfusePublicUrl: 'https://monitor.dorinda.ai',
-        langfuseProjectId: 'forge-default',
-      }),
-    );
+    const user = JSON.parse(renderUserExperienceDashboard({ appId: 'dorinda-api' }));
     expect(user.uid).toBe('forge-user-experience');
     // the email picker queries the identity table scoped to the app, via the RO datasource
     const pickerQ = JSON.stringify(user.templating);
@@ -215,16 +208,12 @@ describe('generateMonitoringCompose — defaults', () => {
     expect(pickerQ).toContain('forge-appdb');
   });
 
-  it('derived fields deep-link to the PUBLIC Langfuse (never an internal hostname) incl. correlation_id (0.77.0)', () => {
-    const ds = renderGrafanaDatasources({
-      langfusePublicUrl: 'https://monitor.dorinda.ai',
-      langfuseProjectId: 'forge-default',
-    });
-    expect(ds).toContain('https://monitor.dorinda.ai/project/forge-default/traces/');
-    expect(ds).not.toContain('langfuse-web:3000');
-    expect(ds).toContain('"correlation_id":"00-');
-    // no appDb → no postgres datasource
-    expect(ds).not.toContain('type: postgres');
+  it('cloud datasources use gce workload-identity auth (no key material to rotate)', () => {
+    const ds = renderGrafanaDatasources({ gcpProject: 'dorinda-prod' });
+    expect(ds).toContain('authenticationType: gce');
+    expect(ds).toContain('defaultProject: dorinda-prod');
+    // no appDb → no postgres datasource declared
+    expect(ds).not.toContain('grafana-postgresql-datasource');
   });
 
   it('MCP per-tool panels select ONE family via the app label the transport sets (0.76.0)', () => {
@@ -312,26 +301,38 @@ describe('generateMonitoringCompose — appDb (User Experience dashboard)', () =
   };
   const compose = generateMonitoringCompose({ appDb });
 
-  it('adds the RO postgres datasource, joins the app network, and ships the user dashboard', () => {
+  it('adds BOTH RO postgres datasources, joins the app network, and ships the user dashboard', () => {
     expect(compose).toContain('uid: forge-appdb');
+    expect(compose).toContain('uid: dorinda-appdb');
     expect(compose).toContain('url: forge-dorinda-api-prod-postgres-1:5432');
+    // each database has its OWN dedicated SELECT-only role
     expect(compose).toContain('user: grafana_ro');
     expect(compose).toContain('database: forge_platform');
+    expect(compose).toContain('user: grafana_dorinda_ro');
+    expect(compose).toContain('database: dorinda_api');
     expect(compose).toContain('dash-user-experience');
     // grafana (and only via declaration) joins the external app network
     const g = compose.slice(compose.indexOf('  grafana:'));
     expect(g).toContain('- forge-dorinda-api-prod_internal');
     expect(compose).toMatch(/forge-dorinda-api-prod_internal:\n    external: true/);
-    // the password flows .env -> grafana container env -> Grafana provisioning $VAR expansion;
+    // the passwords flow .env -> grafana container env -> Grafana provisioning $VAR expansion;
     // embed() $-doubles the config content so compose passes the literal through to Grafana
     expect(compose).toContain('password: $$GRAFANA_PG_RO_PASSWORD');
+    expect(compose).toContain('password: $$GRAFANA_DORINDA_PG_RO_PASSWORD');
+    // wired defined-but-empty (BUILDING_A_CAPABILITY §1) — absence detectable, never a crash
     expect(g).toContain('GRAFANA_PG_RO_PASSWORD: ${GRAFANA_PG_RO_PASSWORD:-}');
+    expect(g).toContain('GRAFANA_DORINDA_PG_RO_PASSWORD: ${GRAFANA_DORINDA_PG_RO_PASSWORD:-}');
   });
 
-  it('env render carries the RO password line (and example documents it)', () => {
-    const env = renderMonitoringEnv(generateMonitoringSecrets(), { appDbPassword: 'x-ro-pass' });
+  it('env render carries BOTH RO password lines (and example documents them)', () => {
+    const env = renderMonitoringEnv(generateMonitoringSecrets(), {
+      appDbPassword: 'x-ro-pass',
+      dorindaDbPassword: 'y-ro-pass',
+    });
     expect(env).toContain('GRAFANA_PG_RO_PASSWORD=x-ro-pass');
+    expect(env).toContain('GRAFANA_DORINDA_PG_RO_PASSWORD=y-ro-pass');
     expect(renderMonitoringEnvExample()).toContain('GRAFANA_PG_RO_PASSWORD=');
+    expect(renderMonitoringEnvExample()).toContain('GRAFANA_DORINDA_PG_RO_PASSWORD=');
   });
 });
 

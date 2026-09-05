@@ -1,9 +1,29 @@
 // Generated-once from the live-validated stack configs (2026-07-26) — now OWNED by forge.
 // Edit HERE and re-release; never hand-edit a provisioned stack dir (regen clobbers it).
-// Datasource uids are forge-loki / forge-prometheus everywhere (datasources, dashboards, alerts).
+// Datasource uids/types/names come from ONE committed list — src/console/datasource-catalog.ts —
+// which the datasource declarations, every dashboard panel and every alert rule derive from.
+// Never write a datasource uid as a literal: Grafana silently substitutes the DEFAULT datasource
+// for an unknown uid, so a wrong reference renders as a working page showing nothing (F-DD-5).
+// The box-era `forge-loki` datasource is RETIRED (2026-09-05): production has no Loki — logs are
+// Cloud Logging (`cloud-logging`, googlecloud-logging-datasource). Logs-type panels query it via
+// Cloud Logging filters; LogQL-aggregation panels and the Loki-based alert rules are gone
+// (estate alerting is Cloud Monitoring's job — see dorinda-shared-infra/infra/main.tf).
 // 0.75.1: metric names fixed to what Traefik OTLP actually emits (entrypoint/service — router-level
-// series do not exist), TLS rule ms→s, Loki alert selectors on service_name (job label never set),
+// series do not exist), TLS rule ms→s,
 // Dead-MCP-Registration re-based on the mcp_tools_registered gauge (register lines only log at boot).
+
+import {
+  DS_PROMETHEUS,
+  DS_CLOUD_LOGGING,
+  DS_CLOUD_MONITORING,
+  DS_FORGE_PLATFORM_DB,
+  DS_DORINDA_APP_DB,
+} from '../../console/datasource-catalog';
+
+/** Panel-side datasource reference — ALWAYS derived from the catalog, never a literal. */
+function dsRef(d: { type: string; uid: string }): string {
+  return `{ "type": "${d.type}", "uid": "${d.uid}" }`;
+}
 
 /** Loki 3.x single-binary config — 30d retention via compactor (delete_request_store REQUIRED) */
 export const LOKI_CONFIG = `# Loki — single-process (monolithic) mode with filesystem storage.
@@ -241,29 +261,42 @@ groups:
             check that port 80 is reachable for the HTTP-01 challenge.
 `;
 
-/** Grafana datasources — fixed uids forge-loki / forge-prometheus */
 /** Options the datasource provisioning needs (subset of the plugin's Resolved). */
 export interface DatasourceRenderOptions {
-  /** Public Langfuse UI base (browser-reachable — NEVER an internal docker hostname). */
-  langfusePublicUrl: string;
-  /** Langfuse project id for /project/<id>/traces/<traceId> deep links. */
-  langfuseProjectId: string;
-  /** Optional read-only app-DB source — powers the by-email user picker. */
-  appDb?: { host: string; port: number; database: string; user: string };
+  /** GCP project the Cloud Logging / Cloud Monitoring datasources read (gce workload identity). */
+  gcpProject?: string;
+  /** Read-only Postgres hookup — declares BOTH DB datasources (forge platform + dorinda app).
+   *  The two databases live on the SAME instance (dorinda-pg hosts forge_platform AND
+   *  dorinda_api — verified 2026-09-05); each gets its OWN SELECT-only role and secret. */
+  appDb?: {
+    host: string;
+    port: number;
+    /** forge platform database (catalog-pinned default: forge_platform). */
+    database: string;
+    /** SELECT-only role for the platform DB — NEVER a superuser. */
+    user: string;
+    /** dorinda-api's application database (catalog-pinned default: dorinda_api). */
+    dorindaDatabase: string;
+    /** SELECT-only role for the app DB — NEVER a superuser, never the platform role. */
+    dorindaUser: string;
+  };
 }
 
-/** Grafana datasource provisioning (uids fixed — alert rules reference them). */
-export function renderGrafanaDatasources(o: DatasourceRenderOptions): string {
-  const lfTrace = `${o.langfusePublicUrl}/project/${o.langfuseProjectId}/traces/$\${__value.raw}`;
+/** Grafana datasource provisioning — every uid/type/name comes from the committed catalog
+ *  (src/console/datasource-catalog.ts); alert rules and panels reference the same entries. */
+export function renderGrafanaDatasources(o: DatasourceRenderOptions = {}): string {
+  const gcpAuth = `      authenticationType: gce${o.gcpProject ? `\n      defaultProject: ${o.gcpProject}` : ''}`;
   const appDbBlock = o.appDb
     ? `
-  # ── App DB (READ-ONLY) ─────────────────────────────────────────────────────
-  # Powers the by-email user picker on the User Experience dashboard. The role
-  # must be SELECT-only (grafana_ro); the password reaches the CONTAINER env from the
-  # stack .env, and Grafana's provisioning expands \$VAR references from that env.
-  - name: App DB (read-only)
-    uid: forge-appdb
-    type: postgres
+  # ── ${DS_FORGE_PLATFORM_DB.name} ──────────────────────────────────────────
+  # Forge's OWN platform database (forge_identity_users + forge_app_events) — the email→owner
+  # picker on the User Experience dashboard. NOT the app's data (that is ${DS_DORINDA_APP_DB.uid}
+  # below — naming this one "App DB" was finding F-DD-3). The role must be SELECT-only
+  # (${o.appDb.user}); the password reaches the CONTAINER env from the stack .env, and Grafana's
+  # provisioning expands \$VAR references from that env.
+  - name: ${DS_FORGE_PLATFORM_DB.name}
+    uid: ${DS_FORGE_PLATFORM_DB.uid}
+    type: ${DS_FORGE_PLATFORM_DB.type}
     access: proxy
     url: ${o.appDb.host}:${o.appDb.port}
     user: ${o.appDb.user}
@@ -275,26 +308,50 @@ export function renderGrafanaDatasources(o: DatasourceRenderOptions): string {
       sslmode: disable
       maxOpenConns: 2
       postgresVersion: 1500
+
+  # ── ${DS_DORINDA_APP_DB.name} ─────────────────────────────────────────────
+  # dorinda-api's application database — events, messages, approvals, every table its
+  # migrations create. Same instance as the platform DB, its OWN database and its OWN
+  # dedicated SELECT-only role (${o.appDb.dorindaUser}) with its OWN secret — NEVER a
+  # superuser, never the platform role.
+  - name: ${DS_DORINDA_APP_DB.name}
+    uid: ${DS_DORINDA_APP_DB.uid}
+    type: ${DS_DORINDA_APP_DB.type}
+    access: proxy
+    url: ${o.appDb.host}:${o.appDb.port}
+    user: ${o.appDb.dorindaUser}
+    editable: false
+    secureJsonData:
+      password: $GRAFANA_DORINDA_PG_RO_PASSWORD
+    jsonData:
+      database: ${o.appDb.dorindaDatabase}
+      sslmode: disable
+      maxOpenConns: 2
+      postgresVersion: 1500
 `
     : '';
   return `# Grafana datasource provisioning.
 #
-# UIDs are fixed so the alerting rules can reference them without depending on
-# auto-assigned IDs. These UIDs must match the \`datasourceUid\` values in
-# grafana/provisioning/alerting/alert_rules.yml.
+# EVERY uid/type/name here comes from the committed catalog (src/console/datasource-catalog.ts).
+# UIDs are fixed so dashboards + alert rules can reference them without depending on
+# auto-assigned IDs. Grafana does NOT error on an unknown datasource uid — it silently
+# substitutes the default datasource — so declaration and reference must come from one list.
 #
-# deleteDatasources: any datasource listed here is removed on Grafana startup if
-# it exists with that name but NOT in this file.
+# There is deliberately NO Loki datasource: production logs are Cloud Logging. The
+# box-era Loki declaration was retired 2026-09-05 (it declared a store production does not
+# have, which made dead panels look merely misconfigured).
 
 apiVersion: 1
 
 datasources:
 
-  # ── Prometheus ─────────────────────────────────────────────────────────────
-  # Scraped from otel-collector:8889 — contains all Traefik OTLP metrics.
-  - name: Prometheus
-    uid: forge-prometheus
-    type: prometheus
+  # ── ${DS_PROMETHEUS.name} ──────────────────────────────────────────────────
+  # Prometheus-compatible metrics. Locally: the stack's own Prometheus (scrapes
+  # otel-collector:8889 — all Traefik OTLP metrics). In production: the Google Managed
+  # Prometheus frontend proxy. Same uid either way — panels bind to the uid.
+  - name: ${DS_PROMETHEUS.name}
+    uid: ${DS_PROMETHEUS.uid}
+    type: ${DS_PROMETHEUS.type}
     access: proxy
     url: http://prometheus:9090
     isDefault: true
@@ -302,35 +359,28 @@ datasources:
     jsonData:
       httpMethod: POST
       timeInterval: "15s"        # matches scrape_interval in prometheus.yml
-      exemplarTraceIdDestinations:
-        - name: trace_id
-          datasourceUid: forge-loki   # link trace IDs in metrics to Loki logs
 
-  # ── Loki ───────────────────────────────────────────────────────────────────
-  # Receives structured logs from otel-collector via OTLP.
-  # Derived fields turn ids inside log lines into CLICKABLE deep links to the
-  # PUBLIC Langfuse UI (payload pane) — the whole two-pane bridge in one click.
-  - name: Loki
-    uid: forge-loki
-    type: loki
+  # ── ${DS_CLOUD_LOGGING.name} ───────────────────────────────────────────────
+  # THE logs datasource (googlecloud-logging-datasource, gce workload-identity auth — no key
+  # material, nothing to rotate). Logs-type panels query it with Cloud Logging filters.
+  - name: ${DS_CLOUD_LOGGING.name}
+    uid: ${DS_CLOUD_LOGGING.uid}
+    type: ${DS_CLOUD_LOGGING.type}
     access: proxy
-    url: http://loki:3100
-    isDefault: false
     editable: false
     jsonData:
-      maxLines: 1000
-      derivedFields:
-        # Traefik access-log trace id (key is \`TraceId\`; match case-insensitively).
-        - matcherRegex: '"Trace[Ii][Dd]":"([a-f0-9]+)"'
-          name: TraceId
-          url: "${lfTrace}"
-          urlDisplayLabel: "Open in Langfuse"
-        # App dispatch lines carry the W3C traceparent as correlation_id
-        # (\`00-<trace_id>-<span>-01\`) — extract the trace segment.
-        - matcherRegex: '"correlation_id":"00-([a-f0-9]{32})'
-          name: trace
-          url: "${lfTrace}"
-          urlDisplayLabel: "Open in Langfuse (payloads)"
+${gcpAuth}
+
+  # ── ${DS_CLOUD_MONITORING.name} ────────────────────────────────────────────
+  # GCP service metrics — the Service Health dashboard's RED panels (Cloud Run request
+  # count/latency), Cloud SQL. Same gce auth as Cloud Logging.
+  - name: ${DS_CLOUD_MONITORING.name}
+    uid: ${DS_CLOUD_MONITORING.uid}
+    type: ${DS_CLOUD_MONITORING.type}
+    access: proxy
+    editable: false
+    jsonData:
+${gcpAuth}
 ${appDbBlock}`;
 }
 
@@ -358,25 +408,20 @@ providers:
     folderUid: forge-mon-folder
 `;
 
-/** Grafana unified-alerting rules: MCP Dispatch Errors · Sweep Error Streak · Edge 5xx Spike · Dead MCP Registration (gauge-based) */
-export const GRAFANA_ALERT_RULES = `# Grafana unified alerting — log-based alert rules (Loki datasource).
+/** Grafana unified-alerting rules — Dead MCP Registration (gauge-based, Prometheus).
+ *  The three box-era Loki rules (MCP Dispatch Errors · Sweep Error Streak · Edge 5xx log-spike)
+ *  were RETIRED with the forge-loki datasource (2026-09-05): production has no Loki, and estate
+ *  alerting deliberately lives in Cloud Monitoring (see dorinda-shared-infra/infra/main.tf) so
+ *  the observability pane is never its own alerting path. The Prometheus 5xx alert survives in
+ *  prometheus/rules/alerts.yml. */
+export const GRAFANA_ALERT_RULES = `# Grafana unified alerting — provisioned alert rules.
 #
-# These four alerts cover the failure modes in the acceptance criteria:
-#   1. silent-tool-call-death   — tool call started but timed out / never completed
-#   2. sweep-error-streak       — repeated sweep errors in a short window
-#   3. edge-5xx-spike           — high 5xx rate at the edge  (Prometheus-metric version;
-#                                  the Prometheus rules file has the same alert —
-#                                  this Grafana copy fires via Loki-derived log count
-#                                  as a belt-and-suspenders check from a different source)
-#   4. dead-mcp-registration    — no MCP registration events seen in the last 10 minutes
+# ONE rule group: metric-based rules over the ${DS_PROMETHEUS.uid} datasource. The box-era
+# Loki-based rules are gone with the retired Loki datasource (production logs are Cloud Logging,
+# which is a logs pane, not an alerting store — estate alerting is Cloud Monitoring's job).
 #
-# TUNING: The LogQL expressions below use broad patterns (|= "keyword").
-# After first deployment, inspect actual log labels and field names with Grafana Explore
-# and tighten the selectors (e.g. {service_name="dorinda-api"} instead of {service_name=~".+"}).
-#
-# Datasource UIDs must match grafana/provisioning/datasources/datasources.yml:
-#   forge-loki
-#   forge-prometheus
+# Datasource UIDs must match the committed catalog (src/console/datasource-catalog.ts):
+#   ${DS_PROMETHEUS.uid}
 #   -100  (special: Grafana expression/math datasource — always present)
 #
 # Reference: https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/file-provisioning/
@@ -385,222 +430,18 @@ apiVersion: 1
 
 groups:
 
-  # ── Loki-based alert group ─────────────────────────────────────────────────
   - orgId: 1
-    name: forge-mon-loki-alerts
+    name: forge-mon-alerts
     folder: forge-mon
     interval: 1m
     rules:
 
-      # ── 1. MCP Dispatch Errors ──────────────────────────────────────────
-      # Detects tool calls that were started but never produced a result or error.
-      # The LogQL looks for lines that mention "tool_call" AND contain a timeout /
-      # dead / hung keyword — indicating the call entered but never exited cleanly.
-      #
-      # TUNING: Replace the match patterns with your app's actual log vocabulary.
-      # A more precise approach once logs are flowing: use two separate queries —
-      # count_over_time of "tool_call_started" vs "tool_call_completed" — and alert
-      # when started count > completed count for > 5 minutes. That requires two data
-      # steps and a math expression referencing both (refId D: "$A - $B > 0").
-      - uid: loki-silent-tool-call-death
-        title: MCP Dispatch Errors (burst)
-        condition: B
-        for: 5m
-        data:
-          # Step A: count log lines indicating a tool call died without completing
-          - refId: A
-            queryType: ''
-            relativeTimeRange:
-              from: 300   # last 5 min
-              to: 0
-            datasourceUid: forge-loki
-            model:
-              expr: 'sum(count_over_time({service_name=~"forge-dorinda-api-prod-web.*"} |= "mcp.dispatch" | json | outcome != \`ok\` [5m]))'
-              instant: true
-              intervalMs: 1000
-              maxDataPoints: 43200
-              queryType: instant
-              refId: A
-          # Step B: fire if any such lines exist
-          - refId: B
-            queryType: ''
-            relativeTimeRange:
-              from: 300
-              to: 0
-            datasourceUid: '-100'
-            model:
-              conditions:
-                - evaluator:
-                    params:
-                      - 0
-                    type: gt
-                  operator:
-                    type: and
-                  query:
-                    params:
-                      - A
-                  reducer:
-                    params: []
-                    type: last
-                  type: query
-              datasource:
-                type: __expr__
-                uid: '-100'
-              expression: ''
-              hide: false
-              intervalMs: 1000
-              maxDataPoints: 43200
-              refId: B
-              type: classic_conditions
-        noDataState: OK
-        execErrState: Error
-        labels:
-          severity: warning
-          team: forge-mon
-        annotations:
-          summary: "Tool-call death detected"
-          description: >
-            Log lines matching tool_call + timeout/hung/dead/no_result appeared in the
-            last 5 minutes. Check app logs for silent tool-call failures.
-            Tune the LogQL in alert_rules.yml once actual log format is known.
-
-      # ── 2. Sweep Error Streak ──────────────────────────────────────────────
-      # Fires when more than 5 sweep-related ERROR log lines appear in 5 minutes,
-      # indicating a persistent error loop rather than a transient blip.
-      - uid: loki-sweep-error-streak
-        title: Sweep Error Streak
-        condition: C
-        for: 2m
-        data:
-          # Step A: count ERROR lines in sweep context
-          - refId: A
-            queryType: ''
-            relativeTimeRange:
-              from: 300
-              to: 0
-            datasourceUid: forge-loki
-            model:
-              # no_calendars_selected is a SKIP (connected, nothing chosen to sync — dorinda-api
-              # 53ed52d counts it apart from errors); a streak of it must never page anyone.
-              expr: 'sum(count_over_time({service_name=~"forge-dorinda-api-prod-web.*"} |= "gcal.sync.owner" | json | status !~ \`ok|no_calendars_selected\` [30m]))'
-              instant: true
-              intervalMs: 1000
-              maxDataPoints: 43200
-              queryType: instant
-              refId: A
-          # Step C: fire if count exceeds threshold
-          - refId: C
-            queryType: ''
-            relativeTimeRange:
-              from: 300
-              to: 0
-            datasourceUid: '-100'
-            model:
-              conditions:
-                - evaluator:
-                    params:
-                      - 5          # > 5 sweep errors in 5 min = streak, not a one-off
-                    type: gt
-                  operator:
-                    type: and
-                  query:
-                    params:
-                      - A
-                  reducer:
-                    params: []
-                    type: last
-                  type: query
-              datasource:
-                type: __expr__
-                uid: '-100'
-              expression: ''
-              hide: false
-              intervalMs: 1000
-              maxDataPoints: 43200
-              refId: C
-              type: classic_conditions
-        noDataState: OK
-        execErrState: Error
-        labels:
-          severity: warning
-          team: forge-mon
-        annotations:
-          summary: "Sweep error streak: >5 errors in 5 min"
-          description: >
-            More than 5 sweep-related ERROR log lines in the last 5 minutes.
-            This suggests a repeating failure loop rather than a one-off error.
-
-      # ── 3. Edge 5xx Spike (Loki / log-count version) ──────────────────────
-      # Belt-and-suspenders: the Prometheus rule fires on metrics; this fires on
-      # Traefik's JSON access log lines where DownstreamStatus >= 500.
-      # Both fire independently; the Prometheus version is more precise.
-      - uid: loki-edge-5xx-spike
-        title: Edge 5xx Spike (log-based)
-        condition: B
-        for: 2m
-        data:
-          # Step A: count access-log lines with DownstreamStatus 5xx
-          # Traefik JSON access log format: {"DownstreamStatus":503,...}
-          - refId: A
-            queryType: ''
-            relativeTimeRange:
-              from: 300
-              to: 0
-            datasourceUid: forge-loki
-            model:
-              expr: 'sum(count_over_time({service_name="traefik"} |~ \`"DownstreamStatus":5\` [5m]))'
-              instant: true
-              intervalMs: 1000
-              maxDataPoints: 43200
-              queryType: instant
-              refId: A
-          - refId: B
-            queryType: ''
-            relativeTimeRange:
-              from: 300
-              to: 0
-            datasourceUid: '-100'
-            model:
-              conditions:
-                - evaluator:
-                    params:
-                      - 10         # > 10 access-log 5xx lines in 5 min
-                    type: gt
-                  operator:
-                    type: and
-                  query:
-                    params:
-                      - A
-                  reducer:
-                    params: []
-                    type: last
-                  type: query
-              datasource:
-                type: __expr__
-                uid: '-100'
-              expression: ''
-              hide: false
-              intervalMs: 1000
-              maxDataPoints: 43200
-              refId: B
-              type: classic_conditions
-        noDataState: OK
-        execErrState: Error
-        labels:
-          severity: critical
-          team: forge-mon
-        annotations:
-          summary: "Edge 5xx spike (>10 in 5 min)"
-          description: >
-            Traefik access log shows more than 10 5xx responses in the last 5 minutes.
-            Check the Edge Overview dashboard for the failing router.
-
-      # ── 4. Dead MCP Registration ───────────────────────────────────────────
+      # ── Dead MCP Registration ───────────────────────────────────────────
       # GAUGE-based (0.75.1): registration log lines only appear at app boot, so an
       # absence-of-lines check would fire constantly. Instead: the data-plane exports
       # mcp_tools_registered continuously; the surface is dead when it drops below the
       # full tool count (26) or the series disappears entirely (or-vector(0) → 0 < 26).
-      - uid: loki-dead-mcp-registration
+      - uid: dead-mcp-registration
         title: Dead MCP Registration
         condition: B
         for: 10m
@@ -611,7 +452,7 @@ groups:
             relativeTimeRange:
               from: 900   # 15 min window to catch the 10-min absence
               to: 0
-            datasourceUid: forge-prometheus
+            datasourceUid: ${DS_PROMETHEUS.uid}
             model:
               # ⛔ RANGE-AWARE. mcp_tools_registered is a SPARSE gauge (emitted once at
               # registration), and Prometheus treats a sample as stale after 5 minutes — so an
@@ -716,7 +557,7 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
   "id": null,
   "uid": "forge-mon-edge",
   "title": "Edge Overview",
-  "description": "Traefik edge traffic: request rates, error rates, latency. Data from otel-collector Prometheus scrape endpoint. Langfuse remains the LLM-trace pane.",
+  "description": "Traefik edge traffic: request rates, error rates, latency. Data from otel-collector Prometheus scrape endpoint.",
   "tags": [
     "forge-mon",
     "traefik",
@@ -745,17 +586,11 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
         "x": 0,
         "y": 0
       },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "forge-prometheus"
-      },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [
         {
           "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "forge-prometheus"
-          },
+          "datasource": ${dsRef(DS_PROMETHEUS)},
           "expr": "sum(rate(traefik_entrypoint_requests_total{code=~\\"5..\\"}[5m])) / sum(rate(traefik_entrypoint_requests_total[5m]))",
           "instant": true,
           "legendFormat": "error ratio"
@@ -811,17 +646,11 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
         "x": 4,
         "y": 0
       },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "forge-prometheus"
-      },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [
         {
           "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "forge-prometheus"
-          },
+          "datasource": ${dsRef(DS_PROMETHEUS)},
           "expr": "sum(rate(traefik_entrypoint_requests_total[5m]))",
           "instant": true,
           "legendFormat": "req/s"
@@ -868,17 +697,11 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
         "x": 8,
         "y": 0
       },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "forge-prometheus"
-      },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [
         {
           "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "forge-prometheus"
-          },
+          "datasource": ${dsRef(DS_PROMETHEUS)},
           "expr": "histogram_quantile(0.95, sum(rate(traefik_entrypoint_request_duration_seconds_bucket[5m])) by (le))",
           "instant": true,
           "legendFormat": "p95"
@@ -933,17 +756,11 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
         "x": 0,
         "y": 4
       },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "forge-prometheus"
-      },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [
         {
           "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "forge-prometheus"
-          },
+          "datasource": ${dsRef(DS_PROMETHEUS)},
           "expr": "sum(rate(traefik_entrypoint_requests_total[2m])) by (code)",
           "legendFormat": "{{code}}"
         }
@@ -1029,17 +846,11 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
         "x": 0,
         "y": 12
       },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "forge-prometheus"
-      },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [
         {
           "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "forge-prometheus"
-          },
+          "datasource": ${dsRef(DS_PROMETHEUS)},
           "expr": "100 * sum(rate(traefik_entrypoint_requests_total{code=~\\"5..\\"}[5m])) / sum(rate(traefik_entrypoint_requests_total[5m]))",
           "legendFormat": "5xx %"
         }
@@ -1091,35 +902,23 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
         "x": 12,
         "y": 12
       },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "forge-prometheus"
-      },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [
         {
           "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "forge-prometheus"
-          },
+          "datasource": ${dsRef(DS_PROMETHEUS)},
           "expr": "histogram_quantile(0.50, sum(rate(traefik_entrypoint_request_duration_seconds_bucket[5m])) by (le))",
           "legendFormat": "p50"
         },
         {
           "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "forge-prometheus"
-          },
+          "datasource": ${dsRef(DS_PROMETHEUS)},
           "expr": "histogram_quantile(0.95, sum(rate(traefik_entrypoint_request_duration_seconds_bucket[5m])) by (le))",
           "legendFormat": "p95"
         },
         {
           "refId": "C",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "forge-prometheus"
-          },
+          "datasource": ${dsRef(DS_PROMETHEUS)},
           "expr": "histogram_quantile(0.99, sum(rate(traefik_entrypoint_request_duration_seconds_bucket[5m])) by (le))",
           "legendFormat": "p99"
         }
@@ -1156,17 +955,11 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
         "x": 0,
         "y": 20
       },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "forge-prometheus"
-      },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [
         {
           "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "forge-prometheus"
-          },
+          "datasource": ${dsRef(DS_PROMETHEUS)},
           "expr": "sum(rate(traefik_service_requests_total[2m])) by (service)",
           "legendFormat": "{{router}}"
         }
@@ -1234,298 +1027,9 @@ export const DASHBOARD_EDGE_OVERVIEW = `{
   ]
 }`;
 
-/** Dashboard: Log Explorer (trace-id search; detected_level panels) */
-export const DASHBOARD_LOG_EXPLORER = `{
-  "id": null,
-  "uid": "forge-mon-log-explorer",
-  "title": "Log Explorer / Correlation-ID Journey",
-  "description": "Search logs across all services. Enter a trace_id or correlation_id to see the full request journey from edge to backend. Data source: Loki (OTLP logs from otel-collector).",
-  "tags": [
-    "forge-mon",
-    "loki",
-    "logs",
-    "tracing"
-  ],
-  "timezone": "browser",
-  "schemaVersion": 39,
-  "version": 1,
-  "refresh": "30s",
-  "time": {
-    "from": "now-1h",
-    "to": "now"
-  },
-  "timepicker": {},
-  "graphTooltip": 0,
-  "templating": {
-    "list": [
-      {
-        "name": "trace_id",
-        "label": "Trace / Correlation ID",
-        "description": "Paste a trace ID from Langfuse, or a correlation_id / request_id from any log line, to see the full request journey across all services.",
-        "type": "textbox",
-        "current": {
-          "value": "",
-          "text": ""
-        },
-        "hide": 0,
-        "options": [],
-        "query": ""
-      },
-      {
-        "name": "service",
-        "label": "Service filter",
-        "description": "Filter by service_name label (leave empty for all services).",
-        "type": "query",
-        "datasource": {
-          "type": "loki",
-          "uid": "forge-loki"
-        },
-        "query": "label_values(service_name)",
-        "current": {
-          "value": "$__all",
-          "text": "All"
-        },
-        "includeAll": true,
-        "allValue": ".*",
-        "hide": 0,
-        "refresh": 2,
-        "sort": 1,
-        "multi": false
-      }
-    ]
-  },
-  "panels": [
-    {
-      "id": 1,
-      "type": "text",
-      "title": "How to use this dashboard",
-      "gridPos": {
-        "h": 3,
-        "w": 24,
-        "x": 0,
-        "y": 0
-      },
-      "options": {
-        "mode": "markdown",
-        "content": "## Request-journey search\\n\\n1. **Paste a trace ID** from Langfuse (or a \`correlation_id\` / \`request_id\` from any log line) into **Trace / Correlation ID** above.\\n2. All log lines from all services sharing that ID appear in the timeline below — edge → backend, ordered by time.\\n3. Use **Service filter** to narrow to one container. Use **Level** to show only errors.\\n\\n**Where to get trace IDs:** Traefik JSON access logs include \`TraceID\` + \`SpanID\`. Click a derived-field link in the Loki datasource to jump from a Traefik log line directly to the matching Langfuse trace.\\n\\n*Langfuse remains the LLM-trace pane. This view covers the full request journey from the edge inward.*"
-      },
-      "datasource": null
-    },
-    {
-      "id": 2,
-      "type": "logs",
-      "title": "Request Journey — all services for trace/correlation ID: $trace_id",
-      "description": "All log lines sharing the given trace_id or correlation_id, sorted ascending (oldest first) to show the request journey from entry to exit.",
-      "gridPos": {
-        "h": 20,
-        "w": 24,
-        "x": 0,
-        "y": 3
-      },
-      "datasource": {
-        "type": "loki",
-        "uid": "forge-loki"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "loki",
-            "uid": "forge-loki"
-          },
-          "expr": "{service_name=~\\"$service\\"} |= \\"$trace_id\\"",
-          "legendFormat": "",
-          "queryType": "range",
-          "maxLines": 500
-        }
-      ],
-      "options": {
-        "showTime": true,
-        "showLabels": true,
-        "showCommonLabels": false,
-        "wrapLogMessage": true,
-        "prettifyLogMessage": false,
-        "enableLogDetails": true,
-        "dedupStrategy": "none",
-        "sortOrder": "Ascending"
-      },
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      }
-    },
-    {
-      "id": 3,
-      "type": "logs",
-      "title": "Error logs — last 1h (all services, level filter: $log_level)",
-      "description": "Recent error log lines across all services. Use this for triage without a known trace ID.",
-      "gridPos": {
-        "h": 16,
-        "w": 24,
-        "x": 0,
-        "y": 23
-      },
-      "datasource": {
-        "type": "loki",
-        "uid": "forge-loki"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "loki",
-            "uid": "forge-loki"
-          },
-          "expr": "{service_name=~\\"$service\\"} | detected_level=~\\"(?i)(error|warn)\\" | line_format \\"{{__line__}}\\"",
-          "legendFormat": "",
-          "queryType": "range",
-          "maxLines": 200
-        }
-      ],
-      "options": {
-        "showTime": true,
-        "showLabels": true,
-        "showCommonLabels": false,
-        "wrapLogMessage": true,
-        "prettifyLogMessage": false,
-        "enableLogDetails": true,
-        "dedupStrategy": "signature",
-        "sortOrder": "Descending"
-      },
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
-      "transformations": []
-    },
-    {
-      "id": 4,
-      "type": "timeseries",
-      "title": "Log Volume by Level",
-      "description": "Log ingestion rate by level — useful to spot error spikes at a glance.",
-      "gridPos": {
-        "h": 6,
-        "w": 24,
-        "x": 0,
-        "y": 39
-      },
-      "datasource": {
-        "type": "loki",
-        "uid": "forge-loki"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "loki",
-            "uid": "forge-loki"
-          },
-          "expr": "sum(rate({service_name=~\\"$service\\"} [2m])) by (detected_level)",
-          "legendFormat": "{{level}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "error"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "red"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "warn"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "yellow"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "info"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "blue"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        },
-        "legend": {
-          "showLegend": true,
-          "displayMode": "list",
-          "placement": "right"
-        }
-      }
-    }
-  ],
-  "annotations": {
-    "list": [
-      {
-        "builtIn": 1,
-        "datasource": {
-          "type": "grafana",
-          "uid": "-- Grafana --"
-        },
-        "enable": true,
-        "hide": true,
-        "iconColor": "rgba(0, 211, 255, 1)",
-        "name": "Annotations & Alerts",
-        "type": "dashboard"
-      }
-    ]
-  },
-  "links": [
-    {
-      "asDropdown": false,
-      "icon": "external link",
-      "includeVars": false,
-      "keepTime": true,
-      "tags": [
-        "forge-mon"
-      ],
-      "targetBlank": true,
-      "title": "Edge Overview",
-      "tooltip": "Open edge metrics dashboard",
-      "type": "dashboards",
-      "url": ""
-    }
-  ]
-}`;
+// DASHBOARD_LOG_EXPLORER (box-era, all-Loki) was RETIRED 2026-09-05 with the forge-loki
+// datasource: production log exploration is Cloud Logging Explore / the forge console,
+// and every one of its panels was LogQL over a store production does not have.
 
 /** Dashboard: MCP Tool Health (RED per tool + registration + dispatch log) */
 export const DASHBOARD_MCP_TOOL_HEALTH = `{
@@ -1553,10 +1057,7 @@ export const DASHBOARD_MCP_TOOL_HEALTH = `{
         "x": 0,
         "y": 0
       },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "forge-prometheus"
-      },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [
         {
           "refId": "A",
@@ -1592,10 +1093,7 @@ export const DASHBOARD_MCP_TOOL_HEALTH = `{
         "x": 4,
         "y": 0
       },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "forge-prometheus"
-      },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [
         {
           "refId": "A",
@@ -1632,10 +1130,7 @@ export const DASHBOARD_MCP_TOOL_HEALTH = `{
         "x": 8,
         "y": 0
       },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "forge-prometheus"
-      },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [
         {
           "refId": "A",
@@ -1654,10 +1149,7 @@ export const DASHBOARD_MCP_TOOL_HEALTH = `{
         "x": 0,
         "y": 9
       },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "forge-prometheus"
-      },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [
         {
           "refId": "A",
@@ -1676,10 +1168,7 @@ export const DASHBOARD_MCP_TOOL_HEALTH = `{
         "x": 12,
         "y": 9
       },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "forge-prometheus"
-      },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [
         {
           "refId": "A",
@@ -1698,14 +1187,12 @@ export const DASHBOARD_MCP_TOOL_HEALTH = `{
         "x": 0,
         "y": 18
       },
-      "datasource": {
-        "type": "loki",
-        "uid": "forge-loki"
-      },
+      "datasource": ${dsRef(DS_CLOUD_LOGGING)},
       "targets": [
         {
           "refId": "A",
-          "expr": "{service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\""
+          "projectId": "PROJECT_ID",
+          "queryText": "resource.type=\\"cloud_run_revision\\" resource.labels.service_name=\\"dorinda-api\\" jsonPayload.op=\\"mcp.dispatch\\""
         }
       ],
       "options": {
@@ -1734,50 +1221,6 @@ export const DASHBOARD_BACKGROUND_PLANE = `{
   },
   "panels": [
     {
-      "id": 1,
-      "type": "timeseries",
-      "title": "Sweep activity (events / 15m, by type)",
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 0,
-        "y": 0
-      },
-      "datasource": {
-        "type": "loki",
-        "uid": "forge-loki"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum by (type) (count_over_time({service_name=~\\"forge-dorinda-api-prod-web.*\\"} | json | type=~\\".+sweep|gcal.sync.summary\\" [15m]))",
-          "legendFormat": "{{type}}"
-        }
-      ]
-    },
-    {
-      "id": 2,
-      "type": "timeseries",
-      "title": "gcal-sync owner outcomes (per 15m, by status)",
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 0
-      },
-      "datasource": {
-        "type": "loki",
-        "uid": "forge-loki"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum by (status) (count_over_time({service_name=~\\"forge-dorinda-api-prod-web.*\\"} | json | type=\\"gcal.sync.owner\\" [15m]))",
-          "legendFormat": "{{status}}"
-        }
-      ]
-    },
-    {
       "id": 3,
       "type": "logs",
       "title": "gcal-sync per-owner log (WITH error cause — the ok=0/errors=N killer)",
@@ -1787,14 +1230,12 @@ export const DASHBOARD_BACKGROUND_PLANE = `{
         "x": 0,
         "y": 9
       },
-      "datasource": {
-        "type": "loki",
-        "uid": "forge-loki"
-      },
+      "datasource": ${dsRef(DS_CLOUD_LOGGING)},
       "targets": [
         {
           "refId": "A",
-          "expr": "{service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"gcal.sync.owner\\""
+          "projectId": "PROJECT_ID",
+          "queryText": "resource.type=\\"cloud_run_revision\\" resource.labels.service_name=\\"dorinda-api\\" jsonPayload.type=\\"gcal.sync.owner\\""
         }
       ],
       "options": {
@@ -1813,14 +1254,12 @@ export const DASHBOARD_BACKGROUND_PLANE = `{
         "x": 0,
         "y": 19
       },
-      "datasource": {
-        "type": "loki",
-        "uid": "forge-loki"
-      },
+      "datasource": ${dsRef(DS_CLOUD_LOGGING)},
       "targets": [
         {
           "refId": "A",
-          "expr": "{service_name=~\\"forge-dorinda-api-prod-web.*\\"} | json | (error != \`\` and error != \`null\`) or (status != \`ok\` and status != \`\`) | line_format \`{{.type}} owner={{.owner}} status={{.status}} error={{.error}}\`"
+          "projectId": "PROJECT_ID",
+          "queryText": "resource.type=\\"cloud_run_revision\\" resource.labels.service_name=\\"dorinda-api\\" (severity>=ERROR OR jsonPayload.error:*)"
         }
       ],
       "options": {
@@ -1839,10 +1278,7 @@ export const DASHBOARD_BACKGROUND_PLANE = `{
         "x": 0,
         "y": 29
       },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "forge-prometheus"
-      },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [
         {
           "refId": "A",
@@ -1886,11 +1322,11 @@ export const DASHBOARD_SERVICE_HTTP = `{
       "description": "Every HTTP surface: the app, the data plane, the web BFF. Answers 'did my flow reach the server at all', which no other dashboard here can.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
-      "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
+      "datasource": ${dsRef(DS_CLOUD_MONITORING)},
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
+          "datasource": ${dsRef(DS_CLOUD_MONITORING)},
           "queryType": "timeSeriesList",
           "timeSeriesList": {
             "projectName": "PROJECT_ID",
@@ -1910,11 +1346,11 @@ export const DASHBOARD_SERVICE_HTTP = `{
       "description": "Server errors only. A flat line here during a flow that LOOKED fine is the reassurance; a spike is the first place to look.",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
-      "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
+      "datasource": ${dsRef(DS_CLOUD_MONITORING)},
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
+          "datasource": ${dsRef(DS_CLOUD_MONITORING)},
           "queryType": "timeSeriesList",
           "timeSeriesList": {
             "projectName": "PROJECT_ID",
@@ -1934,11 +1370,11 @@ export const DASHBOARD_SERVICE_HTTP = `{
       "description": "Cloud Run measures this at the edge, so it includes cold starts — which is what the user actually waits through.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
-      "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
+      "datasource": ${dsRef(DS_CLOUD_MONITORING)},
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
+          "datasource": ${dsRef(DS_CLOUD_MONITORING)},
           "queryType": "timeSeriesList",
           "timeSeriesList": {
             "projectName": "PROJECT_ID",
@@ -1957,11 +1393,11 @@ export const DASHBOARD_SERVICE_HTTP = `{
       "title": "Container instances (by service)",
       "description": "Reads against max_instances, a ceiling nobody watches. A collector or app pinned at zero is why pushed telemetry silently disappears.",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
+      "datasource": ${dsRef(DS_CLOUD_MONITORING)},
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "stackdriver", "uid": "cloud-monitoring" },
+          "datasource": ${dsRef(DS_CLOUD_MONITORING)},
           "queryType": "timeSeriesList",
           "timeSeriesList": {
             "projectName": "PROJECT_ID",
@@ -1982,7 +1418,7 @@ export const DASHBOARD_TOOL_DRILLDOWN = `{
   "id": null,
   "uid": "forge-tool-drilldown",
   "title": "MCP Tool Drilldown",
-  "description": "Pick a tool from the dropdown: transport-family RED metrics (calls, errors, latency), app-tier gate decisions, and both log tiers (app dispatch + data-plane, with Claude/ChatGPT client attribution). Payloads: click a log line's Langfuse link.",
+  "description": "Pick a tool from the dropdown: transport-family RED metrics (calls, errors, latency), app-tier gate decisions, and both log tiers (app dispatch + data-plane, with Claude/ChatGPT client attribution). Payloads live in the forge console's log view.",
   "tags": ["forge-mon", "mcp", "drilldown"],
   "timezone": "browser",
   "schemaVersion": 39,
@@ -1997,7 +1433,7 @@ export const DASHBOARD_TOOL_DRILLDOWN = `{
         "name": "tool",
         "label": "MCP tool",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "forge-prometheus" },
+        "datasource": ${dsRef(DS_PROMETHEUS)},
         "query": "label_values({__name__=~\\"mcp_tool_calls(_total)?\\", app=~\\".+\\"}, tool)",
         "current": { "value": "whats_next", "text": "whats_next" },
         "includeAll": false,
@@ -2012,38 +1448,38 @@ export const DASHBOARD_TOOL_DRILLDOWN = `{
     {
       "id": 1, "type": "stat", "title": "Calls (selected range)",
       "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "forge-prometheus" },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [{ "refId": "A", "instant": true, "expr": "sum(increase({__name__=~\\"mcp_tool_calls(_total)?\\", app=~\\".+\\", tool=\\"$tool\\"}[$__range])) or on() vector(0)" }]
     },
     {
       "id": 2, "type": "stat", "title": "Errors (selected range)",
       "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "forge-prometheus" },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
       "targets": [{ "refId": "A", "instant": true, "expr": "sum(increase({__name__=~\\"mcp_tool_errors(_total)?\\", app=~\\".+\\", tool=\\"$tool\\"}[$__range])) or on() vector(0)" }]
     },
     {
       "id": 3, "type": "stat", "title": "p95 latency (15m, ms)",
       "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "forge-prometheus" },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [{ "refId": "A", "instant": true, "expr": "histogram_quantile(0.95, sum by (le) (rate({__name__=~\\"mcp_tool_duration_ms(_milliseconds)?_bucket\\", app=~\\".+\\", tool=\\"$tool\\"}[15m])))" }]
     },
     {
       "id": 4, "type": "timeseries", "title": "Calls / min (by outcome)",
       "gridPos": { "h": 9, "w": 12, "x": 0, "y": 4 },
-      "datasource": { "type": "prometheus", "uid": "forge-prometheus" },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [{ "refId": "A", "expr": "sum by (outcome) (rate({__name__=~\\"mcp_tool_calls(_total)?\\", app=~\\".+\\", tool=\\"$tool\\"}[5m])) * 60", "legendFormat": "{{outcome}}" }]
     },
     {
       "id": 5, "type": "timeseries", "title": "Errors / min (by class)",
       "gridPos": { "h": 9, "w": 12, "x": 12, "y": 4 },
-      "datasource": { "type": "prometheus", "uid": "forge-prometheus" },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [{ "refId": "A", "expr": "sum by (error_class) (rate({__name__=~\\"mcp_tool_errors(_total)?\\", app=~\\".+\\", tool=\\"$tool\\"}[5m])) * 60", "legendFormat": "{{error_class}}" }]
     },
     {
       "id": 6, "type": "timeseries", "title": "Latency p50 / p95 (ms)",
       "gridPos": { "h": 9, "w": 12, "x": 0, "y": 13 },
-      "datasource": { "type": "prometheus", "uid": "forge-prometheus" },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [
         { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate({__name__=~\\"mcp_tool_duration_ms(_milliseconds)?_bucket\\", app=~\\".+\\", tool=\\"$tool\\"}[5m])))", "legendFormat": "p50" },
         { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate({__name__=~\\"mcp_tool_duration_ms(_milliseconds)?_bucket\\", app=~\\".+\\", tool=\\"$tool\\"}[5m])))", "legendFormat": "p95" }
@@ -2052,41 +1488,39 @@ export const DASHBOARD_TOOL_DRILLDOWN = `{
     {
       "id": 7, "type": "timeseries", "title": "Gate decisions / min (app tier: allow · pending · deny)",
       "gridPos": { "h": 9, "w": 12, "x": 12, "y": 13 },
-      "datasource": { "type": "prometheus", "uid": "forge-prometheus" },
+      "datasource": ${dsRef(DS_PROMETHEUS)},
       "targets": [{ "refId": "A", "expr": "sum by (gate) (rate({__name__=~\\"mcp_tool_gate(_total)?\\", tool=\\"$tool\\"}[5m])) * 60", "legendFormat": "{{gate}}" }]
     },
     {
-      "id": 8, "type": "logs", "title": "App dispatch log — owner, gate, outcome, duration (click a line's Langfuse link for payloads)",
+      "id": 8, "type": "logs", "title": "App dispatch log — owner, gate, outcome, duration",
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 22 },
-      "datasource": { "type": "loki", "uid": "forge-loki" },
+      "datasource": ${dsRef(DS_CLOUD_LOGGING)},
       "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true },
-      "targets": [{ "refId": "A", "expr": "{service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | tool=\\"$tool\\"" }]
+      "targets": [{ "refId": "A", "projectId": "PROJECT_ID", "queryText": "resource.type=\\"cloud_run_revision\\" resource.labels.service_name=\\"dorinda-api\\" jsonPayload.op=\\"mcp.dispatch\\" jsonPayload.tool=\\"$tool\\"" }]
     },
     {
       "id": 9, "type": "logs", "title": "Data-plane log — which AI called (client = Claude / ChatGPT), transport outcome",
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 32 },
-      "datasource": { "type": "loki", "uid": "forge-loki" },
+      "datasource": ${dsRef(DS_CLOUD_LOGGING)},
       "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true },
-      "targets": [{ "refId": "A", "expr": "{service_name=\\"forge-dorinda-api-prod-data-plane-1\\"} |= \\"mcp.tool_call\\" | json | tool=\\"$tool\\"" }]
+      "targets": [{ "refId": "A", "projectId": "PROJECT_ID", "queryText": "resource.type=\\"cloud_run_revision\\" resource.labels.service_name=\\"forge-data-plane\\" \\"mcp.tool_call\\" jsonPayload.tool=\\"$tool\\"" }]
     }
   ]
 }`;
 
 /** Dashboard 6: User Experience Drilldown — pick a user BY EMAIL, see their whole MCP experience.
- *  Requires the read-only App DB datasource (forge-appdb) for the email picker; per-user series are
- *  LOG-derived (per-user Prometheus labels would be a cardinality trap). Payload digging happens in
- *  Langfuse via the header link + per-log-line derived-field links. */
-export function renderUserExperienceDashboard(o: {
-  appId: string;
-  langfusePublicUrl: string;
-  langfuseProjectId: string;
-}): string {
-  const lfUser = `${o.langfusePublicUrl}/project/${o.langfuseProjectId}/users/\${user}`;
+ *  Requires the read-only platform-DB datasource (forge-appdb) for the email picker — logs never
+ *  carry an email (emails must not outlive a purged account), so email → owner-id resolution
+ *  happens at query time against forge_identity_users. Per-user log panels ride Cloud Logging.
+ *  Per-user rate/latency panels are deliberately absent: per-user metric labels are a cardinality
+ *  trap (per-tool rates live on the Tool Drilldown), and the Cloud Logging datasource returns log
+ *  lines, not series. Mirrors the production board validated live 2026-08-27 (dorinda-metrics). */
+export function renderUserExperienceDashboard(o: { appId: string }): string {
   return `{
   "id": null,
   "uid": "forge-user-experience",
   "title": "User Experience Drilldown",
-  "description": "Pick a user by email: every MCP tool call they made, per-tool rates and latency (log-derived), which AI they used, errors and gate outcomes, and the raw dispatch feed. Requests/responses live in Langfuse — use the header link or any log line's Langfuse link.",
+  "description": "Pick a user by email: every MCP tool call they made, problems only, and which AI they used. The email picker resolves email -> owner id via the read-only Forge platform DB datasource. Payload digging (requests/responses) lives in the forge console's log view, filtered by the owner id shown in the header.",
   "tags": ["forge-mon", "mcp", "user", "drilldown"],
   "timezone": "browser",
   "schemaVersion": 39,
@@ -2101,12 +1535,12 @@ export function renderUserExperienceDashboard(o: {
         "name": "user",
         "label": "User (by email)",
         "type": "query",
-        "datasource": { "type": "postgres", "uid": "forge-appdb" },
+        "datasource": ${dsRef(DS_FORGE_PLATFORM_DB)},
         "query": "SELECT email AS __text, id AS __value FROM forge_identity_users WHERE app_id = '${o.appId}' ORDER BY email",
         "current": {},
         "includeAll": false,
         "hide": 0,
-        "refresh": 2,
+        "refresh": 1,
         "sort": 0,
         "multi": false
       }
@@ -2115,65 +1549,36 @@ export function renderUserExperienceDashboard(o: {
   "panels": [
     {
       "id": 1, "type": "text", "title": "",
-      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
-      "options": { "mode": "markdown", "content": "### Conversation payloads live in Langfuse\\n**[Open this user in Langfuse →](${lfUser})** — every trace with full request/response payloads, grouped per user. Or click the **Langfuse link on any log line below** to jump straight to that call's trace." }
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 0 },
+      "options": { "mode": "markdown", "content": "### Everything one user's AI did\\nSelected owner id: **\`\${user}\`** — logs are keyed by owner id, never email (emails must not outlive a purged account), so the picker above resolves email → owner via the read-only Forge platform DB.\\n\\n**Payloads (requests/responses) live in the forge console** — open its Logs view and filter by this owner id. Per-user rate/latency graphs are deliberately absent here: per-user metric labels would explode cardinality (per-tool rates live on the MCP Tool Drilldown), and Cloud Logging panels show lines, not series.\\n\\n**Reading an empty panel:** the bottom panel shows the latest dispatch lines for *any* user. If it has lines and the user panels are empty, this user was quiet in the window. If it is empty too, the feed or the filter is broken — do not read empty as \\"no activity\\"." }
     },
     {
-      "id": 2, "type": "stat", "title": "Tool calls (selected range)",
-      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 3 },
-      "datasource": { "type": "loki", "uid": "forge-loki" },
-      "targets": [{ "refId": "A", "instant": true, "queryType": "instant", "expr": "sum(count_over_time({service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | owner=\\"\${user}\\" [$__range]))" }]
-    },
-    {
-      "id": 3, "type": "stat", "title": "Errors (selected range)",
-      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 3 },
-      "datasource": { "type": "loki", "uid": "forge-loki" },
-      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
-      "targets": [{ "refId": "A", "instant": true, "queryType": "instant", "expr": "sum(count_over_time({service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | owner=\\"\${user}\\" | outcome != \`ok\` [$__range]))" }]
-    },
-    {
-      "id": 4, "type": "stat", "title": "Approval gates hit (pending)",
-      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 3 },
-      "datasource": { "type": "loki", "uid": "forge-loki" },
-      "targets": [{ "refId": "A", "instant": true, "queryType": "instant", "expr": "sum(count_over_time({service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | owner=\\"\${user}\\" | gate=\`pending\` [$__range]))" }]
-    },
-    {
-      "id": 5, "type": "timeseries", "title": "Calls / min (by tool)",
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 7 },
-      "datasource": { "type": "loki", "uid": "forge-loki" },
-      "targets": [{ "refId": "A", "expr": "sum by (tool) (rate({service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | owner=\\"\${user}\\" [5m])) * 60", "legendFormat": "{{tool}}" }]
-    },
-    {
-      "id": 6, "type": "timeseries", "title": "Latency p95 (ms, by tool — this user)",
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 7 },
-      "datasource": { "type": "loki", "uid": "forge-loki" },
-      "targets": [{ "refId": "A", "expr": "quantile_over_time(0.95, {service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | owner=\\"\${user}\\" | unwrap duration_ms [5m]) by (tool)", "legendFormat": "{{tool}}" }]
-    },
-    {
-      "id": 7, "type": "timeseries", "title": "Which AI (data-plane client attribution)",
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 16 },
-      "datasource": { "type": "loki", "uid": "forge-loki" },
-      "targets": [{ "refId": "A", "expr": "sum by (client) (rate({service_name=\\"forge-dorinda-api-prod-data-plane-1\\"} |= \\"mcp.tool_call\\" | json | user=\\"\${user}\\" [5m])) * 60", "legendFormat": "{{client}}" }]
-    },
-    {
-      "id": 8, "type": "timeseries", "title": "Gate outcomes / min (allow · pending · deny)",
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 16 },
-      "datasource": { "type": "loki", "uid": "forge-loki" },
-      "targets": [{ "refId": "A", "expr": "sum by (gate) (rate({service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | owner=\\"\${user}\\" [5m])) * 60", "legendFormat": "{{gate}}" }]
-    },
-    {
-      "id": 9, "type": "logs", "title": "Every tool call (newest first — click a line's Langfuse link for the request/response)",
-      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 25 },
-      "datasource": { "type": "loki", "uid": "forge-loki" },
+      "id": 2, "type": "logs", "title": "Every tool call — this user (api dispatch, newest first)",
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 7 },
+      "datasource": ${dsRef(DS_CLOUD_LOGGING)},
       "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true },
-      "targets": [{ "refId": "A", "expr": "{service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | owner=\\"\${user}\\"" }]
+      "targets": [{ "refId": "A", "projectId": "PROJECT_ID", "queryText": "resource.type=\\"cloud_run_revision\\" resource.labels.service_name=\\"dorinda-api\\" jsonPayload.op=\\"mcp.dispatch\\" jsonPayload.owner=\\"\${user}\\"" }]
     },
     {
-      "id": 10, "type": "logs", "title": "Problems only — errors and denials",
-      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 36 },
-      "datasource": { "type": "loki", "uid": "forge-loki" },
+      "id": 3, "type": "logs", "title": "Problems only — errors and denials (gate=pending is NOT a problem: it is beat one of an approval)",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 18 },
+      "datasource": ${dsRef(DS_CLOUD_LOGGING)},
       "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true },
-      "targets": [{ "refId": "A", "expr": "{service_name=~\\"forge-dorinda-api-prod-web.*\\"} |= \\"mcp.dispatch\\" | json | owner=\\"\${user}\\" | outcome != \`ok\` or gate = \`deny\`" }]
+      "targets": [{ "refId": "A", "projectId": "PROJECT_ID", "queryText": "resource.type=\\"cloud_run_revision\\" resource.labels.service_name=\\"dorinda-api\\" jsonPayload.op=\\"mcp.dispatch\\" jsonPayload.owner=\\"\${user}\\" (jsonPayload.outcome=\\"error\\" OR jsonPayload.gate=\\"deny\\")" }]
+    },
+    {
+      "id": 4, "type": "logs", "title": "Which AI — data-plane attribution (expand a line: \`client\` = Claude vs ChatGPT)",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 18 },
+      "datasource": ${dsRef(DS_CLOUD_LOGGING)},
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true },
+      "targets": [{ "refId": "A", "projectId": "PROJECT_ID", "queryText": "resource.type=\\"cloud_run_revision\\" resource.labels.service_name=\\"forge-data-plane\\" \\"mcp.tool_call\\" jsonPayload.user=\\"\${user}\\"" }]
+    },
+    {
+      "id": 5, "type": "logs", "title": "Feed liveness — latest dispatch lines, ANY user (empty here = broken feed/filter, not a quiet user)",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 27 },
+      "datasource": ${dsRef(DS_CLOUD_LOGGING)},
+      "options": { "showTime": true, "wrapLogMessage": false, "sortOrder": "Descending", "enableLogDetails": true },
+      "targets": [{ "refId": "A", "projectId": "PROJECT_ID", "queryText": "resource.type=\\"cloud_run_revision\\" resource.labels.service_name=\\"dorinda-api\\" jsonPayload.op=\\"mcp.dispatch\\"" }]
     }
   ]
 }`;

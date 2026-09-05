@@ -16,7 +16,13 @@ import {
   MONITORING_HEALTH_PATH,
   MONITORING_OTLP_ENDPOINT,
   DEFAULT_LOG_SCOPE_REGEX,
+  renderResolvedDatasources,
 } from '../../plugins/monitoring-stack/index';
+import {
+  checkDatasources,
+  fetchLiveDatasources,
+  parseProvisionedDatasources,
+} from '../../plugins/monitoring-stack/datasource-check';
 
 const inputSchema = z.object({
   dir: z
@@ -54,14 +60,12 @@ const inputSchema = z.object({
   smtp_user: z.string().optional(),
   smtp_password: z.string().optional(),
   smtp_from: z.string().optional(),
-  langfuse_public_url: z
+  gcp_project: z
     .string()
     .optional()
-    .describe('PUBLIC Langfuse UI base for browser deep links (default https://monitor.dorinda.ai)'),
-  langfuse_project_id: z
-    .string()
-    .optional()
-    .describe('Langfuse project id for deep links (default forge-default)'),
+    .describe(
+      'GCP project the Cloud Logging / Cloud Monitoring datasources and the Service Health dashboard read',
+    ),
   app_db_network: z
     .string()
     .optional()
@@ -79,7 +83,21 @@ const inputSchema = z.object({
   app_db_password: z
     .string()
     .optional()
-    .describe('Password of the SELECT-only role. Preserved if already in the env file.'),
+    .describe('Password of the SELECT-only platform-DB role. Preserved if already in the env file.'),
+  dorinda_db_database: z
+    .string()
+    .optional()
+    .describe("dorinda-api's application database on the SAME instance (default dorinda_api)"),
+  dorinda_db_user: z
+    .string()
+    .optional()
+    .describe(
+      'Dedicated SELECT-only role for the dorinda app DB (default grafana_dorinda_ro) — NEVER a superuser',
+    ),
+  dorinda_db_password: z
+    .string()
+    .optional()
+    .describe('Password of the dorinda app-DB SELECT-only role. Preserved if already in the env file.'),
   env_file: z.string().default('.env').describe('Env filename inside the stack dir (compose --env-file)'),
   health_url: z
     .string()
@@ -171,18 +189,19 @@ export const provisionMonitoring: Capability<Input, MonitoringStack> = {
             database: input.app_db_database,
             user: input.app_db_user,
             appId: input.app_db_app_id,
+            dorindaDatabase: input.dorinda_db_database,
+            dorindaUser: input.dorinda_db_user,
           }
         : undefined;
     const compose = generateMonitoringCompose({
       projectName: input.project_name,
+      gcpProject: input.gcp_project,
       publicHost: input.public_host,
       uiPort: input.ui_port,
       network: input.network,
       proxyNetwork: input.proxy_network,
       alertEmail: input.alert_email,
       logScopeRegex: input.log_scope_regex,
-      langfusePublicUrl: input.langfuse_public_url,
-      langfuseProjectId: input.langfuse_project_id,
       appDb,
     });
     await writeFile(join(dir, 'compose.yaml'), compose, 'utf8');
@@ -201,6 +220,9 @@ export const provisionMonitoring: Capability<Input, MonitoringStack> = {
       if (input.app_db_password && !parseEnvValue(appended, 'GRAFANA_PG_RO_PASSWORD')) {
         appended = `${appended}\nGRAFANA_PG_RO_PASSWORD=${input.app_db_password}\n`;
       }
+      if (input.dorinda_db_password && !parseEnvValue(appended, 'GRAFANA_DORINDA_PG_RO_PASSWORD')) {
+        appended = `${appended}\nGRAFANA_DORINDA_PG_RO_PASSWORD=${input.dorinda_db_password}\n`;
+      }
       if (appended !== existingEnv) await writeFile(envPath, appended, { mode: 0o600 });
     } else {
       secretsMode = 'generated';
@@ -214,6 +236,7 @@ export const provisionMonitoring: Capability<Input, MonitoringStack> = {
           from: input.smtp_from,
         },
         appDbPassword: input.app_db_password,
+        dorindaDbPassword: input.dorinda_db_password,
       });
       await writeFile(envPath, env, { mode: 0o600 });
     }
@@ -249,6 +272,40 @@ export const provisionMonitoring: Capability<Input, MonitoringStack> = {
       reachable = w.ready;
     }
 
+    // 4b. POST-PROVISION DATASOURCE CHECK (F-DD-5): read the LIVE /api/datasources back and
+    // compare against what this provision DECLARED (itself derived from the committed catalog —
+    // src/console/datasource-catalog.ts). Grafana does NOT error on an unknown datasource uid;
+    // it silently substitutes the default datasource, so a declared-but-missing datasource
+    // renders as a working page showing nothing. Only reading the live list back catches it.
+    // Drift in EITHER direction fails the provision loudly — a bounce, not a record.
+    let datasourceCheck: 'ok' | 'skipped' = 'skipped';
+    if (reachable) {
+      const envText = await readFile(envPath, 'utf8').catch(() => '');
+      const adminPass = parseEnvValue(envText, 'GRAFANA_ADMIN_PASSWORD');
+      if (!adminPass) {
+        throw new Error('post-provision datasource check: GRAFANA_ADMIN_PASSWORD missing from the stack env');
+      }
+      const declared = parseProvisionedDatasources(
+        renderResolvedDatasources({
+          projectName: input.project_name,
+          gcpProject: input.gcp_project,
+          appDb: appDb ? { ...appDb } : undefined,
+        }),
+      );
+      const live = await fetchLiveDatasources(healthUrl.replace(MONITORING_HEALTH_PATH, ''), {
+        user: 'admin',
+        pass: adminPass,
+      });
+      const result = checkDatasources(live, declared);
+      if (!result.ok) {
+        throw new Error(
+          `post-provision datasource check FAILED — live /api/datasources drifts from the declared set:\n` +
+            result.problems.map((p) => `  · ${p}`).join('\n'),
+        );
+      }
+      datasourceCheck = 'ok';
+    }
+
     // 5. Register the MonitoringStack (upsert — at most one). Producers export to the INTERNAL
     //    OTLP endpoint on the shared networks. Never store secrets on the resource.
     const grafanaUrl = input.public_host
@@ -282,6 +339,7 @@ export const provisionMonitoring: Capability<Input, MonitoringStack> = {
         status,
         deployed,
         secrets_mode: secretsMode,
+        datasource_check: datasourceCheck,
         stack_dir: dir,
         public_host: input.public_host ?? null,
         health_url: healthUrl,

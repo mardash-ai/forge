@@ -8,7 +8,6 @@ import {
   GRAFANA_ALERT_RULES,
   GRAFANA_CONTACT_POINTS_TEMPLATE,
   DASHBOARD_EDGE_OVERVIEW,
-  DASHBOARD_LOG_EXPLORER,
   DASHBOARD_MCP_TOOL_HEALTH,
   DASHBOARD_BACKGROUND_PLANE,
   DASHBOARD_TOOL_DRILLDOWN,
@@ -36,9 +35,14 @@ import {
 //                     Scope is a keep-regex over container names (default: the forge-provisioned
 //                     stacks + the edge only — NOT every container on the host).
 //   prometheus      — metrics store, 1 y / 20 GB retention caps.
-//   grafana         — dashboards (Edge Overview · Log Explorer · MCP Tool Health · Background
-//                     Plane), unified alerting (provisioned rules + email contact point), optional
-//                     Traefik fronting at a public host.
+//   grafana         — dashboards (Edge Overview · MCP Tool Health · Background Plane · Service
+//                     Health · Tool Drilldown · User Experience), unified alerting (provisioned
+//                     rules + email contact point), optional Traefik fronting at a public host.
+//                     Datasource uids/types/names derive from the committed catalog
+//                     (src/console/datasource-catalog.ts) — see datasource-check.ts for the
+//                     post-provision live check. There is NO Loki datasource (retired 2026-09-05:
+//                     production logs are Cloud Logging); the local Loki container remains as the
+//                     OTLP log sink (30 d retention, queryable over its API) only.
 //
 // The compose is fully SELF-CONTAINED: every config file travels as inline `configs.content`
 // (no bind mounts), so it deploys identically against a local daemon or a remote `--context`
@@ -99,17 +103,24 @@ export interface MonitoringStackOptions {
   /** Prometheus retention time / size caps. Defaults '365d' / '20GB'. */
   promRetentionTime?: string;
   promRetentionSize?: string;
-  /** PUBLIC Langfuse UI base for browser deep links (never an internal hostname). */
-  langfusePublicUrl?: string;
-  /** Langfuse project id for /project/<id>/... deep links. Default 'forge-default'. */
-  langfuseProjectId?: string;
   /**
    * Read-only app-DB hookup — enables the User Experience dashboard's by-email user picker.
    * `network` is the app stack's (external) docker network the postgres container lives on;
    * grafana joins it. The role must be SELECT-only; its password rides the stack .env
    * (GRAFANA_PG_RO_PASSWORD). `appId` scopes the forge_identity_users query.
    */
-  appDb?: { network: string; host: string; port?: number; database: string; user?: string; appId?: string };
+  appDb?: {
+    network: string;
+    host: string;
+    port?: number;
+    database: string;
+    user?: string;
+    appId?: string;
+    /** dorinda-api's application database on the SAME instance (default 'dorinda_api'). */
+    dorindaDatabase?: string;
+    /** Dedicated SELECT-only role for it (default 'grafana_dorinda_ro') — NEVER a superuser. */
+    dorindaUser?: string;
+  };
 }
 
 interface ResolvedAppDb {
@@ -119,6 +130,8 @@ interface ResolvedAppDb {
   database: string;
   user: string;
   appId: string;
+  dorindaDatabase: string;
+  dorindaUser: string;
 }
 
 interface Resolved extends Required<Omit<MonitoringStackOptions, 'publicHost' | 'appDb'>> {
@@ -141,8 +154,6 @@ function resolve(opts: MonitoringStackOptions): Resolved {
     lokiRetention: opts.lokiRetention ?? '720h',
     promRetentionTime: opts.promRetentionTime ?? '365d',
     promRetentionSize: opts.promRetentionSize ?? '20GB',
-    langfusePublicUrl: opts.langfusePublicUrl ?? 'https://monitor.dorinda.ai',
-    langfuseProjectId: opts.langfuseProjectId ?? 'forge-default',
     appDb: opts.appDb
       ? {
           network: opts.appDb.network,
@@ -151,6 +162,8 @@ function resolve(opts: MonitoringStackOptions): Resolved {
           database: opts.appDb.database,
           user: opts.appDb.user ?? 'grafana_ro',
           appId: opts.appDb.appId ?? 'dorinda-api',
+          dorindaDatabase: opts.appDb.dorindaDatabase ?? 'dorinda_api',
+          dorindaUser: opts.appDb.dorindaUser ?? 'grafana_dorinda_ro',
         }
       : undefined,
   };
@@ -262,6 +275,26 @@ function embed(text: string, spaces: number): string {
     .join('\n');
 }
 
+/** Render the datasource provisioning YAML for a set of stack options, defaults applied — the
+ *  SAME text the compose embeds, so the post-provision check compares live Grafana against
+ *  exactly what was declared (never a re-derivation that could drift). */
+export function renderResolvedDatasources(opts: MonitoringStackOptions = {}): string {
+  const r = resolve(opts);
+  return renderGrafanaDatasources({
+    gcpProject: r.gcpProject || undefined,
+    appDb: r.appDb
+      ? {
+          host: r.appDb.host,
+          port: r.appDb.port,
+          database: r.appDb.database,
+          user: r.appDb.user,
+          dorindaDatabase: r.appDb.dorindaDatabase,
+          dorindaUser: r.appDb.dorindaUser,
+        }
+      : undefined,
+  });
+}
+
 /**
  * Generate the standalone monitoring compose. Deterministic, secret-free, and fully self-contained
  * (configs travel inline), so a re-generate is diff-clean and a remote `--context` deploy works
@@ -321,7 +354,7 @@ ${embed(PROMETHEUS_CONFIG, 6)}
 ${embed(PROMETHEUS_RULES, 6)}
   grafana-datasources:
     content: |
-${embed(renderGrafanaDatasources({ langfusePublicUrl: r.langfusePublicUrl, langfuseProjectId: r.langfuseProjectId, appDb: r.appDb }), 6)}
+${embed(renderResolvedDatasources(opts), 6)}
   grafana-dashboard-provider:
     content: |
 ${embed(GRAFANA_DASHBOARD_PROVIDER, 6)}
@@ -334,18 +367,15 @@ ${embed(renderContactPoints(r), 6)}
   dash-edge-overview:
     content: |
 ${embed(DASHBOARD_EDGE_OVERVIEW, 6)}
-  dash-log-explorer:
-    content: |
-${embed(DASHBOARD_LOG_EXPLORER, 6)}
   dash-mcp-tool-health:
     content: |
-${embed(DASHBOARD_MCP_TOOL_HEALTH, 6)}
+${embed(DASHBOARD_MCP_TOOL_HEALTH.replace(/PROJECT_ID/g, r.gcpProject), 6)}
   dash-background-plane:
     content: |
-${embed(DASHBOARD_BACKGROUND_PLANE, 6)}
+${embed(DASHBOARD_BACKGROUND_PLANE.replace(/PROJECT_ID/g, r.gcpProject), 6)}
   dash-tool-drilldown:
     content: |
-${embed(DASHBOARD_TOOL_DRILLDOWN, 6)}
+${embed(DASHBOARD_TOOL_DRILLDOWN.replace(/PROJECT_ID/g, r.gcpProject), 6)}
   dash-service-http:
     content: |
 ${embed(DASHBOARD_SERVICE_HTTP.replace(/PROJECT_ID/g, r.gcpProject), 6)}${
@@ -353,7 +383,7 @@ ${embed(DASHBOARD_SERVICE_HTTP.replace(/PROJECT_ID/g, r.gcpProject), 6)}${
       ? `
   dash-user-experience:
     content: |
-${embed(renderUserExperienceDashboard({ appId: r.appDb.appId, langfusePublicUrl: r.langfusePublicUrl, langfuseProjectId: r.langfuseProjectId }), 6)}`
+${embed(renderUserExperienceDashboard({ appId: r.appDb.appId }).replace(/PROJECT_ID/g, r.gcpProject), 6)}`
       : ''
   }
 
@@ -464,8 +494,6 @@ ${traefikLabels}    configs:
         target: /etc/grafana/provisioning/alerting/contact_points.yml
       - source: dash-edge-overview
         target: /var/lib/grafana/dashboards/edge-overview.json
-      - source: dash-log-explorer
-        target: /var/lib/grafana/dashboards/log-explorer.json
       - source: dash-mcp-tool-health
         target: /var/lib/grafana/dashboards/mcp-tool-health.json
       - source: dash-background-plane
@@ -492,8 +520,9 @@ ${traefikLabels}    configs:
       GF_SMTP_USER: \${GRAFANA_SMTP_USER:-}
       GF_SMTP_PASSWORD: \${GRAFANA_SMTP_PASSWORD:-}
       GF_SMTP_FROM_ADDRESS: \${GRAFANA_SMTP_FROM:-grafana@forge.local}
-      # RO app-DB password — expanded by Grafana provisioning ($GRAFANA_PG_RO_PASSWORD in datasources yaml)
-      GRAFANA_PG_RO_PASSWORD: \${GRAFANA_PG_RO_PASSWORD:-}
+      # RO DB passwords (one per datasource role) — expanded by Grafana provisioning from the
+      # container env; defined-but-empty (\${VAR:-}) so absence is detectable, never a crash.
+${MONITORING_APPDB_PROVIDER_VARS.map((v) => `      ${v}: \$\{${v}:-}`).join('\n')}
     volumes:
       - grafana-data:/var/lib/grafana
     networks:
@@ -528,6 +557,17 @@ export interface MonitoringSecrets {
  *  it must match the C37 stack's key pair, so it is provided/preserved, never invented. */
 export const MONITORING_SECRET_KEYS: ReadonlyArray<keyof MonitoringSecrets> = ['GRAFANA_ADMIN_PASSWORD'];
 
+/** The read-only DB datasource credential pair (BUILDING_A_CAPABILITY §1: the provider-var set is
+ *  written ONCE — the grafana container env, the .env renderers and the operator docs all derive
+ *  from this list). One password per datasource role, both SELECT-only, NEVER a superuser:
+ *    GRAFANA_PG_RO_PASSWORD         — role \`grafana_ro\` on the forge platform DB (forge-appdb)
+ *    GRAFANA_DORINDA_PG_RO_PASSWORD — role \`grafana_dorinda_ro\` on dorinda-api's DB (dorinda-appdb)
+ *  Wired defined-but-empty (\${VAR:-}) so absence is detectable, never a crash. */
+export const MONITORING_APPDB_PROVIDER_VARS = [
+  'GRAFANA_PG_RO_PASSWORD',
+  'GRAFANA_DORINDA_PG_RO_PASSWORD',
+] as const;
+
 /** Non-secret config vars the .env also carries. */
 export const MONITORING_CONFIG_KEYS = [
   'MONITORING_UI_PORT',
@@ -547,8 +587,10 @@ export interface RenderMonitoringEnvOptions {
   /** base64("pk-lf-…:sk-lf-…") of the C37 Langfuse project key pair — the collector's trace auth. */
   langfuseOtlpB64?: string;
   smtp?: { host?: string; user?: string; password?: string; from?: string };
-  /** Password of the SELECT-only app-DB role (grafana_ro) — the user-picker datasource auth. */
+  /** Password of the SELECT-only platform-DB role (grafana_ro) — the forge-appdb datasource auth. */
   appDbPassword?: string;
+  /** Password of the SELECT-only dorinda app-DB role (grafana_dorinda_ro) — dorinda-appdb auth. */
+  dorindaDbPassword?: string;
 }
 
 /**
@@ -584,6 +626,7 @@ export function renderMonitoringEnv(
     `GRAFANA_SMTP_PASSWORD=${opts.smtp?.password ?? ''}`,
     `GRAFANA_SMTP_FROM=${opts.smtp?.from ?? ''}`,
     `GRAFANA_PG_RO_PASSWORD=${opts.appDbPassword ?? ''}`,
+    `GRAFANA_DORINDA_PG_RO_PASSWORD=${opts.dorindaDbPassword ?? ''}`,
     '',
   ].join('\n');
 }
@@ -602,8 +645,10 @@ export function renderMonitoringEnvExample(): string {
     'GRAFANA_SMTP_USER=',
     'GRAFANA_SMTP_PASSWORD=',
     'GRAFANA_SMTP_FROM=',
-    '# SELECT-only app-DB role password (User Experience dashboard email picker)',
+    '# SELECT-only platform-DB role password (grafana_ro — the forge-appdb datasource / email picker)',
     'GRAFANA_PG_RO_PASSWORD=',
+    '# SELECT-only dorinda app-DB role password (grafana_dorinda_ro — the dorinda-appdb datasource)',
+    'GRAFANA_DORINDA_PG_RO_PASSWORD=',
     '',
   ].join('\n');
 }

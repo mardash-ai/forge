@@ -1225,8 +1225,7 @@ program
   .option('--smtp-user <user>')
   .option('--smtp-password <pass>')
   .option('--smtp-from <addr>')
-  .option('--langfuse-public-url <url>', 'PUBLIC Langfuse UI base for browser deep links')
-  .option('--langfuse-project-id <id>', 'Langfuse project id for deep links')
+  .option('--gcp-project <id>', 'GCP project the Cloud Logging/Monitoring datasources + dashboards read')
   .option(
     '--app-db-network <name>',
     'app stack network the postgres container lives on (enables the User Experience dashboard)',
@@ -1236,7 +1235,16 @@ program
   .option('--app-db-database <db>', 'database holding forge_identity_users (e.g. forge_platform)')
   .option('--app-db-user <user>', 'SELECT-only role (default grafana_ro)')
   .option('--app-db-app-id <id>', 'app_id scoping the user picker query')
-  .option('--app-db-password <pass>', 'password of the SELECT-only role (preserved if already in env)')
+  .option(
+    '--app-db-password <pass>',
+    'password of the SELECT-only platform-DB role (preserved if already in env)',
+  )
+  .option(
+    '--dorinda-db-database <db>',
+    "dorinda-api's app database on the same instance (default dorinda_api)",
+  )
+  .option('--dorinda-db-user <user>', 'dedicated SELECT-only role for it (default grafana_dorinda_ro)')
+  .option('--dorinda-db-password <pass>', 'password of that role (preserved if already in env)')
   .option('--env-file <name>', 'env filename inside the stack dir', '.env')
   .option('--context <ctx>', 'docker --context for a remote daemon')
   .option('--skip-deploy', 'generate files only; do not pull/up', false)
@@ -1260,8 +1268,7 @@ program
       smtpUser?: string;
       smtpPassword?: string;
       smtpFrom?: string;
-      langfusePublicUrl?: string;
-      langfuseProjectId?: string;
+      gcpProject?: string;
       appDbNetwork?: string;
       appDbHost?: string;
       appDbPort?: string;
@@ -1269,6 +1276,9 @@ program
       appDbUser?: string;
       appDbAppId?: string;
       appDbPassword?: string;
+      dorindaDbDatabase?: string;
+      dorindaDbUser?: string;
+      dorindaDbPassword?: string;
       envFile: string;
       context?: string;
       skipDeploy: boolean;
@@ -1292,8 +1302,7 @@ program
       if (opts.smtpUser) body.smtp_user = opts.smtpUser;
       if (opts.smtpPassword) body.smtp_password = opts.smtpPassword;
       if (opts.smtpFrom) body.smtp_from = opts.smtpFrom;
-      if (opts.langfusePublicUrl) body.langfuse_public_url = opts.langfusePublicUrl;
-      if (opts.langfuseProjectId) body.langfuse_project_id = opts.langfuseProjectId;
+      if (opts.gcpProject) body.gcp_project = opts.gcpProject;
       if (opts.appDbNetwork) body.app_db_network = opts.appDbNetwork;
       if (opts.appDbHost) body.app_db_host = opts.appDbHost;
       if (opts.appDbPort) body.app_db_port = Number(opts.appDbPort);
@@ -1301,6 +1310,9 @@ program
       if (opts.appDbUser) body.app_db_user = opts.appDbUser;
       if (opts.appDbAppId) body.app_db_app_id = opts.appDbAppId;
       if (opts.appDbPassword) body.app_db_password = opts.appDbPassword;
+      if (opts.dorindaDbDatabase) body.dorinda_db_database = opts.dorindaDbDatabase;
+      if (opts.dorindaDbUser) body.dorinda_db_user = opts.dorindaDbUser;
+      if (opts.dorindaDbPassword) body.dorinda_db_password = opts.dorindaDbPassword;
       if (opts.context) body.context = opts.context;
       await runCapability('provision-monitoring', body);
     },

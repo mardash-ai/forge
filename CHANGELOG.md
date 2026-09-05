@@ -2,6 +2,52 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Committed Grafana datasource catalog** (`src/console/datasource-catalog.ts`): ONE
+  uid/type/name(/database) list — `forge-prometheus`, `cloud-logging`, `cloud-monitoring`,
+  `forge-appdb`, `dorinda-appdb` — that the monitoring-stack datasource declarations, every
+  dashboard panel/templating variable and every alert rule now derive from. Grafana silently
+  substitutes the DEFAULT datasource for an unknown uid (a wrong reference renders as a working
+  page showing nothing — deep-dive finding F-DD-5), so declaration and reference must come from
+  one list. Guarded by `tests/datasource-catalog.test.ts`, proven RED against the then-current
+  stack (`expected [ 'forge-loki' ] to deeply equal []`) before the fix.
+- **"Dorinda app DB (read-only)" datasource** (`dorinda-appdb`, grafana-postgresql-datasource):
+  the monitoring stack now declares a SECOND Postgres datasource pointing at dorinda-api's
+  `dorinda_api` database (same instance as `forge_platform` — dorinda-pg hosts both), through a
+  dedicated SELECT-only role `grafana_dorinda_ro` with its own secret
+  `GRAFANA_DORINDA_PG_RO_PASSWORD` (wired defined-but-empty per BUILDING_A_CAPABILITY §1;
+  C13 secret-catalog entries added for BOTH Grafana RO passwords). Closes F-DD-3: there was no
+  UI that could query the app's data at all. New ProvisionMonitoring inputs
+  `dorinda_db_database` / `dorinda_db_user` / `dorinda_db_password` and `gcp_project`
+  (the Cloud Logging/Monitoring datasources' project — previously the Service Health dashboard's
+  PROJECT_ID was silently substituted with an empty string when provisioned via the capability).
+- **Post-provision datasource check** (`src/plugins/monitoring-stack/datasource-check.ts` +
+  `scripts/check-grafana-datasources.ts`, `npm run check:grafana-datasources`): reads the LIVE
+  `/api/datasources` back and fails on drift in either direction — declared-but-missing,
+  live-but-undeclared, or uid-matches-but-type/name/database-drifted (the "App DB (read-only)
+  → forge_platform" lie). ProvisionMonitoring now runs it after the health wait and FAILS the
+  provision on drift; the standalone script runs against any Grafana (production is provisioned
+  by dorinda-metrics). Proven RED against the real 2026-09-05 drift before being trusted
+  (forge-loki MISSING + cloud-logging/cloud-monitoring UNDECLARED + Prometheus name DRIFT).
+
+### Changed
+
+- **`forge-appdb` renamed to what it is**: "App DB (read-only)" → **"Forge platform DB
+  (read-only)"**. It connects to `forge_platform` (identity + event tables), NOT the app's
+  data — the old name was finding F-DD-3.
+- **`forge-loki` RETIRED** (datasource declaration, its three Loki alert rules, the all-Loki
+  Log Explorer dashboard, and every LogQL panel): production has no Loki — logs are Cloud
+  Logging (`cloud-logging`, googlecloud-logging-datasource), which the stack now declares
+  instead (gce workload-identity auth, no key material). Logs-type panels (MCP dispatch, tool
+  drilldown, gcal-sync, User Experience) were converted to Cloud Logging filters mirroring the
+  shapes validated live in production (dorinda-metrics, 2026-08-27); LogQL *aggregation* panels
+  (sweep-activity timeseries) were dropped — the Cloud Logging datasource returns log lines,
+  not series. The local Loki/promtail containers remain as the compose stack's OTLP log sink
+  only. Retired ProvisionMonitoring inputs `langfuse_public_url` / `langfuse_project_id`
+  (they only fed the Loki datasource's derived-field deep links; Langfuse itself was retired
+  2026-07-28 — `langfuse_otlp_b64` for the collector is unchanged).
+
 ## [1.59.1] - 2026-09-04
 
 ### Fixed
