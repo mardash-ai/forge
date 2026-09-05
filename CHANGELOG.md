@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.60.0] - 2026-09-05
+
 ### Added
 
 - **Committed Grafana datasource catalog** (`src/console/datasource-catalog.ts`): ONE
